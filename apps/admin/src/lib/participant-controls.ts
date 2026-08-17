@@ -89,6 +89,22 @@ export interface DrawCapabilities {
    * both have deleted and rebuilt since they were written.
    */
   generate: boolean;
+  /**
+   * tournaments.draw.checkin.mark.write — the Desk tab's court field and its
+   * per-player ready pills.
+   *
+   * THE SAME KEY CHECK-IN ALREADY ASKS, and no new capability was minted for
+   * either control. Marking a member ready IS check-in, at match granularity
+   * instead of event granularity; setting the court is the reply the same
+   * person gives in the same breath. "May check people in but may not tell them
+   * which court" is a distinction the club does not have and could not staff.
+   * See capability-gates.ts, where that merge is argued and where both server
+   * actions are named.
+   *
+   * Feeds the Desk tab rather than the participants tab, which is why it sits
+   * beside `generate` down here.
+   */
+  runDesk: boolean;
 }
 
 export interface ParticipantControls {

@@ -9,6 +9,8 @@
 //   - results.ts      — score entry, walkovers, void / restore / edit / undo
 //                       results, manual draw-slot repair
 //   - finalize.ts     — placement bonuses + event finalization
+//   - scheduling.ts   — running the desk at a live event: which court a match
+//                       is on, and marking a member present for it
 //   - _internal.ts    — private helpers (NOT 'use server' — revalidation,
 //                       notifications, Elo apply/reverse, standings)
 export {
@@ -74,3 +76,8 @@ export {
   applyPlacementBonuses,
   finalizeEvent,
 } from './tournament-actions/finalize';
+
+export {
+  setMatchCourt,
+  setMatchReadyForPlayer,
+} from './tournament-actions/scheduling';

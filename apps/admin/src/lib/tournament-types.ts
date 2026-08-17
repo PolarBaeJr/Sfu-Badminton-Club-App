@@ -28,6 +28,17 @@ export type TournamentMatchRow = Tables['tournament_matches']['Row'] & {
   match_format?: string | null;
   games_per_match?: number | null;
   points_per_game?: number | null;
+  /**
+   * Who has said they are present and ready to play THIS match (00135) — the
+   * member from their phone, or an exec at the desk on their behalf. One entry
+   * per person, so a doubles match can be 3 of 4.
+   *
+   * NOT the same thing as `status === 'ready'`, which means only that both sides
+   * are known. Optional here for the reason the block above gives: the page
+   * selects `*`, so it arrives as soon as the migration is applied and is simply
+   * absent before that.
+   */
+  ready_player_ids?: string[] | null;
 };
 export type TournamentParticipantRow = Tables['tournament_participants']['Row'];
 export type TournamentPairRow = Tables['tournament_pairs']['Row'];

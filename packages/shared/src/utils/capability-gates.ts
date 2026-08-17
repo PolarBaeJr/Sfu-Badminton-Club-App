@@ -316,13 +316,16 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     merged: MINT_A_TOKEN,
   },
   'tournaments.draw.checkin.mark.write': {
-    label: 'Check a participant in', area: 'tournaments', group: 'draw', mode: 'write',
+    label: 'Run the desk', area: 'tournaments', group: 'draw', mode: 'write',
     gate: 'tournament-actions/participants.ts checkInParticipant',
     also: [
       'tournament-actions/participants.ts checkInPair',
       'tournament-actions/participants.ts bulkCheckIn',
+      'tournament-actions/scheduling.ts setMatchReadyForPlayer',
+      'tournament-actions/scheduling.ts setMatchCourt',
     ],
-    merged: 'Singles entrant, pair, or the whole event at once — one act, three shapes.',
+    merged:
+      'Everything the desk does to somebody BEFORE they play, by the one person standing at the table with the entry list. Check-in is the same act at three sizes — singles entrant, pair, whole event — and marking a member ready is that act again at match granularity: recording that a person has turned up. Setting the court is the reply the desk gives them in the same breath, and it is joined here rather than minting a fifth tournament key, because "may check people in but may not tell them which court" is a distinction the club does not have and nobody could staff.',
   },
   'tournaments.draw.noshow.write': {
     label: 'Mark a no-show', area: 'tournaments', group: 'draw', mode: 'write',

@@ -12,6 +12,8 @@ import {
   TOURNAMENT_EVENT_FORMAT_LABELS,
   isPoolToBracket,
   endsInKnockout,
+  courtLabel,
+  courtLabelOrTbc,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -26,6 +28,31 @@ import { EventActions } from './EventActions';
 import { ParticipantsList, type ParticipantEntry } from './ParticipantsList';
 import { LiveTournament } from '../../../live-tournament';
 import { Draw, type DrawMatch } from './Draw';
+import { MatchReady } from './MatchReady';
+
+/**
+ * The match's own state, said to a member rather than to a database.
+ *
+ * `{matchStatus}` under `capitalize` printed the raw enum, which is how a member
+ * came to be looking at the word "Ready" in a bordered uppercase chip and
+ * pressing it. The words matter as much as the styling did: "Ready" describes
+ * the DRAW (both sides are known) and a member reads it as describing
+ * THEMSELVES. "Waiting to be called" cannot be misread that way, and cannot be
+ * mistaken for something to press.
+ *
+ * All seven values of tournament_matches' CHECK are here, not the three that
+ * were obviously wrong: 'walkover', 'disputed' and 'voided' were painting the
+ * same button-shaped chip and are just rarer.
+ */
+const MATCH_STATE_LABELS: Record<string, string> = {
+  pending:   'Not scheduled yet',
+  ready:     'Waiting to be called',
+  live:      'On court now',
+  completed: 'Played',
+  walkover:  'Walkover',
+  disputed:  'Result disputed',
+  voided:    'Voided',
+};
 
 // The bracket's geometry used to be five constants here and five more in the
 // console, drifting apart card height by card height. It is now one shared
@@ -133,7 +160,15 @@ export default async function EventDetailPage({
       // engine's working, a Json blob), walkover_reason / walkover_winner,
       // result_entered_by, the loser_* and *_to_* advancement wiring, and the
       // per-match format overrides — none of which this page draws.
-      .select('id, round_number, bracket_position, round_name, court, status, scores, is_bye, is_third_place, phase, participant_a_id, participant_b_id, pair_a_id, pair_b_id, winner_participant_id, winner_pair_id')
+      //
+      // `ready_player_ids` (00135) is the newest name on this list and the one
+      // that makes the migration ORDER-SENSITIVE in a way `court` never was:
+      // PostgREST fails the whole request on an unknown column and `unwrap`
+      // raises on res.error, so a build naming it against a database without it
+      // 500s this page rather than degrading. 00135 says the same thing at the
+      // top of the file — apply it before deploying, and applying it early is
+      // harmless.
+      .select('id, round_number, bracket_position, round_name, court, status, scores, is_bye, is_third_place, phase, participant_a_id, participant_b_id, pair_a_id, pair_b_id, winner_participant_id, winner_pair_id, ready_player_ids')
       .eq('event_id', eventId)
       .order('round_number')
       .order('bracket_position')
@@ -145,7 +180,22 @@ export default async function EventDetailPage({
   // `paired` is the discriminator; `partnerName` is display only and may be
   // null even for a real pair, so nothing branches on it.
   let playerRegistration: { status: string; paired: boolean; partnerName?: string | null } | null = null;
-  let playerParticipantId: string | null = null;
+  /**
+   * THE ID THE MATCH ROWS ACTUALLY NAME — a tournament_participants id in a
+   * singles event, a tournament_pairs id in a doubles one.
+   *
+   * This used to be `playerParticipantId`, set only inside a `!doubles` branch,
+   * while "Your Matches" below both GATED on it and compared it against
+   * `m.pair_a_id`/`m.pair_b_id` when `doubles`. A participant id is never a pair
+   * id, so the gate was false for every doubles entrant and the block has never
+   * rendered on a doubles event at all — nobody in a doubles draw has ever seen
+   * their own next match on this page. It is fixed here rather than left,
+   * because the court and the ready control both live in that block and doubles
+   * is the case they were asked for ("both halves of a pair matter").
+   */
+  let playerEntryId: string | null = null;
+  /** The viewer's own side of a doubles pair, for "your partner isn't here yet". */
+  let playerPartnerId: string | null = null;
 
   // READ FOR DOUBLES TOO, since 00102. This was `!doubles` on the grounds that a
   // doubles entrant had no participant row — true until a member could enter
@@ -162,11 +212,10 @@ export default async function EventDetailPage({
     const reg = unwrapMaybe(regRes);
     if (reg) {
       playerRegistration = { status: reg.status, paired: false };
-      // Only meaningful for singles: everything downstream that keys on a
-      // participant id (the bracket's "you" highlight, the match list) is inside
-      // a `!doubles` branch, because a doubles match names a PAIR id and never
-      // this one.
-      if (!doubles) playerParticipantId = reg.id;
+      // Singles only, and now for a reason that is stated rather than assumed: a
+      // doubles match names a PAIR id in participant_a_id's place, so this id
+      // would match nothing there. The doubles half is picked up below.
+      if (!doubles) playerEntryId = reg.id;
     }
 
     // And the other way to be in a doubles event: on a formed team. The partner's
@@ -175,7 +224,12 @@ export default async function EventDetailPage({
     if (doubles) {
       const pairRes = await supabase
         .from('tournament_pairs')
-        .select('status, player1_id, player2_id, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)')
+        // `id` is what the match rows name for a doubles event — see
+        // playerEntryId above for the bug its absence caused. Safe to add: this
+        // one query deliberately bypasses `unwrap` and fails soft, so a column
+        // the database has not got yet costs the partner's name and nothing
+        // else. (It has got `id`.)
+        .select('id, status, player1_id, player2_id, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)')
         .eq('event_id', eventId)
         .or(`player1_id.eq.${currentPlayer.id},player2_id.eq.${currentPlayer.id}`)
         .limit(1);
@@ -188,6 +242,8 @@ export default async function EventDetailPage({
           paired: true,
           partnerName: (one as { full_name?: string | null } | null)?.full_name ?? null,
         };
+        playerEntryId = mine.id as string;
+        playerPartnerId = (mine.player1_id === currentPlayer.id ? mine.player2_id : mine.player1_id) as string;
       }
     }
   }
@@ -506,7 +562,7 @@ export default async function EventDetailPage({
       {/* Your Matches — above the participant list: someone opening this page at
           the venue came for their own next match, and the roster below can run
           long enough to push it off a phone screen. */}
-      {playerParticipantId && allMatches.length > 0 && (
+      {playerEntryId && allMatches.length > 0 && (
         <FadeIn delay={0.1}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="p-4 pb-0 mb-3">
@@ -529,22 +585,49 @@ export default async function EventDetailPage({
                 .filter((m) => {
                   const aId = doubles ? m.pair_a_id : m.participant_a_id;
                   const bId = doubles ? m.pair_b_id : m.participant_b_id;
-                  return aId === playerParticipantId || bId === playerParticipantId;
+                  return aId === playerEntryId || bId === playerEntryId;
                 })
                 .map((m) => {
                   const matchStatus  = m.status as TournamentMatchStatus;
                   const scores       = m.scores as Array<{ a: number; b: number }> | null;
                   const scoreStr     = formatScores(scores);
-                  const playerSide   = (doubles ? m.pair_a_id : m.participant_a_id) === playerParticipantId ? 'a' : 'b';
+                  const playerSide   = (doubles ? m.pair_a_id : m.participant_a_id) === playerEntryId ? 'a' : 'b';
                   const opponentSide = playerSide === 'a' ? 'b' : 'a';
                   const won          = isWinner(m, playerSide as 'a' | 'b');
                   const opponentName = getEntryName(m, opponentSide as 'a' | 'b');
                   const done         = matchStatus === 'completed' || matchStatus === 'walkover';
 
+                  // WHERE TO GO. `court` is free text an exec typed, so it is
+                  // normalised rather than prefixed — see @badminton/shared
+                  // courtLabel, which absorbs a desk that types "Court 3" as
+                  // readily as one that types "3".
+                  const court = courtLabelOrTbc(m.court as string | null);
+                  const courtSet = !!courtLabel(m.court as string | null);
+
+                  const readyIds = (m.ready_player_ids as string[] | null) ?? [];
+                  const iAmReady = !!currentPlayer && readyIds.includes(currentPlayer.id);
+                  const partnerReady = doubles && playerPartnerId ? readyIds.includes(playerPartnerId) : null;
+
+                  // WHEN THE CONTROL IS OFFERED. A match still to be played, in
+                  // an event the viewer is still in. Not on a finished one, and
+                  // not once they have withdrawn or been disqualified —
+                  // `playerOutOfEvent` already draws that line two lines below
+                  // for the label, and turning up for a match you have forfeited
+                  // is the one thing this button must not invite.
+                  //
+                  // 'pending' IS INCLUDED. A member whose opponent is not known
+                  // yet is exactly the person the desk wants to hear from, and
+                  // making them wait for the other semi-final to finish before
+                  // they can say "I'm here" would be the label problem again in
+                  // a different costume. 00135's function agrees.
+                  const canSayReady =
+                    !!currentPlayer && !done && !playerOutOfEvent &&
+                    (matchStatus === 'ready' || matchStatus === 'pending' || matchStatus === 'live');
+
                   return (
                     <div
                       key={m.id as string}
-                      className={`flex items-center justify-between p-3 rounded-xl border gap-3 ${
+                      className={`p-3 border ${
                         done
                           ? won
                             ? 'border-[var(--color-success)]/20 bg-[var(--color-success)]/5'
@@ -552,35 +635,67 @@ export default async function EventDetailPage({
                           : 'border-[var(--border)] bg-white/[0.02]'
                       }`}
                     >
-                      <div className="min-w-0">
-                        <p className="text-sm text-[var(--text-primary)] font-medium truncate">
-                          vs {opponentName}
-                        </p>
-                        <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                          {(m.round_name as string) || `Round ${m.round_number}`}
-                          {m.court ? ` — Court ${m.court as string}` : ''}
-                        </p>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm text-[var(--text-primary)] font-medium truncate">
+                            vs {opponentName}
+                          </p>
+                          <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                            {(m.round_name as string) || `Round ${m.round_number}`}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          {done ? (
+                            <>
+                              <span className={`text-sm font-bold ${won ? 'text-[var(--color-success)]' : 'text-[var(--color-accent)]'}`} role="status">
+                                {won ? 'WIN' : 'LOSS'}
+                              </span>
+                              {scoreStr && (
+                                <p className="nums text-xs text-[var(--text-muted)] mt-0.5">{scoreStr}</p>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              {/* THE COURT TAKES THE SLOT THE SCORE WILL TAKE —
+                                  "show which location the match is at before the
+                                  score", literally. It outranks the round name
+                                  on purpose: the round is context, the court is
+                                  the instruction, and this is a page read while
+                                  walking. "Court TBC" rather than a blank,
+                                  because an empty right-hand slot is what made
+                                  the old READY label read as a broken app. */}
+                              <p
+                                className={`display-md leading-none ${courtSet ? 'text-[var(--color-accent)]' : 'text-[var(--text-dim)]'}`}
+                                role="status"
+                              >
+                                <span className="sr-only">Court: </span>
+                                {court}
+                              </p>
+                              {/* A PLAIN SPAN, NOT A CHIP. The chip's border and
+                                  uppercase weight are what made a status read as
+                                  a control — the bug this whole change came out
+                                  of. The WIN/LOSS branch immediately above has
+                                  always been an unbordered span for exactly that
+                                  reason, and every state that is not actionable
+                                  now matches it. The one actionable state has a
+                                  real button underneath instead. */}
+                              <span className="block text-[11px] uppercase tracking-wide text-[var(--text-muted)] mt-1">
+                                {playerOutOfEvent
+                                  ? (playerRegistration?.status === 'withdrawn' ? 'Withdrawn' : 'Disqualified')
+                                  : MATCH_STATE_LABELS[matchStatus] ?? matchStatus}
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        {done ? (
-                          <>
-                            <span className={`text-sm font-bold ${won ? 'text-[var(--color-success)]' : 'text-[var(--color-accent)]'}`} role="status">
-                              {won ? 'WIN' : 'LOSS'}
-                            </span>
-                            {scoreStr && (
-                              <p className="nums text-xs text-[var(--text-muted)] mt-0.5">{scoreStr}</p>
-                            )}
-                          </>
-                        ) : (
-                          // "Ready" on a match you can no longer play is an
-                          // invitation to turn up for it.
-                          <span className="chip capitalize">
-                            {playerOutOfEvent
-                              ? (playerRegistration?.status === 'withdrawn' ? 'Withdrawn' : 'Disqualified')
-                              : matchStatus}
-                          </span>
-                        )}
-                      </div>
+                      {canSayReady && (
+                        <MatchReady
+                          matchId={m.id as string}
+                          ready={iAmReady}
+                          partnerReady={partnerReady}
+                          isDoubles={doubles}
+                        />
+                      )}
                     </div>
                   );
                 })}

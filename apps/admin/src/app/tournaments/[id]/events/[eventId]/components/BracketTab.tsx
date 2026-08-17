@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getRoundName, eventIsPlaying, computeDrawLayout, fitScale, eventEloMultiplier, splitPairLabel } from '@badminton/shared';
+import { getRoundName, eventIsPlaying, computeDrawLayout, fitScale, eventEloMultiplier, splitPairLabel, courtLabel } from '@badminton/shared';
 import type { DrawSide } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { RoundShapeControl } from './RoundShapeControl';
@@ -535,7 +535,14 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
         style={{ height: META_H }}
       >
         <span>{m.match_number ? `M${m.match_number}` : ''}</span>
-        <span>{m.court ? `Court ${m.court}` : ''}</span>
+        {/* courtLabel rather than `Court ${m.court}`: the desk types this free
+            hand and half of them type "Court 3", which the old template turned
+            into "Court Court 3" in a 196px-wide card. Still BLANK when unset —
+            unlike the player's own match row, which says "Court TBC", because
+            here the reader is the person who would be assigning it and an
+            18px meta strip at 0.68 scale is the wrong place for a prompt. The
+            Desk tab is where the uncourted matches are listed. */}
+        <span>{courtLabel(m.court) ?? ''}</span>
       </div>
 
       <Side
