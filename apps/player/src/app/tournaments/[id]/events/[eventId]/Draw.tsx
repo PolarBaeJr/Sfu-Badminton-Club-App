@@ -52,10 +52,10 @@ const GEOMETRY = {
  * be pure cost.
  *
  * Measured in full screen against the compiled CSS. At 1920×1080 a 16-draw
- * (four rounds, 1320×608) fits both axes at 1.0 with room to spare, and at
- * 1280×720 — the worst projector this feature admits to — it still fits at
- * 0.94. A 32-draw is the first that does not: it needs 0.73 at 720p, below the
- * 0.80 floor, and so is the first that has anything to gain.
+ * (four rounds, 1320×349) fits both axes at 1.43, and at 1280×720 — the worst
+ * projector this feature admits to — it still fits at 0.9424. A 32-draw is the
+ * first that does not: at 1704×608 it needs 0.7300 at 720p, below the 0.80
+ * floor, and so is the first that has anything to gain.
  *
  * The cost this buys off is real but small: the halves are built by the SERVER
  * component whether or not full screen is ever entered, so their markup travels
@@ -430,13 +430,15 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
                   pos: pageLayout.centreSlots[0]!,
                   match: quarter.feeds,
                   heading: roundName(quarter.feeds.round_number),
-                  // ONE SHORT LINE, measured at the 152px field. The half page's
-                  // caption has 64px of reservation and spends it on two lines; a
-                  // third would paint past `bodyH`, which the scaled box's height
-                  // does not include, so it would be shaved off at the bottom of
-                  // the scroll region rather than collide with anything. This says
-                  // the one thing the picture cannot: where the other entrant of
-                  // the borrowed card comes from.
+                  // TWO LINES, AND THAT IS MEASURED. In headless Chrome against
+                  // the compiled CSS at the 168px column this wraps to two lines
+                  // and the heading, its 8px of `mt-2` and the caption come to
+                  // 49.8px of the 64px `playoffCaptionH` reserves. A third line
+                  // would paint past `bodyH`, which the scaled box's height does
+                  // not include, so it would be shaved off at the bottom of the
+                  // scroll region rather than collide with anything — which is why
+                  // this is kept to the one thing the picture cannot say: where
+                  // the borrowed card's other entrant comes from.
                   caption: `Its other entrant comes from the ${other.toLowerCase()}.`,
                 },
               ]}

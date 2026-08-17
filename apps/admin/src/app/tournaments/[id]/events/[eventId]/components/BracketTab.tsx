@@ -556,15 +556,20 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
         style={{ height: FOOT_H }}
       >
         {/* THE SCORELINE FIRST, and it is the only thing here allowed to
-            truncate. `games_per_match` is legal up to 7 (00031), and a
-            seven-game line is 41 mono characters against 180px of strip — so
-            something has to give on that card whatever this does, and the
-            scoreline is the part whose full text is one press away in the score
-            dialog and already spelled out in the card's aria-label. Everything
-            beside it is `shrink-0`, so the strip degrades by clipping digits off
-            the right rather than by pushing the status or the action out of the
-            card. A best-of-3, which is what every event in the club is set to,
-            fits with room over. */}
+            truncate. `games_per_match` is legal up to 7 (00031), so something has
+            to give on a long match whatever this does, and the scoreline is the
+            part whose full text is one press away in the score dialog and already
+            spelled out in the card's aria-label. Everything beside it is
+            `shrink-0`, so the strip degrades by clipping digits off the right
+            rather than by pushing the status or the action out of the card.
+            MEASURED in headless Chrome, against the 194px the strip has inside
+            the card's borders. A completed best-of-3 — what every event in the
+            club is set to — needs 147px, a live match with one game 100px, a skip
+            107px, a pending card 62px. What does NOT fit, and clips: a best-of-5
+            (219px), and a walkover or voided result that also carries three games
+            (222px and 202px), where the status word and "· Change" are both on the
+            strip as well. Those keep their words and lose digits, which is the
+            right way round — the words are what the digits cannot say. */}
         {scoreLine && (
           <span className="min-w-0 truncate font-mono text-[10px] text-[var(--text-secondary)]">
             {scoreLine}
@@ -675,17 +680,19 @@ function Side({
           Fairweather" is 112.1px at 10px, so the longest partner name still
           ellipsized.
           THE DIGITS HAVE GONE TO THE FOOTER, which is what that residue was
-          waiting for — see the note on `scoreLine`. The field is now the whole
-          196px column less 16px of padding, the 16px seed gutter and 6px of gap:
-          158px, on EVERY card rather than only on the unplayed ones. 112.1px in
-          158px is 46px of headroom, so the longest name in the sample fits with
-          the next several to spare.
-          STILL 10px, NOT 11. The two entrant rows are `flex-1` inside an 88px
-          card, so each is about 22.5px, and two 11px lines at leading-[1.05] are
-          23.1px of text — the overflow-hidden shave this card has already been
-          bitten by once. The width is the win here; the type size is not on
-          offer without moving CARD_H, and CARD_H is what makes the whole card a
-          44px tap target at the 0.5 zoom floor.
+          waiting for — see the note on `scoreLine`. The field is now the 196px
+          column less its 1px borders, 16px of padding, the 16px seed gutter and
+          6px of gap: 156px, on EVERY card rather than only on the unplayed ones.
+          Re-measured in headless Chrome at that field: 112.1px, and 114.0px on
+          the winner's row, where `font-semibold` costs it another two pixels.
+          Neither truncates, so the longest name in the sample fits with 42px over.
+          STILL 10px, NOT 11, and this is the measurement that settles it: the two
+          entrant rows are `flex-1` inside an 88px card and come out 21.5px, while
+          two 10px lines at leading-[1.05] measure 21.0px. Two 11px lines would be
+          23.1px — the overflow-hidden shave this card has already been bitten by
+          once. The width is the win here; the type size is not on offer without
+          moving CARD_H, and CARD_H is what makes the whole card a 44px tap target
+          at the 0.5 zoom floor.
           A singles name, or a pair with a name of its own, is one line at 13px
           exactly as before. `title` carries the full label for a mouse; the
           card's aria-label already carries it for a reader. */}

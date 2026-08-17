@@ -136,15 +136,18 @@ const BOTTOM_GUTTER = 24;
  * currency here.
  *
  * WHY 0.80 AND NOT HIGHER. The floor must never be what stops the largest draw
- * that CAN fit a screen from fitting it. Measured in full screen at 1920×1080 —
- * a 1884px pane and a 1010px budget once this shell's padding and header are
- * out — a 64-draw fits both axes at 0.842, and 8, 16 and 32 fit at 1.0 outright.
- * (1012 and 0.843 before the controls joined the header's row; the two pixels
- * that cost are worth what a row that cannot underlap buys.) So 0.80 costs
- * nothing at all at the resolution this feature exists for, and still leaves
- * 0.04 of margin against a projector whose aspect differs a little. A 128-draw
- * would need 0.41 and is refused by this floor — which is what the halves
- * below exist to answer, and until they did it held at 0.80 and scrolled.
+ * that CAN fit a screen from fitting it. RE-MEASURED in headless Chrome against
+ * the compiled CSS, because the figures this note used to carry were 12px
+ * optimistic: the pane is the viewport less 36px (18px of shell padding a side)
+ * and the budget is the viewport less 82px — 14px of padding top and bottom, a
+ * 44px `.draw-topline` and its 10px margin. So 1884×998 at 1920×1080, not the
+ * 1010 claimed here before, and a 64-draw (2088×1200) fits both axes at 0.8317
+ * rather than 0.842. The conclusion survives with a thinner margin than was
+ * advertised: 0.80 still costs nothing at the resolution this feature exists
+ * for, but the margin is 0.03 and not 0.04, so a projector whose aspect differs
+ * much would lose the whole 64 draw. 8, 16 and 32 fit outright. A 128-draw needs
+ * 0.4186 and is refused by this floor — which is what the halves below exist to
+ * answer, and until they did it held at 0.80 and scrolled.
  *
  * WHAT IT COSTS, said plainly: on a 1280×720 projector a 32-draw needs 0.73 and
  * so now scrolls where the page floor would have fitted it whole. That is the
@@ -528,7 +531,9 @@ export function DrawScroller({
    * the three stops it swept before this change.
    *
    * WHEN NOTHING FITS, THE FINEST TIER, not the coarsest. On a 128 at 720p every
-   * tier crops: the whole draw at 0.27, the halves at 0.54, the quarters at 0.73.
+   * tier crops: the whole draw at 0.2676, the halves at 0.5317, the quarters at
+   * 0.7300 — measured, and the quarters are the only one of the three that is
+   * within a tenth of the floor.
    * The old rule fell back to the unfiltered list and put the 0.27 sheet — a
    * corner of a bracket — on the wall for fifteen seconds in five. The finest
    * tier is the least-cropped thing there is, so that is what a screen too small
