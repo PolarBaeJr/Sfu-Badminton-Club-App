@@ -302,7 +302,7 @@ export async function acceptLegalDocuments(data: LegalAcceptanceInput): Promise<
 async function acceptLegalDocumentsImpl(data: LegalAcceptanceInput) {
   parseOrThrow(legalAcceptanceSchema, data);
   const player = await getCurrentPlayer();
-  if (!player) throw new Error('Not authenticated');
+  if (!player) throw new ExpectedError('Not authenticated');
   const supabase = await createServerSupabaseClient();
 
   await insertAcceptances(supabase, player.id, data.age_attestation);
@@ -321,7 +321,7 @@ export async function deleteMyAccount(confirmation: string): Promise<ActionResul
 async function deleteMyAccountImpl(confirmation: string) {
   parseOrThrow(accountDeletionSchema, { confirmation });
   const player = await getCurrentPlayer();
-  if (!player) throw new Error('Not authenticated');
+  if (!player) throw new ExpectedError('Not authenticated');
 
   // Service role: deletion_requested_at / active_flag aren't part of the
   // players self-update RLS surface.
@@ -368,8 +368,8 @@ export async function restoreMyAccount(): Promise<ActionResult> {
 
 async function restoreMyAccountImpl() {
   const player = await getCurrentPlayer();
-  if (!player) throw new Error('Not authenticated');
-  if (!player.deletion_requested_at) throw new Error('No deletion is scheduled for this account');
+  if (!player) throw new ExpectedError('Not authenticated');
+  if (!player.deletion_requested_at) throw new ExpectedError('No deletion is scheduled for this account');
 
   const service = createServiceRoleClient();
   const { error } = await service
@@ -435,7 +435,7 @@ async function completeOnboardingImpl(data: OnboardingInput) {
   parseOrThrow(legalAcceptanceSchema, data);
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
+  if (!user) throw new ExpectedError('Not authenticated');
 
   // ONE CLAIM IMPLEMENTATION, AND IT IS NOT HERE ANY MORE (00132). This used to
   // hold its own copy of the claim — find an unclaimed roster row by email,
