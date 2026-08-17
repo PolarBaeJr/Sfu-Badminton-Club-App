@@ -73,6 +73,13 @@ export default async function LegalPage() {
       .from('players')
       .select('id, full_name, avatar_url, waiver_reset_at, waiver_acceptances(document, version, accepted_at)')
       .eq('active_flag', true)
+      // 00132. A stub created at first sign-in is active_flag = TRUE and has no
+      // acceptances, so without this it would land in activeMemberCount AND in
+      // the non-compliant list — inflating the denominator of "all N active
+      // members are gated" with people who have not been asked to sign anything
+      // yet. Onboarding is where the waiver is collected; somebody who has not
+      // reached the end of it is not out of compliance.
+      .or('onboarding_completed.is.true,user_id.is.null')
       .order('full_name')
       // An EXPLICIT ceiling rather than PostgREST's implicit one. activeMemberCount
       // is counted from these rows and is the number in "all N active members are

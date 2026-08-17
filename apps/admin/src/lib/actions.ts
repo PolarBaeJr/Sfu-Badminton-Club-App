@@ -34,6 +34,7 @@ export {
   requireWaiverResignature,
   previewPlayerMerge,
   mergePlayers,
+  resolvePrivilegeClaimReview,
 } from './actions/players';
 export type { MergePreviewRow } from './actions/players';
 

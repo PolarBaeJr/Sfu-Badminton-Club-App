@@ -27,7 +27,8 @@ import {
   type WaiverDocument,
 } from '@badminton/shared';
 import { getSkillTierOptions, type SkillTierOption } from '../rating-tiers';
-import { buildRosterClaim, normalizeEmail } from '../roster-claim';
+import { normalizeEmail } from '../roster-claim';
+import { ensurePlayerRowForUser } from '../first-signin';
 import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from '../supabase-server';
 import { requirePlayer, trackServerEvent, runAction, type ActionResult } from './_shared';
 
@@ -398,91 +399,68 @@ async function completeOnboardingImpl(data: OnboardingInput) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
+  // ONE CLAIM IMPLEMENTATION, AND IT IS NOT HERE ANY MORE (00132). This used to
+  // hold its own copy of the claim — find an unclaimed roster row by email,
+  // adopt it, strip its privileges — because onboarding was the first moment a
+  // `players` row existed at all. The row is now made at first sign-in, so the
+  // claim has to happen there or first sign-in would insert a SECOND row for
+  // somebody an exec had already pre-added, which is the exact duplicate the
+  // claim exists to prevent.
+  //
+  // Keeping a second copy here would mean two claim implementations that could
+  // disagree about privileges, so this calls the same function the sign-in
+  // routes do. It is idempotent and by this point has almost always already run;
+  // the call stays because "almost always" is not a guarantee — a session
+  // predating the deploy, or a sign-in whose ensure failed transiently, must
+  // still be able to finish onboarding.
+  await ensurePlayerRowForUser(user.id);
+
   const existingPlayer = await getCurrentPlayer();
   let playerId = existingPlayer?.id ?? null;
 
-  // Claim an unclaimed roster row before creating a new one. Admins routinely
-  // pre-add members (user_id IS NULL) who later sign up themselves; without
-  // this, onboarding always inserts a SECOND row and someone has to merge the
-  // two by hand. Matching on the email is safe here specifically because
-  // sign-in is OTP/OAuth — the address is proven, not self-asserted — and we
-  // only ever attach to a row nobody has claimed yet.
+  // Still nothing, with a live session and a confirmed address, means
+  // ensure_player_for_user DECLINED — and the only thing it declines for is an
+  // ambiguous roster match (two unclaimed rows for one address). It cannot say
+  // so at sign-in because sign-in has no screen to say it on. This is that
+  // screen, and this is the sentence it used to throw from its own lookup.
   //
-  // What the claim may carry over is decided in lib/roster-claim: it links the
-  // login and never confers console privilege.
-  //
-  // Needs the service-role client: under RLS the user cannot see or update a
-  // players row that isn't linked to them yet.
+  // players_email_lower_key (00066) makes a second match impossible going
+  // forward; this stays because the app deploys independently of the migration
+  // and because picking one of the two would attach the member to an arbitrary
+  // row and its arbitrary history.
   if (!existingPlayer && user.email) {
-    const serviceClient = createServiceRoleClient();
-    // .eq, not .ilike — see normalizeEmail. limit(2) rather than maybeSingle():
-    // players_email_lower_key (00066) makes a second match impossible going
-    // forward, but maybeSingle() THROWS on two rows, and this code deploys
-    // independently of the migration. A throw here blocks that person's
-    // onboarding with no way out, so ask for two and refuse deliberately.
-    const { data: matches, error: lookupError } = await serviceClient
+    const { data: matches } = await createServiceRoleClient()
       .from('players')
-      .select('id, role, is_exec, is_trainer')
+      .select('id')
       .is('user_id', null)
       .eq('email', normalizeEmail(user.email))
       .limit(2);
-    if (lookupError) {
-      Sentry.captureException(lookupError, { extra: { action: 'claimRosterRow', userId: user.id } });
-      throw new Error(lookupError.message);
-    }
     if (matches && matches.length > 1) {
-      // Picking one would attach the member to an arbitrary row and its
-      // arbitrary history. Fail closed and name the fix.
       throw new ExpectedError(
         'There is more than one club record for your email address. Please contact an exec to have them merged before finishing setup.',
       );
     }
-
-    const unclaimed = matches?.[0];
-    if (unclaimed) {
-      const { update, stripped } = buildRosterClaim(unclaimed, user.id, {
-        display_name: data.display_name,
-        phone: data.phone,
-      });
-
-      const { error } = await serviceClient.from('players').update(update).eq('id', unclaimed.id);
-      if (error) {
-        Sentry.captureException(error, { extra: { action: 'claimRosterRow', userId: user.id } });
-        throw new Error(error.message);
-      }
-      playerId = unclaimed.id;
-
-      // An admin pre-added this person WITH privileges and they came off. Say
-      // so on the record, or the admin has no way to know their intent was
-      // downgraded and no prompt to re-grant it deliberately.
-      if (stripped) {
-        const { error: auditError } = await serviceClient.from('audit_logs').insert({
-          actor_id: unclaimed.id,
-          action_type: 'roster_row_claimed_privileges_stripped',
-          target_type: 'player',
-          target_id: unclaimed.id,
-          old_value: stripped,
-          new_value: { role: 'player', is_exec: false, is_trainer: false },
-          reason:
-            'Roster row claimed at onboarding. A claim links a login and never grants console access — re-grant deliberately from Players → Edit if it was intended.',
-        });
-        // The claim itself succeeded; a failed audit write must not undo it or
-        // block the member. Sentry is the backstop.
-        if (auditError) {
-          Sentry.captureException(auditError, {
-            extra: { action: 'claimRosterRowAudit', playerId: unclaimed.id, stripped },
-          });
-        }
-      }
-    }
   }
 
   if (existingPlayer) {
-    const update: Record<string, unknown> = {
-      first_name: data.first_name,
-      last_name: data.last_name ?? null,
-      onboarding_completed: true,
-    };
+    const update: Record<string, unknown> = { onboarding_completed: true };
+
+    // THE ADMIN-ENTERED NAME STAYS AUTHORITATIVE, and this branch is newly the
+    // one that could have broken that. Before 00132 a claimed roster row only
+    // reached here after the claim, which never touched first_name/last_name —
+    // roster-claim states the rule: "the admin-entered name/email/status stay
+    // authoritative (same rule the merge tool follows); onboarding only supplies
+    // what the admin could not know". The row now exists BEFORE onboarding runs,
+    // so every claimed member takes this branch, and writing the name
+    // unconditionally would have silently reversed that rule for all of them.
+    //
+    // A STUB, on the other hand, has first_name = '' and this is the only thing
+    // that ever fills it. So the test is on the stored value, not on which path
+    // got here: a blank name is filled, an admin's is left alone.
+    if (!String(existingPlayer.first_name ?? '').trim()) {
+      update.first_name = data.first_name;
+      update.last_name = data.last_name ?? null;
+    }
     if (data.display_name) update.display_name = data.display_name;
     if (data.phone) update.phone = data.phone;
 

@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { CHECKIN_TOKEN_REGEX } from '@badminton/shared';
-import { getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { reactivateLapsedMember } from '@/lib/reactivate';
+import { ensurePlayerRowForUser } from '@/lib/first-signin';
 
 // After a code-based sign-in the session cookie is already set client-side;
 // this server route reads it and sends the user to the right place — onboarding
@@ -15,6 +16,16 @@ export default async function PostLoginPage({
   searchParams: Promise<{ checkin?: string }>;
 }) {
   const { checkin } = await searchParams;
+  // First sign-in by OTP code or passkey lands here, and this is where the row
+  // gets made (00132). Unlike /auth/callback the session cookie is already set
+  // client-side by the time this route runs, so the user comes off next/headers
+  // rather than off an exchange result. Idempotent and never throws — a member
+  // whose row already exists pays one indexed lookup.
+  const {
+    data: { user },
+  } = await (await createServerSupabaseClient()).auth.getUser();
+  if (user) await ensurePlayerRowForUser(user.id);
+
   const player = await getCurrentPlayer();
   // Not just a missing profile: a row can exist with setup unfinished (the
   // signup function inserts it with onboarding_completed FALSE), and sending

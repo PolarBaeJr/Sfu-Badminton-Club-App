@@ -242,6 +242,12 @@ export default async function SessionsPage({
         .from('players')
         .select('id, full_name, avatar_url')
         .eq('active_flag', true)
+        // 00132. active_flag alone stopped being enough the moment a `players`
+        // row could exist before onboarding: a stub is active_flag = TRUE by
+        // default, and it would appear in the "add attendee" picker as a
+        // nameless row. Marking one present would also file attendance against
+        // somebody with no waiver, which is the thing check-in exists to check.
+        .or('onboarding_completed.is.true,user_id.is.null')
         .order('full_name')
     : { data: [] };
 

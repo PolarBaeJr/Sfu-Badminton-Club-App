@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { CHECKIN_TOKEN_REGEX, rateLimit, getClientIp } from '@badminton/shared';
 import { AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
 import { reactivateLapsedMemberByUserId } from '@/lib/reactivate';
+import { ensurePlayerRowForUser } from '@/lib/first-signin';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -82,7 +83,13 @@ export async function GET(request: Request) {
   // being SET on this response, so next/headers cannot see it yet on this
   // request. Best-effort — the requirePlayer() net catches anything missed
   // here, and a failed lookup must not cost the member their sign-in.
-  if (userId) await reactivateLapsedMemberByUserId(userId);
+  // BEFORE reactivation, and the order matters: reactivateLapsedMemberByUserId
+  // looks the member up BY user_id, so on a first sign-in there is nothing for
+  // it to find until this has run. Both are best-effort and neither throws.
+  if (userId) {
+    await ensurePlayerRowForUser(userId);
+    await reactivateLapsedMemberByUserId(userId);
+  }
 
   return response;
 }
