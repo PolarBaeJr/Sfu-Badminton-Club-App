@@ -317,7 +317,7 @@ describe('regenerateDrawControl — a way back to Generate', () => {
   });
 
   it('greys a draw with results in it and SAYS HOW MANY', () => {
-    // The server refuses this either way (assertNoResultsEntered). Saying it
+    // The server refuses this either way (assertDrawIsRebuildable). Saying it
     // before the click is the difference between "the console knows" and "the
     // console guesses" — and on a 128-match live draw the number is the only
     // part of the message anybody can act on.
@@ -327,6 +327,47 @@ describe('regenerateDrawControl — a way back to Generate', () => {
 
     const many = regenerateDrawControl(at('bracket_generated', false, 7), EVERYTHING);
     expect(many.blockedReason).toBe('7 matches have been played — void them first');
+  });
+
+  it('greys a draw with a match ON COURT, which it used to offer', () => {
+    // 'live' is not in RESULT_MATCH_STATUSES — correctly, a live match has no
+    // result — so isPlayedMatch read it as zero and this button stayed
+    // pressable while three rallies were in progress. That needed no race at
+    // all. The remedy named is the cheap one: un-starting a match is one click
+    // on the Court Management tab and touches no rating.
+    const one = regenerateDrawControl(
+      { status: 'live', drawLocked: false, playedMatches: 0, liveMatches: 1 }, EVERYTHING);
+    expect(one.show).toBe(true);
+    expect(one.blockedReason).toBe('1 match is on court — undo the start or wait for the result');
+
+    const many = regenerateDrawControl(
+      { status: 'live', drawLocked: false, playedMatches: 0, liveMatches: 3 }, EVERYTHING);
+    expect(many.blockedReason).toBe('3 matches are on court — undo the start or wait for the result');
+  });
+
+  it('greys a draw holding an unreversed rating, and says how to clear it', () => {
+    // A row that reads `voided` and still carries elo_snapshot. "Void it first"
+    // would be a dead end — it is already voided — so this one gets its own
+    // sentence rather than being folded into the played count.
+    const c = regenerateDrawControl(
+      { status: 'live', drawLocked: false, playedMatches: 0, ratedMatches: 1 }, EVERYTHING);
+    expect(c.show).toBe(true);
+    expect(c.blockedReason).toBe('1 match carries an unreversed rating — unvoid then undo it first');
+  });
+
+  it('names the blockers in the order the server refuses them', () => {
+    // The greyed reason and the refusal an exec would get by clicking anyway
+    // must name the SAME blocker, or the console sends them to fix the wrong
+    // thing. delete_phase_matches (00144) raises played, then rated, then live.
+    const all = regenerateDrawControl(
+      { status: 'live', drawLocked: false, playedMatches: 2, ratedMatches: 1, liveMatches: 3 },
+      EVERYTHING);
+    expect(all.blockedReason).toBe('2 matches have been played — void them first');
+
+    const ratedAndLive = regenerateDrawControl(
+      { status: 'live', drawLocked: false, playedMatches: 0, ratedMatches: 1, liveMatches: 3 },
+      EVERYTHING);
+    expect(ratedAndLive.blockedReason).toBe('1 match carries an unreversed rating — unvoid then undo it first');
   });
 
   it('names the LOCK before the results when both are true', () => {

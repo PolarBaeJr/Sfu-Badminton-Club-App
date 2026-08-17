@@ -7,6 +7,10 @@ import {
   OPEN_MATCH_STATUSES,
   isPlayedMatch,
   RESULT_MATCH_STATUSES,
+  isInProgressMatch,
+  carriesAppliedRating,
+  summariseRedrawBlockers,
+  hasRedrawBlockers,
 } from '../tournament-withdrawal';
 
 describe('eventHasDraw', () => {
@@ -185,5 +189,92 @@ describe('isPlayedMatch — the one definition of "somebody played this"', () =>
       expect(open && played, status).toBe(false);
       expect(open || played || status === 'voided', status).toBe(true);
     }
+  });
+});
+
+describe('summariseRedrawBlockers — what a redraw would destroy', () => {
+  it('counts a result exactly as isPlayedMatch does, byes excluded', () => {
+    const b = summariseRedrawBlockers([
+      { status: 'completed', is_bye: false },
+      { status: 'walkover', is_bye: false },
+      { status: 'disputed', is_bye: null },
+      { status: 'completed', is_bye: true },
+      { status: 'pending', is_bye: false },
+    ]);
+    expect(b).toEqual({ played: 3, rated: 0, inProgress: 0 });
+  });
+
+  it('counts a LIVE match, which isPlayedMatch does not and must not', () => {
+    // The whole of harm (a). A live match has no score and no Elo, so it is
+    // rightly not a result — but redrawing deletes it out from under the people
+    // on court, and the button stayed pressable because nothing counted it.
+    expect(isInProgressMatch({ status: 'live', is_bye: false })).toBe(true);
+    expect(isPlayedMatch({ status: 'live', is_bye: false })).toBe(false);
+    const b = summariseRedrawBlockers([
+      { status: 'live', is_bye: false },
+      { status: 'live' },
+      { status: 'ready', is_bye: false },
+    ]);
+    expect(b).toEqual({ played: 0, rated: 0, inProgress: 2 });
+  });
+
+  it('a bye is never in progress', () => {
+    // Nothing generates a live bye, but the null-safety is the same rule
+    // isPlayedMatch follows and it should not depend on that staying true.
+    expect(isInProgressMatch({ status: 'live', is_bye: true })).toBe(false);
+  });
+
+  it('counts an unreversed rating on a row whose status says otherwise', () => {
+    // voidMatchImpl writes status on the id alone, so a void racing a result
+    // entry leaves a row reading `voided` that still carries the delta. Deleting
+    // it puts a rating on the ladder that reverse_tournament_match_rating can
+    // never take back, because the snapshot it reads went with the row.
+    const b = summariseRedrawBlockers([
+      { status: 'voided', is_bye: false, elo_snapshot: { discipline: 'singles', entries: [] } },
+      { status: 'voided', is_bye: false, elo_snapshot: null },
+      { status: 'pending', is_bye: false },
+    ]);
+    expect(b).toEqual({ played: 0, rated: 1, inProgress: 0 });
+  });
+
+  it('does NOT count a properly voided match — the escape hatch has to work', () => {
+    // reverse_tournament_match_rating nulls elo_snapshot in the same transaction
+    // as the reversal (00078). If a voided match still blocked, "void those
+    // matches first" — the only remedy the refusal offers — would lead nowhere
+    // and the draw would be permanently unregenerable.
+    expect(carriesAppliedRating({ status: 'voided', elo_snapshot: null })).toBe(false);
+    expect(carriesAppliedRating({ status: 'voided' })).toBe(false);
+    expect(hasRedrawBlockers(summariseRedrawBlockers([
+      { status: 'voided', is_bye: false, elo_snapshot: null },
+      { status: 'voided', is_bye: false },
+    ]))).toBe(false);
+  });
+
+  it('never reports the same match twice', () => {
+    // A rated `completed` match is the NORMAL case, and it is one blocker, not
+    // two. Double-counting would tell an exec to void two matches when there is
+    // one, on a screen where the number is the only actionable part.
+    const b = summariseRedrawBlockers([
+      { status: 'completed', is_bye: false, elo_snapshot: { discipline: 'singles', entries: [] } },
+    ]);
+    expect(b).toEqual({ played: 1, rated: 0, inProgress: 0 });
+  });
+
+  it('is clean on the ordinary unplayed draw, byes and all', () => {
+    // The common case, and the one a false positive would break: every draw
+    // whose field is not a power of two carries byes written `completed`.
+    const b = summariseRedrawBlockers([
+      { status: 'pending', is_bye: false },
+      { status: 'ready', is_bye: false },
+      { status: 'completed', is_bye: true },
+      { status: 'completed', is_bye: true },
+    ]);
+    expect(hasRedrawBlockers(b)).toBe(false);
+  });
+
+  it('reads a caller that did not select elo_snapshot as unrated', () => {
+    // Which is why the server guard names the column in its projection. Stated
+    // as a test so the behaviour is deliberate rather than discovered.
+    expect(carriesAppliedRating({ status: 'completed' })).toBe(false);
   });
 });

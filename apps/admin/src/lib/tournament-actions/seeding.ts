@@ -197,7 +197,7 @@ async function loadGroupStage(
   const { count: matchCount, error } = await adminClient.from('tournament_matches')
     .select('id', { count: 'exact', head: true })
     .eq('event_id', eventId);
-  // Same reasoning as assertNoResultsEntered: a discarded error here reads as
+  // Same reasoning as assertDrawIsRebuildable: a discarded error here reads as
   // "no fixtures yet" and lets a live event's groups be rewritten underneath it.
   if (error) {
     Sentry.captureException(error);

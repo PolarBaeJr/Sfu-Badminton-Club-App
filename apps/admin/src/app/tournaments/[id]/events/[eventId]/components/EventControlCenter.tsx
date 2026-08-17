@@ -6,7 +6,7 @@ import {
   TOURNAMENT_EVENT_TYPE_LABELS,
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
-  isPlayedMatch,
+  summariseRedrawBlockers,
   isPoolToBracket,
   playsRoundRobin,
   endsInKnockout,
@@ -186,14 +186,25 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // would grey the button on every draw whose field is not a power of two.
   //
   // COUNTED WITHIN THE CURRENT PHASE (00107). The redraw rebuilds one half, and
-  // assertNoResultsEntered refuses on that half's results only — so a
+  // assertDrawIsRebuildable refuses on that half's results only — so a
   // pool_to_bracket event arriving at its knockout with a fully played pool
   // must NOT show "9 matches have been played, void them first" against a
   // Regenerate button that would not touch any of them. currentPhase is null
   // for the other two formats, where this is the whole event exactly as before.
   const phaseNow = currentPhase(format, status);
   const phaseMatches = phaseNow === 'pool' ? poolMatches : phaseNow === 'bracket' ? bracketMatches : matches;
-  const playedMatches = phaseMatches.filter(isPlayedMatch).length;
+  // THREE COUNTS, NOT ONE, because "has a result" is not the whole of "a redraw
+  // would destroy this". A match that is ON COURT has no result and no Elo, so
+  // isPlayedMatch reads it as zero and the button used to stay live while three
+  // rallies were in progress. A match whose row still carries an unreversed
+  // elo_snapshot holds the only record of what it did to the ladder. Both are
+  // separated out rather than folded into `playedMatches` so the greyed reason
+  // can name the remedy that actually applies — see summariseRedrawBlockers.
+  //
+  // The server re-asks all three (delete_phase_matches, 00144) and its answer is
+  // the one that decides; these only save the exec a click.
+  const redrawBlockers = summariseRedrawBlockers(phaseMatches);
+  const playedMatches = redrawBlockers.played;
 
   return (
     <div className="space-y-6">
@@ -208,6 +219,8 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         totalMatches={totalMatches}
         completedMatches={completedMatches}
         playedMatches={playedMatches}
+        liveMatches={redrawBlockers.inProgress}
+        ratedMatches={redrawBlockers.rated}
         // How many matches the REDRAW would actually replace — the current
         // phase's, not the event's. The confirm dialog names this number, and
         // on a pool_to_bracket event "the 18 matches in the current draw are
