@@ -95,13 +95,38 @@ export async function markFeePaid(input: FeeMarkInput) {
   //
   // The shape is waiveFee's, a few lines below, for the same reasons it gives:
   // the 23505 branch turns the race into a message rather than a crash.
+  //
+  // AND NOW THE READ IS WIDE, for the rest of what waiveFee's comment says. It
+  // records a production incident about overwriting a recorded payment and
+  // guards against it, and this function — twenty lines above it, over the same
+  // table, the same row, the same partial index — had the identical hole: the
+  // update below replaces amount_cents/method/reference unconditionally, and the
+  // audit entry carried no old_value, so a $100 dues row rewritten as $80 lost
+  // the $100 in both places at once. Not part of the report that produced the
+  // waiver fix; it is the same defect and the same three lines close it.
   const { data: existing } = await adminClient
     .from('club_fees')
-    .select('id')
+    .select('id, player_id, season_id, amount_cents, paid_at, method, reference')
     .eq('player_id', input.player_id)
     .eq('season_id', input.season_id)
     .eq('fee_type', 'dues')
     .maybeSingle();
+
+  // Refuse rather than overwrite. Reversing a season fee is markFeeUnpaid, which
+  // keeps the amount and audits it; /fees renders "Mark Unpaid" for a paid row
+  // and "Remove waiver" for a waived one, so the Mark Paid dialog is never
+  // offered over either and no rendered control reaches this branch.
+  //
+  // A waived row is refused on paid_at alone — see the matching note in
+  // tournament-fees.ts. waiveFee may re-waive a waiver because that destroys
+  // nothing; recording a PAYMENT over a waiver replaces the club's decision not
+  // to charge, and that decision is a fact of its own.
+  if (existing?.paid_at) {
+    throw new ExpectedError(
+      `That fee is already recorded as ${isWaivedFee(existing) ? 'waived' : `paid ($${((existing.amount_cents ?? 0) / 100).toFixed(2)})`}. ` +
+        'Mark it unpaid first if you really mean to record a different payment.',
+    );
+  }
 
   const payment = {
     paid_at: new Date().toISOString(),
@@ -117,9 +142,20 @@ export async function markFeePaid(input: FeeMarkInput) {
       .from('club_fees')
       .update(payment)
       .eq('id', existing.id)
+      // Only while it is STILL unpaid. The refusal above read a row that another
+      // desk may have paid since — the exact race waiveFee's second comment
+      // describes — and matching no row is not an error in PostgREST, so the
+      // count below is what turns the loss into a message.
+      .is('paid_at', null)
       .select('id')
-      .single();
+      .maybeSingle();
     if (error) throw new Error(error.message);
+    if (!updated) {
+      throw new ExpectedError(
+        'That fee was recorded as paid while you were marking it — most likely another desk got there first. ' +
+        'Reload and check before recording it again.',
+      );
+    }
     fee = updated;
   } else {
     const { data: inserted, error } = await adminClient
@@ -152,6 +188,10 @@ export async function markFeePaid(input: FeeMarkInput) {
     action_type: 'fee_marked_paid',
     target_type: 'club_fee',
     target_id: fee.id,
+    // Null on the insert path, where nothing preceded this. fee_waived and
+    // fee_marked_unpaid both carry the previous row; this is the third writer of
+    // the same columns and was the only one that did not.
+    old_value: existing ?? null,
     new_value: {
       player_id: input.player_id,
       season_id: input.season_id,

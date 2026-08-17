@@ -74,8 +74,10 @@ const TONE_WORDS: { tone: Exclude<ActionTone, 'neutral'>; words: string[] }[] = 
 ];
 // `marked` is deliberately in none of them: `fee_marked_paid` and
 // `fee_marked_unpaid` are opposites that share it, and whichever list held it
-// would swallow the other's verb. `cancelled` likewise — the only action using
-// it is `account_deletion_cancelled`, where the cancelling is the good outcome.
+// would swallow the other's verb. `cancelled` likewise — the two actions using
+// it, `account_deletion_cancelled` and the member's own
+// `self_deletion_cancelled`, are both the good outcome, so neutral is the honest
+// tone and no list needs to claim the word.
 
 const words = (actionType: string) => actionType.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 
@@ -135,7 +137,19 @@ const GROUPS: { id: AuditGroupId; label: string; words: string[] }[] = [
   // with anything above, so both used to file under OTHER — an entry saying
   // somebody's admin had just been taken away, sitting one tab from every other
   // thing that ever happened to that member.
-  { id: 'members',     label: 'Members',     words: ['player', 'players', 'account', 'varsity', 'reliability', 'suspend', 'passkey', 'permission', 'permissions', 'baseline', 'roster', 'claim', 'privileges'] },
+  //
+  // `deletion`, `reactivated`, `inactive` and `rating` are the same complaint,
+  // for the rows a MEMBER and the nightly jobs write about themselves:
+  // `self_deletion_requested`, `self_deletion_cancelled`, `self_rating_seeded`,
+  // `self_reactivated`, `auto_marked_inactive` and `auto_purged_inactive` share
+  // no word with anything above, so the whole self-service and automated half of
+  // a member's history filed under OTHER while the console's half — including
+  // `account_deletion_cancelled`, the exact counterpart of two of them — filed
+  // under Members. `rating` collides with nothing (no action type has ever
+  // contained it); `tier` deliberately is NOT here, because it would steal
+  // `tournament_fee_tier_*` from Money, which the note below says must not
+  // happen.
+  { id: 'members',     label: 'Members',     words: ['player', 'players', 'account', 'varsity', 'reliability', 'suspend', 'passkey', 'permission', 'permissions', 'baseline', 'roster', 'claim', 'privileges', 'deletion', 'reactivated', 'inactive', 'rating', 'ratings'] },
   { id: 'matches',     label: 'Matches',     words: ['match', 'challenge', 'walkover', 'dispute'] },
   { id: 'money',       label: 'Money',       words: ['fee', 'fees', 'payment', 'expense', 'income', 'reimbursed'] },
   { id: 'sessions',    label: 'Sessions',    words: ['session'] },

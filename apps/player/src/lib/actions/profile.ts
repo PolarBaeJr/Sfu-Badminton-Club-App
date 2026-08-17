@@ -30,6 +30,7 @@ import { getSkillTierOptions, type SkillTierOption } from '../rating-tiers';
 import { normalizeEmail } from '../roster-claim';
 import { ensurePlayerRowForUser } from '../first-signin';
 import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from '../supabase-server';
+import { logMemberAudit } from '../member-audit';
 import { requirePlayer, trackServerEvent, runAction, type ActionResult } from './_shared';
 
 export async function updateProfile(data: {
@@ -325,14 +326,37 @@ async function deleteMyAccountImpl(confirmation: string) {
   // Service role: deletion_requested_at / active_flag aren't part of the
   // players self-update RLS surface.
   const service = createServiceRoleClient();
+  // Hoisted so the audit row records the stamp that was actually written rather
+  // than a second now() a few lines later.
+  const deletionRequestedAt = new Date().toISOString();
   const { error } = await service
     .from('players')
-    .update({ deletion_requested_at: new Date().toISOString(), active_flag: false })
+    .update({ deletion_requested_at: deletionRequestedAt, active_flag: false })
     .eq('id', player.id);
   if (error) {
     Sentry.captureException(error, { extra: { action: 'deleteMyAccount', playerId: player.id } });
     throw new Error(error.message);
   }
+
+  // AUDITED, because the console's own version of this write is. Clearing
+  // active_flag and stamping deletion_requested_at is what cancelAccountDeletion
+  // undoes, and that action files 'account_deletion_cancelled' with the previous
+  // value; the request itself left nothing, so the audit log held the reversal of
+  // a decision it had no record of. Three writers clear active_flag and the
+  // console has to be able to tell them apart (see isSelfReactivatable) — this is
+  // the one that says "they asked", and the row is what says so.
+  //
+  // trackServerEvent below is not that record. PostHog is product analytics: a
+  // separate system, retention-limited, not joined to the member's row and not
+  // readable from /audit, which is the screen an exec opens to answer "why is
+  // this account deactivated". The two are both worth having.
+  await logMemberAudit({
+    playerId: player.id,
+    actionType: 'self_deletion_requested',
+    oldValue: { deletion_requested_at: null, active_flag: player.active_flag ?? null },
+    newValue: { deletion_requested_at: deletionRequestedAt, active_flag: false },
+    reason: 'Member requested deletion of their own account',
+  });
 
   trackServerEvent(player.id, 'account_deletion_requested', {});
 }
@@ -356,6 +380,20 @@ async function restoreMyAccountImpl() {
     Sentry.captureException(error, { extra: { action: 'restoreMyAccount', playerId: player.id } });
     throw new Error(error.message);
   }
+
+  // The member's twin of cancelAccountDeletion, which files
+  // 'account_deletion_cancelled'. A DIFFERENT action_type on purpose: the two
+  // writes are identical and the actors are not, and an /audit reader who cannot
+  // tell "an admin rescued this account" from "the member changed their mind" has
+  // been told less than the log knows. Same reasoning as 'self_reactivated'
+  // sitting beside 'auto_marked_inactive'.
+  await logMemberAudit({
+    playerId: player.id,
+    actionType: 'self_deletion_cancelled',
+    oldValue: { deletion_requested_at: player.deletion_requested_at, active_flag: false },
+    newValue: { deletion_requested_at: null, active_flag: true },
+    reason: 'Member cancelled the deletion of their own account',
+  });
 
   trackServerEvent(player.id, 'account_deletion_cancelled', {});
   revalidatePath('/');
@@ -480,6 +518,21 @@ async function completeOnboardingImpl(data: OnboardingInput) {
     // player and ratings rows in one transaction. Its internal guard mirrors
     // the players_self_insert RLS policy (00005_rls.sql): user_id = auth.uid(),
     // status = 'pending_approval', role = 'player'.
+    //
+    // NOT AUDITED, unlike its console twin createPlayer, and that asymmetry was
+    // examined rather than inherited. Three things separate them. An audit row
+    // exists to preserve what a write DESTROYED or to name who decided
+    // something; this destroys nothing — there is no prior state, and the row's
+    // own created_at is already the durable record that it appeared and when.
+    // Nobody decided anything either: the function's guard pins user_id to the
+    // session, the status to pending_approval and the role to 'player', so the
+    // only content of the act is "somebody signed up", and the decision that
+    // follows — approval — IS audited, with the whole signup row as old_value.
+    // And since 00132 the row is normally made by ensure_player_for_user at
+    // first sign-in, so a row per call here would be a partial census of
+    // signups filed under a fallback path. One audit_logs row per member for a
+    // fact players.created_at already holds is noise in the log that the
+    // entries above have to be found in.
     const { error } = await supabase.rpc('create_player_with_rating', {
       p_user_id: user.id,
       p_email: user.email!,
@@ -566,15 +619,50 @@ async function recordPasskeySetup(playerId: string, outcome: string | undefined)
  * passkey must not be bounced back to step three because a rating seed failed.
  * They land at default_elo — exactly where every member landed before tiering
  * existed — and Sentry keeps the record.
+ *
+ * AUDITED WHEN IT ACTUALLY SEEDS. This is a rating rewrite, and a rating is the
+ * one number the whole ladder is for: singles_elo and doubles_elo are on
+ * PLAYER_FIELD_PRIVILEGED in the admin app precisely so no exec can move one by
+ * hand, and the admin who may writes an audit row with the previous rating and a
+ * typed reason. The member's route to the same two columns wrote nothing, so a
+ * rating that arrived here was indistinguishable from a rating that had always
+ * been there.
+ *
+ * ONLY WHEN THE FUNCTION SAYS IT WROTE. apply_skill_tier_seed returns TRUE only
+ * when a rating was actually written — its own comment says the boolean exists
+ * "so the caller can tell 'seeded' from 'declined to seed' rather than guessing"
+ * — and it declines whenever the rating has ever moved or was set deliberately by
+ * an exec. Auditing unconditionally would file rows claiming rating changes that
+ * the guard refused, which is worse than filing none.
+ *
+ * THE TIER IS LOGGED, NOT THE RESULTING RATING. The number is resolved in SQL out
+ * of platform_settings, clamped to the ladder, and the migration is explicit that
+ * duplicating that arithmetic in TypeScript is the two-implementations drift it
+ * was written to avoid. The tier is what the member claimed and what the audit
+ * reader needs; the rating it produced is on the ratings row.
  */
 async function applySkillTier(playerId: string, tier: string | undefined) {
   if (!isSkillTier(tier)) return;
   try {
-    const { error } = await createServiceRoleClient().rpc('apply_skill_tier_seed', {
+    const { data: seeded, error } = await createServiceRoleClient().rpc('apply_skill_tier_seed', {
       p_player_id: playerId,
       p_tier: tier,
     });
     if (error) throw new Error(error.message);
+    if (seeded === true) {
+      await logMemberAudit({
+        playerId,
+        // `rating`, not `tier`, is the word that files this under Members in the
+        // console's audit taxonomy — `tier` belongs to the tournament fee tiers
+        // and would land a rating change on the Money tab.
+        actionType: 'self_rating_seeded',
+        // No old_value: the function's own precondition is that the rating was
+        // still untouched at default_elo, so the previous figure is the club's
+        // default rather than a fact about this member.
+        newValue: { skill_tier: tier },
+        reason: 'Starting rating seeded from the skill level claimed at onboarding',
+      });
+    }
   } catch (error) {
     Sentry.captureException(error, {
       extra: { action: 'applySkillTier', playerId, tier },

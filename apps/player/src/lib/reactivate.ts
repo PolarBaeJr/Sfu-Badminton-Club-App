@@ -16,6 +16,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { isSelfReactivatable } from '@badminton/shared';
 import { createServiceRoleClient } from './supabase-server';
+import { logMemberAudit } from './member-audit';
 
 export interface ReactivatablePlayer {
   id: string;
@@ -85,27 +86,23 @@ export async function reactivateLapsedMember(
   }
   if (!data || data.length === 0) return false;
 
-  // An account coming back leaves a trail. There is no player-side audit
-  // helper — logAdminAudit lives in the admin app and stamps an actor who holds
-  // a console level — so this writes the row directly, in the same shape
-  // mark-inactive-players uses for 'auto_marked_inactive'. actor_id is the
-  // member themselves: unlike the nightly job, somebody did do this.
-  const { error: auditError } = await service.from('audit_logs').insert({
-    actor_id: player.id,
-    action_type: 'self_reactivated',
-    target_type: 'player',
-    target_id: player.id,
-    old_value: { active_flag: false },
-    new_value: { active_flag: true },
+  // An account coming back leaves a trail, in the same shape
+  // mark-inactive-players uses for 'auto_marked_inactive'.
+  //
+  // THIS USED TO BE AN INLINE INSERT, with a comment saying there was no
+  // player-side audit helper to use. There is now — member-audit.ts, extracted
+  // when deleteMyAccount, restoreMyAccount and the onboarding rating seed needed
+  // the identical row and this was the only worked example of it. The shape is
+  // unchanged: actor_id is the member themselves, the reason is a fixed sentence,
+  // and a failed insert is reported rather than thrown, because the member is
+  // already back and losing the row is not worth failing their sign-in over.
+  await logMemberAudit({
+    playerId: player.id,
+    actionType: 'self_reactivated',
+    oldValue: { active_flag: false },
+    newValue: { active_flag: true },
     reason: 'Signed in after being marked inactive',
   });
-  if (auditError) {
-    // The member is already back; losing the audit row is not worth failing
-    // their sign-in over, but it must not vanish silently either.
-    Sentry.captureException(auditError, {
-      extra: { action: 'reactivateLapsedMember.audit', playerId: player.id },
-    });
-  }
 
   return true;
 }

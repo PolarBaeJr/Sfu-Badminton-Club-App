@@ -4,6 +4,16 @@ import * as Sentry from '@sentry/nextjs';
 import type { createAdminClient } from './supabase-server';
 
 // Tournament-scoped audit trail (tournament_audit_log table).
+//
+// A failed write is reported to Sentry and never breaks the parent action —
+// the same contract logAdminAudit states below, and it did NOT hold here until
+// now. This function awaited the insert and dropped the `error` it resolved
+// with: supabase-js resolves rather than rejects on a PostgREST failure, so
+// every way a row could be refused — a revoked column grant, a constraint, a
+// dropped socket — looked exactly like success, and the tournament audit trail
+// could lose entries with nothing anywhere to say so. Silence was the one
+// outcome neither of the two sensible policies wanted. Same shape as below so
+// the two trails behave alike.
 export async function logAudit(
   adminClient: ReturnType<typeof createAdminClient>,
   params: {
@@ -15,7 +25,7 @@ export async function logAudit(
     details?: Record<string, unknown>;
   }
 ) {
-  await adminClient.from('tournament_audit_log').insert({
+  const { error } = await adminClient.from('tournament_audit_log').insert({
     tournament_id: params.tournament_id ?? null,
     event_id: params.event_id ?? null,
     match_id: params.match_id ?? null,
@@ -23,6 +33,16 @@ export async function logAudit(
     performed_by: params.performed_by,
     details: params.details ?? null,
   });
+  if (error) {
+    Sentry.captureException(new Error(`Tournament audit log write failed: ${error.message}`), {
+      extra: {
+        action: params.action,
+        tournamentId: params.tournament_id ?? null,
+        eventId: params.event_id ?? null,
+        matchId: params.match_id ?? null,
+      },
+    });
+  }
 }
 
 // General admin audit trail (audit_logs table). A failed write is reported
