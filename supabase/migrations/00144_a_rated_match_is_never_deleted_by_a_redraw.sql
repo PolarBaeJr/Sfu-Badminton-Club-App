@@ -342,6 +342,36 @@ NOTIFY pgrst, 'reload schema';
 --               properly voided (snapshot-nulled) match; and regenerating the
 --               BRACKET of a pool_to_bracket event whose POOL is fully played.
 --
---   idempotent  the whole file re-applied over itself; second run clean, one
---               function, same oid semantics (CREATE OR REPLACE).
+--   idempotent  the whole file re-applied over itself; second run clean, still
+--               exactly one function, and pg_proc.oid UNCHANGED across the
+--               re-apply (25919 before and after) — CREATE OR REPLACE really
+--               did replace rather than drop and recreate, so nothing that
+--               depends on the oid was invalidated.
+--
+--   not proven  everything above went through psql. The PostgREST path was not
+--               exercised: that `p_phase: null` binds to the text parameter
+--               (there is only one overload, so there is nothing to be
+--               ambiguous about), and that a check_violation RAISE reaches
+--               supabase-js as error.code '23514'. The second is precedent
+--               rather than measurement — addPairToEventImpl
+--               (participants.ts:1240) already reads 00102's raises exactly
+--               that way and has done since 00102 shipped.
+--
+-- ============================================================
+-- APPLYING IT
+-- ============================================================
+-- APPLY THIS BEFORE DEPLOYING THE ADMIN APP THAT CALLS IT. deletePhaseMatches
+-- becomes an .rpc() call in the same commit, so between a deploy and this
+-- migration every redraw comes back PGRST202 ("Could not find the function
+-- public.delete_phase_matches in the schema cache"). That is loud and destroys
+-- nothing — the seed_number writes have landed and the draw is untouched — but
+-- the Regenerate button does not work until this file has run.
+--
+-- ONE FREE SMOKE TEST once it is applied, on any event that has no matches:
+--
+--     select delete_phase_matches('<event-with-no-draw>'::uuid, null);
+--
+-- It returns 0 and deletes nothing, and it proves the whole PostgREST path at
+-- once: the schema cache reloaded, the arguments bind, and service_role may
+-- execute it.
 -- ============================================================

@@ -10,6 +10,7 @@ import {
   getRoundName,
   ExpectedError,
   summariseRedrawBlockers,
+  hasRedrawBlockers,
   isPoolToBracket,
   phaseValueFor,
   knockoutLadder,
@@ -153,6 +154,7 @@ async function assertDrawIsRebuildable(
     throw new Error(`Could not check whether this event has results yet, so the draw was left alone: ${error.message}`);
   }
   const blockers = summariseRedrawBlockers(data ?? []);
+  if (!hasRedrawBlockers(blockers)) return;
   // NAMES THE NUMBER, because the refusal is now reachable from a live event
   // where the exec cannot see at a glance what has been played. "Results have
   // already been entered" on a 128-match draw is not something anybody can act
