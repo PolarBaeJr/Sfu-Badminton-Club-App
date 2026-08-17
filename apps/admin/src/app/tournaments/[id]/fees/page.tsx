@@ -1,8 +1,8 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, AvatarChip, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
-import { unwrap } from '@badminton/shared';
+import { unwrap, quoteEntryFee } from '@badminton/shared';
 import { isWaivedFee } from '@/lib/fee-status';
-import type { TournamentFeeTier, ClubFee, Player } from '@badminton/shared';
+import type { TournamentFeeTier, ClubFee, Player, MembershipType } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
@@ -39,7 +39,6 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
       .order('sort_order')
   ) as TournamentFeeTier[];
   const tierById = new Map(tiers.map((t) => [t.id, t]));
-  const defaultTier = tiers.find((t) => t.is_default) ?? null;
 
   // Owed list: every player entered in any of this tournament's events, from
   // both singles participants and doubles pairs, excluding withdrawn entries.
@@ -102,11 +101,16 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
     ? (unwrap(
         await supabase
           .from('players')
-          .select('id, full_name, email, avatar_url, is_exec, fee_exempt')
+          // membership_type is what DECIDES the price (00094): the tiers name
+          // membership groups, and selectFeeTier reads this column to pick one.
+          // Without it every row on this page — and every dialog opened from one
+          // — falls back to the tournament's default tier, which on the live
+          // tournament is the $25 External price for members who owe $15.
+          .select('id, full_name, email, avatar_url, is_exec, fee_exempt, membership_type')
           .in('id', Array.from(playerIds))
           .order('full_name')
       ) as (Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'> & {
-        is_exec: boolean; fee_exempt: boolean;
+        is_exec: boolean; fee_exempt: boolean; membership_type: MembershipType | null;
       })[])
     : [];
   const players = roster.filter(
@@ -171,8 +175,13 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
           cards={players.map((player) => {
             const fee = feeByPlayer.get(player.id);
             const { paid, waived } = stateOf(fee);
-            const tier = fee?.tier_id ? tierById.get(fee.tier_id) : null;
-            const owedCents = fee?.amount_cents ?? defaultTier?.amount_cents ?? null;
+            // ONE DERIVATION, shared with the dialog this row opens. The old
+            // fallback was the tournament's default tier regardless of who the
+            // member is; quoteEntryFee asks selectFeeTier, which is the rule the
+            // fee was actually written by.
+            const quote = quoteEntryFee(player.membership_type, tiers, fee);
+            const tier = quote.tierId ? tierById.get(quote.tierId) : null;
+            const owedCents = quote.amountCents;
             return (
               <TableCard
                 key={player.id}
@@ -191,7 +200,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                   </Badge>
                 }
                 fields={[
-                  { label: 'Tier', value: tier?.name ?? defaultTier?.name ?? '-' },
+                  { label: 'Tier', value: tier?.name ?? '-' },
                   { label: 'Method', value: (paid && fee?.method) || '-' },
                 ]}
                 actions={
@@ -202,6 +211,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                     playerName={player.full_name}
                     tiers={tiers}
                     paid={paid}
+                    membershipType={player.membership_type}
+                    fee={fee ?? null}
                   />
                 }
               />
@@ -223,8 +234,10 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
               {players.map((player) => {
                 const fee = feeByPlayer.get(player.id);
                 const { paid, waived } = stateOf(fee);
-                const tier = fee?.tier_id ? tierById.get(fee.tier_id) : null;
-                const owedCents = fee?.amount_cents ?? defaultTier?.amount_cents ?? null;
+                // Same derivation as the card above — see the note there.
+                const quote = quoteEntryFee(player.membership_type, tiers, fee);
+                const tier = quote.tierId ? tierById.get(quote.tierId) : null;
+                const owedCents = quote.amountCents;
                 return (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     <td className="px-4 py-3">
@@ -244,7 +257,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
-                      {tier?.name ?? defaultTier?.name ?? '-'}
+                      {tier?.name ?? '-'}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className="font-mono text-[var(--text-primary)]">
@@ -262,6 +275,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                         playerName={player.full_name}
                         tiers={tiers}
                         paid={paid}
+                        membershipType={player.membership_type}
+                        fee={fee ?? null}
                       />
                     </td>
                   </tr>
