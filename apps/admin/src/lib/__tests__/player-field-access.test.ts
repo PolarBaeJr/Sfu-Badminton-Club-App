@@ -363,6 +363,71 @@ describe('updatePlayer cannot set a console-access column, not even for an admin
   });
 });
 
+// ---------------------------------------------------------------------------
+// membership_type is on NEITHER list, and that is a decision
+// ---------------------------------------------------------------------------
+// A privilege audit flagged this as the strongest-looking omission in the guard,
+// and its arithmetic is right: selectFeeTier() takes three inputs off the player
+// row — membership_type, is_exec and fee_exempt — and the other two ARE on the
+// lists, so an exec can move a member to whichever group the cheapest tier names.
+// The decision is to leave it off both, because membership_type is primarily who
+// a member is (isMembershipAllowed decides which events they may enter at all)
+// rather than what they pay, and because the near miss — PLAYER_FIELD_PRIVILEGED —
+// would make it admin-only, since players.privilegedfields.write sits in no
+// baseline. See the note in player-field-access.ts for the whole argument.
+//
+// PINNED HERE because it was previously recorded nowhere. competition_category
+// carries a comment saying the same thing about itself; this field had no comment
+// and no test, which is precisely what made it read as an oversight rather than a
+// choice. A future change that moves it onto either list now has to delete an
+// assertion, and reach the argument on the way.
+describe('membership_type is exec-writable on purpose', () => {
+  it('is on neither PLAYER_FIELD_FLOOR nor PLAYER_FIELD_PRIVILEGED', async () => {
+    const { PLAYER_FIELD_FLOOR, PLAYER_FIELD_PRIVILEGED, ADMIN_ONLY_PLAYER_FIELDS } =
+      await import('../player-field-access');
+    expect([...PLAYER_FIELD_FLOOR]).not.toContain('membership_type');
+    expect([...PLAYER_FIELD_PRIVILEGED]).not.toContain('membership_type');
+    expect([...ADMIN_ONLY_PLAYER_FIELDS]).not.toContain('membership_type');
+    // The two fee inputs that ARE admin-only, asserted beside it so the split
+    // reads as the deliberate one it is rather than as three fields nobody
+    // classified. is_exec skips the fee for every event, silently; fee_exempt
+    // does the same by name; membership_type chooses which price applies.
+    expect([...PLAYER_FIELD_FLOOR]).toContain('is_exec');
+    expect([...PLAYER_FIELD_PRIVILEGED]).toContain('fee_exempt');
+  });
+
+  it('lets an exec correct a member’s group, and audits it with a reason', async () => {
+    asExec();
+    const res = await updatePlayer('player-9', {
+      membership_type: 'alumni',
+      reason: 'Graduated last term',
+    });
+    expect(res.ok).toBe(true);
+    expect(state.updates).toContainEqual({ table: 'players', values: { membership_type: 'alumni' } });
+  });
+
+  it('is still refused to a varsity trainer, who may write nothing at all', async () => {
+    asTrainer();
+    const res = await updatePlayer('player-9', { membership_type: 'external', reason: 'Trying it on' });
+    expect(res.ok).toBe(false);
+    expect(state.updates).toEqual([]);
+  });
+
+  it('does not let the fee fields ride along with it', async () => {
+    // The whole reason the field is safe to leave open: it chooses a price, it
+    // does not skip one. An exec reaching for both in one payload is refused
+    // outright, membership_type included — the guard rejects rather than strips.
+    asExec();
+    const res = await updatePlayer('player-9', {
+      membership_type: 'alumni',
+      fee_exempt: true,
+      reason: 'Both at once',
+    });
+    expect(res.ok).toBe(false);
+    expect(state.updates).toEqual([]);
+  });
+});
+
 describe('createPlayer field-level access', () => {
   it('lets an exec add a plain member but not an exec', async () => {
     const { createPlayer } = await import('../actions/players');

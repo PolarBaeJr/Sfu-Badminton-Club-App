@@ -39,21 +39,93 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
 
-  const { error } = await adminClient
+  // APPROVAL ONLY APPLIES TO A PENDING SIGNUP, and until now only the client
+  // said so. isApprovalEdit() — `currentStatus === 'pending_approval'` and into a
+  // real division — is the rule both callers already follow, and its test spells
+  // out the harm: "approving them twice would file a second player_approved row
+  // for an approval that never happened". That is a client-side rule guarding a
+  // server action, which is to say a suggestion; this is the guarantee, in the
+  // same spirit as reinstatePlayer's "not banned, so there is nothing to
+  // reinstate".
+  //
+  // WHAT IT ACTUALLY CLOSES, because the reachable damage is worse than a
+  // duplicate audit row. This function writes `status` and `active_flag: true`
+  // with no reference to what the row held, so a hand-rolled POST — or a tab
+  // opened before somebody was suspended — could aim it at ANY member and:
+  //   * clear a status='suspended' that removePlayer wrote, an admin-only
+  //     capability being undone through an exec one;
+  //   * email a banned or suspended member "you're in", which is the club
+  //     telling somebody the opposite of a moderation decision it just made;
+  //   * file a player_approved row that reads as an approval, over a row that
+  //     was approved months ago, destroying nothing but recording a fiction.
+  //
+  // STRICTLY STRONGER THAN AN is_banned CHECK, which is what a privilege audit
+  // proposed here. A banned member is not pending_approval — banPlayer does not
+  // touch status — so refusing anything that is not pending_approval refuses
+  // them too, and refuses the suspended and the already-approved as well. It is
+  // also the right shape: the ban is not what makes this write wrong. See the
+  // note below on why `active_flag: true` beside a ban is not the finding it
+  // looks like.
+  //
+  // The status is compared, not is_banned, so a member who signed up and was
+  // banned before anyone got to them can still be approved — and stays blocked
+  // by is_banned everywhere afterwards, which is the column's job.
+  if (oldPlayer?.status !== 'pending_approval') {
+    throw new ExpectedError(
+      'Only a pending signup can be approved. This member has already been let in, ' +
+      'or their standing is a decision for the roster controls rather than this one.',
+    );
+  }
+
+  const { data: approved, error } = await adminClient
     .from('players')
     .update({
       status,
       active_flag: true,
     })
-    .eq('id', playerId);
+    .eq('id', playerId)
+    // Re-checked in the WHERE clause, because the read above is a moment old and
+    // two execs clearing the Needs Attention tab together would both pass it. The
+    // loser then matches no row, so only one of them emails the member and only
+    // one files the audit entry.
+    .eq('status', 'pending_approval')
+    // Matching zero rows is not an error in PostgREST. Without the count the
+    // loser of that race sends a second "you're in" email and writes a second
+    // player_approved row for a decision it did not make.
+    .select('id');
 
   if (error) throw new Error(error.message);
+  if (!approved?.length) {
+    throw new ExpectedError(
+      'That signup was decided while you were approving it — most likely another exec got there first. ' +
+      'Reload the roster before trying again.',
+    );
+  }
+
+  // active_flag: true BESIDE A POSSIBLE BAN IS DELIBERATE, and it was queried.
+  // updatePlayer carries thirty-odd lines refusing to mark a banned member
+  // INACTIVE — "they may get removed from suspended", the club owner — which is
+  // the club insisting a moderated member stays ON the roster so lifting the ban
+  // later puts them back where they were. banPlayer never clears the flag, so
+  // banned-and-active is the ordinary state, and writing `true` here agrees with
+  // that rule rather than routing around it. Nothing gates on active_flag alone:
+  // requirePlayer, getAccountStanding, isSelfReactivatable, the calendar feed and
+  // every tournament entry path read is_banned as its own independent refusal.
 
   // Approval is the moment somebody becomes a member, so it is where the club's
   // membership code is stamped — not at signup, which is only a request. The
   // RPC derives the code from the row's own id and retries past a collision
   // behind the unique index, and it returns the existing code untouched if this
-  // row already has one, which is what makes a re-approval harmless.
+  // row already has one, so calling it twice on one row is a no-op.
+  //
+  // THE PRECONDITION ABOVE COSTS ONE RECOVERY PATH, and it is worth naming. If
+  // this RPC fails the status write is already committed, and re-running the
+  // whole approval used to be how an exec filled the missing code in; it is now
+  // refused, because the member is no longer pending. That is the right trade:
+  // the code is cosmetic by the reasoning on the next lines, 00092 ships a
+  // backfill for exactly this state, and the alternative was leaving approval
+  // aimable at every row in the table so that one Sentry-reported failure stayed
+  // retryable.
   const { data: memberCode, error: codeError } = await adminClient.rpc('assign_member_code', {
     p_player_id: playerId,
   });
@@ -334,6 +406,23 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
 // Backup path for the player's own restore flow: clears a pending
 // self-service account deletion (players.deletion_requested_at) before the
 // purge-deleted-accounts edge function anonymizes the row.
+//
+// NO is_banned CHECK ON THE `active_flag: true` BELOW, and that is a decision. A
+// privilege audit read this write and approvePlayer's as "a holder of one
+// capability returning a banned member to the active roster without holding
+// players.reinstate.write". Two things make that the wrong reading here:
+//
+//   * the flag is not the ban. is_banned is an independent column with its own
+//     refusal in requirePlayer, getAccountStanding, isSelfReactivatable, the
+//     calendar feed and every tournament entry path, and banPlayer never touches
+//     active_flag — so banned-and-active is the ordinary state of a banned
+//     member, not a laundered one. updatePlayer's long note is the club insisting
+//     on precisely that: a banned member may not be marked INACTIVE.
+//   * there is no second capability to bypass. players.deletion.cancel.write is
+//     on access-level.ts's deliberately-unofferable list, so only an admin — who
+//     holds players.reinstate.write by level — can reach this at all.
+//
+// What this write restores is the pair deleteMyAccount cleared, nothing more.
 export async function cancelAccountDeletion(playerId: string): Promise<ActionResult<void>> {
   return runAction(() => cancelAccountDeletionImpl(playerId));
 }

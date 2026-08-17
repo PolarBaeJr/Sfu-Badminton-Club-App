@@ -135,6 +135,50 @@ export const ADMIN_ONLY_PLAYER_FIELDS = [
   ...PLAYER_FIELD_PRIVILEGED,
 ] as const;
 
+// membership_type IS ON NEITHER LIST, AND THAT IS A DECISION TOO.
+//
+// Raised by a privilege audit as the strongest-looking omission in this file, and
+// the arithmetic it gives is correct: entry_fee's selectFeeTier() takes three
+// inputs off the player row — membership_type, is_exec and fee_exempt — and the
+// other two are on the lists above (is_exec on the floor, fee_exempt grantable).
+// So an exec holding nothing but players.update.write can move a member from
+// 'internal' to whichever group the cheapest tier names, and the next entry they
+// make is priced there. Unlike competition_category there was no note recording
+// that anybody had thought about it, which is what made it read as an oversight.
+//
+// IT STAYS OFF BOTH LISTS, for the reason the note below gives about the near
+// miss, and for a reason of its own.
+//
+//   * PLAYER_FIELD_PRIVILEGED is the near miss again, and wrong again.
+//     players.privilegedfields.write is in no baseline, so this field would
+//     become admin-only — and membership_type is not primarily a price. It is
+//     WHO A MEMBER IS: `isMembershipAllowed(player.membership_type, …)` decides
+//     which events they may enter at all, tournaments carry an applies_to per
+//     tier, and an alumnus who graduates or an external who joins the club is
+//     ordinary roster correction. Making that admin-only would put the roster's
+//     own classification behind the one level that does not do roster work.
+//   * PLAYER_FIELD_FLOOR is further wrong: the floor is privilege and identity
+//     the club assigns and never edits. This is edited, on purpose, by design.
+//
+// AND THE FEE CONSEQUENCE IS BOUNDED, which is what makes the arithmetic above
+// less alarming than it sounds. ensureEntryFees NEVER re-prices a row that
+// exists — "changing someone's membership_type does not re-price an entry they
+// have already made", the club owner, restated in 00094's column comment — so
+// this cannot reach money already on the ledger. It sets what the NEXT entry
+// costs, which is the same authority an exec already has by editing the
+// tournament's fee tiers, and it lands in an audit_logs row with the whole
+// previous player row as old_value and a required reason, because updatePlayer's
+// guard makes both unavoidable. is_exec and fee_exempt are on the lists above
+// because they are not that: they SKIP the fee entirely, silently, for every
+// event, and neither is a fact about which group of the club somebody is in.
+//
+// Nothing here is what stops a MEMBER changing their own, and unlike
+// competition_category the answer is not a trigger doing the real work. There is
+// no per-column UPDATE grant on membership_type at all (00111 granted one for
+// competition_category and only for it), players_self has been a read since
+// 00134, and guard_player_privileged_columns lists the column as well. Three
+// separate refusals, none of them this file.
+
 // competition_category IS ON NEITHER LIST, AND THAT IS A DECISION.
 //
 // It became writable from this console in 00129: the field is write-once for

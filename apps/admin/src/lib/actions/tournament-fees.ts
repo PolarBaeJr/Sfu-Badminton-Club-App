@@ -276,13 +276,42 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
   // READ, THEN UPDATE OR INSERT — see the note in actions/fees.ts. 00094's
   // uniqueness is a partial index (… WHERE fee_type = 'tournament'), which
   // PostgREST cannot infer as an upsert arbiter.
+  //
+  // THE WHOLE ROW, not just the id, and for the reason waiveFee gives at length:
+  // the update below replaces amount_cents, tier_id, method and reference, so
+  // running it over a row that already records a payment erases what was
+  // collected — and the audit entry, written with no old_value, kept no copy of
+  // it either. waiveFee's comment names a fee_waived row on production with an
+  // empty old_value for exactly that. This is the same defect at the entry-fee
+  // desk, where the numbers are per-tournament and a tier fallback can silently
+  // substitute a different price for the one that was taken.
   const { data: existing } = await adminClient
     .from('club_fees')
-    .select('id')
+    .select('id, tier_id, amount_cents, paid_at, method, reference')
     .eq('tournament_id', input.tournament_id)
     .eq('player_id', input.player_id)
     .eq('fee_type', 'tournament')
     .maybeSingle();
+
+  // REFUSE RATHER THAN OVERWRITE, the same choice waiveFee made. Reversing a
+  // recorded entry fee is markTournamentFeeUnpaid, which preserves the amount
+  // and audits it with an old_value; there is no correction workflow that goes
+  // through here, and the fees page proves it — TournamentFeeActions renders
+  // "Mark Unpaid" for a paid row and never the Mark Paid dialog, so no rendered
+  // control reaches this branch. A server action is a public endpoint, though,
+  // and a stale tab is a client that still thinks the row is unpaid.
+  //
+  // A WAIVED ROW IS REFUSED TOO. isWaivedFee is paid_at plus method 'waived',
+  // which this test catches on paid_at alone — deliberately. waiveFee permits a
+  // re-waive because writing $0/waived over $0/waived destroys nothing; marking
+  // a waived entry PAID would replace the club's record that it had decided not
+  // to charge, which is a different fact and not one to lose silently.
+  if (existing?.paid_at) {
+    throw new ExpectedError(
+      `That entry fee is already recorded as paid ($${((existing.amount_cents ?? 0) / 100).toFixed(2)}). ` +
+        'Mark it unpaid first if you really mean to record a different payment.',
+    );
+  }
 
   const payment = {
     tier_id: tierId,
@@ -299,9 +328,26 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
       .from('club_fees')
       .update(payment)
       .eq('id', existing.id)
+      // The refusal above ran against a row read a moment ago, and an unguarded
+      // UPDATE overwrites whatever is there NOW. Two desks working one
+      // tournament — one taking $25 at the door, one recording the $15 member
+      // tier — both see an unpaid row, and the second write replaces a real
+      // payment with a different figure. This is what makes the refusal true
+      // rather than advisory, and it is the same predicate waiveFee carries.
+      .is('paid_at', null)
+      // Matching no row is not an error in PostgREST, so the count is what
+      // detects the lost race. Without it the loser is told the payment was
+      // recorded and the audit log gets a row for money the ledger does not
+      // hold — a worse lie than the overwrite.
       .select('id')
-      .single();
+      .maybeSingle();
     if (error) throw new Error(error.message);
+    if (!updated) {
+      throw new ExpectedError(
+        'That entry fee was recorded as paid while you were marking it — most likely another desk got there first. ' +
+        'Reload and check before recording it again.',
+      );
+    }
     fee = updated;
   } else {
     const { data: inserted, error } = await adminClient
@@ -331,6 +377,11 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
     action_type: 'tournament_fee_marked_paid',
     target_type: 'tournament_fee',
     target_id: fee.id,
+    // What the row held before. Null on the insert path, where there was no
+    // previous figure to lose. markTournamentFeeUnpaid a few lines below has
+    // always carried this; the paid direction is the one that can destroy a
+    // number, so it is the one that needed it more.
+    old_value: existing ?? null,
     new_value: {
       tournament_id: input.tournament_id,
       player_id: input.player_id,
