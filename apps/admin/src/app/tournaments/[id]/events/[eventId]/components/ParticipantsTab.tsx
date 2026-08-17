@@ -815,7 +815,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             )}
           </span>
           {drawLocked && (
-            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[var(--color-warning)]/15 text-[var(--color-warning)]" role="status">
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[color-mix(in_oklab,var(--color-warning)_15%,transparent)] text-[var(--color-warning)]" role="status">
               Draw Locked
             </span>
           )}
@@ -863,7 +863,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
 
       {/* Skip preview */}
       {byes > 0 && showsBracketSize && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] border border-[color-mix(in_oklab,var(--color-warning)_20%,transparent)]">
           <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0" />
           <span className="text-sm text-[var(--color-warning)]">
             {activeEntries.length} {isDoubles ? 'pairs' : 'players'} → {bracketSize}-slot bracket with {byes} skip{byes > 1 ? 's' : ''}. Seeds #1–{byes} skip the first round.
@@ -1130,7 +1130,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               the exec is standing rather than at the moment they press
               Generate. Both remedies, the same two the refusal names. */}
           {activeUnpaired.length > 0 && (
-            <div className="flex items-start gap-2 px-4 py-3 bg-[var(--color-warning)]/10 border-b border-[var(--color-warning)]/20">
+            <div className="flex items-start gap-2 px-4 py-3 bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] border-b border-[color-mix(in_oklab,var(--color-warning)_20%,transparent)]">
               <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
               <span className="text-sm text-[var(--color-warning)]">
                 The draw cannot be generated while anyone is waiting. Pair them up, or take them out of the event.

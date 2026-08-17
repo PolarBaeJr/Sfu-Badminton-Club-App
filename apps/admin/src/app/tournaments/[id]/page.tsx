@@ -200,7 +200,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             const statusColor = TOURNAMENT_EVENT_STATUS_COLORS[ev.status as keyof typeof TOURNAMENT_EVENT_STATUS_COLORS] ?? '#6B7280';
             return (
               <Link key={ev.id} href={`/tournaments/${id}/events/${ev.id}`} className="block group focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded-xl">
-                <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--color-accent)]/30 transition-all">
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[color-mix(in_oklab,var(--color-accent)_30%,transparent)] transition-all">
                   <div className="flex items-start justify-between mb-3">
                     <h3 className="text-base font-semibold text-[var(--text-primary)] group-hover:text-[var(--color-accent)] transition-colors">
                       {TOURNAMENT_EVENT_TYPE_LABELS[ev.event_type as keyof typeof TOURNAMENT_EVENT_TYPE_LABELS] ?? ev.event_type}

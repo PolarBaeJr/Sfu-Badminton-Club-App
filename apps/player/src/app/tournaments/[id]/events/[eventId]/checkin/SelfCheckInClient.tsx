@@ -47,7 +47,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   if (success) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
-        <div className="w-20 h-20 rounded-full bg-[var(--color-success)]/15 flex items-center justify-center glow-soft">
+        <div className="w-20 h-20 rounded-full bg-[color-mix(in_oklab,var(--color-success)_15%,transparent)] flex items-center justify-center glow-soft">
           <CheckCircle className="w-10 h-10 text-[var(--color-success)]" />
         </div>
         <div>
@@ -57,7 +57,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
         </div>
         <Link
           href={backLink}
-          className="press inline-flex items-center gap-2 px-5 py-3 min-h-[48px] bg-[var(--color-success)]/10 text-[var(--color-success)] text-sm font-bold rounded-xl border border-[var(--color-success)]/25 hover:bg-[var(--color-success)]/20 transition-all duration-200"
+          className="press inline-flex items-center gap-2 px-5 py-3 min-h-[48px] bg-[color-mix(in_oklab,var(--color-success)_10%,transparent)] text-[var(--color-success)] text-sm font-bold rounded-xl border border-[color-mix(in_oklab,var(--color-success)_25%,transparent)] hover:bg-[color-mix(in_oklab,var(--color-success)_20%,transparent)] transition-all duration-200"
         >
           View Event Details
         </Link>
@@ -72,7 +72,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   if (!standing.ok) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
-        <div className="w-20 h-20 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center">
+        <div className="w-20 h-20 rounded-full bg-[color-mix(in_oklab,var(--color-accent)_15%,transparent)] flex items-center justify-center">
           <XCircle className="w-10 h-10 text-[var(--color-accent)]" />
         </div>
         <div>
@@ -92,7 +92,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   if (tournamentSuspended) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
-        <div className="w-20 h-20 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center">
+        <div className="w-20 h-20 rounded-full bg-[color-mix(in_oklab,var(--color-accent)_15%,transparent)] flex items-center justify-center">
           <XCircle className="w-10 h-10 text-[var(--color-accent)]" />
         </div>
         <div>
@@ -112,7 +112,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   if (eventStatus !== 'checkin') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
-        <div className="w-20 h-20 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center">
+        <div className="w-20 h-20 rounded-full bg-[color-mix(in_oklab,var(--color-accent)_15%,transparent)] flex items-center justify-center">
           <XCircle className="w-10 h-10 text-[var(--color-accent)]" />
         </div>
         <div>
@@ -132,7 +132,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   if (!registration) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
-        <div className="w-20 h-20 rounded-full bg-[var(--color-warning)]/15 flex items-center justify-center">
+        <div className="w-20 h-20 rounded-full bg-[color-mix(in_oklab,var(--color-warning)_15%,transparent)] flex items-center justify-center">
           <AlertTriangle className="w-10 h-10 text-[var(--color-warning)]" />
         </div>
         <div>
@@ -152,7 +152,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   if (registration.status === 'checked_in') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
-        <div className="w-20 h-20 rounded-full bg-[var(--color-success)]/15 flex items-center justify-center glow-soft">
+        <div className="w-20 h-20 rounded-full bg-[color-mix(in_oklab,var(--color-success)_15%,transparent)] flex items-center justify-center glow-soft">
           <CheckCircle className="w-10 h-10 text-[var(--color-success)]" />
         </div>
         <div>
@@ -172,7 +172,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-6 text-center px-6 pb-28">
-      <div className="w-24 h-24 rounded-full bg-[var(--color-accent)]/10 flex items-center justify-center glow-red">
+      <div className="w-24 h-24 rounded-full bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] flex items-center justify-center glow-red">
         <CheckCircle className="w-12 h-12 text-[var(--color-accent)]" />
       </div>
       <div>

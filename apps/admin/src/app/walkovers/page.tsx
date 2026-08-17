@@ -136,7 +136,7 @@ export default async function WalkoversPage() {
         {/* Empty State */}
         {(!walkovers || walkovers.length === 0) && (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-12 flex flex-col items-center gap-3">
-            <div className="w-14 h-14 rounded-full bg-[var(--color-success)]/10 flex items-center justify-center">
+            <div className="w-14 h-14 rounded-full bg-[color-mix(in_oklab,var(--color-success)_10%,transparent)] flex items-center justify-center">
               <CheckCircle2 className="w-7 h-7 text-[var(--color-success)]" />
             </div>
             <p className="text-[var(--text-primary)] font-medium">No walkovers to review</p>
