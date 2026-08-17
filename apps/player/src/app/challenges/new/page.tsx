@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { PageHeader } from '@badminton/ui';
 import { getCurrentPlayer } from '@/lib/supabase-server';
 import { getRatingSettings } from '@/lib/rating-settings';
+import { listChallengeableOpponents } from '@/lib/challengeable-opponents';
 import NewChallengeClient from './new-challenge-client';
 
 // Server wrapper so ?opponent= can be read without useSearchParams(), which in
@@ -27,7 +28,10 @@ export default async function NewChallengePage({
   // no at submit is worse than being told now. Deep links from a QR code or a
   // stale notification land here too, which is why it is the page and not just
   // the entry points that has to say it.
-  const standing = getAccountStanding(await getCurrentPlayer());
+  // Read once and used twice — the standing gate below, and the self-exclusion
+  // for the opponent list. The client used to fetch its own row for both.
+  const me = await getCurrentPlayer();
+  const standing = getAccountStanding(me);
   if (!standing.ok) {
     return (
       <div data-screen-label="New Challenge">
@@ -51,10 +55,17 @@ export default async function NewChallengePage({
   // would be a second, differently-authorised path to the same row.
   const ratingSettings = await getRatingSettings();
 
+  // The opponent list is read HERE for the same class of reason, and one more
+  // besides: the browser cannot see players.is_banned at all (00032 revoked the
+  // grant), so the filter that keeps a banned member out of the picker is only
+  // expressible on the server. See challengeable-opponents.ts.
+  const opponents = await listChallengeableOpponents(me?.id);
+
   return (
     <NewChallengeClient
       initialOpponentId={isUuid(opponent) ? opponent : undefined}
       ratingSettings={ratingSettings}
+      opponents={opponents}
     />
   );
 }

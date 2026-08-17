@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Select, Input, Textarea, DatePicker, Button, PlayerPicker } from '@badminton/ui';
 import { previewEloChange, getEventMultiplier } from '@badminton/shared';
@@ -34,6 +34,7 @@ interface PlayerOption {
 export default function NewChallengeClient({
   initialOpponentId,
   ratingSettings,
+  opponents,
 }: {
   initialOpponentId?: string;
   /**
@@ -42,6 +43,16 @@ export default function NewChallengeClient({
    * previewEloChange treats as "no overrides configured".
    */
   ratingSettings?: RatingSettings | null;
+  /**
+   * THE CHALLENGEABLE MEMBERS, resolved by the server wrapper and NOT by this
+   * component. The list used to be built here, and it could not filter
+   * `is_banned` because `authenticated` has no SELECT grant on that column —
+   * so banned members were offered as opponents. See
+   * lib/challengeable-opponents.ts. Optional so an un-updated caller still
+   * type-checks; the picker is simply empty without it, which is what the old
+   * browser-side read also produced when it failed.
+   */
+  opponents?: PlayerOption[];
 }) {
   const [type, setType] = useState<'singles' | 'doubles'>('singles');
   const [rated, setRated] = useState(true);
@@ -63,7 +74,11 @@ export default function NewChallengeClient({
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('');
   const [loading, setLoading] = useState(false);
-  const [players, setPlayers] = useState<PlayerOption[]>([]);
+  // NOT state any more. The list is resolved once per request by the server
+  // wrapper and never changes while the form is open, so holding it in useState
+  // would only add a way for it to go stale. useMemo keeps the array identity
+  // stable for the pickers below.
+  const players = useMemo<PlayerOption[]>(() => opponents ?? [], [opponents]);
   const [myElo, setMyElo] = useState({ singles: 400, doubles: 400 });
   // WHICH K-FACTOR THIS VIEWER IS ON, which is the other half of getting the
   // preview right. apply_match_result picks between the provisional and the
@@ -119,37 +134,32 @@ export default function NewChallengeClient({
         setMyName(me.full_name ?? '');
       }
 
-      const { data } = await supabase
-        .from('players')
-        .select('id, full_name, handle, avatar_url, ratings(singles_elo, doubles_elo)')
-        .eq('active_flag', true)
-        .not('status', 'in', '("pending_approval","suspended")')
-        .neq('id', me?.id ?? '');
-
-      const options = (data || []).map((p) => {
-        const r = Array.isArray(p.ratings) ? p.ratings[0] : p.ratings;
-        return {
-          id: p.id,
-          full_name: p.full_name,
-          handle: p.handle,
-          singles_elo: r?.singles_elo ?? 400,
-          doubles_elo: r?.doubles_elo ?? 400,
-        };
-      });
-      setPlayers(options);
-
-      // ?opponent= (the profile QR target) can name someone who is no longer
-      // challengeable — deactivated, suspended, pending_approval — or the
-      // scanner themselves. The query above already excludes all of those, so
-      // absence from the list means the prefill is stale: clear it rather than
-      // leave the form looking armed. UX only; validate_challenge_creation
-      // remains the authority on whether the challenge is allowed.
-      if (initialOpponentId && !options.some((p) => p.id === initialOpponentId)) {
-        setOpponentId('');
-        toast("That player can't be challenged right now.", 'error');
-      }
+      // The opponent list is NOT read here any more. It arrives as a prop from
+      // the server wrapper, which is the only place `is_banned` is readable —
+      // see the `opponents` prop above and lib/challengeable-opponents.ts. What
+      // stays in the browser is this viewer's own ratings row, which
+      // ratings_select grants outright.
     }
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ?opponent= (the profile QR target) can name someone who is no longer
+  // challengeable — banned, deactivated, suspended, pending_approval — or the
+  // scanner themselves. listChallengeableOpponents excludes all of those, so
+  // absence from the list means the prefill is stale: clear it rather than
+  // leave the form looking armed. UX only; validate_challenge_creation remains
+  // the authority on whether the challenge is allowed.
+  //
+  // Its own effect now, because the list no longer arrives inside `load` — it
+  // is a prop and is already there on the first render. Empty deps: this is a
+  // one-shot judgement about the value the page was opened with, and re-running
+  // it after the member deliberately picks somebody would be wrong.
+  useEffect(() => {
+    if (initialOpponentId && !players.some((p) => p.id === initialOpponentId)) {
+      setOpponentId('');
+      toast("That player can't be challenged right now.", 'error');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
