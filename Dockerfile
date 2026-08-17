@@ -90,6 +90,14 @@ RUN addgroup --system --gid 1001 nextjs && \
 
 COPY --from=builder --chown=nextjs:nextjs /app/apps/admin/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /app/apps/admin/.next/static ./apps/admin/.next/static
+# public/ is NOT part of Next's standalone output — it has to be copied by hand,
+# exactly as the player runner above does. Without this line the console's four
+# public files (manifest.json and the three icons) 404 in every container build,
+# which is invisible in dev because `next dev` serves public/ straight off disk.
+# The console is built with basePath=/admin, so Next serves these at
+# /admin/manifest.json etc.; the destination path stays basePath-free because it
+# is a filesystem location, resolved relative to apps/admin/server.js.
+COPY --from=builder --chown=nextjs:nextjs /app/apps/admin/public ./apps/admin/public
 
 USER nextjs
 EXPOSE 3001

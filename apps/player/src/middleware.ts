@@ -11,6 +11,18 @@ import {
 } from '@badminton/shared/src/utils/constants';
 
 export async function middleware(request: NextRequest) {
+  // Container health probes, before anything else — before the Supabase client
+  // is even built. The matcher at the bottom already excludes them, so this is
+  // the second of two independent guards, and it is worth the duplication: if
+  // that lookahead is ever mis-edited, every container reports unhealthy at
+  // once. Not in the isPublic list below either, because that list still pays
+  // for an auth.getUser() round trip on a route that must stay dependency-free.
+  //
+  // Trailing slash so /api/healthfoo can never match.
+  if (request.nextUrl.pathname.startsWith('/api/health/')) {
+    return NextResponse.next();
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   // Stale host-only auth cookies left over from before the cookie became
@@ -135,7 +147,11 @@ export async function middleware(request: NextRequest) {
 export const config = {
   // PWA assets (manifest, service worker, icons) must stay public —
   // an auth redirect here breaks installability and SW registration.
+  //
+  // api/health/ likewise: the container healthcheck runs inside the container
+  // with no session, so a gated probe would 307 to /login and — since the check
+  // now requires exactly 200 — mark a perfectly good container unhealthy.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/|api/health/).*)',
   ],
 };

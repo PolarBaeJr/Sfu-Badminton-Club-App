@@ -51,10 +51,24 @@ services:
       proxy.unscalable: "true"
       proxy.autoupdate:  "true"
     healthcheck:
-      # node -e fetch(): the slim runtime image has no curl/wget
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      # node -e fetch(): the slim runtime image has no curl/wget.
+      #
+      # Three things this asserts that the old `status < 500` test did not:
+      #   redirect: 'manual'  — a 307 to /login is a failure, not a follow. The
+      #                         old test followed it and read the login page's
+      #                         200, which is how an auth or middleware
+      #                         regression could pass as healthy.
+      #   status === 200      — 301/401/404/429 are all failures now. A wrong
+      #                         base path 404s, and that used to count as fine.
+      #   ok === true         — a fixed JSON shape, so an HTML page served under
+      #                         a 200 cannot satisfy the check.
+      # /api/health/ready also proves the build's Supabase config parses and the
+      # database answers; see apps/player/src/app/api/health/ready/route.ts.
+      # timeout is 10s against the route's own 3s probe ceiling, so a slow
+      # dependency fails the check with a log line rather than being killed.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready',{redirect:'manual'}).then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 20s
 
@@ -111,11 +125,14 @@ services:
       proxy.unscalable: "true"
       proxy.autoupdate:  "true"
     healthcheck:
-      # Probe /admin, not /: with a basePath the root is a 404, and this
-      # status<500 test would cheerfully call that healthy.
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/admin').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      # The /admin prefix is required: the image is BUILT with basePath=/admin,
+      # so the route file at src/app/api/health/ready is served at
+      # /admin/api/health/ready and the unprefixed path is a 404. That 404 is no
+      # longer survivable — see the player service above for what this test now
+      # asserts (manual redirects, exactly 200, and the {"ok":true} shape).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/admin/api/health/ready',{redirect:'manual'}).then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 20s
 

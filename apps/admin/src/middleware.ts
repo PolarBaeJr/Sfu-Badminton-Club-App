@@ -16,6 +16,20 @@ import {
 } from '@badminton/shared/src/utils/constants';
 
 export async function middleware(request: NextRequest) {
+  // Container health probes come first, for the same second reason spelled out
+  // for passkey sign-in below: the catch at the bottom of this function
+  // redirects to /login WITHOUT consulting isPublicRoute, so any blip in
+  // auth.getUser() would 307 the healthcheck — and a 307 now fails the check
+  // and marks a working console unhealthy. The matcher at the bottom already
+  // excludes these; this is the second of two independent guards.
+  //
+  // Paths here are basePath-RELATIVE (Next strips /admin before matching), so
+  // this reads /api/health/ while the URL the healthcheck probes is
+  // /admin/api/health/ready. Trailing slash so /api/healthfoo cannot match.
+  if (request.nextUrl.pathname.startsWith('/api/health/')) {
+    return NextResponse.next();
+  }
+
   // Passkey SIGN-IN is let through before anything else, including before the
   // Supabase client is built. Two reasons it can't just join isPublicRoute
   // below:
@@ -255,9 +269,14 @@ export const config = {
   // assets) — fixing that without this turns a cosmetic mix-up into a console
   // that cannot be installed at all.
   //
+  // api/health/ is excluded for a different reason: the container healthcheck
+  // runs inside the container with no session, and the check now requires
+  // exactly 200, so a 307 to /admin/login would report a working console as
+  // unhealthy rather than being silently swallowed as it was under status<500.
+  //
   // Paths here are basePath-RELATIVE: Next strips /admin before matching.
   // No sw.js entry: the console registers no service worker (see app/layout.tsx).
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png|api/health/).*)',
   ],
 };
