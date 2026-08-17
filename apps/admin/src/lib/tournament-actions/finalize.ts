@@ -96,8 +96,8 @@ export async function applyPlacementBonuses(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'completed') throw new Error('Event must be completed first');
-  if (!event.placement_bonus_enabled) throw new Error('Placement bonuses not enabled for this event');
+  if (event.status !== 'completed') throw new ExpectedError('Event must be completed first');
+  if (!event.placement_bonus_enabled) throw new ExpectedError('Placement bonuses not enabled for this event');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   // Two gates, both must allow it: the global master switch in
@@ -109,7 +109,7 @@ export async function applyPlacementBonuses(eventId: string) {
   // half-finalises — see the guard there.
   const bonusSettings = await getTournamentBonusSettings(adminClient);
   if (!bonusSettings.enabled) {
-    throw new Error('Placement bonuses are disabled platform-wide (Settings → Tournament Bonuses)');
+    throw new ExpectedError('Placement bonuses are disabled platform-wide (Settings → Tournament Bonuses)');
   }
 
   const doubles = isDoublesEvent(event.event_type);
@@ -634,7 +634,7 @@ export async function finalizeEvent(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'live') throw new Error('Event must be live to finalize');
+  if (event.status !== 'live') throw new ExpectedError('Event must be live to finalize');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   const doubles = isDoublesEvent(event.event_type);

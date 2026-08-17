@@ -17,6 +17,14 @@ export class ExpectedError extends Error {
   }
 }
 
+// THE STRUCTURAL `expected === true` ARM IS LOAD-BEARING, not belt-and-braces.
+// instrumentation.ts and the Sentry init files deep-import this module
+// (@badminton/shared/src/utils/expected-error) while app code imports it through
+// the barrel, because the barrel drags node 'crypto' into an edge bundle. Same
+// resolved path, so webpack dedupes today and `instanceof` happens to hold — but
+// the moment anything gives those two entry points separate module instances,
+// instanceof-only would stop recognising a refusal and every one of them would
+// go back to being filed as a fault. Do not "tidy" this to instanceof.
 export function isExpectedError(err: unknown): boolean {
   return (
     err instanceof ExpectedError ||

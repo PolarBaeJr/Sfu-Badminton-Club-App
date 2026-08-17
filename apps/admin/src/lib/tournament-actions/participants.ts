@@ -282,9 +282,9 @@ export async function addParticipantToEvent(
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
   if (event.status !== 'registration' && event.status !== 'checkin') {
-    throw new Error('Cannot add participants in current status');
+    throw new ExpectedError('Cannot add participants in current status');
   }
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   // A DOUBLES EVENT TAKES A SOLO ENTRANT — that is the whole point of the pool.
@@ -334,7 +334,7 @@ export async function addParticipantToEvent(
         .eq('event_id', eventId)
         .not('status', 'eq', 'withdrawn');
       if (count && count >= event.max_participants) {
-        throw new Error('Event is full');
+        throw new ExpectedError('Event is full');
       }
     }
   }
@@ -378,7 +378,7 @@ export async function addParticipantToEvent(
   }).select().single();
 
   if (error) {
-    if (error.code === '23505') throw new Error('Player already registered for this event');
+    if (error.code === '23505') throw new ExpectedError('Player already registered for this event');
     Sentry.captureException(error);
     throw new Error(error.message);
   }
@@ -451,9 +451,9 @@ export async function addParticipantsToEvent(
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
   if (event.status !== 'registration' && event.status !== 'checkin') {
-    throw new Error('Cannot add participants in current status');
+    throw new ExpectedError('Cannot add participants in current status');
   }
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   // Solo entry into a doubles event, same as the per-player path above.
@@ -752,7 +752,7 @@ export async function removeParticipantFromEvent(participantId: string) {
   if (event.status !== 'registration' && event.status !== 'checkin') {
     throw new ExpectedError('Entries can only be removed before the draw is generated.');
   }
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
 
   const { error } = await adminClient.from('tournament_participants').delete().eq('id', participantId);
   if (error) {
@@ -1079,10 +1079,10 @@ async function addPairToEventImpl(
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
   if (event.status !== 'registration' && event.status !== 'checkin') {
-    throw new Error('Cannot add pairs in current status');
+    throw new ExpectedError('Cannot add pairs in current status');
   }
 
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   if (!isDoublesEvent(event.event_type)) {
@@ -1638,7 +1638,7 @@ export async function removePairFromEvent(pairId: string) {
   if (event.status !== 'registration' && event.status !== 'checkin') {
     throw new ExpectedError('Pairs can only be removed before the draw is generated.');
   }
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
 
   const { error } = await adminClient.from('tournament_pairs').delete().eq('id', pairId);
   if (error) {

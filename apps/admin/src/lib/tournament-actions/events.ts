@@ -533,7 +533,7 @@ export async function deleteTournamentEvent(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'registration') throw new Error('Can only delete events in registration status');
+  if (event.status !== 'registration') throw new ExpectedError('Can only delete events in registration status');
 
   const { error } = await adminClient.from('tournament_events').delete().eq('id', eventId);
   if (error) {
