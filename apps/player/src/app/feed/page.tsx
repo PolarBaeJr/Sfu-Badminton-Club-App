@@ -6,7 +6,10 @@ import {
   formatTime,
   getAccountStanding,
   pickOne,
+  scopeToActiveSeason,
 } from '@badminton/shared';
+import * as Sentry from '@sentry/nextjs';
+import { Fragment } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ChevronRight, QrCode } from 'lucide-react';
@@ -14,6 +17,8 @@ import { PageHeader, AvatarChip } from '@badminton/ui';
 import { PasskeyNudge } from '@/components/passkey-nudge';
 import { LiveRating } from '@/components/live-rating';
 import { LiveFeed } from '@/components/live-matches';
+import { LiveTournament } from '../tournaments/live-tournament';
+import { ActiveTournamentCard, type ActiveEntry } from './active-tournament';
 import {
   attendanceStreak,
   clubDayKey,
@@ -23,6 +28,8 @@ import {
   sessionDayLabel,
   type RiverPerson,
 } from '@/lib/feed-activity';
+import { isUnderWay, runningEvents, type FeedTournament } from '@/lib/feed-tournament';
+import { countEnteredPlayers, occupiesAPlace } from '@/lib/tournament-index';
 import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
 
 type PlayerEmbed = { id: string; full_name: string | null; handle: string | null; avatar_url: string | null };
@@ -133,6 +140,7 @@ export default async function FeedPage() {
     announcementsRes,
     recentMatchesRes,
     pendingChallengesRes,
+    liveTournamentsRes,
   ] = await Promise.all([
     // The one session a member turning up tonight needs. Same track filter the
     // schedule uses — a session aimed at the other division is not "next" for
@@ -217,6 +225,47 @@ export default async function FeedPage() {
       .eq('player_id', player.id)
       .eq('confirmation_status', 'pending')
       .limit(5),
+    // ---- IS THE CLUB PLAYING A TOURNAMENT RIGHT NOW (wave 1 of 2) --------
+    //
+    // The three cheap conditions are pushed into the query and the expensive one
+    // is not:
+    //   status = 'active'      — 'draft' is unpublished, 'completed' and
+    //                            'archived' are over. Only 'active' can be on.
+    //   suspended_at IS NULL   — a suspended tournament refuses registration
+    //                            and self check-in server-side, so announcing it
+    //                            as running would be an invitation to a refusal.
+    //                            Filtered rather than selected; PostgREST
+    //                            filters on unselected columns happily and
+    //                            `authenticated` may read it either way.
+    //   the active season      — same rule as the sessions and announcements
+    //                            above, via the same shared helper /tournaments
+    //                            uses.
+    //
+    // The DATE bound is applied in JS instead, in isUnderWay(). It is
+    // `(end_date ?? start_date) >= todayKey`, and PostgREST has no COALESCE in a
+    // filter, so expressing it here would mean a second `.or()` on a query that
+    // already has one from scopeToActiveSeason — two `or` params that get ANDed
+    // in a way nobody reading this would predict. The row count this leaves to
+    // JS is the active season's 'active' tournaments, which is one on production
+    // and will not be many.
+    //
+    // NAMED COLUMNS, NOT `*`, for the reason the event page gives at length:
+    // these tables carry exec-written free text (`suspension_reason` here,
+    // `notes` and `pair_name` below) that 00117/00118 moved out but deliberately
+    // did not drop. Every column named here was verified readable by the
+    // `authenticated` ROLE against the production database on 2026-08-17, with
+    // has_column_privilege() and then again by running these selects under
+    // `SET LOCAL ROLE authenticated` — not by reading the migrations, which is
+    // how the four screens in 00115 were lost. `end_date` is the only one no
+    // other player-app query names, and it is the one that was checked hardest.
+    scopeToActiveSeason(
+      supabase
+        .from('tournaments')
+        .select('id, name, start_date, end_date, tournament_events(id, event_type, status)')
+        .eq('status', 'active')
+        .is('suspended_at', null),
+      activeSeason?.id,
+    ).order('start_date', { ascending: true }),
   ]);
 
   const nextSession = (nextSessionRes.data ?? [])[0] as SessionRow | undefined;
@@ -233,6 +282,104 @@ export default async function FeedPage() {
         .eq('session_id', nextSession.id)
         .eq('intent', 'going')
     : { count: null };
+
+  // ---- IS THE CLUB PLAYING A TOURNAMENT RIGHT NOW (wave 2 of 2) ------------
+  //
+  // *** WHY THIS IS NEITHER `unwrap` NOR A BARE `?? []`. ***
+  //
+  // The event page wraps its reads in `unwrap`, which RAISES on res.error. That
+  // is right there and wrong here: this is the app's LANDING SURFACE, reached by
+  // every member on every visit, and a 403 on a tournament column would turn the
+  // front door into an error screen over a card that is absent 360 days a year.
+  //
+  // A bare `?? []` is the other failure and the one this repository keeps
+  // paying for: a rejected PostgREST request RESOLVES rather than rejects, so
+  // `?? []` renders a 403 as "no tournament is on" — indistinguishable from the
+  // truth, silent, and permanent. 00115 is the write-up of that emptying five
+  // screens.
+  //
+  // So: check res.error explicitly, report it to Sentry the way first-signin.ts
+  // and reactivate.ts report their soft failures, and degrade to no card. The
+  // feed still renders; somebody finds out.
+  let liveTournaments: FeedTournament[] = [];
+  if (liveTournamentsRes.error) {
+    Sentry.captureException(new Error(liveTournamentsRes.error.message), {
+      extra: { action: 'feed:activeTournaments', details: liveTournamentsRes.error.details },
+    });
+  } else {
+    liveTournaments = ((liveTournamentsRes.data ?? []) as unknown as FeedTournament[])
+      .map((t) => ({ ...t, tournament_events: t.tournament_events ?? [] }))
+      .filter((t) => isUnderWay(t, todayKey));
+  }
+
+  // Every running event across every running tournament, in ONE pair of round
+  // trips rather than a pair per tournament. Same two-wave shape /tournaments
+  // uses for `countedEventIds`, and the same two column lists, so both screens
+  // are asking the database the same question.
+  //
+  // BOTH TABLES, ALWAYS, and not as a belt-and-braces gesture. Since 00102 a
+  // member enters a DOUBLES event alone and an exec pairs them later, so a
+  // doubles entrant may own a `tournament_participants` row and no
+  // `tournament_pairs` row at all. Checking only pairs for a doubles event would
+  // tell a genuinely entered member they are not in it — the exact bug the event
+  // page documents having had ("This was `!doubles` on the grounds that a
+  // doubles entrant had no participant row"). Neither table is consulted
+  // per-format here; both are read and both are searched.
+  const runningEventIds = liveTournaments.flatMap((t) => runningEvents(t).map((e) => e.id));
+
+  let tournamentEntryRows: Array<{ event_id: string; player_id: string; status: string }> = [];
+  let tournamentPairRows: Array<{ event_id: string; player1_id: string; player2_id: string; status: string }> = [];
+  if (runningEventIds.length > 0) {
+    const [pRes, prRes] = await Promise.all([
+      supabase
+        .from('tournament_participants')
+        .select('event_id, player_id, status')
+        .in('event_id', runningEventIds),
+      supabase
+        .from('tournament_pairs')
+        .select('event_id, player1_id, player2_id, status')
+        .in('event_id', runningEventIds),
+    ]);
+    // Same explicit-error rule as above, for the same reason — but the DEGRADED
+    // STATE IS DIFFERENT, and that is the point of handling the two waves
+    // separately. Wave 1 failing means "we do not know whether a tournament is
+    // on", so there is no card to draw. Wave 2 failing means "we know one is on
+    // but not who is in it", and a card drawn anyway would silently demote every
+    // entrant to the not-entered branch — telling a member standing in the gym
+    // that they are not entered in the event they are about to play. That is
+    // worse than no card, so the card is dropped whole rather than shown wrong.
+    if (pRes.error || prRes.error) {
+      const failed = pRes.error ?? prRes.error!;
+      Sentry.captureException(new Error(failed.message), {
+        extra: { action: 'feed:activeTournamentEntries', details: failed.details },
+      });
+      tournamentEntryRows = [];
+      tournamentPairRows = [];
+      liveTournaments = [];
+    } else {
+      tournamentEntryRows = (pRes.data ?? []) as typeof tournamentEntryRows;
+      tournamentPairRows = (prRes.data ?? []) as typeof tournamentPairRows;
+    }
+  }
+
+  /** The viewer's own standing in one running event, or null if they are not in
+   *  it. `occupiesAPlace` rather than a fresh status check, so this agrees with
+   *  the "You are in" section on /tournaments about the same member: a withdrawn
+   *  or disqualified entry is not an entry. */
+  const myEntryIn = (eventId: string): ActiveEntry['mine'] => {
+    const solo = tournamentEntryRows.find(
+      (r) => r.event_id === eventId && r.player_id === player.id && occupiesAPlace(r.status),
+    );
+    if (solo) return { checkedIn: solo.status === 'checked_in' };
+    const pair = tournamentPairRows.find(
+      (r) =>
+        r.event_id === eventId &&
+        (r.player1_id === player.id || r.player2_id === player.id) &&
+        occupiesAPlace(r.status),
+    );
+    if (pair) return { checkedIn: pair.status === 'checked_in' };
+    return null;
+  };
 
   // RLS only checks status='published'. Expiry and season are filtered in the
   // query above; audience is the one part that cannot be, because it is matched
@@ -426,6 +573,99 @@ export default async function FeedPage() {
           disagreeing about how many columns the page has. */}
       <div className="wide-grid">
         <div className="feed-col">
+          {/* ── A TOURNAMENT IS ON ────────────────────────────────────
+              FIRST IN THE COLUMN, above the river. See ./active-tournament for
+              why this is a banner here rather than a RiverItem or a rail card —
+              the short version is that `.wide-grid` collapses to one column
+              below 1101px, so `.wide-rail` unstacks BELOW this column, and a
+              member standing in the gym would have had to scroll past fifteen
+              river rows to learn that the tournament they are standing in is
+              running.
+
+              ONE CARD PER RUNNING TOURNAMENT, uncapped, with no "and N more"
+              line. The bound is already real and narrow — the ACTIVE SEASON's
+              tournaments whose status is 'active', which are not suspended, whose
+              last day has not passed, and which have an event past registration
+              and short of completed. Production has one. Machinery for a case
+              that cannot occur is machinery that will be wrong when it does.
+
+              `.feed-col` is `display: flex; flex-direction: column; gap: 20px`,
+              so two cards space themselves like every other pair of blocks on
+              the page, and `.feed-col > * { min-width: 0 }` (globals.css:1577) is
+              what stops a long tournament name from widening the column and
+              taking the whole document sideways. That rule is why this card sets
+              no width of its own. */}
+          {liveTournaments.map((t) => {
+            const running = runningEvents(t);
+            const eventIds = running.map((e) => e.id);
+            return (
+              // A FRAGMENT, NOT A WRAPPER DIV. `.feed-col > * { min-width: 0 }`
+              // only reaches DIRECT children, and that rule is the one thing
+              // standing between a long exec-typed tournament name and a document
+              // that scrolls sideways. A wrapper would absorb it and leave the
+              // card itself with the flex default of `min-width: auto`.
+              // LiveTournament renders null, so the fragment costs no element.
+              <Fragment key={t.id}>
+                {/* THE SAME MECHANISM THE TOURNAMENT PAGES USE, not a new one:
+                    LiveTournament coalesces at 700ms and calls router.refresh(),
+                    which re-runs this server component and re-derives the card
+                    from the viewer's own credentials.
+
+                    `draw` IS OMITTED (it defaults false). That is the whole
+                    argument in ./active-tournament: this card prints nothing off
+                    `tournament_matches`, so a match-level filter would wake the
+                    busiest screen in the app on every score to redraw an
+                    identical card. What the card DOES show is covered without
+                    it — an event going live or completing arrives on
+                    `tournament_events` (watched tournament-wide, so an event
+                    ADDED mid-tournament is caught too), and a check-in arrives
+                    on `tournament_participants` / `tournament_pairs`, which are
+                    watched per event id. Since 00120 an entry REMOVED arrives as
+                    an UPDATE on `tournament_events`, which the same
+                    tournament-wide listener already hears.
+
+                    The channel name is unique per surface, which live-tournament
+                    requires: `/tournaments/[id]` holds `player-tournament-${id}`
+                    and the event page holds `player-tournament-event-${eventId}`,
+                    so this one is prefixed `feed-` to match the app's other feed
+                    channel (`feed-matches`). Several of these mount on one socket
+                    — @supabase/ssr 0.5.2 caches the browser client in a module
+                    singleton (`cachedBrowserClient`), so createClient() returns
+                    the same instance to every mount. */}
+                <LiveTournament
+                  channel={`feed-tournament-${t.id}`}
+                  tournamentId={t.id}
+                  eventIds={eventIds}
+                />
+                <ActiveTournamentCard
+                  tournamentId={t.id}
+                  name={t.name}
+                  startDate={t.start_date}
+                  todayKey={todayKey}
+                  events={running.map(
+                    (e): ActiveEntry => ({
+                      eventId: e.id,
+                      eventType: e.event_type,
+                      status: e.status,
+                      mine: myEntryIn(e.id),
+                    }),
+                  )}
+                  // Distinct PEOPLE, not rows: a member in both the singles and
+                  // the doubles is one player, and a pair is two. Counted with
+                  // the same helper /tournaments counts its hero's field with, so
+                  // the two screens cannot print different numbers for the same
+                  // tournament. Scoped to the RUNNING events only — somebody
+                  // entered in a sibling event that has already finished is not
+                  // playing right now.
+                  entered={countEnteredPlayers(
+                    tournamentEntryRows.filter((r) => eventIds.includes(r.event_id)),
+                    tournamentPairRows.filter((r) => eventIds.includes(r.event_id)),
+                  )}
+                />
+              </Fragment>
+            );
+          })}
+
           {/* THE RIVER ------------------------------------------------ */}
           {sections.length === 0 ? (
             <div className="card-base">
