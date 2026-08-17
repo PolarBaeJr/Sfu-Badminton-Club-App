@@ -612,8 +612,38 @@ function layoutLinear<M extends DrawInputMatch>(
 }
 
 // ============================================================
-// One half of a draw, on its own
+// PART OF A DRAW, ON ITS OWN
 // ============================================================
+//
+// *** THE ONE RULE, AND IT IS THE RULE THIS SECTION EXISTS TO ENFORCE:
+//     A SUBSET OF A DRAW IS RE-LAID-OUT, NEVER CROPPED. ***
+//
+// The functions below return MATCH LISTS, not coordinates, and every caller is
+// expected to feed the list it gets back through `computeDrawLayout`. That is
+// deliberate and it is the whole design: none of them can hand a caller a
+// coordinate, so no view can be built by taking the parent chart's numbers and
+// showing part of the sheet.
+//
+// WHY THAT MATTERS, with the number that proved it. `computeRowY` puts every
+// card at the MEAN of the cards that feed it, and the pitch it stacks the first
+// round at is the pitch of THE DRAW IT WAS GIVEN. So the vertical gap inside a
+// column doubles every round: on a 128 the gaps in the left-hand columns run
+// 84 → 232 → 528 → 1120px. Those middles are not empty on the whole sheet —
+// the outer columns fill them — but they are only filled BY THE OUTER COLUMNS.
+//
+// Crop instead of re-laying-out and the middle becomes literally empty. A
+// quarter-finals-to-final view of a 128 drawn at the parent's coordinates puts
+// its two left quarter-finals 1120px apart with nothing whatever between them;
+// at the player app's 0.80 full-screen floor that is 896px of blank projector
+// between the quarter-final row and the semi-final row, which is exactly the
+// sheet that was reported as looking broken. Re-laid-out, the same four
+// quarter-finals stack at one pitch and the gap is 10px.
+//
+// The two extractors differ only in which way they cut:
+//   * `drawHalves`      cuts by SIDE  — the subtree under each semi-final,
+//   * `drawLastRounds`  cuts by DEPTH — the last N rounds, the business end.
+// Both then go through the same engine, so neither can drift from the chart it
+// came from and neither can invent geometry of its own.
 
 /**
  * Split a converging draw into its two halves, as the match lists each is made
@@ -652,6 +682,45 @@ export function drawHalves<M extends DrawInputMatch>(
     else if (node.side === 'right') bottom.push(node.match);
   }
   return top.length && bottom.length ? { top, bottom } : null;
+}
+
+/**
+ * The LAST `count` ROUNDS of a converging draw — "split this away into Quarter
+ * finals to finals" — as the match list they are made of. Feed it back through
+ * `computeDrawLayout` and you get the business end as its own converging chart:
+ * three rounds is a four-card first row, a two-card second and the final in the
+ * centre, which is the same shape as a whole 8-entry draw and 936×251px.
+ *
+ * WHY IT IS COUNTED FROM THE FINAL AND NOT NAMED. There is no `roundNumber` to
+ * match on that means "quarter-final" — the knockout half of a pool_to_bracket
+ * event numbers its rounds from 1 like any other, and a 16 and a 128 give their
+ * quarter-finals different numbers. Counting back from the last round is how
+ * `getRoundName` already decides what to call a round, so a subset taken this
+ * way is labelled by the same arithmetic it was cut by and the two cannot
+ * disagree. `count = 3` is quarter-finals, semi-finals and final on every draw
+ * size there is.
+ *
+ * Returns null rather than a copy of the whole draw when `count` is not a
+ * STRICT subset. A three-round draw's last three rounds are the draw itself, so
+ * offering that as a separate view would be offering the same sheet twice — the
+ * caller is expected to leave the option out for such a draw rather than show a
+ * duplicate of one it already has.
+ *
+ * Null too on a linear fallback layout, and for the same reason `drawHalves`
+ * refuses one: that mode is reached precisely when the rounds do not halve, so
+ * it draws no connectors because it does not know who feeds whom. Its last
+ * three rounds may well halve on their own, and laying them out as a converging
+ * tree would assert wiring the whole sheet had just declined to assert.
+ */
+export function drawLastRounds<M extends DrawInputMatch>(
+  layout: DrawLayout<M>,
+  count: number,
+): M[] | null {
+  if (layout.mode !== 'converging') return null;
+  if (count < 2 || count >= layout.rounds) return null;
+  const from = layout.rounds - count;
+  const out = layout.nodes.filter((n) => n.depth >= from).map((n) => n.match);
+  return out.length ? out : null;
 }
 
 // ============================================================

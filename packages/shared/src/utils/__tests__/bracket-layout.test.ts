@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeDrawLayout, drawHalves, fitScale, type DrawInputMatch } from '../bracket-layout';
+import { computeDrawLayout, drawHalves, drawLastRounds, fitScale, type DrawInputMatch } from '../bracket-layout';
 import { nextPowerOf2 } from '../constants';
 
 const GEO = { cardH: 80, cardGap: 10, colW: 200, linkW: 30, headH: 30 };
@@ -338,6 +338,141 @@ describe('drawHalves — a draw too big for a projector, one half at a time', ()
     // A two-entry event is a final and nothing under it.
     expect(drawHalves(computeDrawLayout(drawOf(2), GEO))).toBeNull();
   });
+});
+
+describe('drawLastRounds — the business end, on its own', () => {
+  it('is the last N rounds and nothing earlier', () => {
+    const l = computeDrawLayout(drawOf(128), GEO);
+    const last3 = drawLastRounds(l, 3)!;
+    // 4 quarter-finals + 2 semi-finals + 1 final. Round 5, 6, 7 of a 128.
+    expect(last3).toHaveLength(7);
+    expect(new Set(last3.map((m) => m.round_number))).toEqual(new Set([5, 6, 7]));
+  });
+
+  it('is A WHOLE EIGHT-ENTRY DRAW once it is laid out again, whatever it was cut from', () => {
+    // The point of the view: the business end of a 16 and of a 128 are the same
+    // three-round sheet, because a bracket's last three rounds always are.
+    const eight = computeDrawLayout(drawOf(8), GEO);
+    for (const n of [16, 32, 64, 128]) {
+      const cut = computeDrawLayout(drawLastRounds(computeDrawLayout(drawOf(n), GEO), 3)!, GEO);
+      expect(cut.mode).toBe('converging');
+      expect(cut.width).toBe(eight.width);
+      expect(cut.height).toBe(eight.height);
+    }
+  });
+
+  it('*** RE-LAYS-OUT RATHER THAN CROPPING — the void this whole view exists to close ***', () => {
+    const whole = computeDrawLayout(drawOf(128), GEO);
+    const cut = drawLastRounds(whole, 3)!;
+    const ids = new Set(cut.map((m) => m.id));
+
+    // What CROPPING would have given: the same seven cards at the whole draw's
+    // own coordinates. The two quarter-finals on the left are a chasm apart,
+    // because on the whole sheet the four columns that fill that space are
+    // drawn and here they are not.
+    const cropped = whole.nodes.filter((n) => ids.has(n.id));
+    const leftQF = cropped
+      .filter((n) => n.depth === whole.rounds - 3 && n.side === 'left')
+      .map((n) => n.y)
+      .sort((a, b) => a - b);
+    expect(leftQF).toHaveLength(2);
+    expect(leftQF[1]! - leftQF[0]! - GEO.cardH).toBeGreaterThan(1000);
+
+    // What RE-LAYING-OUT gives: the four quarter-finals are a first round, so
+    // they stack at one pitch a side, and the gap is the ordinary card gap.
+    const relaid = computeDrawLayout(cut, GEO);
+    const relaidLeftQF = relaid.nodes
+      .filter((n) => n.depth === 0 && n.side === 'left')
+      .map((n) => n.y)
+      .sort((a, b) => a - b);
+    expect(relaidLeftQF).toEqual([0, PITCH]);
+    expect(relaidLeftQF[1]! - relaidLeftQF[0]! - GEO.cardH).toBe(GEO.cardGap);
+  });
+
+  it('keeps each card in the half of the real draw it was already in', () => {
+    // The finals view does NOT override the side the way a half page does, so
+    // the sides it computes for itself have to be the sides the whole sheet
+    // gave the same cards — otherwise a card would be announced as being in the
+    // top half on one view and the bottom half on another.
+    const whole = computeDrawLayout(drawOf(64), GEO);
+    const relaid = computeDrawLayout(drawLastRounds(whole, 3)!, GEO);
+    for (const node of relaid.nodes) {
+      expect(node.side).toBe(whole.nodes.find((n) => n.id === node.id)!.side);
+    }
+  });
+
+  it('refuses a cut that is not a strict subset, and one it cannot wire', () => {
+    // An 8-entry draw IS its own last three rounds — offering it as a separate
+    // view would be offering the reader the sheet they are already looking at.
+    expect(drawLastRounds(computeDrawLayout(drawOf(8), GEO), 3)).toBeNull();
+    expect(drawLastRounds(computeDrawLayout(drawOf(16), GEO), 3)).not.toBeNull();
+    // One round is not a chart, and a count past the draw is the whole draw.
+    expect(drawLastRounds(computeDrawLayout(drawOf(64), GEO), 1)).toBeNull();
+    expect(drawLastRounds(computeDrawLayout(drawOf(64), GEO), 9)).toBeNull();
+    // A linear fallback declined to say who feeds whom; its tail must not
+    // start saying it. Five matches into two is the shape that fails the
+    // halving test — ceil(5 / 2) is 3, not 2 — while the two rounds ABOVE it
+    // halve perfectly, which is exactly the case where cutting the tail would
+    // turn a refusal into an assertion.
+    const ladder = computeDrawLayout(
+      [
+        ...[0, 1, 2, 3, 4].map((p) => ({ id: `a${p}`, round_number: 1, bracket_position: p })),
+        { id: 'b0', round_number: 2, bracket_position: 0 },
+        { id: 'b1', round_number: 2, bracket_position: 1 },
+        { id: 'c0', round_number: 3, bracket_position: 0 },
+      ],
+      GEO,
+    );
+    expect(ladder.mode).toBe('linear');
+    expect(drawLastRounds(ladder, 2)).toBeNull();
+  });
+});
+
+describe('every view is dense — no band of the TREE is empty across all columns', () => {
+  /**
+   * THE MEASUREMENT THAT CAUGHT THE ORIGINAL BUG, as an invariant. A card sits
+   * at the mean of its feeders, so the gaps INSIDE a column double every round;
+   * that is a bracket and it is fine. What is not fine is a horizontal band of
+   * the sheet with no card in it at all, which is what a cropped subset gives
+   * and what "800px of nothing" looked like. Every view the player app builds
+   * has to come out at zero.
+   *
+   * THE TREE, not every card drawn: the centre-column stack (a repeated final,
+   * the third-place playoff) hangs below the root, and on a 32's half page it
+   * hangs 37px below the bottom of the outer column. That sliver is the caption
+   * pitch, not a layout that was computed for a different draw, and folding it
+   * in here would make this assertion about the wrong thing.
+   */
+  const emptyBand = (l: ReturnType<typeof computeDrawLayout>, cardH: number) => {
+    const spans = l.nodes.map((n) => [n.y, n.y + cardH]).sort((a, b) => a[0]! - b[0]!);
+    let reach = spans.length ? spans[0]![1]! : 0;
+    let worst = 0;
+    for (const [a, b] of spans) {
+      if (a! > reach) worst = Math.max(worst, a! - reach);
+      reach = Math.max(reach, b!);
+    }
+    return worst;
+  };
+
+  for (const n of [8, 16, 32, 64, 128]) {
+    it(`a ${n}-entry draw, in every view it is offered`, () => {
+      const whole = computeDrawLayout(drawOf(n), GEO, { thirdPlace: true });
+      expect(emptyBand(whole, GEO.cardH)).toBe(0);
+
+      const halves = drawHalves(whole);
+      if (halves) {
+        for (const side of [halves.top, halves.bottom]) {
+          const half = computeDrawLayout(side, GEO, { centreSlots: 1, thirdPlace: true });
+          expect(emptyBand(half, GEO.cardH)).toBe(0);
+        }
+      }
+
+      const finals = drawLastRounds(whole, 3);
+      if (finals) {
+        expect(emptyBand(computeDrawLayout(finals, GEO, { thirdPlace: true }), GEO.cardH)).toBe(0);
+      }
+    });
+  }
 });
 
 describe('computeDrawLayout — centreSlots, the final on a half page', () => {

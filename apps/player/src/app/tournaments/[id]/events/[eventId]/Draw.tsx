@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { getRoundName, computeDrawLayout, drawHalves, splitPairLabel } from '@badminton/shared';
+import { getRoundName, computeDrawLayout, drawHalves, drawLastRounds, splitPairLabel } from '@badminton/shared';
 import type { DrawSide, DrawLayout } from '@badminton/shared';
-import { DrawScroller, type DrawPage } from './DrawScroller';
+import { DrawScroller, type DrawView } from './DrawScroller';
 
 /**
  * THE PLAYER APP'S HALF OF THE CONVERGING DRAW.
@@ -63,6 +63,75 @@ const GEOMETRY = {
  * below, where one never is.
  */
 const HALVES_FROM_ROUNDS = 5;
+
+/**
+ * THE BUSINESS END: quarter-finals, semi-finals, final.
+ *
+ * "split this away into Quarter finals to finals" — the rounds a room actually
+ * watches. Three is the count that makes that phrase true on EVERY draw size,
+ * because a round's name is decided by counting back from the final: the third
+ * round from the end is the quarter-final of a 16 and of a 128 alike. So this
+ * is not a size-dependent guess, and the view never has to be relabelled.
+ */
+const FINALS_ROUNDS = 3;
+
+/**
+ * THE SMALLEST DRAW THAT IS OFFERED THE BUSINESS END — four rounds, so 16
+ * entrants and up. An 8-entry draw IS its own last three rounds, so below this
+ * the option would be a second button showing the sheet the reader is already
+ * looking at. `drawLastRounds` refuses that case on its own; this constant is
+ * the same rule said where the view list is built, so the option is simply
+ * absent rather than present and degenerate.
+ *
+ * IT IS NOT GATED ON THE FIT, unlike the halves, and that is the point of it.
+ * The halves exist because a 128 cannot be shown whole at a readable size —
+ * they are a remedy for a sheet that does not fit. This is not a remedy: a
+ * 16-draw fits whole at every resolution and is still offered its last three
+ * rounds, because what the room wants at 7pm on finals night is the four
+ * matches that are left, printed as large as the wall can carry them. On a
+ * 1920×1080 projector that is 2.0 against the whole 16-draw's 1.43.
+ */
+const FINALS_FROM_ROUNDS = 4;
+
+/**
+ * THE CAPTION UNDER A CENTRE-COLUMN CARD IS SHORTER ON THE BUSINESS END, and
+ * the geometry has to be told so or the room reserved would not be the room
+ * used.
+ *
+ * The whole draw and the halves reserve 64px, which is a heading and two 11px
+ * lines. That was measured for a sheet 477–2384px tall, where 64px is trim. The
+ * quarter-finals-to-final tree is 138px tall: the third-place block at 64px of
+ * caption would be 128px of the sheet against 138px of actual bracket, so
+ * nearly half of what the projector showed would be a card and a sentence about
+ * a match that is not in the tree.
+ *
+ * It shortens because it CAN, not to save room. That caption's job is to say
+ * where the two entrants came from, and on this view both semi-finals are on
+ * screen a few centimetres above it — the picture answers the question the
+ * sentence was there to answer, so one line does.
+ *
+ * 40px IS THE MEASURED STACK, in Chrome against the compiled CSS at the 168px
+ * column: 8px of `mt-2`, a 12px `.eyebrow` heading and one 11px line at
+ * `leading-snug`, which measures 15.1px. 35.1px in a 40px reservation.
+ *
+ * AND THE SENTENCE IS MEASURED TOO, because "one line" is a claim about a
+ * string and not about a style. "Between the two beaten semi-finalists." wraps
+ * to two lines in that column and paints 50px into the 40; "The two beaten
+ * semi-finalists." is 15.1px and fits. Counting characters would not have
+ * caught it — the render did.
+ */
+const FINALS_CAPTION_H = 40;
+
+const FINALS_GEOMETRY = { ...GEOMETRY, playoffCaptionH: FINALS_CAPTION_H };
+
+/**
+ * The third-place playoff's heading and its long caption, written once because
+ * three of the four views print them and a fourth prints a shortened form. Two
+ * lines at 11px, which is what `GEOMETRY.playoffCaptionH` reserves room for.
+ */
+const THIRD_PLACE_HEADING = '3rd Place Playoff';
+const THIRD_PLACE_CAPTION =
+  'The two beaten semi-finalists, one from each half. The winner does not advance to the final.';
 
 /**
  * One knockout match, already resolved to entry ids. The page flattens singles
@@ -181,7 +250,7 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
     (n) => n.side === 'centre' && n.depth === layout.rounds - 1,
   )?.match ?? null;
 
-  const pages: DrawPage[] = halves && finalMatch
+  const halfViews: DrawView[] = halves && finalMatch
     ? ([['top', halves.top], ['bottom', halves.bottom]] as const).map(([half, halfMatches]) => {
         // centreSlots: 1 is the FINAL. It is not in either half — its two
         // feeders are one per page — so it is repeated on both, in the clear
@@ -193,9 +262,13 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
           thirdPlace: !!thirdPlace,
         });
         const other = half === 'top' ? 'bottom' : 'top';
+        const label = half === 'top' ? 'Top half' : 'Bottom half';
         return {
           key: half,
-          label: half === 'top' ? 'Top half' : 'Bottom half',
+          label,
+          heading: label,
+          noun: 'half',
+          sideHint: 'Scroll sideways — this half meets at the semi-final',
           width: pageLayout.width,
           height: pageLayout.height,
           note: `The ${half} half of the draw, meeting at its semi-final in the middle. `
@@ -228,9 +301,8 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
                       key: 'third',
                       pos: pageLayout.thirdPlace,
                       match: thirdPlace,
-                      heading: '3rd Place Playoff',
-                      caption: 'The two beaten semi-finalists, one from each half. '
-                        + 'The winner does not advance to the final.',
+                      heading: THIRD_PLACE_HEADING,
+                      caption: THIRD_PLACE_CAPTION,
                     }]
                   : []),
               ]}
@@ -240,6 +312,113 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
       })
     : [];
 
+  /**
+   * QUARTER-FINALS TO FINAL, LAID OUT FROM SCRATCH.
+   *
+   * `drawLastRounds` returns the matches and nothing else — no coordinates —
+   * so the only way to draw them is to send them back through the engine, and
+   * the engine stacks the four quarter-finals at one pitch like any other first
+   * round. That is the fix for the sheet that was reported: at the whole draw's
+   * own coordinates a 128's two left-hand quarter-finals are 1120px apart, and
+   * at the 0.80 full-screen floor that is 896px of blank projector between the
+   * quarter-final row and the semi-final row. Re-laid-out the gap is 10px.
+   *
+   * NO `centreSlots` HERE, unlike a half, and getting that backwards would put
+   * a second card under a card that is already the root. A half stops at a
+   * semi-final and has to borrow room for the final because the final's other
+   * feeder is on the other page; this view CONTAINS the final, so the centre
+   * column below it is free for the third-place playoff alone.
+   */
+  const finalsMatches = layout.rounds >= FINALS_FROM_ROUNDS
+    ? drawLastRounds(layout, FINALS_ROUNDS)
+    : null;
+  const finalsLayout = finalsMatches
+    ? computeDrawLayout(finalsMatches, FINALS_GEOMETRY, { thirdPlace: !!thirdPlace })
+    : null;
+
+  const finalsView: DrawView[] = finalsLayout
+    ? [{
+        key: 'finals',
+        label: 'Quarter-finals to final',
+        heading: 'Quarter-finals to final',
+        noun: 'view',
+        sideHint: 'Scroll sideways — the two sides meet at the final',
+        width: finalsLayout.width,
+        height: finalsLayout.height,
+        note: 'The last three rounds only: the quarter-finals, the semi-finals and the final.',
+        body: (
+          <ChartBody
+            layout={finalsLayout}
+            // NOT a half, so the cards keep their own sides — and those sides
+            // are the real draw's. `computeDrawLayout` assigns sides by walking
+            // down from the root, and the four quarter-finals of this subset
+            // walk down from the same two semi-finals they do on the whole
+            // sheet, so a card labelled "top half" here is in the top half
+            // there. That is why this view does not need the half override the
+            // two half pages do.
+            half={null}
+            roundName={roundName}
+            nameOf={nameOf}
+            seedOf={seedOf}
+            extras={thirdPlace && finalsLayout.thirdPlace
+              ? [{
+                  key: 'third',
+                  pos: finalsLayout.thirdPlace,
+                  match: thirdPlace,
+                  heading: THIRD_PLACE_HEADING,
+                  // ONE LINE, because both semi-finals are on this sheet. The
+                  // long caption exists to say where the two entrants came
+                  // from; here the reader can see it. Measured at the 168px
+                  // column, not counted — see FINALS_CAPTION_H.
+                  caption: 'The two beaten semi-finalists.',
+                }]
+              : []}
+          />
+        ),
+      }]
+    : [];
+
+  /**
+   * THE VIEWS, IN THE ORDER THE DROPDOWN OFFERS THEM, and the whole draw is
+   * always the first of them.
+   *
+   * "for all the section since one cannot be active when other is active" —
+   * they are one mutually exclusive choice, so they are one list. DrawScroller
+   * shows `views[0]` on the page and whenever full screen is not on; everything
+   * after it is only ever reachable from the full-screen dropdown.
+   */
+  const views: DrawView[] = [
+    {
+      key: 'whole',
+      label: 'Whole draw',
+      noun: 'draw',
+      sideHint: 'Scroll sideways — the two halves meet at the final',
+      width: layout.width,
+      height: layout.height,
+      note: readingNote,
+      body: (
+        <ChartBody
+          layout={layout}
+          half={null}
+          roundName={roundName}
+          nameOf={nameOf}
+          seedOf={seedOf}
+          extras={thirdPlace && layout.thirdPlace
+            ? [{
+                key: 'third',
+                pos: layout.thirdPlace,
+                match: thirdPlace,
+                heading: THIRD_PLACE_HEADING,
+                caption: THIRD_PLACE_CAPTION,
+              }]
+            : []}
+        />
+      ),
+    },
+    ...halfViews,
+    ...finalsView,
+  ];
+
   return (
     <>
       {/* THE CHART — tablet and up only. `display: none` below 768px, so on a
@@ -248,39 +427,14 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
       <div className="draw-chart-wrap px-4 pb-4">
         {/* ONE STRING, TWO PLACES. This sits above the shell, so it is outside
             the element that goes full screen and would vanish there; the same
-            text is handed to DrawScroller for its full-screen header rather
-            than written out twice and left to drift. */}
+            text reaches DrawScroller's full-screen header as the whole draw
+            view's own `note` rather than being written out twice. */}
         <p className="text-xs text-[var(--text-muted)] mb-2">{readingNote}</p>
         {/* The sized, positioned box the absolute offsets below are relative to
             is DrawScroller's innermost one — it owns it because it is the one
             being transformed to fit. Everything here is laid out at full size
             and scaled as a whole. */}
-        <DrawScroller
-          width={layout.width}
-          height={layout.height}
-          title={title}
-          subtitle={subtitle}
-          note={readingNote}
-          pages={pages}
-        >
-          <ChartBody
-            layout={layout}
-            half={null}
-            roundName={roundName}
-            nameOf={nameOf}
-            seedOf={seedOf}
-            extras={thirdPlace && layout.thirdPlace
-              ? [{
-                  key: 'third',
-                  pos: layout.thirdPlace,
-                  match: thirdPlace,
-                  heading: '3rd Place Playoff',
-                  caption: 'The two beaten semi-finalists, one from each half. '
-                    + 'The winner does not advance to the final.',
-                }]
-              : []}
-          />
-        </DrawScroller>
+        <DrawScroller title={title} subtitle={subtitle} views={views} />
       </div>
 
       <DrawRounds

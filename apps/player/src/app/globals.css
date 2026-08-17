@@ -4321,8 +4321,16 @@ a.cal-ev:hover { filter: brightness(1.15); }
    cannot underlap. On the page (not full screen) .draw-topline is
    a plain block whose only visible child is .draw-tools, which
    keeps the right-aligned row it already had. */
+/* CENTRE, NOT BASELINE, since the view picker joined this row.
+   Baseline aligned the 44px select's text with the 20px title,
+   which pushed the title down to sit on the select's own baseline
+   and left the caption hanging below the row. The two BLOCKS are
+   centred against each other here; .draw-full-head is itself a
+   baseline flex row, so the title, the tournament and the reading
+   note still share a baseline with each other, which is the
+   alignment that was ever load-bearing. */
 .draw-shell:fullscreen .draw-topline {
-  display: flex; align-items: baseline; gap: 14px;
+  display: flex; align-items: center; gap: 14px;
   flex: 0 0 auto; margin-bottom: 10px; min-width: 0;
 }
 
@@ -4338,6 +4346,52 @@ a.cal-ev:hover { filter: brightness(1.15); }
 }
 
 .draw-pager { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* ── THE VIEW PICKER ───────────────────────────────────────────
+   "just setup a dropdown ... for all the section since one cannot
+   be active when other is active". One <select> carrying every
+   view, because the views are one mutually exclusive choice.
+
+   A NATIVE CONTROL, STYLED — not @badminton/ui's `Select`, which
+   is a 48px full-width form field with a block label and is used
+   only by admin dialogs. See the note in DrawScroller.
+
+   44px MINIMUM, and it is what sets the height of the whole
+   header row (.draw-topline is baseline-aligned, so the tallest
+   item wins). That costs the chart about 12px of height budget
+   against the row the buttons alone made — 1010px to 998px at
+   1080p — which is 1.2% of scale on a 64-draw and does not move
+   any view across the 0.80 floor. Worth it: this is the one
+   control on the sheet that has to be operable on a tablet in
+   full screen. */
+.draw-view-pick { position: relative; display: inline-flex; align-items: center; }
+.draw-view-select {
+  /* 13px, not the 10px the buttons use. The buttons are actions
+     whose meaning survives being small; this one says WHICH SHEET
+     the room is looking at, and it is glanced at across a hall.
+     The 20px .draw-page-label carries the same answer for the
+     back row — this is for whoever is at the keyboard. */
+  font-family: var(--mono); font-size: 13px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink);
+  background: transparent; border: 1px solid var(--line-2);
+  min-height: 44px; padding: 0 28px 0 10px;
+  cursor: pointer;
+  /* So the chevron below is the only arrow and the control can
+     carry the mono voice rather than the platform's. */
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+}
+.draw-view-select:hover { border-color: var(--ink); }
+.draw-view-select:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+/* THE OPEN LIST IS DRAWN BY THE PLATFORM, not by this stylesheet,
+   and on Windows and Linux Chrome it takes its colours from these
+   two properties rather than inheriting the control's. Without
+   them a dark full screen drops down a white list. */
+.draw-view-select option { background: var(--surface); color: var(--ink); }
+.draw-view-chev {
+  position: absolute; right: 9px; color: var(--mute);
+  pointer-events: none;
+}
+
 .draw-page-btn {
   display: inline-flex; align-items: center; gap: 5px;
   font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
@@ -4394,4 +4448,22 @@ a.cal-ev:hover { filter: brightness(1.15); }
    scrollable here or it is simply cropped. */
 .draw-shell:fullscreen .draw-scroll {
   flex: 1 1 auto; min-height: 0; overflow: auto;
+  /* A SHEET SMALLER THAN THE SCREEN SITS IN THE MIDDLE OF IT.
+     Now that a view can be a deliberately small one — the
+     quarter-finals to final is 936x251 — a chart pinned to the top
+     left would leave the rest of the wall blank and read as a
+     rendering fault rather than as a choice. Grid because a single
+     child is all this box ever has.
+
+     `safe` IS THE WHOLE POINT OF THIS DECLARATION. Plain `center`
+     on a scroll container centres overflowing content too, which
+     puts its top-left in negative scroll space that no scrollbar
+     can reach — a 128 whole draw would be cropped on all four
+     sides with no way back. `safe` falls back to start alignment
+     the moment the child is bigger than the box, so the large
+     views behave exactly as they did. A browser without `safe`
+     drops the declaration and also behaves exactly as before. */
+  display: grid;
+  justify-content: safe center;
+  align-content: safe center;
 }
