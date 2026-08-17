@@ -159,22 +159,28 @@ describe('CAPABILITY_GATES', () => {
   // capability was added or removed there: CAPABILITIES is 119 above, and the
   // one added by `players.consoleaccess.write` is the 134th site — setConsoleAccess,
   // which no other capability claims.
-  // 133 BECAME 136 when the desk got two more things to do. `tournaments.draw.
-  // checkin.mark.write` picked up setMatchReadyForPlayer and setMatchCourt —
-  // two new sites, no new capability, and no capability removed: CAPABILITIES is
-  // still 119 above. Both are the desk recording or answering "are you here",
-  // which is why they merged rather than minting a key; the reason is argued in
-  // that entry's `merged` prose, which this file's next test requires.
-  it('names 136 distinct enforcement points, none of them claimed twice', () => {
+  // 133 BECAME 137 over two changes to the Court Management tab.
+  // `tournaments.draw.checkin.mark.write` picked up setMatchReadyForPlayer and
+  // setMatchCourt (136), then setMatchLive (137) once it turned out that
+  // `tournament_matches.status = 'live'` had no writer anywhere in either app —
+  // see 00136. Three new sites, NO new capability and none removed: CAPABILITIES
+  // is still 119 above. All three are the desk answering or acting on "are you
+  // here", which is why they merged rather than minting keys; the reason is
+  // argued in that entry's `merged` prose, which this file's next test requires.
+  //
+  // Score entry deliberately did NOT join them, even though it now sits on the
+  // same tab: tournaments.results.* is a different act by a different person and
+  // keeps its own gate.
+  it('names 137 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(136);
-    expect(new Set(sites).size).toBe(136);
-    expect(ENFORCEMENT_POINTS).toBe(136);
+    expect(sites.length).toBe(137);
+    expect(new Set(sites).size).toBe(137);
+    expect(ENFORCEMENT_POINTS).toBe(137);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

@@ -115,10 +115,16 @@ export default async function EventPage({
     // tab, and it is the same key both generators already ask for — no new
     // capability, and nothing gated on it that was not gated on it before.
     generate: may('tournaments.draw.generate.write'),
-    // Feeds the Desk tab's court field and its ready pills. Same key check-in
-    // already asks, and the same key both server actions re-check — see
-    // participant-controls.ts for why neither control minted one of its own.
-    runDesk: may('tournaments.draw.checkin.mark.write'),
+    // Feeds the Court Management tab's court field, ready pills and
+    // start/stop. Same key check-in already asks, and the same key every one of
+    // those server actions re-checks — see participant-controls.ts for why none
+    // of them minted one of its own.
+    manageCourts: may('tournaments.draw.checkin.mark.write'),
+    // The Court Management tab's Score button. A DIFFERENT KEY from the line
+    // above on purpose — see participant-controls.ts. This is the first time any
+    // tournaments.results.* capability has reached a component at all; the
+    // bracket and round-robin tabs still gate score entry on status alone.
+    enterResult: may('tournaments.results.enter.write'),
   };
   // `siblingEvents` feeds one picker too: the "seed from" list in
   // EventSettingsDialog, which is reached from EventHeader's settings button and

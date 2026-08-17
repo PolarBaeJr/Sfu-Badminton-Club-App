@@ -318,16 +318,22 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     merged: MINT_A_TOKEN,
   },
   'tournaments.draw.checkin.mark.write': {
-    label: 'Run the desk', area: 'tournaments', group: 'draw', mode: 'write',
+    // DISPLAY TEXT ONLY, reconciled with the tab it now gates. The capability
+    // STRING is untouched and must stay untouched: capability keys are stored as
+    // DATA in permission_grants and permission_baselines.capabilities, so
+    // renaming one orphans every live grant that holds it. The label is what an
+    // exec reads in the permission editor; the key is what the database joins on.
+    label: 'Check in and manage courts', area: 'tournaments', group: 'draw', mode: 'write',
     gate: 'tournament-actions/participants.ts checkInParticipant',
     also: [
       'tournament-actions/participants.ts checkInPair',
       'tournament-actions/participants.ts bulkCheckIn',
       'tournament-actions/scheduling.ts setMatchReadyForPlayer',
       'tournament-actions/scheduling.ts setMatchCourt',
+      'tournament-actions/scheduling.ts setMatchLive',
     ],
     merged:
-      'Everything the desk does to somebody BEFORE they play, by the one person standing at the table with the entry list. Check-in is the same act at three sizes — singles entrant, pair, whole event — and marking a member ready is that act again at match granularity: recording that a person has turned up. Setting the court is the reply the desk gives them in the same breath, and it is joined here rather than minting a fifth tournament key, because "may check people in but may not tell them which court" is a distinction the club does not have and nobody could staff.',
+      'Everything the desk does to somebody BEFORE they play, by the one person standing at the table with the entry list. Check-in is the same act at three sizes — singles entrant, pair, whole event — and marking a member ready is that act again at match granularity: recording that a person has turned up. Setting the court is the reply the desk gives them in the same breath, and putting the match on court is the last act of the same sequence — check them in, name the court, confirm they are standing there, send them on. All six are joined here rather than minting new tournament keys, because "may check people in but may not tell them which court" is a distinction the club does not have and nobody could staff. RECORDING THE RESULT IS NOT HERE: that is tournaments.results.* and stays its own key, which is why the Court Management tab carries two levels of control on one screen.',
   },
   'tournaments.draw.noshow.write': {
     label: 'Mark a no-show', area: 'tournaments', group: 'draw', mode: 'write',

@@ -172,3 +172,104 @@ async function setMatchReadyForPlayerImpl(matchId: string, playerId: string, rea
 
   revalidateEventPaths(tournamentId, match.event_id as string);
 }
+
+/**
+ * PUTTING A MATCH ON COURT, AND TAKING IT BACK OFF.
+ *
+ * "this should show 'active match'" — the club owner. It could not, and no amount
+ * of reading harder would have fixed it: `tournament_matches.status` has admitted
+ * 'live' since 00001 and NOTHING HAS EVER WRITTEN IT. Every UPDATE of that column
+ * in both apps produces 'ready', 'pending', 'completed', 'walkover' or 'voided'
+ * and that is the entire set. results.ts:86 READS 'live' when undoing a result,
+ * which is the giveaway — the undo path was written to cope with a state the rest
+ * of the app cannot create. The console said so in its own copy, and 00135 quoted
+ * it while fixing only the court half of the sentence. 00136 documents the rest.
+ *
+ * So "active" is not a display problem, it is a missing transition, and the desk
+ * is the only place that knows. An exec calls two names, watches them walk to
+ * court 3, and presses this.
+ *
+ * WHAT IT BUYS BEYOND A BADGE ON THIS TAB. The player event page already maps
+ * 'live' to "On court now" — a label no member has ever been shown, because
+ * nothing could produce the state behind it. This is what turns that dead string
+ * into the thing an entrant's phone says while they play.
+ *
+ * SAME DESK CAPABILITY, NOT THE SCORE ONE. Calling a match onto court is the last
+ * act of running the door: check them in, tell them the court, confirm they are
+ * standing there, send them on. Recording what happened afterwards is a different
+ * job with a different key, and this tab offers both at their own gates rather
+ * than widening either.
+ *
+ * `stop` IS A CORRECTION, NOT AN OUTCOME. It exists because the other way out of
+ * 'live' is entering a result, and an exec who pressed Start on the wrong row
+ * would otherwise have to fake one. It returns the match to 'ready', which is
+ * where it came from — never to 'pending', because both sides are known by
+ * definition if it was startable.
+ */
+export async function setMatchLive(matchId: string, live: boolean): Promise<ActionResult<void>> {
+  return runAction(async () => { await setMatchLiveImpl(matchId, live); });
+}
+
+async function setMatchLiveImpl(matchId: string, live: boolean) {
+  const admin = await requireCapability('tournaments.draw.checkin.mark.write');
+  const adminClient = createAdminClient();
+
+  const { data: match } = await adminClient
+    .from('tournament_matches')
+    .select('id, status, is_bye, event_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id, event:tournament_events(tournament_id)')
+    .eq('id', matchId)
+    .maybeSingle();
+  if (!match) throw new ExpectedError('Match not found');
+
+  const event = match.event as { tournament_id?: string } | Array<{ tournament_id?: string }> | null;
+  const tournamentId = (Array.isArray(event) ? event[0]?.tournament_id : event?.tournament_id) ?? null;
+  if (!tournamentId) throw new Error('Match is not attached to a tournament');
+  await assertTournamentNotSuspended(adminClient, tournamentId);
+
+  const status = match.status as string;
+
+  if (live) {
+    // A BYE IS NOT PLAYED BY ANYBODY, so it cannot go on court. Refused rather
+    // than hidden, for the reason every guard in this file is doubled: the UI is
+    // a courtesy and this is the boundary.
+    if (match.is_bye) throw new ExpectedError('A skipped match is not played, so it cannot be started.');
+    // ONLY FROM A STARTABLE STATE. 'completed', 'walkover' and 'voided' are
+    // outcomes and starting one would silently discard a recorded result;
+    // 'disputed' is somebody else's open question. The refusals name the state so
+    // an exec can tell which row they hit.
+    if (status === 'live') return; // Idempotent: pressing Start twice is not an error.
+    if (status !== 'ready' && status !== 'pending') {
+      throw new ExpectedError(`This match is ${status} — only a match waiting to be called can be started.`);
+    }
+    // BOTH SIDES KNOWN, which 'ready' already implies but 'pending' does not.
+    // A round-of-64 slot whose feeders have not been played shows TBD on the
+    // tab; starting it would put a name-less fixture on court.
+    const aKnown = !!(match.participant_a_id ?? match.pair_a_id);
+    const bKnown = !!(match.participant_b_id ?? match.pair_b_id);
+    if (!aKnown || !bKnown) {
+      throw new ExpectedError('Both entrants have to be known before this match can go on court.');
+    }
+  } else {
+    if (status !== 'live') return; // Idempotent in this direction too.
+  }
+
+  const { error } = await adminClient
+    .from('tournament_matches')
+    .update({ status: live ? 'live' : 'ready', updated_at: new Date().toISOString() })
+    .eq('id', matchId);
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: tournamentId,
+    event_id: match.event_id as string,
+    match_id: matchId,
+    action: live ? 'match_started' : 'match_start_undone',
+    performed_by: admin.id,
+    details: { previous_status: status },
+  });
+
+  revalidateEventPaths(tournamentId, match.event_id as string);
+}

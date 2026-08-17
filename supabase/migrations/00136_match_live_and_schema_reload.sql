@@ -1,0 +1,105 @@
+-- ============================================================
+-- 00136 — the reload 00135 should have carried, and a status that
+--         finally has a writer
+-- ============================================================
+-- TWO SMALL THINGS, NO DDL. Nothing here adds, drops or alters a column. One
+-- statement tells PostgREST to look again; the rest is a COMMENT and the
+-- reasoning behind it. Safe to run at any time, in any order, repeatedly.
+--
+-- ------------------------------------------------------------
+-- PART ONE — THE NOTIFY 00135 OMITTED
+-- ------------------------------------------------------------
+-- 00135 created a NEW FUNCTION (set_match_ready) and a NEW COLUMN
+-- (tournament_matches.ready_player_ids) and did not reload the schema cache.
+-- That is a real omission against this directory's own practice, and the
+-- practice is unusually well documented here because it has bitten repeatedly:
+--
+--   00064:114  the view exists in Postgres but the job gets PGRST205 until
+--              the cache is reloaded
+--   00086:179  PGRST202/PGRST204, with the app written to fail OPEN on it
+--   00093:370  "PGRST205/PGRST204 — the Baselines tab empty with no error"
+--   00104:289  "it exists in Postgres while every request gets PGRST204"
+--   00092:759, 00110:234 — same line, same reason
+--
+-- And the three files that correctly DON'T reload say exactly why, which is the
+-- distinction 00135 got on the wrong side of:
+--
+--   00096:86, 00100:80, 00130:151/198 — no NOTIFY, because PostgREST caches the
+--   SIGNATURE and those files only changed a function BODY.
+--
+-- 00135 changed neither a body nor nothing: it introduced a signature that had
+-- never existed. Both failure modes were therefore live, and both are silent in
+-- the way this repo keeps getting caught by:
+--
+--   * set_match_ready -> PGRST202, "Could not find the function
+--     public.set_match_ready(...) in the schema cache". The console's ready
+--     pills would do NOTHING AT ALL, because the click handler checked `res.ok`
+--     and dropped the message on the floor (fixed in the same commit as this
+--     file). The court field, being a plain UPDATE of a column that has existed
+--     since 00001, would keep working — so the desk sees half a feature and has
+--     no way to say which half.
+--
+--   * ready_player_ids -> PGRST204 on any NAMED select. The console selects `*`
+--     and is immune (Postgres expands `*`, not PostgREST), but the player event
+--     page NAMES the column and wraps the read in `unwrap`, which raises. A
+--     stale cache there is not a blank card — it is a 500 on the one screen an
+--     entrant opens courtside.
+--
+-- IT APPEARS TO HAVE SELF-HEALED ON STAGING: the owner's second screenshot shows
+-- green ready pills and `2 OF 2 HERE`, so the cache did reload there — Supabase
+-- ships an event trigger (pgrst_ddl_watch) that NOTIFYs on DDL, and a container
+-- restart does it too. That is luck rather than design, and it is exactly the
+-- kind of luck that does not repeat: PRODUCTION HAS NOT HAD 00135 APPLIED YET,
+-- migrations here are applied BY HAND, and if that trigger is absent or the
+-- statement is run outside its scope the first press of a ready pill on a live
+-- Saturday does nothing and says nothing.
+--
+-- One statement, no cost, and it is idempotent by nature.
+
+NOTIFY pgrst, 'reload schema';
+
+-- ------------------------------------------------------------
+-- PART TWO — 'live' HAS A WRITER NOW
+-- ------------------------------------------------------------
+-- tournament_matches.status has admitted 'live' since 00001. NOTHING HAS EVER
+-- WRITTEN IT. Traced through every UPDATE of that column in both apps, the
+-- values actually produced are:
+--
+--   'ready'      brackets.ts:1114, _internal.ts:1850, results.ts:980
+--   'pending'    results.ts:86, results.ts:980
+--   'completed'  results.ts:386
+--   'walkover'   _internal.ts:1647
+--   'voided'     results.ts:623, results.ts:738
+--
+-- and that is the whole set. 'live' and 'disputed' are produced by nothing.
+-- results.ts:86 READS it —
+--
+--     status: nextRow.status === 'ready' || nextRow.status === 'live' ? 'pending' : ...
+--
+-- which is the giveaway: the undo path was written to cope with a state the
+-- rest of the app cannot create. The console said so out loud in EventHeader's
+-- own copy, and 00135 quoted it: "the console has no idea whether a match is on
+-- court right now (nothing writes tournament_matches.court or the 'live' match
+-- status)". 00135 fixed the court half and left this one.
+--
+-- A STATUS NO PATH WRITES IS A STATE THE DESK CAN NEVER SEE. It also made the
+-- player-facing label a lie by omission: the event page maps 'live' to "On court
+-- now", a sentence no member could ever have been shown.
+--
+-- The owner's ask — "this should show 'active match'" — therefore cannot be
+-- satisfied by reading harder. It needs the transition to exist, so the Court
+-- Management tab now owns it: startMatch / stopMatch in
+-- apps/admin/src/lib/tournament-actions/scheduling.ts, gated on the same desk
+-- capability as check-in, the court and the ready marks.
+--
+-- NO CHECK CONSTRAINT IS ADDED to police the transition, and that is deliberate
+-- rather than lazy. A legal-transition constraint would have to know that a
+-- regenerate resets a played match to 'pending', that an undo walks 'completed'
+-- back, and that a void can arrive from any state — three paths that already
+-- move this column freely and correctly. Encoding a state machine now would
+-- refuse repairs the console depends on. The transition is guarded in the action
+-- (only 'ready' or 'pending' may start; only 'live' may stop), where it can be
+-- explained to the exec who tripped it.
+
+COMMENT ON COLUMN public.tournament_matches.status IS
+  'Where this match is in its life. pending = at least one side is still unknown. ready = both sides are known and it can be called. live = it is BEING PLAYED RIGHT NOW; written only by startMatch/stopMatch on the console''s Court Management tab, and unwritten by anything at all before 00136 — the value existed in the CHECK from 00001 and no code path produced it, which is why the player app''s "On court now" label had never been shown to anybody. completed = a score is recorded. walkover = awarded without play. voided = struck, recoverable via unvoidMatch. disputed = admitted by the CHECK and still written by nothing. Deliberately NOT policed by a transition constraint: regenerate, undo and void all move this column non-linearly by design, and the ordering rules live in the actions where a refusal can be explained.';

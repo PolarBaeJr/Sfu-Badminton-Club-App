@@ -90,8 +90,8 @@ export interface DrawCapabilities {
    */
   generate: boolean;
   /**
-   * tournaments.draw.checkin.mark.write — the Desk tab's court field and its
-   * per-player ready pills.
+   * tournaments.draw.checkin.mark.write — the Court Management tab: its court
+   * field, its per-player ready pills, and starting or stopping a match.
    *
    * THE SAME KEY CHECK-IN ALREADY ASKS, and no new capability was minted for
    * either control. Marking a member ready IS check-in, at match granularity
@@ -101,10 +101,38 @@ export interface DrawCapabilities {
    * See capability-gates.ts, where that merge is argued and where both server
    * actions are named.
    *
-   * Feeds the Desk tab rather than the participants tab, which is why it sits
-   * beside `generate` down here.
+   * Feeds the Court Management tab rather than the participants tab, which is
+   * why it sits beside `generate` down here.
+   *
+   * NOT the score-entry key. Recording a result is gated separately — see the
+   * tab, which carries two levels of control on one screen deliberately.
    */
-  runDesk: boolean;
+  manageCourts: boolean;
+  /**
+   * tournaments.results.enter.write — the Score button on the Court Management
+   * tab, which opens the SHARED ScoreEntryDialog.
+   *
+   * A SECOND LEVEL OF CONTROL ON ONE SCREEN, deliberately. Running the door and
+   * recording what happened are different jobs: an exec trusted to call names and
+   * point at court 3 is not automatically trusted to decide who won. So this tab
+   * asks two keys and offers two sets of controls, rather than widening either.
+   *
+   * THIS IS ALSO NEW BEHAVIOUR, not a transcription. Not one of the eight
+   * `tournaments.results.*` capabilities has ever reached a component: BracketTab
+   * and RoundRobinTab gate score entry on the match's STATUS alone and let the
+   * server action refuse on click. That works, but it offers a control that
+   * cannot succeed — the same dead invitation `participantControls` was written to
+   * remove from the participants tab. The server actions still re-check; this
+   * only stops the button appearing to someone it would refuse.
+   *
+   * ONE KEY FOR THE OPENER, and it is the primary act rather than the union.
+   * `enter.write` is what entering a score asks; the dialog's walkover, void and
+   * slot-repair paths each hold their own key and still enforce it inside. Anyone
+   * holding one of those but not `enter.write` reaches them from the Bracket or
+   * Round Robin tab exactly as before — this tab adds a route, it does not remove
+   * one.
+   */
+  enterResult: boolean;
 }
 
 export interface ParticipantControls {

@@ -37,7 +37,7 @@ import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
 import { ResultsTab } from './ResultsTab';
 import { LeaderboardTab } from './LeaderboardTab';
-import { MatchDeskTab } from './MatchDeskTab';
+import { CourtManagementTab } from './CourtManagementTab';
 
 // 'pool' is a tab of its own rather than a mode of 'bracket' (00107). On a
 // pool_to_bracket event BOTH halves exist at once from the moment the knockout
@@ -45,14 +45,21 @@ import { MatchDeskTab } from './MatchDeskTab';
 // fixture list, the bracket is a tree. One tab that switched between them would
 // hide half the event behind a control, and would have no answer for the exec
 // who wants the standings open while entering a quarter-final.
-// 'desk' is where an event is RUN rather than recorded. Everything else here is
-// a view of what has happened; this one is the two live facts nothing in the
-// console had before — which court a match is on, and who is standing in front
-// of you. It exists as a tab of its own because the bracket card is a single
-// <button> (an input inside it would nest interactives) and because "which
-// matches still have no court" is a sorted list, not a control on another
-// screen.
-type TabId = 'participants' | 'checkin' | 'desk' | 'pool' | 'bracket' | 'results' | 'leaderboard';
+// 'courts' is where an event is RUN rather than recorded — named "Court
+// Management" at the owner's request, having shipped as "Desk". Everything else
+// here is a view of what has happened; this one carries the facts the console
+// never had: which court a match is on, who is standing in front of you, which
+// one is next, which one is being played, and — since the owner asked for score
+// entry "on this side instead of the main thing" — the result too.
+//
+// A TAB OF ITS OWN because the bracket card is a single <button>, so the court
+// input and the ready pills inside a row would nest interactives.
+//
+// THE ID IS NOT STORED ANYWHERE. It is `useState` only — no URL, no
+// localStorage — so renaming it from 'desk' orphans nothing. Capability strings
+// are the opposite (they live in permission_grants and
+// permission_baselines.capabilities as data) and none of them was touched.
+type TabId = 'participants' | 'checkin' | 'courts' | 'pool' | 'bracket' | 'results' | 'leaderboard';
 
 interface Props {
   tournament: TournamentRow;
@@ -113,7 +120,12 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // and a court set on one is history — the tab would be a working list with no
   // work in it.
   if (hasDraw && status !== 'completed') {
-    tabs.push({ id: 'desk', label: 'Desk', icon: <MapPin className="w-4 h-4" /> });
+    // LONGER LABEL THAN THE REST, and it fits by construction rather than by
+    // luck: the tab row is `overflow-x-auto` with `min-w-fit` and every button is
+    // `whitespace-nowrap`, so a long label scrolls the row horizontally and can
+    // never wrap it. The text is also `hidden sm:inline`, so on a phone this is
+    // the icon alone. Measured at 390 / 768 / 1280 against the compiled CSS.
+    tabs.push({ id: 'courts', label: 'Court Management', icon: <MapPin className="w-4 h-4" /> });
   }
 
   if (hasDraw && playsRoundRobin(format)) {
@@ -146,9 +158,9 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // Default to the most relevant tab
   // The half that is CURRENT, not a fixed tab id — an exec opening a
   // pool_to_bracket event mid-round-robin wants the round robin.
-  // The desk is not the default even while an event is live: an exec opening
-  // this page mid-event is as likely to be entering a score as calling a match,
-  // and moving the landing tab under them would be a change nobody asked for.
+  // Court Management is not the default even while an event is live: an exec
+  // opening this page mid-event is as likely to be reading the draw as calling a
+  // match, and moving the landing tab under them is a change nobody asked for.
   const defaultTab: TabId = hasResultsTab(status) ? 'results'
     : ['pool_generated', 'pool_live'].includes(status) ? 'pool'
     : ['bracket_generated', 'live'].includes(status) ? (endsInKnockout(format) ? 'bracket' : 'pool')
@@ -276,13 +288,19 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             waiverStates={waiverStates}
           />
         )}
-        {activeTab === 'desk' && (
-          <MatchDeskTab
+        {activeTab === 'courts' && (
+          <CourtManagementTab
             matches={matches}
+            // The shared ScoreEntryDialog resolves the per-round match shape from
+            // the event row, so this tab needs it now that it mounts the dialog.
+            event={event}
             participants={participants}
             pairs={pairs}
             isDoubles={isDoubles}
-            canRunDesk={drawCapabilities.runDesk}
+            // TWO KEYS, TWO SETS OF CONTROLS, on one screen. Running the door is
+            // not the same permission as deciding who won.
+            canManageCourts={drawCapabilities.manageCourts}
+            canEnterResult={drawCapabilities.enterResult}
           />
         )}
         {activeTab === 'pool' && (
