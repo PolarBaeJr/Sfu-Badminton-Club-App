@@ -145,11 +145,20 @@ export function ActiveTournamentCard({
         style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em' }}
       >
         {/* dayLabel gives "TODAY" on the day, which is the whole point of the
-            card, and a dated weekday on a multi-day tournament's later days. */}
+            card, and a dated weekday on a multi-day tournament's later days.
+
+            THE COUNT DROPS OUT AT ZERO rather than printing "0 PLAYERS". It is
+            reachable — an event left at `live` whose entrants all withdrew, and
+            occupiesAPlace correctly excludes every one of them — and "UNDER WAY
+            / 0 PLAYERS" reads as a broken card, which is the exact impression
+            the not-entered branch below is built to avoid. A card that says only
+            the day is still true. */}
         {[
           dayLabel(startDate.slice(0, 10), todayKey),
-          `${entered} ${entered === 1 ? 'PLAYER' : 'PLAYERS'}`,
-        ].join(' · ')}
+          entered > 0 ? `${entered} ${entered === 1 ? 'PLAYER' : 'PLAYERS'}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
       </div>
 
       {mine.length > 0 ? (
