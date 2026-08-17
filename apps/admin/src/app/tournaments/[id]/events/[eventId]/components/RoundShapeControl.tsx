@@ -198,8 +198,14 @@ export function RoundShapeControl({
   const draftGames = Number(draft?.games);
   const draftPoints = Number(draft?.points);
   const draftLegal = isLegalCustomGames(draftGames) && isLegalCustomPoints(draftPoints);
-  // Nothing to apply when the typed pair is what is already saved — an Apply
-  // that writes the current value would report success for a no-op.
+  // Nothing to apply when the typed pair is what this round ALREADY STORES — an
+  // Apply that rewrites the stored value would report success for a no-op.
+  //
+  // Compared against the stored columns, NOT the resolved shape, so on an
+  // INHERITING round (both columns NULL) the seeded 3/21 counts as a change and
+  // Apply is live. That is right: pinning a round to an explicit 3/21 stops it
+  // following the event, which is a real decision even though today's numbers
+  // are identical.
   const draftChanged =
     draftLegal
     && (draftGames !== (first?.games_per_match ?? null) || draftPoints !== (first?.points_per_game ?? null));

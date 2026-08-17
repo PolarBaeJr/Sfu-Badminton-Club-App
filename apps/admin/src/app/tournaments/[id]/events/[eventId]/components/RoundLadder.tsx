@@ -98,6 +98,17 @@ export function RoundLadder({ event, rounds, thirdPlace, phase }: Props) {
   ].map((row) => {
     const first = row.matches[0];
     const shape = resolveMatchShape(first ?? null, event);
+    // DO THE MATCHES IN THIS ROUND ACTUALLY AGREE? setRoundMatchShape writes the
+    // pair to every match in the round and shouts if only some of the writes
+    // land ("two quarter-finals to 15 and two to 21 is a draw nobody can
+    // referee"), but nothing has ever SHOWN that state — the old strip read
+    // matches[0] and reported its shape as the round's. A table of aligned
+    // definite answers makes that a stronger claim than one select did, so the
+    // disagreement is detected rather than averaged away. Re-picking the shape
+    // is the whole remedy, which is why the row stays editable.
+    const sameAsFirst = (m: TournamentMatchRow) =>
+      (m.games_per_match ?? null) === (first?.games_per_match ?? null)
+      && (m.points_per_game ?? null) === (first?.points_per_game ?? null);
     return {
       ...row,
       resolved: describeMatchShape(shape),
@@ -106,6 +117,7 @@ export function RoundLadder({ event, rounds, thirdPlace, phase }: Props) {
       // question about the columns, and hasOwnMatchShape is the same predicate
       // the rest of 00108 answers it with.
       overrides: hasOwnMatchShape(first),
+      mixed: row.matches.length > 1 && !row.matches.every(sameAsFirst),
       locked: row.matches.some(isPlayedMatch) || event.status === 'completed',
     };
   });
@@ -237,10 +249,21 @@ export function RoundLadder({ event, rounds, thirdPlace, phase }: Props) {
                   >
                     <span className="flex items-center gap-1.5">
                       <span>{row.name}</span>
-                      {row.overrides && (
+                      {row.overrides && !row.mixed && (
                         <span className="rounded-[4px] bg-[var(--color-accent)] px-1 py-px text-[9px] font-bold uppercase tracking-wide text-[var(--bg-base)]">
                           <span className="sr-only">Set for this round, not inherited from the event: </span>
                           Set
+                        </span>
+                      )}
+                      {row.mixed && (
+                        <span
+                          className="rounded-[4px] bg-[var(--color-danger)] px-1 py-px text-[9px] font-bold uppercase tracking-wide text-[var(--bg-base)]"
+                          title="The matches in this round are not all set to the same shape. Pick one below to put the whole round back in step."
+                        >
+                          <span className="sr-only">
+                            The matches in this round do not all have the same shape:{' '}
+                          </span>
+                          Mixed
                         </span>
                       )}
                     </span>
@@ -258,12 +281,21 @@ export function RoundLadder({ event, rounds, thirdPlace, phase }: Props) {
                   {/* The weight lives in its own column so the eye can run down
                       it. In the old strip it sat under each select, which is
                       where the eight identical copies were. */}
+                  {/* No single weight to print for a round that is not one
+                      shape — matches[0]'s figure would be the guess the "Mixed"
+                      badge exists to refuse. */}
                   <td
                     className="py-1 text-right align-middle font-mono text-[11px] text-[var(--text-muted)] whitespace-nowrap"
-                    title={row.elo.spoken}
+                    title={row.mixed ? undefined : row.elo.spoken}
                   >
-                    <span className="sr-only">{row.elo.spoken}</span>
-                    <span aria-hidden="true">{row.elo.short}</span>
+                    {row.mixed ? (
+                      <span className="text-[var(--color-danger)]">not one shape</span>
+                    ) : (
+                      <>
+                        <span className="sr-only">{row.elo.spoken}</span>
+                        <span aria-hidden="true">{row.elo.short}</span>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
