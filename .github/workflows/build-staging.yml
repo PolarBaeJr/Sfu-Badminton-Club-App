@@ -11,10 +11,14 @@ name: Build & push staging images
 # it at a staging .env would move only the server and leave every browser-side
 # query aimed at the production database.
 #
-# Deliberately NOT gated on the test suite. Staging is where you go to find out
-# whether something works; refusing to deploy a red commit there would remove
-# the one place it is safe to look at one. Production is the branch that gets
-# the gate.
+# Gated on the same reusable suite production uses — but with an escape hatch,
+# because the old ungated behaviour was a considered choice and not an
+# oversight. Staging is where you go to find out whether something works, so
+# refusing to deploy a red commit would remove the one place it is safe to look
+# at one. What was missing was the DELIBERATE part: `docker build` catches a
+# compile error and nothing else, so a red lint or test reached staging by
+# default rather than by decision. A push now runs CI first; `workflow_dispatch`
+# skips it, which is how you ship a knowingly-red commit when debugging.
 
 on:
   push:
@@ -35,8 +39,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The same reusable suite build-images.yml calls. Skipped on
+  # workflow_dispatch — that is the override, and it is the only way past this
+  # gate, so shipping red to staging stays possible but has to be chosen.
+  #
+  # CONCURRENCY, which is the sharp edge here. ci.yml groups itself as
+  # `ci-${{ github.workflow }}-${{ github.ref }}` with cancel-in-progress, and a
+  # push to deploy/docker-prod now starts TWO callers of it on the same ref
+  # (build-images.yml and this file). They do not collide: GitHub documents that
+  # inside a called workflow "the `github` context is always associated with the
+  # caller workflow", so github.workflow resolves to each caller's own name and
+  # the two groups differ by it. If that ever stopped holding, cancel-in-progress
+  # would kill one `verify` job, `needs: verify` would refuse to build, and a
+  # production deploy would silently not ship — so if you rename either workflow,
+  # keep the two names distinct.
+  verify:
+    if: github.event_name != 'workflow_dispatch'
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: verify
+    # `always()` is required or this is skipped whenever verify is, which is
+    # every workflow_dispatch. 'skipped' therefore means "dispatched on
+    # purpose"; a real failure or a cancellation leaves a different result and
+    # stops the build. Nothing here can deadlock: verify either runs to a
+    # terminal state or is skipped outright, and both are covered.
+    if: always() && (needs.verify.result == 'success' || needs.verify.result == 'skipped')
     runs-on: ubuntu-24.04-arm
+    # The tag metadata-action actually generated, handed to `publish` so that
+    # job never has to reconstruct it from github.sha and get the convention
+    # wrong. A matrix job's outputs are last-writer-wins across legs, which is
+    # normally a trap; here it is safe because `version` is the tag VALUE and
+    # both legs produce the identical string — only the image name differs.
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
     strategy:
       matrix:
         app: [player, admin]
@@ -75,11 +111,20 @@ jobs:
           # nothing can then confuse a staging image for a production image, and
           # the auto-updater watching :latest here cannot see production's.
           images: ghcr.io/${{ github.repository_owner }}/badminton-${{ matrix.app }}-staging
-          # latest      — the moving tag the Pi's staging containers track
-          # sha-<sha>   — immutable, for pinning or rolling back
+          # IMMUTABLE TAG ONLY. `latest` — the moving tag the Pi's staging
+          # containers track, and therefore the thing that actually deploys — is
+          # moved by the `publish` job below, once, after BOTH matrix legs have
+          # succeeded. Publishing it here made the two apps independent: admin
+          # could fail while player's `latest` had already moved, leaving staging
+          # running two different revisions of the same commit's pair.
+          #
+          # ONE tag, so `steps.meta.outputs.version` is exactly it and the
+          # publish job below can be handed the real value instead of rebuilding
+          # it. format=short is the default and is spelled out only so the tag
+          # you see in GHCR matches what is written here; nothing depends on the
+          # length, which DOCKER_METADATA_SHORT_SHA_LENGTH can change.
           tags: |
-            type=raw,value=latest
-            type=sha,prefix=sha-
+            type=sha,prefix=sha-,format=short
 
       - uses: docker/build-push-action@v6
         with:
@@ -113,3 +158,53 @@ jobs:
             NEXT_PUBLIC_SENTRY_DSN=
             NEXT_PUBLIC_POSTHOG_KEY=
             NEXT_PUBLIC_POSTHOG_HOST=
+
+  # THE DEPLOY. Everything above only publishes immutable sha- tags, which
+  # nothing on the Pi watches; moving `latest` is what the auto-updater sees, and
+  # this job moves both of them or neither. `needs: build` covers the whole
+  # matrix, so one failed leg leaves BOTH staging deploy references where they
+  # were rather than half-advancing the pair.
+  #
+  # imagetools create copies the existing manifest by digest — no rebuild, no
+  # second arm64 build, and the bits behind :latest are byte-identical to the
+  # sha- tag this commit already produced.
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move :latest on both staging images
+        env:
+          OWNER: ${{ github.repository_owner }}
+          # The tag the build job actually pushed, not a guess at how
+          # metadata-action spells one. Reconstructing it from github.sha would
+          # break silently the day the short-sha length changed: imagetools
+          # would 404 on a tag nobody pushed, :latest would not move, and the
+          # deploy would simply not happen.
+          TAG: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TAG" ]; then
+            echo "::error::build job produced no image tag; refusing to touch :latest"
+            exit 1
+          fi
+          # GHCR paths are lowercase; github.repository_owner is not (PolarBaeJr).
+          # metadata-action lowercases for us in the build job, so this is the one
+          # place the raw value would have leaked through as a 404 on push.
+          owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
+          tag="$TAG"
+          for app in player admin; do
+            image="ghcr.io/${owner}/badminton-${app}-staging"
+            echo "promoting ${image}:${tag} -> ${image}:latest"
+            docker buildx imagetools create -t "${image}:latest" "${image}:${tag}"
+          done

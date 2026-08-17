@@ -52,9 +52,13 @@ services:
       # It would NOT be safe if staging shared production's package.
       proxy.autoupdate: "true"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      # Same test as production — see docker-compose.yml for the full reasoning.
+      # In short: manual redirects so a 307 to /login cannot be followed into a
+      # cheerful 200, exactly 200 rather than anything under 500, and a fixed
+      # {"ok":true} body so HTML under a 200 cannot pass.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready',{redirect:'manual'}).then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 20s
 
@@ -81,10 +85,10 @@ services:
       # See the player service above — safe only because this is its own package.
       proxy.autoupdate: "true"
     healthcheck:
-      # Probe /admin, not /: with a basePath the root is a 404, and a status<500
-      # test would cheerfully call that healthy.
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/admin').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      # The /admin prefix is required — the image is built with basePath=/admin,
+      # so the unprefixed path is a 404, and a 404 now fails the check.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/admin/api/health/ready',{redirect:'manual'}).then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 20s
