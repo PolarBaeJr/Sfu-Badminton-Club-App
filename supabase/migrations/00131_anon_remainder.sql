@@ -320,6 +320,13 @@ BEGIN
      -- 00093's fourth. See the column comment: this one is a promise of access
      -- rather than access, and the promise is kept by the next propagation.
      OR NEW.permission_baseline_id IS DISTINCT FROM OLD.permission_baseline_id
+     -- Added by 00092 and RESTORED HERE. This file was written from a body that
+     -- predated it and dropped it silently; assign_member_code() sets it once
+     -- and it is permanent, so there is no legitimate self-edit including
+     -- clearing it. Two migrations rewrote this function in parallel on the
+     -- same day and each lost a column the other kept — which is why both now
+     -- carry every column, so the apply order cannot decide what is guarded.
+     OR NEW.member_code  IS DISTINCT FROM OLD.member_code
      OR NEW.is_trainer   IS DISTINCT FROM OLD.is_trainer THEN
     RAISE EXCEPTION 'Not authorized to modify privileged player fields';
   END IF;

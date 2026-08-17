@@ -762,13 +762,34 @@ COMMENT ON FUNCTION public.admin_access_level(uuid) IS
 CREATE OR REPLACE FUNCTION public.guard_player_privileged_columns()
 RETURNS trigger
 LANGUAGE plpgsql
-SECURITY DEFINER
+-- SECURITY INVOKER, and it is load-bearing: under DEFINER, current_user is the
+-- owner and the first branch below collapses back into the bypass 00131
+-- removed. 00131 asserts prosecdef = false for exactly this reason.
+SECURITY INVOKER
 SET search_path TO 'public'
 AS $$
 BEGIN
-  -- auth.uid() IS NULL covers the service-role console, which has already
-  -- checked the caller's level in a server action.
-  IF auth.uid() IS NULL OR is_admin(auth.uid()) THEN
+  -- THE OPENING IS 00131'S, NOT THIS FILE'S ORIGINAL.
+  --
+  -- This migration was written in parallel with 00131, from a body that
+  -- predated it, and shipped `IF auth.uid() IS NULL OR is_admin(auth.uid())`.
+  -- Applied in order that silently reverted 00131's hardening: auth.uid() is
+  -- NULL for `anon` as well as for the service-role console, so the guard
+  -- returned early for an unauthenticated caller. The table-grant revokes in
+  -- 00128/00131 mask it today; any future anon grant would unmask it.
+  --
+  -- BOTH halves are required: current_user alone would admit a member inside a
+  -- postgres-owned SECURITY DEFINER function, and auth.uid() alone is what let
+  -- anon through.
+  IF (current_user = 'service_role' OR current_user NOT IN ('anon', 'authenticated'))
+     AND auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- An admin editing a row from the player app, on the browser key.
+  -- auth.uid() IS NOT NULL first, so this branch can never be the one that
+  -- decides an anonymous request.
+  IF auth.uid() IS NOT NULL AND is_admin(auth.uid()) THEN
     RETURN NEW;
   END IF;
 
@@ -797,7 +818,11 @@ BEGIN
        -- Added by 00132. Written only by ensure_player_for_user and cleared
        -- only by an admin resolving it; a row that arrives carrying one is
        -- inventing a claim decision nobody made.
-       OR NEW.privilege_claim_review IS NOT NULL THEN
+       OR NEW.privilege_claim_review IS NOT NULL
+       -- 00093, restored alongside the UPDATE arm: pre-staging in its purest
+       -- form, a label that grants nothing today and is filled in by the next
+       -- edit to that baseline.
+       OR NEW.permission_baseline_id IS NOT NULL THEN
       RAISE EXCEPTION 'Not authorized to create a privileged player row';
     END IF;
     RETURN NEW;
@@ -832,6 +857,11 @@ BEGIN
      -- admin's only durable prompt to review a privilege the member did not
      -- get — see the section header.
      OR NEW.privilege_claim_review IS DISTINCT FROM OLD.privilege_claim_review
+     -- 00093's fourth, RESTORED: this file dropped it. It is a promise of
+     -- access rather than access itself, and clearing it makes baseline
+     -- propagation skip the member — so a capability the club revoked stays
+     -- revoked for everyone except them.
+     OR NEW.permission_baseline_id IS DISTINCT FROM OLD.permission_baseline_id
      OR NEW.is_trainer   IS DISTINCT FROM OLD.is_trainer THEN
     RAISE EXCEPTION 'Not authorized to modify privileged player fields';
   END IF;

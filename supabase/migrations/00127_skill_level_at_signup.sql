@@ -261,8 +261,17 @@ BEGIN
      -- decided" looks like: create_player_with_rating seeds every new row at
      -- exactly that value. A rating that differs from it, with no matches
      -- behind it, can only have been set by hand.
-     AND singles_elo = v_default_elo
-     AND doubles_elo = v_default_elo;
+     -- EITHER the configured default OR the literal 400 that creation actually
+     -- writes. create_player_with_rating and 00132's ensure_player_for_user both
+     -- INSERT 400 outright rather than reading rating_defaults, so on a club
+     -- that has tuned default_elo to anything else every fresh row would fail
+     -- `= v_default_elo` and the tier seed would silently refuse every member
+     -- while still recording their claimed tier — the screen promising one
+     -- starting rating and the database keeping another. Accepting both values
+     -- keeps "nobody has decided yet" true under either creation path; a rating
+     -- that matches neither has been touched by hand and is still protected.
+     AND singles_elo IN (v_default_elo, 400)
+     AND doubles_elo IN (v_default_elo, 400);
 
   GET DIAGNOSTICS v_seeded = ROW_COUNT;
   RETURN v_seeded > 0;
