@@ -76,7 +76,9 @@ See `backup/README.md` for the backup scripts and the rclone/crypt setup.
 
 ## Manage admins & execs
 
-Roles live on the `players` table (`role` = `player`/`admin`, `is_exec` = true/false). Prefer the **admin console** (Members → edit) to change them. Direct SQL (last resort, on the server):
+Roles live on the `players` table (`role` = `player`/`admin`, `is_exec` = true/false, `is_trainer` = true/false). Prefer the **admin console** — **Permissions**, and only Permissions. The Members edit dialog used to carry a "Console access" dropdown and no longer does: the server action refuses those three columns from every caller now, so the Permissions page is the one place the change can be made, and it is the only one that checks you are not editing yourself, that you are not touching an admin, and that you are not handing out more than you hold.
+
+Direct SQL (last resort, on the server) — note that it bypasses all of the above **and writes no audit row**, so nothing on `/accounts` will show that it happened:
 
 ```sh
 # promote to admin

@@ -1,11 +1,13 @@
 // WHAT CONSOLE ACCESS SOMEBODY HAS, as one question with four answers, and the
 // translation between that answer and the three columns that store it.
 //
-// ONE MAPPING, TWO SCREENS. This began inside the player Edit dialog and moved
-// here when /permissions grew a console-access control of its own: two places
-// that both turn "Admin" into a role and two booleans is two places that can
-// disagree about what Admin means, and a disagreement there is a privilege bug
-// rather than a rendering one.
+// ONE MAPPING, AND NOW ONE EDITING SCREEN. This began inside the player Edit
+// dialog and moved here when /permissions grew a console-access control of its
+// own, because two places that both turn "Admin" into a role and two booleans is
+// two places that can disagree about what Admin means. The club owner has since
+// taken the control off the Edit dialog entirely — "as its only admins who will
+// be mainly editing permissions" — so /permissions is the only screen that SETS
+// a level. /accounts still reads the mapping, to label a level it is showing.
 //
 // NOT a 'use server' module and deliberately free of any Supabase, Next or React
 // import — a server action and a client component both import it, which is the
@@ -14,8 +16,13 @@
 // This module does NOT write anything and is not a boundary. The three columns
 // it names are the hard floor in ./player-field-access.ts, refused to anyone
 // below admin under all circumstances and reachable by no capability; the write
-// goes through updatePlayer(), which is where that floor is enforced.
+// goes through writeConsoleLevel() in actions/permissions.ts, which is the one
+// writer of them on an existing member and is not exported. updatePlayer() used
+// to be the other one and now refuses them from every caller.
+import { ExpectedError } from '@badminton/shared';
+import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
 import { accessLevelFor, type AccessLevel } from '@badminton/shared/src/utils/access-level';
+import type { Capability } from './permissions';
 
 /** The four answers, in the order they are offered. */
 export type ExecRole = 'none' | 'executive' | 'trainer' | 'admin';
@@ -69,4 +76,76 @@ export function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec:
 export function accessForLevel(level: AccessLevel | null): ExecRole {
   return EXEC_ROLE_OPTIONS.find((o) => accessLevelFor(fromRoleValue(o.value)) === level)?.value
     ?? 'none';
+}
+
+// ---------------------------------------------------------------------------
+// GRANT CLOSURE ON A LEVEL
+// ---------------------------------------------------------------------------
+// MOVED HERE FROM actions/permissions.ts BECAUSE IT ACQUIRED A SECOND CALLER,
+// and a second copy of this is a second place a check can be forgotten — which
+// is exactly the defect the one-console-access-path change exists to remove.
+// The callers are setConsoleAccess (the /permissions control) and
+// resolvePrivilegeClaimReview (the roster-claim restore on /players): two
+// different acts, both of which hand somebody a console LEVEL, and therefore
+// both bounded by the same rule.
+//
+// The naming helpers came with it for the same reason: a refusal that lists
+// capabilities has to spell them the way the rest of the console does, and
+// there is one vocabulary.
+
+/** "Varsity notes (write)" — how a capability is named in a refusal. */
+function nameOf(capability: Capability): string {
+  const entry = CAPABILITY_GATES[capability];
+  return `${entry.label} (${entry.mode})`;
+}
+
+export function listOf(capabilities: readonly Capability[]): string {
+  return capabilities.map(nameOf).join(', ');
+}
+
+export function missingFrom(
+  held: ReadonlySet<Capability>,
+  wanted: readonly Capability[],
+): Capability[] {
+  return wanted.filter((capability) => !held.has(capability));
+}
+
+/**
+ * Nobody hands out — or takes away — what they do not hold themselves, measured
+ * on the capability set a LEVEL resolves to rather than on a delta.
+ *
+ * BOTH DIRECTIONS, AND BOTH BEFORE ANY WRITE.
+ *
+ *   `before`  what the target's resolved set is NOW. Stops a narrowly-scoped
+ *             holder reaching into somebody richer than they are — which, with
+ *             no grant involved at all, is the denial-of-access half of the act:
+ *             taking the console away from a colleague who was elected to use it.
+ *   `after`   what it WOULD BE. This is what stops a trainer-sized holder minting
+ *             an executive, and it is why one capability covers both levels
+ *             rather than two: the graduation is a consequence of the baselines,
+ *             not of a second tick box that would have to be kept in step.
+ *
+ * The caller computes `after` from the ACTUAL post-change state, because whether
+ * a stored composition survives the move decides which baseline underpins it —
+ * see the note at each call site. Reading the wrong one here would make the check
+ * wrong in exactly the case it matters.
+ */
+export function assertLevelClosure(
+  actorSet: ReadonlySet<Capability>,
+  before: ReadonlySet<Capability>,
+  after: ReadonlySet<Capability>,
+): void {
+  const outOfReach = missingFrom(actorSet, [...before]);
+  if (outOfReach.length > 0) {
+    throw new ExpectedError(
+      `You cannot change this person's console access: they hold ${listOf(outOfReach)}, which you do not.`,
+    );
+  }
+
+  const wouldExceed = missingFrom(actorSet, [...after]);
+  if (wouldExceed.length > 0) {
+    throw new ExpectedError(
+      `That would give them ${listOf(wouldExceed)}, which you do not hold.`,
+    );
+  }
 }

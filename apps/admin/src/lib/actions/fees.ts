@@ -18,9 +18,18 @@ import {
 import { isWaivedFee } from '../fee-status';
 import { requireCapability } from './_shared';
 
-// Club-admin markers: is_exec (executive team) and fee_exempt (exempted from
-// the club fee). Neither affects gameplay, ratings, or leaderboards — they
-// only control the fee-collection list.
+// The club-fee marker: fee_exempt exempts a member from the club fee. It does
+// not affect gameplay, ratings or leaderboards — it only controls the
+// fee-collection list.
+//
+// IT USED TO WRITE is_exec AS WELL, and that made this a second way to hand
+// somebody the console: is_exec is one of the three columns admin_access_level
+// resolves a level from. Console access is now set in exactly one place —
+// /permissions, through setConsoleAccess, which refuses a self-edit, refuses a
+// non-admin touching an admin, checks grant closure both before and after, and
+// demands a reason — and none of that was reachable from a fee screen. An exec
+// who also needs to stop paying is now two decisions in two places, which is
+// what they always were.
 export async function updatePlayerFlags(playerId: string, flags: PlayerFlagsInput) {
   parseOrThrow(playerFlagsSchema, flags);
   const admin = await requireCapability('fees.playerflags.write');
@@ -28,13 +37,13 @@ export async function updatePlayerFlags(playerId: string, flags: PlayerFlagsInpu
 
   const { data: oldPlayer } = await adminClient
     .from('players')
-    .select('is_exec, fee_exempt')
+    .select('fee_exempt')
     .eq('id', playerId)
     .single();
 
   const { error } = await adminClient
     .from('players')
-    .update({ is_exec: flags.is_exec, fee_exempt: flags.fee_exempt })
+    .update({ fee_exempt: flags.fee_exempt })
     .eq('id', playerId);
   if (error) throw new Error(error.message);
 

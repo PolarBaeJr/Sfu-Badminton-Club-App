@@ -18,6 +18,7 @@ export function PrivilegeReviewActions({
   playerName,
   review,
   canResolve,
+  isSelf,
 }: {
   playerId: string;
   playerName: string;
@@ -25,6 +26,11 @@ export function PrivilegeReviewActions({
   /** players.consoleaccess.write. The server action is the real gate; this only
    *  keeps somebody from being offered a button guaranteed to refuse them. */
   canResolve: boolean;
+  /** This row is the viewer's own. resolvePrivilegeClaimReview refuses that
+   *  before it reads anything — the same self-edit refusal setConsoleAccess
+   *  makes, and for the same reason: restoring your own withheld privileges is
+   *  the one move that would let this capability promote its holder. */
+  isSelf: boolean;
 }) {
   const [decision, setDecision] = useState<'restore' | 'dismiss' | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -32,6 +38,19 @@ export function PrivilegeReviewActions({
   const { toast } = useToast();
 
   if (!canResolve) return null;
+
+  // SAID RATHER THAN SILENTLY DROPPED, which is how /permissions handles the
+  // same case on its console-access control. Returning null here would leave a
+  // review badge on your own row with nothing beside it and no explanation, and
+  // "why can I not act on this" is a worse question than the answer.
+  if (isSelf) {
+    return (
+      <p className="px-3 text-xs text-[var(--text-muted)] max-w-[42ch]">
+        You cannot resolve your own review — restoring your own privileges is the one
+        change that would let you promote yourself. Ask another admin.
+      </p>
+    );
+  }
 
   const held = describePrivileges(review.withheld);
   const kept = describePrivileges(review.kept);

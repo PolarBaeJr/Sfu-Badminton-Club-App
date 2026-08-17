@@ -15,39 +15,25 @@ import { updatePlayer, approvePlayer } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import type { Player, Rating } from '@badminton/shared';
 
-// One question — what console access does this person have — instead of a role
-// select plus an is_exec flag plus a trainer switch. "Admin + Executive" is gone
-// because admin already outranks exec everywhere (accessLevelFor takes the
-// highest level held), so the pair was never a distinct state.
-const EXEC_ROLE_OPTIONS = [
-  { value: 'none', label: 'None — ordinary member' },
-  { value: 'executive', label: 'Executive' },
-  { value: 'trainer', label: 'Varsity trainer' },
-  { value: 'admin', label: 'Admin' },
-];
+// NO CONSOLE-ACCESS CONTROL HERE ANY MORE. This form used to carry a "Console
+// access" select between Status and Membership, mapping four answers onto
+// role / is_exec / is_trainer and posting them through updatePlayer. The club
+// owner: "i dont think the console access should be there anymore… since execs
+// wouldnt require it anymore… as its only admins who will be mainly editing
+// permissions."
+//
+// It is decided on /permissions instead, through setConsoleAccess, which is the
+// only place that refuses a self-edit, refuses a non-admin touching an admin,
+// checks grant closure on the target's whole resolved set both before and after,
+// and clears a stored composition the new level would strand. This form had none
+// of that — it had `isAdmin`, and a reason box.
+//
+// REMOVING THE CONTROL IS THE COSMETIC HALF. updatePlayer refuses the three
+// columns outright now (assertNoConsoleAccessFields), for admins too, so this is
+// not a control that merely stopped being drawn.
 
-type ExecRole = 'none' | 'executive' | 'trainer' | 'admin';
-
-function toRoleValue(role: string, isExec: boolean, isTrainer: boolean): ExecRole {
-  if (role === 'admin') return 'admin';
-  if (isExec) return 'executive';
-  if (isTrainer) return 'trainer';
-  return 'none';
-}
-
-// Admin implies is_exec: they hold every exec power already, and the club's
-// admin sits on the exec team, so they belong on the public /exec page too.
-function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec: boolean; is_trainer: boolean } {
-  switch (v) {
-    case 'admin':     return { role: 'admin',  is_exec: true,  is_trainer: false };
-    case 'executive': return { role: 'player', is_exec: true,  is_trainer: false };
-    case 'trainer':   return { role: 'player', is_exec: false, is_trainer: true };
-    default:          return { role: 'player', is_exec: false, is_trainer: false };
-  }
-}
-
-// isAdmin gates the privilege/money block: role, exec title, exec photo,
-// fee-exempt and the varsity-trainer marker. Execs keep status and membership.
+// isAdmin gates the money/ladder block: ratings, the exec bio fields and
+// fee-exempt. Execs keep status, membership and the category correction.
 // The server action rejects the admin-only fields outright, so an exec must
 // never be shown a control that sends one.
 //
@@ -73,7 +59,6 @@ export function PlayerEditForm({
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(player.status);
-  const [roleValue, setRoleValue] = useState<ExecRole>(toRoleValue(player.role, player.is_exec ?? false, player.is_trainer ?? false));
   const [membershipType, setMembershipType] = useState(
     (player as { membership_type?: string }).membership_type ?? 'internal',
   );
@@ -101,56 +86,81 @@ export function PlayerEditForm({
 
   const isPending = player.status === 'pending_approval';
   const approvalBlocked = isPending && !canApprove;
-  const { role: nextRole, is_exec: isExec, is_trainer: wantsTrainer } = fromRoleValue(roleValue);
+  // Read off the STORED row rather than off a control, because the control that
+  // used to decide it is gone. The exec bio fields below are only meaningful on
+  // somebody who is already on the exec team, and whether they are is now settled
+  // on /permissions before this form is opened.
+  const isExec = player.is_exec ?? false;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!reason.trim()) { toast('Reason is required', 'error'); return; }
     setLoading(true);
 
+    // EVERYTHING EXCEPT STATUS, which the approval branch below writes through
+    // approvePlayer instead. Lifted out of the update call so that BOTH branches
+    // can send it: an approval used to take this whole object with it, so an exec
+    // who fixed somebody's Gender while letting them in was told "Player
+    // approved" and the correction was never written. Nothing said so, and 00129
+    // makes the console the only route to that column — the member cannot change
+    // their own answer a second time, so a silently dropped write there has no
+    // other remedy.
+    //
+    // Every field is sent ONLY when it actually changed. The server guard is on
+    // PRESENCE, not on value, so a non-admin must send nothing at all for an
+    // admin-only field — not even an unchanged value.
+    //
+    // role / is_exec / is_trainer are absent from this payload and from
+    // adminPlayerUpdateSchema: they are console access, and console access is set
+    // on /permissions.
+    const changes = {
+      membership_type:
+        membershipType !== ((player as { membership_type?: string }).membership_type ?? 'internal')
+          ? (membershipType as 'internal' | 'alumni' | 'external')
+          : undefined,
+      // Ratings are admin-only: a hand-edited number bypasses every K
+      // factor, bound and margin rule the engine applies.
+      singles_elo: isAdmin && singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
+      doubles_elo: isAdmin && doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
+      exec_title: isAdmin && execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
+      exec_photo_url:
+        isAdmin && execPhotoUrl !== ((player as { exec_photo_url?: string | null }).exec_photo_url ?? '')
+          ? execPhotoUrl
+          : undefined,
+      fee_exempt: isAdmin && feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
+      // NOT gated on isAdmin: this one is exec work by design (00129), and the
+      // server guard passes it because it is on neither admin-only list.
+      // `null` is a real value — an exec putting a member back to "prefer not to
+      // say" — so the ternary yields null rather than undefined for the empty
+      // option, and `!== undefined` below still counts it as a change.
+      competition_category:
+        category !== (toCompetitionCategory(
+          (player as { competition_category?: unknown }).competition_category,
+        ) ?? '')
+          ? (category === '' ? null : category)
+          : undefined,
+    };
+    const hasOtherChanges = Object.values(changes).some((v) => v !== undefined);
+
     try {
       if (isPending) {
         const res = await approvePlayer(player.id, status as 'competitive' | 'recreational', reason);
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
+        // approvePlayer writes status and active_flag and nothing else, so a
+        // Save that also changed something on the form needs the ordinary update
+        // behind it. Second, not first: a failed update must not leave somebody
+        // approved-and-half-saved without saying so, and the toast below only
+        // claims success once both have landed. Same shape the roster dialog's
+        // Edit uses (players/player-actions.tsx).
+        if (hasOtherChanges) {
+          const rest = await updatePlayer(player.id, { ...changes, reason });
+          if (!rest.ok) { toast(rest.error, 'error'); setLoading(false); return; }
+        }
         toast('Player approved', 'success');
       } else {
         const res = await updatePlayer(player.id, {
           status: status !== player.status ? status as Player['status'] : undefined,
-          // Guarded on presence server-side, so a non-admin must send nothing
-          // at all for these — not even an unchanged value.
-          role: isAdmin && nextRole !== player.role ? nextRole as Player['role'] : undefined,
-          membership_type:
-            membershipType !== ((player as { membership_type?: string }).membership_type ?? 'internal')
-              ? (membershipType as 'internal' | 'alumni' | 'external')
-              : undefined,
-          // Ratings are admin-only: a hand-edited number bypasses every K
-          // factor, bound and margin rule the engine applies.
-          singles_elo: isAdmin && singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
-          doubles_elo: isAdmin && doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
-          is_exec: isAdmin && isExec !== (player.is_exec ?? false) ? isExec : undefined,
-          // Sent ONLY when an admin actually changed it. The server guard
-          // rejects a non-admin who supplies the key at all, so an
-          // unconditional `is_trainer: false` would fail every exec's Save —
-          // exactly the bug `role` had (see actions/players.ts).
-          is_trainer: isAdmin && wantsTrainer !== (player.is_trainer ?? false) ? wantsTrainer : undefined,
-          exec_title: isAdmin && execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
-          exec_photo_url:
-            isAdmin && execPhotoUrl !== ((player as { exec_photo_url?: string | null }).exec_photo_url ?? '')
-              ? execPhotoUrl
-              : undefined,
-          fee_exempt: isAdmin && feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
-          // Sent only when it actually changed, like every field above. NOT
-          // gated on isAdmin: this one is exec work by design (00129), and the
-          // server guard passes it because it is on neither admin-only list.
-          // `null` is a real value — an exec putting a member back to "prefer
-          // not to say" — so the ternary yields null rather than undefined for
-          // the empty option.
-          competition_category:
-            category !== (toCompetitionCategory(
-              (player as { competition_category?: unknown }).competition_category,
-            ) ?? '')
-              ? (category === '' ? null : category)
-              : undefined,
+          ...changes,
           reason,
         });
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
@@ -174,16 +184,10 @@ export function PlayerEditForm({
         value={status}
         onChange={(e) => setStatus(e.target.value as Player['status'])}
       />
-      {isAdmin && (
-        <Select
-          label="Console access"
-          options={EXEC_ROLE_OPTIONS}
-          value={roleValue}
-          onChange={(e) => setRoleValue(e.target.value as ExecRole)}
-        />
-      )}
-      {/* Separate from Role on purpose: an exec is still an internal member,
-          so promoting someone must not change which events they can enter. */}
+      {/* Membership is NOT console access, and it never was — an exec is still
+          an internal member, so promoting someone must not change which events
+          they can enter. It stays here; the console-access select that used to
+          sit above it does not. */}
       <Select
         label="Membership"
         options={MEMBERSHIP_TYPES.map((m) => ({ value: m.value, label: m.label }))}
@@ -232,8 +236,13 @@ export function PlayerEditForm({
         />
       </div>
       )}
-      {/* Square hairline group, like the rest of the screen. The gate is
-          untouched: still `isAdmin`, still the same fields inside it. */}
+      {/* Square hairline group, like the rest of the screen. Still `isAdmin`,
+          and still the same fields inside it — what changed is that `isExec` is
+          now read off the stored row rather than off a select on this form, so
+          the bio fields appear for somebody who is ALREADY on the exec team.
+          Making them one is a separate act on /permissions, which means putting
+          a new officer up is now two steps on two screens. That is the shape the
+          club owner asked for, not a gap. */}
       {isAdmin && (
       <div className="border border-[var(--border)] p-3 space-y-1">
         {isExec && (

@@ -399,6 +399,13 @@ export default async function PlayersPage({
             playerName={displayName}
             review={claimReview}
             canResolve={canConsoleAccess}
+            // Nobody resolves their own review — the action refuses it before it
+            // reads anything, for the reason setConsoleAccess refuses a
+            // self-edit. Passed rather than derived so the card can SAY so,
+            // which is what /permissions does for the same case: a button that
+            // is guaranteed to refuse is worse than a sentence explaining why
+            // there is no button.
+            isSelf={player.id === viewer.id}
           />
         )}
         {rosterActionsFor(tab, player, { isAdmin })

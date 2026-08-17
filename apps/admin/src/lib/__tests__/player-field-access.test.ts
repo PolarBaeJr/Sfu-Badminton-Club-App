@@ -181,9 +181,15 @@ describe('updatePlayer field-level access', () => {
     expect(state.updates).toContainEqual({ table: 'ratings', values: { singles_elo: 1200 } });
   });
 
+  // `as never` on every console-access payload below, here and throughout: the
+  // three columns are no longer declared on adminPlayerUpdateSchema, so TypeScript
+  // rejects them at the call site. That is the FIRST line of the enforcement and
+  // is worth stating — a typed caller cannot express the request at all. The cast
+  // is what lets these tests reach past it and prove the RUNTIME refusal too,
+  // which is the line a hand-rolled POST actually meets.
   it('rejects an exec who supplies role — this is the escalation path', async () => {
     asExec();
-    const res = await updatePlayer('player-9', { role: 'admin', reason: 'Promoting myself' });
+    const res = await updatePlayer('player-9', { role: 'admin', reason: 'Promoting myself' } as never);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain('Admin access required');
     // Rejected outright, not silently stripped: nothing was written.
@@ -192,7 +198,7 @@ describe('updatePlayer field-level access', () => {
 
   it('rejects an exec who supplies is_exec', async () => {
     asExec();
-    const res = await updatePlayer('player-9', { is_exec: true, reason: 'Adding a friend to the exec team' });
+    const res = await updatePlayer('player-9', { is_exec: true, reason: 'Adding a friend to the exec team' } as never);
     expect(res.ok).toBe(false);
     expect(state.updates).toEqual([]);
   });
@@ -206,7 +212,7 @@ describe('updatePlayer field-level access', () => {
 
   it('rejects the whole request even when the admin-only field rides along with an allowed one', async () => {
     asExec();
-    const res = await updatePlayer('player-9', { status: 'competitive', is_exec: true, reason: 'Mixed payload' });
+    const res = await updatePlayer('player-9', { status: 'competitive', is_exec: true, reason: 'Mixed payload' } as never);
     expect(res.ok).toBe(false);
     // The permitted half must not land either — a partial save would look like
     // a success that half-worked.
@@ -221,8 +227,6 @@ describe('updatePlayer field-level access', () => {
     asExec();
     const res = await updatePlayer('player-9', {
       status: 'competitive',
-      role: undefined,
-      is_exec: undefined,
       exec_title: undefined,
       exec_photo_url: undefined,
       fee_exempt: undefined,
@@ -232,18 +236,30 @@ describe('updatePlayer field-level access', () => {
     expect(state.updates).toContainEqual({ table: 'players', values: { status: 'competitive' } });
   });
 
-  it('lets an admin change role', async () => {
+  // A TAB OPENED BEFORE THIS DEPLOY still renders the console-access select and
+  // still builds `role: changed ? value : undefined`. Unchanged, that is a key
+  // present and undefined, and the new refusal is presence-based like every other
+  // guard here — so the stale client's ordinary Save must still work. If this
+  // ever flipped to "key exists", every open admin tab would start failing on a
+  // status change until it was reloaded.
+  it('accepts an old client that still names the console fields but changed none of them', async () => {
     asAdmin();
-    const res = await updatePlayer('player-9', { role: 'admin', reason: 'Promotion' });
+    const res = await updatePlayer('player-9', {
+      status: 'competitive',
+      role: undefined,
+      is_exec: undefined,
+      is_trainer: undefined,
+      reason: 'Save from a tab opened before the dropdown was removed',
+    } as never);
     expect(res.ok).toBe(true);
-    expect(state.updates).toContainEqual({ table: 'players', values: { role: 'admin' } });
+    expect(state.updates).toContainEqual({ table: 'players', values: { status: 'competitive' } });
   });
 
-  it('lets an admin change is_exec and fee_exempt', async () => {
+  it('lets an admin change fee_exempt', async () => {
     asAdmin();
-    const res = await updatePlayer('player-9', { is_exec: true, fee_exempt: true, reason: 'New exec' });
+    const res = await updatePlayer('player-9', { fee_exempt: true, reason: 'Waiving a contributor’s fee' });
     expect(res.ok).toBe(true);
-    expect(state.updates).toContainEqual({ table: 'players', values: { is_exec: true, fee_exempt: true } });
+    expect(state.updates).toContainEqual({ table: 'players', values: { fee_exempt: true } });
   });
 
   it('rejects an exec who supplies a blank exec_title', async () => {
@@ -259,6 +275,91 @@ describe('updatePlayer field-level access', () => {
     } as never);
     expect(res.ok).toBe(false);
     expect(state.updates).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CONSOLE ACCESS HAS ONE PATH, AND IT IS NOT THIS ONE
+// ---------------------------------------------------------------------------
+// The club owner, looking at the member Edit dialog's "Console access" select:
+// "i dont think the console access should be there anymore… since execs wouldnt
+// require it anymore… as its only admins who will be mainly editing permissions."
+//
+// Removing the control answers the rendering half. This block is the other half,
+// and it is the one that matters: updatePlayer is a server action, so it is a
+// public endpoint, and a field nothing renders is still a field a hand-rolled
+// POST can send.
+//
+// THE ACTOR HERE IS AN ADMIN ON PURPOSE. An exec being refused proves only that
+// the level guard still works — it did before this change too. What is new is
+// that the SENIOR caller is refused as well, because the refusal is about where
+// the act lives rather than about who is asking. /permissions → setConsoleAccess
+// is where it lives, and that path has a self-edit refusal, an admin-target
+// refusal, grant closure on the target's resolved set in both directions, a
+// required reason and composition clearing. None of those is reachable from here.
+describe('updatePlayer cannot set a console-access column, not even for an admin', () => {
+  it.each([
+    ['role', { role: 'admin' }],
+    ['is_exec', { is_exec: true }],
+    ['is_trainer', { is_trainer: true }],
+  ])('refuses an admin who supplies %s, and writes nothing', async (field, payload) => {
+    asAdmin();
+    const res = await updatePlayer('player-9', { ...payload, reason: 'Promoting a friend' } as never);
+    expect(res.ok, `an admin was allowed to send ${field}`).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain('Permissions page');
+      expect(res.error).toContain(field);
+    }
+    // THE ROW, NOT JUST THE REFUSAL. `ok === false` alone would still pass if the
+    // write had landed and something downstream had thrown.
+    expect(state.updates).toEqual([]);
+  });
+
+  // REVOKING IS THE SAME ACT AS GRANTING, so `false` is refused exactly as `true`
+  // is. A guard that only stopped the truthy value would leave "take somebody's
+  // console away" on a screen with no audit of who else holds what.
+  it.each([
+    ['is_exec', { is_exec: false }],
+    ['is_trainer', { is_trainer: false }],
+  ])('refuses an admin REVOKING through %s too', async (_field, payload) => {
+    asAdmin();
+    const res = await updatePlayer('player-9', { ...payload, reason: 'Season over' } as never);
+    expect(res.ok).toBe(false);
+    expect(state.updates).toEqual([]);
+  });
+
+  // The permitted half must not land either — the same rule the mixed-payload
+  // case above pins for an exec, asserted for the new refusal because it is a
+  // different guard at a different line.
+  it('refuses the whole request when a console column rides along with an allowed field', async () => {
+    asAdmin();
+    const res = await updatePlayer('player-9', {
+      status: 'competitive',
+      is_exec: true,
+      reason: 'Status change with a promotion smuggled in',
+    } as never);
+    expect(res.ok).toBe(false);
+    expect(state.updates).toEqual([]);
+  });
+
+  // The three columns and no more. membership_type reads like a level to
+  // somebody skimming and is not one, so it must not be caught by this guard —
+  // an exec correcting somebody's membership is ordinary roster work.
+  it('names exactly the three columns and leaves ordinary fields alone', async () => {
+    const { CONSOLE_ACCESS_FIELDS, assertNoConsoleAccessFields } =
+      await import('../player-field-access');
+    expect([...CONSOLE_ACCESS_FIELDS]).toEqual(['role', 'is_exec', 'is_trainer']);
+
+    expect(() => assertNoConsoleAccessFields([{ membership_type: 'alumni' }])).not.toThrow();
+    expect(() => assertNoConsoleAccessFields([{ status: 'competitive' }])).not.toThrow();
+    // Keys present but undefined are not supplied — the same presence rule the
+    // rest of this file pins, so an old client sending an unchanged field saves.
+    expect(() => assertNoConsoleAccessFields([{ role: undefined }])).not.toThrow();
+    expect(() => assertNoConsoleAccessFields([{}])).not.toThrow();
+    // BOTH PAYLOADS, for the reason the exec_title case above exists: zod strips
+    // these keys now, so a check against the parsed object alone is vacuous.
+    expect(() => assertNoConsoleAccessFields([{ is_exec: true }, {}]))
+      .toThrowError(/Permissions page/);
   });
 });
 
@@ -384,51 +485,52 @@ describe('trainer composes with exec', () => {
 
   it('...and is still not an admin', async () => {
     asExecTrainer();
-    const res = await updatePlayer('player-9', { is_exec: true, reason: 'Promoting a friend' });
+    const res = await updatePlayer('player-9', { is_exec: true, reason: 'Promoting a friend' } as never);
     expect(res.ok).toBe(false);
     expect(state.updates).toEqual([]);
   });
 
+  // ASSERTED THROUGH fee_exempt RATHER THAN is_trainer, which is what it used to
+  // use. is_trainer is refused for everybody now, so a passing assertion on it
+  // would say nothing about admin power — it would pass for an exec too. The
+  // claim is "the trainer flag does not cost an admin their admin fields", and
+  // fee_exempt is an admin field this action still writes.
   it('an admin who is also a trainer keeps every admin power', async () => {
     state.actor = { id: 'admin-trainer-1', role: 'admin', is_trainer: true };
-    const res = await updatePlayer('player-9', { is_trainer: true, reason: 'Appointing a trainer' });
+    const res = await updatePlayer('player-9', { fee_exempt: true, reason: 'Waiving a fee' });
     expect(res.ok).toBe(true);
-    expect(state.updates).toContainEqual({ table: 'players', values: { is_trainer: true } });
+    expect(state.updates).toContainEqual({ table: 'players', values: { fee_exempt: true } });
   });
 });
 
-describe('is_trainer is admin-only, exactly like is_exec', () => {
-  it('rejects an exec who supplies is_trainer', async () => {
+// is_trainer was admin-only here, exactly like is_exec. It is now NOBODY's
+// through this action — appointing a varsity trainer is console access and goes
+// through /permissions with the other two. What survives is the exec refusal,
+// because the wording an exec gets is a different sentence from the one an admin
+// gets and both are worth pinning; the admin half lives in the console-access
+// block above.
+describe('is_trainer is console access, like role and is_exec', () => {
+  it('rejects an exec who supplies is_trainer, naming the field', async () => {
     asExec();
-    const res = await updatePlayer('player-9', { is_trainer: true, reason: 'Appointing a trainer' });
+    const res = await updatePlayer('player-9', { is_trainer: true, reason: 'Appointing a trainer' } as never);
     expect(res.ok).toBe(false);
+    // The LEVEL guard answers first for an exec — "Admin access required" — which
+    // is the true shape of their refusal: they may not do it anywhere, whereas an
+    // admin may, just not here.
     if (!res.ok) expect(res.error).toContain('is_trainer');
     expect(state.updates).toEqual([]);
   });
 
-  it('lets an admin grant and revoke it', async () => {
-    asAdmin();
-    const granted = await updatePlayer('player-9', { is_trainer: true, reason: 'New varsity trainer' });
-    expect(granted.ok).toBe(true);
-    expect(state.updates).toContainEqual({ table: 'players', values: { is_trainer: true } });
-
-    state.updates = [];
-    const revoked = await updatePlayer('player-9', { is_trainer: false, reason: 'Season over' });
-    expect(revoked.ok).toBe(true);
-    // false, not undefined: revoking has to actually write.
-    expect(state.updates).toContainEqual({ table: 'players', values: { is_trainer: false } });
-  });
-
-  it('accepts the shape the admin UI sends when is_trainer did not change', async () => {
-    // edit-form.tsx sends `isAdmin && changed ? value : undefined`. For an exec
-    // the key is present and undefined — which must not count as supplying it,
-    // or every exec's Save breaks (the bug `role` already had).
+  it('accepts the shape an old admin UI sends when is_trainer did not change', async () => {
+    // edit-form.tsx used to send `isAdmin && changed ? value : undefined`. For an
+    // exec the key was present and undefined — which must not count as supplying
+    // it, or every exec's Save breaks (the bug `role` already had).
     asExec();
     const res = await updatePlayer('player-9', {
       status: 'competitive',
       is_trainer: undefined,
       reason: 'Ordinary status change',
-    });
+    } as never);
     expect(res.ok).toBe(true);
     expect(state.updates).toContainEqual({ table: 'players', values: { status: 'competitive' } });
   });
