@@ -19,6 +19,9 @@ import { permits, type AccessLevel, type Capability, type Permissions } from './
 // The missing-table predicate, shared with 00118's four tables so the two
 // modules cannot drift on the one question they must agree about.
 import { isMissingTableError } from './private-notes';
+// Deep path rather than the barrel — this module is unit-tested without a
+// request, and the barrel drags in the email sender's Resend/Supabase clients.
+import { selectInChunks } from '@badminton/shared/src/utils/query-chunks';
 // TYPE-ONLY, and it has to stay that way. supabase-server.ts reaches for
 // next/headers and the passkey cookie machinery at import time; a value import
 // here would drag all of it into the unit tests, which have no request to read
@@ -137,10 +140,13 @@ export async function fetchMatchNotes(
 ): Promise<Map<string, string>> {
   if (matchIds.length === 0) return new Map();
 
-  const { data, error } = await client
-    .from(MATCH_ADMIN_NOTE_TABLE)
-    .select('match_id, note')
-    .in('match_id', matchIds);
+  // Chunked, same as private-notes.ts: this takes the match ids on screen, a
+  // paged list runs to hundreds, and `.in()` is a query-string filter the proxy
+  // refuses past 8 KB. The failure would be silent — notes missing rather than
+  // an error.
+  const { data, error } = await selectInChunks(matchIds, (ids) =>
+    client.from(MATCH_ADMIN_NOTE_TABLE).select('match_id, note').in('match_id', ids) as never,
+  );
 
   if (error) {
     if (isMissingNoteTableError(error)) return new Map();

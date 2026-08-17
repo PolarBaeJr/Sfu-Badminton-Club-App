@@ -29,6 +29,7 @@ import {
   isOutOfEvent,
   isExpectedFailure,
   ExpectedError,
+  selectInChunks,
   type CompetitionCategory,
   type TournamentEventType,
 } from '@badminton/shared';
@@ -124,10 +125,13 @@ async function loadCompetitionCategories(
 ): Promise<Map<string, CompetitionCategory | null>> {
   const byPlayer = new Map<string, CompetitionCategory | null>();
   if (playerIds.length === 0) return byPlayer;
-  const { data, error } = await adminClient
-    .from('players')
-    .select('id, competition_category')
-    .in('id', playerIds as string[]);
+  // Chunked — a bulk add can pass an entire event's entrant list, and `.in()`
+  // is a query-string filter the proxy refuses past 8 KB. The refusal below is
+  // unchanged: a failed read must not wave entries through.
+  const { data, error } = await selectInChunks<{ id: string; competition_category: unknown }>(
+    playerIds as string[],
+    (ids) => adminClient.from('players').select('id, competition_category').in('id', ids) as never,
+  );
   if (error) {
     Sentry.captureException(error);
     throw new Error('Could not check who may enter this event. Nothing was added — try again.');

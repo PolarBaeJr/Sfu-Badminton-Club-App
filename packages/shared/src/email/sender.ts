@@ -108,11 +108,28 @@ async function sendCategoryEmail(
   const db = getAdmin();
 
   if (db) {
-    const { data: blocked } = await db
+    const { data: blocked, error: blockedError } = await db
       .from('email_suppressions')
       .select('email')
       .eq('email', address)
       .maybeSingle();
+    // THE ERROR IS CHECKED, and this is the line that makes the docstring true.
+    //
+    // A failed PostgREST read does not throw — an RLS change, an expired key or
+    // a transient fault arrives as `data: null` with an error set. Destructuring
+    // the error away left `blocked` falsy, so the mail went to an address that
+    // had hard-bounced, filed a spam complaint, or clicked
+    // unsubscribe-from-all. Silently, in the one gate this file calls "the gate
+    // that must never fail open".
+    //
+    // It THROWS rather than returning a SendOutcome, deliberately. `suppressed`
+    // and `opted_out` mean "the system worked and the answer was no"; this means
+    // the system did not work, which is exactly the kind of thing sendEmail
+    // already throws for. All ten call sites catch and capture to Sentry, so a
+    // broken gate becomes a visible incident instead of an invisible send.
+    if (blockedError) {
+      throw new Error(`Suppression check failed, refusing to send: ${blockedError.message}`);
+    }
     if (blocked) return { sent: false, reason: 'suppressed' };
 
     // Preferences are looked up by address because that is all the call sites
@@ -126,11 +143,19 @@ async function sendCategoryEmail(
     // mail with nothing to show for it. Failing open here is deliberate; the
     // suppression list above is the gate that must never fail open.
     if (!options.transactional) {
-      const { data: player } = await db
+      // `preferenceError` is read and then deliberately NOT acted on — named
+      // rather than destructured away so the asymmetry with the suppression
+      // read above is visible instead of looking like the same oversight. The
+      // reasoning is the paragraph above this one: a preference lookup that
+      // fails is not evidence the member said no, and silencing their mail on
+      // that basis is the worse error. The suppression list is the opposite
+      // case and now throws.
+      const { data: player, error: preferenceError } = await db
         .from('players')
         .select('notification_preferences')
         .eq('email', address)
         .maybeSingle();
+      void preferenceError;
       if (player && !isEmailCategoryEnabled(player.notification_preferences, category)) {
         return { sent: false, reason: 'opted_out' };
       }

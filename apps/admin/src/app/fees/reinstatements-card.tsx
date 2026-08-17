@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
-import { unwrap, formatPaymentMethod } from '@badminton/shared';
+import { unwrap, formatPaymentMethod, selectInChunks } from '@badminton/shared';
 import { RecordReinstatementPayment } from './fee-actions';
 import { CardHeading } from './card-heading';
 
@@ -99,8 +99,13 @@ export async function ReinstatementsCard({
   if (rows.length === 0) return null;
 
   const playerIds = [...new Set(rows.map((r) => r.player_id))];
+  // Chunked: everyone in the club who has ever owed a reinstatement fee.
   const people = unwrap(
-    await supabase.from('players').select('id, full_name, email, avatar_url').in('id', playerIds)
+    await selectInChunks<{ id: string; full_name: string; email: string | null; avatar_url: string | null }>(
+      playerIds,
+      (ids) =>
+        supabase.from('players').select('id, full_name, email, avatar_url').in('id', ids) as never
+    )
   );
   const personById = new Map(people.map((p) => [p.id, p]));
 
