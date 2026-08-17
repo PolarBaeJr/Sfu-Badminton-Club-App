@@ -581,6 +581,22 @@ COMMENT ON COLUMN public.ratings.doubles_k_factor IS
 --        * Every use of this table in both apps is an INSERT or a SELECT —
 --          audit.ts:18, finalize.ts:67, finalize.ts:262, participants.ts:705.
 --          There is no UPDATE and no DELETE anywhere in either app.
+--        * AND THE DATABASE WAS ASKED THE SAME QUESTION, because a grep of the
+--          TypeScript cannot see a writer that lives inside a function — which
+--          is exactly how merge_players' UPDATE was found, by dumping the body
+--          rather than by grepping. Run on BOTH databases:
+--
+--            SELECT p.proname, p.prosecdef, p.proowner::regrole
+--              FROM pg_proc p
+--             WHERE p.pronamespace = 'public'::regnamespace
+--               AND pg_get_functiondef(p.oid) ~*
+--                   '(insert into|update|delete from)[[:space:]]+(public\.)?tournament_audit_log';
+--
+--          ONE ROW ON EACH, identical: merge_players | t | postgres. The two
+--          columns are the whole point — a hit that were SECURITY INVOKER, or
+--          owned by anything but the table's owner, would run with the CALLER's
+--          grants and would therefore be broken by the revoke below. There is no
+--          such hit. There is also no trigger on the table at all (checked).
 --        * merge_players DOES `UPDATE tournament_audit_log SET performed_by =
 --          p_keep`. It survives because it is SECURITY DEFINER owned by
 --          `postgres`, which is the table's OWNER — so the UPDATE runs with
@@ -695,9 +711,15 @@ BEGIN
   IF v_def IS NULL THEN
     RAISE EXCEPTION '00138 assert: is_admin(uuid) is missing';
   END IF;
+  -- A NOTICE, NOT AN EXCEPTION, and for the same reason §D's is — a hard check
+  -- here would be WORSE than §D's was. §B itself RECOMMENDS narrowing this
+  -- function; an EXCEPTION would mean the file that takes that advice makes
+  -- 00138 permanently un-re-runnable, and the only remedy would be editing an
+  -- already-applied forward-only migration. "IDEMPOTENT THROUGHOUT" at the head
+  -- of this file has to stay unconditionally true, including after 00139.
   IF position('onboarding_completed' in v_def) > 0 THEN
-    RAISE EXCEPTION
-      '00138 assert: is_admin now mentions onboarding_completed. 00138 §B argues it should be narrowed to admin_access_level(p_user_id) = ''admin'' in ONE move with all 48 policies re-verified, not one predicate at a time. Re-read §B, then delete this assertion in the file that does it.';
+    RAISE NOTICE
+      '00138 §B: is_admin has been narrowed since 00138 was written — §B''s measurement and severity argument are stale, so re-read them rather than trusting them. §B''s recommendation was to narrow it to admin_access_level(p_user_id) = ''admin'' in ONE move, with all 48 policies re-verified, rather than one predicate at a time.';
   END IF;
   IF obj_description('public.is_admin(uuid)'::regprocedure, 'pg_proc') IS NULL THEN
     RAISE EXCEPTION '00138 assert: the is_admin COMMENT did not take';
