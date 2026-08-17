@@ -105,6 +105,35 @@ interface DeskSide {
  */
 type DeskState = 'live' | 'callable' | 'waiting';
 
+/**
+ * A TINTED SURFACE THAT ACTUALLY RENDERS.
+ *
+ * Tailwind's opacity modifier CANNOT be applied to an arbitrary `var()` colour:
+ * `bg-[var(--color-success)]/12` compiles to NOTHING AT ALL, because the compiler
+ * has no way to split a runtime custom property into colour channels. It is not a
+ * warning and not a fallback — the declaration is simply absent from the
+ * stylesheet, so the element renders untinted and the class looks like it worked.
+ *
+ * THIS IS NOT HYPOTHETICAL AND IT IS WHY THE READY PILLS LOOKED "DIMMED". A pill
+ * in the ready state asked for green text, a 12% green fill and a 40% green
+ * border; only `text-[var(--color-success)]` compiles, so it rendered as green
+ * text on the default surface with the default border — legible, but nothing like
+ * the filled chip it was meant to be, and indistinguishable at a glance from the
+ * not-ready state beside it. Grepped against the compiled stylesheet, 71 sites
+ * across both apps make the same mistake; this file no longer does.
+ *
+ * color-mix() is the house answer — globals.css already uses it for exactly this
+ * (`color-mix(in oklab, var(--win) 30%, transparent)`) — and every token here is
+ * a hex literal, which is what makes it mixable.
+ */
+function tint(token: string, fill: number, edge: number): React.CSSProperties {
+  return {
+    background: `color-mix(in oklab, var(${token}) ${fill}%, transparent)`,
+    borderColor: `color-mix(in oklab, var(${token}) ${edge}%, transparent)`,
+    color: `var(${token})`,
+  };
+}
+
 export function CourtManagementTab({
   matches,
   event,
@@ -372,26 +401,34 @@ function DeskRow({
   // that only differs by hue is a badge that differs by nothing.
   const badge =
     state === 'live'
-      ? { text: 'On court', cls: 'border-[var(--color-success)]/45 bg-[var(--color-success)]/12 text-[var(--color-success)]' }
+      ? { text: 'On court', style: tint('--color-success', 14, 45) }
       : isNext
-        ? { text: 'Next up', cls: 'border-[var(--color-accent)]/50 bg-[var(--color-accent)]/12 text-[var(--color-accent)]' }
+        ? { text: 'Next up', style: tint('--color-accent', 14, 50) }
         : state === 'callable'
-          ? { text: 'Ready to call', cls: 'border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-secondary)]' }
-          : { text: 'Waiting', cls: 'border-[var(--border)] bg-transparent text-[var(--text-dim)]' };
+          ? { text: 'Ready to call', style: undefined, cls: 'border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-secondary)]' }
+          : { text: 'Waiting', style: undefined, cls: 'border-[var(--border)] text-[var(--text-dim)]' };
 
   return (
     <div
       className={`border p-3 space-y-3 ${
-        state === 'live'
-          ? 'border-[var(--color-success)]/35 bg-[var(--color-success)]/5'
-          : isNext
-            ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent)]/5'
-            : 'border-[var(--border)] bg-[var(--bg-elevated)]'
+        state === 'live' || isNext ? '' : 'border-[var(--border)] bg-[var(--bg-elevated)]'
       }`}
+      // Inline for the two tinted states, for the reason `tint` documents: the
+      // Tailwind form of this renders nothing.
+      style={
+        state === 'live'
+          ? tint('--color-success', 6, 35)
+          : isNext
+            ? tint('--color-accent', 6, 40)
+            : undefined
+      }
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <span className={`inline-flex items-center px-2 py-0.5 mb-1 border text-[10px] font-bold uppercase tracking-wider ${badge.cls}`}>
+          <span
+            className={`inline-flex items-center px-2 py-0.5 mb-1 border text-[10px] font-bold uppercase tracking-wider ${badge.cls ?? ''}`}
+            style={badge.style}
+          >
             {badge.text}
           </span>
           <p className="text-sm text-[var(--text-primary)] break-words">
@@ -485,10 +522,9 @@ function StartStopButton({ matchId, live }: { matchId: string; live: boolean }) 
           })
         }
         className={`inline-flex items-center gap-1.5 min-h-[44px] px-3 border text-xs font-semibold uppercase tracking-wide transition-colors duration-150 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
-          live
-            ? 'border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-            : 'border-[var(--color-success)]/45 bg-[var(--color-success)]/12 text-[var(--color-success)]'
+          live ? 'border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]' : ''
         }`}
+        style={live ? undefined : tint('--color-success', 14, 45)}
       >
         {pending ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />
@@ -621,10 +657,11 @@ function ReadyPill({
           })
         }
         className={`inline-flex items-center gap-1.5 min-h-[44px] px-3 border text-xs font-medium transition-colors duration-150 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
-          ready
-            ? 'border-[var(--color-success)]/40 bg-[var(--color-success)]/12 text-[var(--color-success)]'
-            : 'border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+          ready ? '' : 'border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
         }`}
+        // THE FILL THAT WAS MISSING. See `tint`: the Tailwind form of this
+        // compiled to nothing, which is why a ready pill was reported as dimmed.
+        style={ready ? tint('--color-success', 14, 40) : undefined}
       >
         {pending ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />

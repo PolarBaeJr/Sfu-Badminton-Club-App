@@ -29,6 +29,37 @@ import { useToast } from '@/components/toast-provider';
  * button quietly returning to where it was — which is exactly how the original
  * label came to be described as broken.
  */
+
+/**
+ * A TINT THAT ACTUALLY RENDERS.
+ *
+ * This button was written as `bg-[var(--color-success)]/12` and friends, and
+ * Tailwind COMPILES THAT TO NOTHING: an opacity modifier cannot be applied to an
+ * arbitrary `var()` colour, because the compiler has no way to split a runtime
+ * custom property into channels. No warning and no fallback — the declaration is
+ * simply absent from the stylesheet, so the class looks like it worked.
+ *
+ * Caught by grepping this file's classes against the COMPILED stylesheet rather
+ * than by reading them, and confirmed by the symptom on the console's matching
+ * control, which the club owner described as "dimmed": only the `text-` colour
+ * survives, so a filled green chip renders as green text on the default surface.
+ * 71 sites across both apps still do this.
+ *
+ * color-mix() is what globals.css already uses for the same job
+ * (`color-mix(in oklab, var(--win) 30%, transparent)`), and these tokens are hex
+ * literals, which is what makes them mixable. Inline, because it is per-state.
+ *
+ * The hover tint went with it and is deliberately not replaced: this is a 48px
+ * control pressed with a thumb in a gym, where hover does not exist.
+ */
+function tint(token: string, fill: number, edge: number): React.CSSProperties {
+  return {
+    background: `color-mix(in oklab, var(${token}) ${fill}%, transparent)`,
+    borderColor: `color-mix(in oklab, var(${token}) ${edge}%, transparent)`,
+    color: `var(${token})`,
+  };
+}
+
 export function MatchReady({
   matchId,
   ready,
@@ -83,11 +114,8 @@ export function MatchReady({
         onClick={toggle}
         disabled={pending}
         aria-pressed={showing}
-        className={`w-full min-h-[48px] px-4 inline-flex items-center justify-center gap-2 border text-sm font-semibold uppercase tracking-wide transition-colors duration-150 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
-          showing
-            ? 'border-[var(--color-success)]/40 bg-[var(--color-success)]/12 text-[var(--color-success)]'
-            : 'border-[var(--color-accent)]/45 bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/16'
-        }`}
+        className="w-full min-h-[48px] px-4 inline-flex items-center justify-center gap-2 border text-sm font-semibold uppercase tracking-wide transition-colors duration-150 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        style={tint(showing ? '--color-success' : '--color-accent', 14, 45)}
       >
         {pending ? (
           <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
