@@ -18,7 +18,23 @@ async function resolveAudiencePlayerIds(
   audience: Audience,
   excludePlayerId: string,
 ): Promise<string[]> {
-  let query = adminClient.from('players').select('id');
+  // 00132: NEVER an unfinished signup, on any audience. Since the `players` row
+  // is written at first sign-in, `all` — which has no status filter, by design,
+  // so it matches the player-side view — would otherwise resolve to include
+  // people who signed up, never gave a name and never came back. They would get
+  // a bell row and, when the admin ticks "send push", a web push about a club
+  // they have not joined. On an announcement channel that reaches real inboxes
+  // and real lock screens that is the wrong first-week surprise, and it is the
+  // one query where a stub could reach the outside world.
+  //
+  // Applied to every audience rather than only to `all`: a stub carries
+  // status='pending_approval' and eligibility_flag=false, so it matches none of
+  // the other three today — the filter is here so that stays true if any of
+  // those predicates ever widen.
+  let query = adminClient
+    .from('players')
+    .select('id')
+    .or('onboarding_completed.is.true,user_id.is.null');
   if (audience === 'competitive') query = query.eq('status', 'competitive');
   else if (audience === 'recreational') query = query.eq('status', 'recreational');
   else if (audience === 'eligible_only') query = query.eq('eligibility_flag', true);

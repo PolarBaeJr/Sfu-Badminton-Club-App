@@ -121,6 +121,12 @@ export default async function PermissionsPage() {
     ? await adminClient
         .from('players')
         .select('id, full_name, email, is_banned, status, active_flag')
+        // 00132. Somebody who has not finished signing up cannot hold a console
+        // level — admin_access_level returns NULL for an unfinished account —
+        // so offering them in the "grant permissions to" picker would be a
+        // choice with no effect. They also have no name yet, which would put a
+        // blank row in a list an admin picks a person from.
+        .or('onboarding_completed.is.true,user_id.is.null')
         .order('full_name')
     : { data: [] };
 

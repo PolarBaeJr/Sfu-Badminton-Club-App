@@ -10,6 +10,9 @@ import {
   adminPlayerUpdateSchema,
   joinName,
   sendPlayerApprovedEmail,
+  parsePrivilegeClaimReview,
+  restoreWithheldPrivileges,
+  describePrivileges,
   type AdminPlayerUpdateInput,
 } from '@badminton/shared';
 import { requireCapability } from './_shared';
@@ -475,4 +478,78 @@ export async function mergePlayers(
     revalidatePath('/players');
     return { login_moved: Boolean((data as { login_moved?: boolean } | null)?.login_moved) };
   });
+}
+
+/**
+ * Resolve a permission review left by a roster claim (00132).
+ *
+ * `restore` writes back exactly the privileges the claim withheld and clears the
+ * flag; `dismiss` clears the flag and leaves the row as it is. Both are ONE
+ * click, which is the point of storing the privileges on the row rather than
+ * making an admin reconstruct them from /audit.
+ *
+ * THE CAPABILITY IS players.consoleaccess.write, not players.update.write. That
+ * is what the /permissions editor asks for when it sets somebody's console level
+ * (permissions.ts:621), and restoring a withheld role or is_exec IS setting a
+ * console level — asking for the weaker one would let somebody who may edit
+ * member details grant admin.
+ *
+ * `role` additionally requires the actor to be an admin, mirroring
+ * setConsoleAccess's own refusal: an exec cannot hand out the level above their
+ * own, and a review is not a way around that.
+ */
+export async function resolvePrivilegeClaimReview(
+  playerId: string,
+  decision: 'restore' | 'dismiss',
+): Promise<ActionResult<void>> {
+  return runAction(() => resolvePrivilegeClaimReviewImpl(playerId, decision));
+}
+
+async function resolvePrivilegeClaimReviewImpl(playerId: string, decision: 'restore' | 'dismiss') {
+  const actor = await requireCapability('players.consoleaccess.write');
+  const adminClient = createAdminClient();
+
+  const { data: player, error: readError } = await adminClient
+    .from('players')
+    .select('id, full_name, role, is_exec, is_trainer, privilege_claim_review')
+    .eq('id', playerId)
+    .single();
+  if (readError) throw new Error(readError.message);
+
+  const review = parsePrivilegeClaimReview(player.privilege_claim_review);
+  // Already resolved — by somebody else, in another tab, a moment ago. Say so
+  // rather than writing a restore built from an empty review.
+  if (!review) throw new Error('There is nothing left to review on this member.');
+
+  const restore = decision === 'restore' ? restoreWithheldPrivileges(review) : {};
+  if (restore.role && restore.role !== 'player' && actor.role !== 'admin') {
+    throw new Error('Only an admin can restore an admin role. Ask one to resolve this review.');
+  }
+
+  const { error } = await adminClient
+    .from('players')
+    .update({ ...restore, privilege_claim_review: null })
+    .eq('id', playerId);
+  if (error) throw new Error(error.message);
+
+  // 'player_updated' DELIBERATELY, and for the reason writeConsoleLevel chose it
+  // (permissions.ts:566): isAccessChange() matches that action_type plus a
+  // console-level column, so this shows up on /accounts' access-change card. A
+  // bespoke action_type would make the restore vanish from the one screen that
+  // exists to answer "who was given what, and when".
+  await logAdminAudit(adminClient, {
+    actor_id: actor.id,
+    action_type: 'player_updated',
+    target_type: 'player',
+    target_id: playerId,
+    old_value: { role: player.role, is_exec: player.is_exec, is_trainer: player.is_trainer },
+    new_value: { ...restore, privilege_claim_review: null },
+    reason:
+      decision === 'restore'
+        ? `Restored privileges a roster claim withheld at sign-in: ${describePrivileges(review.withheld)}.`
+        : 'Dismissed a roster claim permission review without restoring anything.',
+  }, { playerId });
+
+  revalidatePath('/players');
+  revalidatePath(`/players/${playerId}`);
 }

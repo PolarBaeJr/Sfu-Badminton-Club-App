@@ -46,6 +46,9 @@ const TONE_WORDS: { tone: Exclude<ActionTone, 'neutral'>; words: string[] }[] = 
     words: [
       'banned', 'voided', 'removed', 'rejected', 'deleted', 'suspend', 'suspended',
       'anomaly', 'reversed',
+      // The old claim strip. Somebody losing console access without asking is
+      // not a neutral event, and a neutral badge is what it wore.
+      'stripped',
     ],
   },
   {
@@ -61,6 +64,11 @@ const TONE_WORDS: { tone: Exclude<ActionTone, 'neutral'>; words: string[] }[] = 
     words: [
       'updated', 'changed', 'edited', 'ended', 'expired', 'rotated', 'required',
       'adjusted', 'converted', 'merged', 'unpaid', 'archived',
+      // 00132's claim decision. Warning rather than danger because it can KEEP
+      // privileges as well as hold them, and rather than neutral because either
+      // way somebody's console access was decided by a machine and an admin has
+      // something to look at.
+      'reviewed',
     ],
   },
 ];
@@ -121,7 +129,13 @@ const GROUPS: { id: AuditGroupId; label: string; words: string[] }[] = [
   // beside `player_permissions_changed`, which already lands here on the word
   // `player`. Without them a baseline being created, edited or deleted would sit
   // in Other, one tab away from the per-person rows that same edit wrote.
-  { id: 'members',     label: 'Members',     words: ['player', 'players', 'account', 'varsity', 'reliability', 'suspend', 'passkey', 'permission', 'permissions', 'baseline'] },
+  // `roster`, `claim` and `privileges` are here for 00132's
+  // roster_claim_privileges_reviewed and for the older
+  // roster_row_claimed_privileges_stripped it replaces. Neither shares a word
+  // with anything above, so both used to file under OTHER — an entry saying
+  // somebody's admin had just been taken away, sitting one tab from every other
+  // thing that ever happened to that member.
+  { id: 'members',     label: 'Members',     words: ['player', 'players', 'account', 'varsity', 'reliability', 'suspend', 'passkey', 'permission', 'permissions', 'baseline', 'roster', 'claim', 'privileges'] },
   { id: 'matches',     label: 'Matches',     words: ['match', 'challenge', 'walkover', 'dispute'] },
   { id: 'money',       label: 'Money',       words: ['fee', 'fees', 'payment', 'expense', 'income', 'reimbursed'] },
   { id: 'sessions',    label: 'Sessions',    words: ['session'] },

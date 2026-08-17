@@ -143,14 +143,35 @@ export type AuditRowShape = {
 
 export function isAccessChange(log: AuditRowShape): boolean {
   if (log.action_type === 'player_permissions_changed') return true;
-  if (log.action_type !== 'player_updated') return false;
+  // A roster claim deciding what a pre-added row's privileges become IS an
+  // access change, and its absence here is most of why the 2026-08-15 incident
+  // went unnoticed for a day: the claim wrote its audit row faithfully, and this
+  // card — the one screen that exists to answer "who was given what, and when" —
+  // filtered it out before it was ever examined. Both the current action type
+  // (00132) and the one it replaces are listed, so the history stays readable.
+  if (
+    log.action_type === 'roster_claim_privileges_reviewed'
+    || log.action_type === 'roster_row_claimed_privileges_stripped'
+  ) return true;
+  // The roster dialog's is_exec toggle goes through updatePlayerFlags, which
+  // writes `player_flags_updated` (fees.ts:43) rather than `player_updated`.
+  // Without this line, GRANTING somebody exec from the roster was as invisible
+  // on this card as the claim taking it away was — the same failure in the
+  // opposite direction, and the reason the same column test runs for both.
+  if (log.action_type !== 'player_updated' && log.action_type !== 'player_flags_updated') return false;
   const next = log.new_value;
   if (typeof next !== 'object' || next === null) return false;
   return CONSOLE_LEVEL_COLUMNS.some((column) => column in (next as Record<string, unknown>));
 }
 
 /** The action types worth fetching before `isAccessChange` narrows them. */
-export const ACCESS_CHANGE_ACTION_TYPES = ['player_permissions_changed', 'player_updated'] as const;
+export const ACCESS_CHANGE_ACTION_TYPES = [
+  'player_permissions_changed',
+  'player_updated',
+  'player_flags_updated',
+  'roster_claim_privileges_reviewed',
+  'roster_row_claimed_privileges_stripped',
+] as const;
 
 /**
  * How many capabilities a permission change added and removed.

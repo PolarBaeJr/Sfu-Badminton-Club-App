@@ -80,6 +80,16 @@ type DashboardMatch = {
   match_participants?: MatchParticipant[] | null;
 };
 
+// The two columns that separate somebody waiting on an APPROVAL from somebody
+// who signed in and never finished setup (00132). Its own type for the same
+// reason as the rest here: the not-an-approver branch has to agree with the real
+// one and there is no row to infer from.
+type PendingApprovalFlags = {
+  id: string;
+  user_id: string | null;
+  onboarding_completed: boolean | null;
+};
+
 // Same job for the pending-approvals query: it only needs a type so the
 // not-an-approver branch agrees with the real one.
 type PendingPlayer = {
@@ -172,6 +182,11 @@ export default async function DashboardPage({
   // kept the panel without it would be handed the pending list and a dialog
   // whose every Save throws.
   const canApprove = permits(level, permissions, 'players.approve.write');
+  // 00132. Owns the permission-review clause in the alert band and nothing else
+  // on this page. Same capability the /permissions editor and the review's own
+  // Restore control ask for, so the band never points somebody at a queue they
+  // cannot clear.
+  const canSetConsoleAccess = permits(level, permissions, 'players.consoleaccess.write');
 
   // NOT canAccess(level, …, '/fees'). Reaching /fees needs `fees.page`, which
   // buys the SECTION and no ledger in it — an exec holds it, and so does
@@ -278,7 +293,7 @@ export default async function DashboardPage({
   const [
     { count: totalMembers },
     { count: activeMembers },
-    { count: pendingPlayers },
+    { data: pendingApprovalFlags },
     { count: openDisputes },
     { count: pendingWalkovers },
     { count: sessionsThisWeek },
@@ -303,9 +318,31 @@ export default async function DashboardPage({
     // Approving is exec work, so the COUNT of people waiting on a decision is
     // exec work too. It used to ride on the roster flag, which is trainer
     // level, so a trainer saw how many decisions they cannot make.
+    //
+    // 00132 CHANGED THE SHAPE OF THIS QUERY, not just its filter. A stub created
+    // at first sign-in is 'pending_approval' too, but nobody is waiting on an
+    // exec's decision about it — the member has not finished setup, and there is
+    // nothing here for an approver to do. Counting them would put a number in
+    // "Needs you" that the Approve button cannot reduce. They have their own
+    // queue on /players?tab=incomplete.
+    //
+    // Excluding them needs BOTH user_id and onboarding_completed (a pre-added
+    // roster row is `user_id IS NULL, onboarding_completed = false` and DOES
+    // belong here; only `user_id IS NOT NULL, onboarding_completed = false` is a
+    // stub), and no single-column predicate separates the two. That would mean
+    // an `.or()` — and an `.or()` on a `head: true` count is the exact
+    // combination that silently returned 0 on this self-hosted PostgREST and
+    // made "Needs Attention" show 0 while listing pending players. So this
+    // fetches the two columns and counts in JS instead. The set is the approval
+    // queue, which an exec is expected to keep near empty; the limit is there so
+    // a neglected one cannot become an unbounded read.
     canApprove
-      ? supabase.from('players').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval')
-      : noCount,
+      ? supabase
+          .from('players')
+          .select('id, user_id, onboarding_completed')
+          .eq('status', 'pending_approval')
+          .limit(500)
+      : noRows<PendingApprovalFlags>(),
 
     // ---- disputes.page / walkovers.page ----------------------------------
     showDisputes
@@ -362,6 +399,11 @@ export default async function DashboardPage({
           // exec's console access and offer to take it away.
           .select('id, full_name, email, avatar_url, created_at, status, active_flag, role, is_exec, is_trainer, fee_exempt')
           .eq('status', 'pending_approval')
+          // Same exclusion as the count above (00132), and it must be the same
+          // or the header prints one number over a list of another. Safe as an
+          // `.or()` here because this is a LIST query — the shape that returned
+          // 0 silently on this PostgREST was `.or()` on a `head: true` count.
+          .or('onboarding_completed.is.true,user_id.is.null')
           .order('created_at', { ascending: false })
           .limit(6)
       : noRows<PendingPlayer>(),
@@ -407,6 +449,29 @@ export default async function DashboardPage({
   // it is one round trip either way and both branches are already awaited
   // before the first byte of markup.
   const ladder = canReadRoster ? await getLadderSpread(supabase) : null;
+
+  // 00132. The same predicate /players uses for its Needs Attention tab, so the
+  // band and the queue it links to can never disagree about how many people are
+  // actually waiting on a decision.
+  const pendingPlayers = (pendingApprovalFlags ?? []).filter(
+    (p) => p.user_id === null || p.onboarding_completed === true,
+  ).length;
+
+  // Permission reviews left by a roster claim. A COUNT QUERY OF ITS OWN, and
+  // small: the partial index players_privilege_claim_review_idx (00132) covers
+  // exactly this predicate, and the answer is 0 on almost every load.
+  //
+  // Gated on players.consoleaccess.write rather than on the roster read,
+  // matching the rule the rest of this band follows — every clause is gated on
+  // the capability that owns the figure in it, or the band leaks the counts the
+  // panels hide, one sentence at a time. Restoring a review sets a console
+  // level, so that is the capability that owns this number.
+  const { count: privilegeReviews } = canSetConsoleAccess
+    ? await supabase
+        .from('players')
+        .select('id', { count: 'exact', head: true })
+        .not('privilege_claim_review', 'is', null)
+    : { count: 0 };
 
   // ------------------------------------------------------------------------
   // TONIGHT — one query, two answers
@@ -555,8 +620,17 @@ export default async function DashboardPage({
   // sentence, and that scan is not worth a line of text.
   // ------------------------------------------------------------------------
   const alertTerms = [
-    canApprove && (pendingPlayers ?? 0) > 0
-      ? `${pendingPlayers} pending ${plural(pendingPlayers!, 'approval')}`
+    // FIRST, ahead of the approval queue, and that ordering is the whole point
+    // of adding it here rather than leaving it as a tab badge. This is a member
+    // who has LOST or been refused console access without asking for it — the
+    // failure that went unnoticed for a day because nothing said it out loud —
+    // and it is rarer and more consequential than an approval. It also decides
+    // where Review goes, below.
+    canSetConsoleAccess && (privilegeReviews ?? 0) > 0
+      ? `${privilegeReviews} permission ${plural(privilegeReviews!, 'review')} from a roster claim`
+      : null,
+    canApprove && pendingPlayers > 0
+      ? `${pendingPlayers} pending ${plural(pendingPlayers, 'approval')}`
       : null,
     showDisputes && (openDisputes ?? 0) > 0
       ? `${openDisputes} open ${plural(openDisputes!, 'dispute')}`
@@ -574,7 +648,9 @@ export default async function DashboardPage({
   // /players fallback is the waiver clause's own door and is only reached when
   // that clause is the band's only one — and it required players.read, which
   // the resolver cannot grant without players.page.
-  const reviewHref = canApprove && (pendingPlayers ?? 0) > 0
+  const reviewHref = canSetConsoleAccess && (privilegeReviews ?? 0) > 0
+    ? '/players?tab=permissions'
+    : canApprove && pendingPlayers > 0
     ? '/players?tab=attention'
     : showDisputes && (openDisputes ?? 0) > 0
       ? '/disputes'
@@ -759,7 +835,7 @@ export default async function DashboardPage({
                           below it. The table shows the six most recent; a
                           header reading "6 waiting" when twelve people are
                           would be a figure that quietly contradicts /players. */}
-                      {pendingPlayers ?? 0} waiting
+                      {pendingPlayers} waiting
                     </span>
                   </div>
                   {pendingPlayersList && pendingPlayersList.length > 0 ? (

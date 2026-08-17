@@ -1,11 +1,21 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, TableCard } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, formatRelativeTime, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
+import {
+  PLAYER_STATUS_LABELS,
+  formatRelativeTime,
+  getMissingLegalDocuments,
+  getWinRate,
+  unwrap,
+  parsePrivilegeClaimReview,
+  hasPrivilegeClaimReview,
+  describePrivileges,
+} from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
 import { AddPlayerButton } from './add-player-button';
 import { MergePlayersButton } from './merge-players-button';
+import { PrivilegeReviewActions } from './privilege-review-actions';
 import { RosterTable, type RosterRow } from './roster-table';
 import { RowLink } from '@/components/row-link';
 import { RosterCharts } from './roster-charts';
@@ -95,6 +105,10 @@ export default async function PlayersPage({
   // which is the same answer for every baseline today and the wrong question
   // the moment a portfolio hands it to an exec.
   const canMerge = can('players.merge.write');
+  // Resolving a permission review restores a console level, so it asks for the
+  // capability the /permissions editor asks for — not players.update.write, or
+  // somebody who may edit member details could grant admin through a review.
+  const canConsoleAccess = can('players.consoleaccess.write');
   /**
    * Which of the actions the tab offers are this viewer's to press.
    *
@@ -127,13 +141,19 @@ export default async function PlayersPage({
   // somebody granted only players.ban.write has business on Suspended and would
   // have been bounced off it by a check that asked about updates.
   const canModerate = canManage || canBan || canReinstate;
-  const MODERATION_TABS = ['attention', 'suspended', 'inactive'];
+  // 00132 adds two: `incomplete` lists people who signed in and never finished
+  // setup, `permissions` lists claims that withheld or kept console privileges.
+  // Both are moderation queues by the same test as the other three — every
+  // action they offer asks for a players.*.write — so a trainer is not shown
+  // queues they cannot act on, and a stale link falls back to the roster rather
+  // than erroring.
+  const MODERATION_TABS = ['attention', 'incomplete', 'permissions', 'suspended', 'inactive'];
   const tab = !canModerate && MODERATION_TABS.includes(requestedTab) ? 'competitive' : requestedTab;
   const supabase = createAdminClient();
 
   let query = supabase
     .from('players')
-    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -149,7 +169,23 @@ export default async function PlayersPage({
     // without going through Restore. A suspension is undone on the Suspended
     // tab, deliberately, because that is where the ban/suspension distinction
     // is made.
-    query = query.eq('status', 'pending_approval');
+    //
+    // 00132: AND NOT AN UNFINISHED SIGNUP. A stub created at first sign-in is
+    // also 'pending_approval' — deliberately, because that status is what keeps
+    // it off the ladder, out of the pickers and invisible to other members — but
+    // it is not waiting on the club to approve it. It is waiting on the MEMBER
+    // to finish setup, which is a different queue with a different action, and
+    // putting the two in one list would bury the people an exec can actually
+    // help behind the people they cannot.
+    query = query.eq('status', 'pending_approval').or('onboarding_completed.is.true,user_id.is.null');
+  } else if (tab === 'incomplete') {
+    // Signed in, never finished. `user_id IS NOT NULL AND NOT onboarding_completed`
+    // is the whole definition and it needs no new column: a row with no login and
+    // no onboarding is a roster row an exec pre-added, which is a different thing
+    // and belongs on Needs Attention where it has always been.
+    query = query.not('user_id', 'is', null).eq('onboarding_completed', false);
+  } else if (tab === 'permissions') {
+    query = query.not('privilege_claim_review', 'is', null);
   } else if (tab === 'suspended') {
     query = query.or('status.eq.suspended,is_banned.eq.true');
   } else if (tab === 'inactive') {
@@ -197,18 +233,30 @@ export default async function PlayersPage({
     ? await supabase
         .from('players')
         .select(
-          'id, full_name, handle, email, avatar_url, user_id, status, is_banned, active_flag, created_at',
+          'id, full_name, handle, email, avatar_url, user_id, status, is_banned, active_flag, created_at, onboarding_completed, privilege_claim_review',
         )
         .order('full_name')
         .limit(5000)
     : { data: null };
   const forCount = countRows ?? [];
+  // 00132. Somebody who signed in and never finished setup: a real person with a
+  // proved address, no name and no waiver. They are NOT a member of the club yet,
+  // and the point of this predicate is that every headcount below can say so.
+  const isIncompleteSignup = (p: { user_id: string | null; onboarding_completed: boolean | null }) =>
+    p.user_id !== null && p.onboarding_completed !== true;
+  const members = forCount.filter((p) => !isIncompleteSignup(p));
   const isCompetitive = (s: string) => !['recreational', 'suspended', 'pending_approval'].includes(s);
   const compCount = forCount.filter((p) => isCompetitive(p.status)).length;
   const recCount = forCount.filter((p) => p.status === 'recreational').length;
   // Must use the same predicate as the tab's list filter above, or the badge
   // counts rows the tab will not show.
-  const attCount = forCount.filter((p) => p.status === 'pending_approval').length;
+  const attCount = forCount.filter(
+    (p) => p.status === 'pending_approval' && !isIncompleteSignup(p),
+  ).length;
+  const incompleteCount = forCount.filter(isIncompleteSignup).length;
+  const permissionReviewCount = forCount.filter((p) =>
+    hasPrivilegeClaimReview(p.privilege_claim_review),
+  ).length;
   const susCount = forCount.filter((p) => p.status === 'suspended' || p.is_banned).length;
   const inactCount = forCount.filter((p) => p.active_flag === false).length;
 
@@ -222,6 +270,14 @@ export default async function PlayersPage({
     { id: 'recreational', label: 'Recreational', count: recCount },
     ...(canModerate ? [
       { id: 'attention', label: 'Needs Attention', count: attCount },
+      // Both hidden at zero rather than shown as "0". They are new queues most
+      // clubs will never have anything in, and a permanently empty tab teaches
+      // an exec to stop reading the tab strip. Permission review in particular
+      // must MEAN something the day it appears.
+      ...(incompleteCount > 0 ? [{ id: 'incomplete', label: 'Incomplete', count: incompleteCount }] : []),
+      ...(permissionReviewCount > 0
+        ? [{ id: 'permissions', label: 'Permission review', count: permissionReviewCount }]
+        : []),
       { id: 'suspended', label: 'Suspended', count: susCount },
       { id: 'inactive', label: 'Inactive', count: inactCount },
     ] : []),
@@ -251,6 +307,14 @@ export default async function PlayersPage({
       getMissingLegalDocuments(legalDocs ?? [], acceptances, new Date(), player.waiver_reset_at).length === 0;
     const standing = standingOf(player, waiverCurrent);
     standingCounts.set(standing.label, (standingCounts.get(standing.label) ?? 0) + 1);
+    const claimReview = parsePrivilegeClaimReview(player.privilege_claim_review);
+    // A stub has first_name = '' and therefore full_name = '' — deliberately, in
+    // 00132: we do not know their name, and inventing one from the email would
+    // put something in the roster and the merge picker that reads as real. The
+    // blank is rendered as a blank ONCE, here, so the row still identifies
+    // somebody (the email is already the row's meta line) instead of showing an
+    // empty cell with an avatar beside it.
+    const displayName = player.full_name?.trim() ? player.full_name : 'No name yet';
     // The handle if they picked one, else the seven-character code the club
     // assigned. One helper decides which, so the roster and the member's own
     // page cannot disagree about what identifies somebody.
@@ -284,6 +348,21 @@ export default async function PlayersPage({
             {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS] || player.status}
           </Badge>
         )}
+        {/* 00132. Two states that are new because a `players` row no longer
+            means "a member of the club". Both are on every tab, not only their
+            own, because the merge picker and the Competitive list can show these
+            rows too and a nameless row with no explanation is worse than none. */}
+        {isIncompleteSignup(player) && (
+          <Badge variant="warning" className={BADGE}>Signup unfinished</Badge>
+        )}
+        {claimReview && (
+          <Badge variant={claimReview.state === 'kept' ? 'info' : 'danger'} className={BADGE}>
+            {claimReview.state === 'kept' ? 'Kept ' : 'Holding '}
+            {describePrivileges(
+              claimReview.state === 'kept' ? claimReview.kept : claimReview.withheld,
+            )}
+          </Badge>
+        )}
         {player.is_exec && <Badge variant="info" className={BADGE}>Exec</Badge>}
         {player.is_trainer && <Badge variant="info" className={BADGE}>Trainer</Badge>}
         {player.fee_exempt && <Badge variant="neutral" className={BADGE}>Fee exempt</Badge>}
@@ -311,6 +390,17 @@ export default async function PlayersPage({
         >
           View
         </Link>
+        {/* Only where the review is, and only for somebody who can act on it.
+            Rendered beside View rather than inside the tab's action set because
+            it is not a roster action — it decides a flag, not a member. */}
+        {claimReview && (
+          <PrivilegeReviewActions
+            playerId={player.id}
+            playerName={displayName}
+            review={claimReview}
+            canResolve={canConsoleAccess}
+          />
+        )}
         {rosterActionsFor(tab, player, { isAdmin })
           .filter((action) => mayRun(action, player.status === 'pending_approval'))
           .map((action) => (
@@ -318,7 +408,7 @@ export default async function PlayersPage({
               key={rosterActionKey(action)}
               mode={action.kind}
               playerId={player.id}
-              playerName={player.full_name}
+              playerName={displayName}
               playerData={player}
               isAdmin={isAdmin}
               canApprove={canApprove}
@@ -329,10 +419,10 @@ export default async function PlayersPage({
 
     const name = (
       <Link href={`/players/${player.id}`} className="group flex items-center gap-3">
-        <AvatarChip name={player.full_name} src={player.avatar_url} size="sm" id={player.id} />
+        <AvatarChip name={displayName} src={player.avatar_url} size="sm" id={player.id} />
         <span className="min-w-0">
           <span className="block truncate text-sm text-[var(--text-primary)] transition-colors group-hover:text-[var(--color-accent)]">
-            {player.full_name}
+            {displayName}
           </span>
           {identifier && (
             <span className="block font-mono text-[10px] text-[var(--text-muted)]">{identifier}</span>
@@ -343,7 +433,7 @@ export default async function PlayersPage({
 
     return {
       id: player.id,
-      name: player.full_name,
+      name: displayName,
       handle: player.handle,
       meta: player.email,
       row: (
@@ -401,7 +491,11 @@ export default async function PlayersPage({
         // The club's own size, in the console's eyebrow voice. Omitted rather
         // than printed as 0 for somebody without the read: they never fetched
         // the roster, so they have no number to print.
-        eyebrow={canRead ? `Roster · ${forCount.length} members` : 'Roster'}
+        // `members`, not `forCount`: an unfinished signup is a real person but
+        // not yet a member of the club, and 00132 made those rows exist. Counting
+        // them here would have made the club's stated size jump on deploy day for
+        // a reason nobody could find.
+        eyebrow={canRead ? `Roster · ${members.length} members` : 'Roster'}
         title="Players"
         sub="Standing, rating and last seen for every member."
         watermark="P"
@@ -415,7 +509,14 @@ export default async function PlayersPage({
               <MergePlayersButton
                 players={(countRows ?? []).map((p) => ({
                   id: p.id,
-                  full_name: p.full_name,
+                  // Unfinished signups stay IN the picker on purpose: merging a
+                  // stub into the roster row an exec pre-added is exactly the
+                  // recovery an officer needs if one ever slips past the claim.
+                  // They are named rather than hidden, because an unlabelled
+                  // blank row in a merge dialog is the worst of both.
+                  full_name: p.full_name?.trim()
+                    ? p.full_name
+                    : `No name yet · ${p.email ?? 'unknown address'}`,
                   handle: p.handle,
                   email: p.email,
                   avatar_url: p.avatar_url,
@@ -453,7 +554,13 @@ export default async function PlayersPage({
           standings={[...standingCounts].map(([label, value]) => ({ label, value }))}
           tabLabel={tabs.find((t) => t.id === tab)?.label ?? tab}
           tabTotal={tabs.find((t) => t.id === tab)?.count ?? rows.length}
-          joins={(countRows ?? [])
+          // `members`, not `countRows`. A signup that was never finished is not
+          // a join: plotting it would put a step on the growth curve for
+          // somebody who never became a member, and — because the headline
+          // figure below is the same set — the two numbers on this one card
+          // would have to agree about which rows count. They do, by using the
+          // same list.
+          joins={members
             // `players.created_at` is NOT NULL DEFAULT now(), so this drops
             // nothing today and is kept only so a schema change cannot put an
             // undated member on a time axis. It matters that it is dead: the
@@ -464,7 +571,7 @@ export default async function PlayersPage({
             // One member, valued at one — see the note in roster-charts.tsx on
             // why the field is called `cents`.
             .map((p) => ({ at: p.created_at as string, cents: 1 }))}
-          totalMembers={forCount.length}
+          totalMembers={members.length}
           capped={forCount.length >= 5000}
         />
         {/* Remounted per tab (key) so a query typed on one tab cannot carry over
