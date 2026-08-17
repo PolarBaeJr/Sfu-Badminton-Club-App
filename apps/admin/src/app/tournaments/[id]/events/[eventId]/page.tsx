@@ -115,6 +115,10 @@ export default async function EventPage({
     // tab, and it is the same key both generators already ask for — no new
     // capability, and nothing gated on it that was not gated on it before.
     generate: may('tournaments.draw.generate.write'),
+    // Feeds the Desk tab's court field and its ready pills. Same key check-in
+    // already asks, and the same key both server actions re-check — see
+    // participant-controls.ts for why neither control minted one of its own.
+    runDesk: may('tournaments.draw.checkin.mark.write'),
   };
   // `siblingEvents` feeds one picker too: the "seed from" list in
   // EventSettingsDialog, which is reached from EventHeader's settings button and

@@ -477,3 +477,80 @@ async function selfCheckInImpl(eventId: string) {
 
   revalidateTournamentPaths(event.tournament_id, eventId);
 }
+
+/**
+ * "I'M HERE" — the member telling the desk they are standing courtside and
+ * ready to play this match.
+ *
+ * THE BUG THIS CAME OUT OF. The event page painted the match's status in a
+ * bordered uppercase chip in the right-hand slot of the member's own row, so a
+ * match at status 'ready' rendered a thing that looked exactly like a READY
+ * button. The owner pressed it repeatedly and reported "it has never worked".
+ * It was a label. Rather than make the label look less like a button, the club
+ * asked for the button — and it turns out to be the thing the scoring table is
+ * missing, because today nobody there knows whether the person whose match is
+ * up is even in the building.
+ *
+ * A TOGGLE, WHICH IS THE UNDO. Somebody taps it and then goes to the toilet;
+ * they tap it again on the way and the mark comes off. There is no timeout and
+ * no expiry — a flag that silently withdrew itself would be worse than one that
+ * is occasionally stale, because the desk would have no way to tell the two
+ * apart. The other two ways a mark ends are structural rather than actions:
+ * every mark is scoped to ONE match, so the next round starts empty; and the
+ * marks are on the match row, so regenerating a draw deletes them with it.
+ *
+ * NOT eventId-SCOPED LIKE ITS NEIGHBOURS. Every other action in this file is
+ * given the event and finds the member's row; this one is given the MATCH,
+ * because that is what the control is attached to. The tournament and event ids
+ * needed for revalidation are read back from it.
+ *
+ * NO PARTICIPANT LOOKUP HERE, deliberately. Whether this member is in this
+ * match is decided by set_match_ready() inside one statement — it has to be,
+ * because a doubles entrant may have no tournament_participants row at all
+ * (00102) and because a stray id in that array is data nobody can see in order
+ * to fix. The gate is not skipped, it has moved somewhere it cannot be raced.
+ */
+export async function setMyMatchReady(matchId: string, ready: boolean): Promise<ActionResult> {
+  return runAction(() => setMyMatchReadyImpl(matchId, ready));
+}
+
+async function setMyMatchReadyImpl(matchId: string, ready: boolean) {
+  const player = await requirePlayer();
+  const service = createServiceRoleClient();
+
+  const { data: match } = await service
+    .from('tournament_matches')
+    .select('id, event_id, event:tournament_events(tournament_id, tournament:tournaments(suspended_at, suspension_reason))')
+    .eq('id', matchId)
+    .maybeSingle();
+  if (!match) throw new ExpectedError('Match not found');
+
+  const event = (Array.isArray(match.event) ? match.event[0] : match.event) as
+    { tournament_id?: string; tournament?: unknown } | null;
+  const tournamentId = event?.tournament_id;
+  if (!tournamentId) throw new Error('Match is not attached to a tournament');
+
+  const suspension = pickSuspension(event?.tournament);
+  if (suspension?.suspended_at) {
+    throw new ExpectedError(
+      `This tournament is currently suspended${suspension.suspension_reason ? `: ${suspension.suspension_reason}` : ''}`,
+    );
+  }
+
+  // p_player_id is ALWAYS requirePlayer()'s id and never a parameter of this
+  // action — the same rule every self-service action in this app follows, and
+  // the reason set_match_ready's EXECUTE is service_role only. The function
+  // takes an arbitrary player id because the console needs to pass somebody
+  // else's; nothing reachable from a browser gets to choose it.
+  const { error } = await service.rpc('set_match_ready', {
+    p_match_id: matchId,
+    p_player_id: player.id,
+    p_ready: ready,
+  });
+  // The refusals this can return are sentences an entrant can act on ("This
+  // match is finished"), so they go through the expected channel rather than
+  // into Sentry as unhandled.
+  if (error) throw new ExpectedError(error.message);
+
+  revalidateTournamentPaths(tournamentId, match.event_id as string);
+}

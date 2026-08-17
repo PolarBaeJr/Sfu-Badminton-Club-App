@@ -19,7 +19,7 @@ import type {
   TournamentBonusSettings,
   EventWaiverStatus,
 } from '@badminton/shared';
-import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered, Pause } from 'lucide-react';
+import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered, Pause, MapPin } from 'lucide-react';
 import type {
   TournamentRow,
   TournamentEventRow,
@@ -37,6 +37,7 @@ import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
 import { ResultsTab } from './ResultsTab';
 import { LeaderboardTab } from './LeaderboardTab';
+import { MatchDeskTab } from './MatchDeskTab';
 
 // 'pool' is a tab of its own rather than a mode of 'bracket' (00107). On a
 // pool_to_bracket event BOTH halves exist at once from the moment the knockout
@@ -44,7 +45,14 @@ import { LeaderboardTab } from './LeaderboardTab';
 // fixture list, the bracket is a tree. One tab that switched between them would
 // hide half the event behind a control, and would have no answer for the exec
 // who wants the standings open while entering a quarter-final.
-type TabId = 'participants' | 'checkin' | 'pool' | 'bracket' | 'results' | 'leaderboard';
+// 'desk' is where an event is RUN rather than recorded. Everything else here is
+// a view of what has happened; this one is the two live facts nothing in the
+// console had before — which court a match is on, and who is standing in front
+// of you. It exists as a tab of its own because the bracket card is a single
+// <button> (an input inside it would nest interactives) and because "which
+// matches still have no court" is a sorted list, not a control on another
+// screen.
+type TabId = 'participants' | 'checkin' | 'desk' | 'pool' | 'bracket' | 'results' | 'leaderboard';
 
 interface Props {
   tournament: TournamentRow;
@@ -101,6 +109,13 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   const bracketMatches = poolToBracket ? matches.filter((m) => m.phase === 'bracket') : matches;
   const hasDraw = eventHasDraw(status);
 
+  // ONLY WHILE THERE IS SOMETHING TO CALL. A completed event has no next match,
+  // and a court set on one is history — the tab would be a working list with no
+  // work in it.
+  if (hasDraw && status !== 'completed') {
+    tabs.push({ id: 'desk', label: 'Desk', icon: <MapPin className="w-4 h-4" /> });
+  }
+
   if (hasDraw && playsRoundRobin(format)) {
     tabs.push({
       id: 'pool',
@@ -131,6 +146,9 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // Default to the most relevant tab
   // The half that is CURRENT, not a fixed tab id — an exec opening a
   // pool_to_bracket event mid-round-robin wants the round robin.
+  // The desk is not the default even while an event is live: an exec opening
+  // this page mid-event is as likely to be entering a score as calling a match,
+  // and moving the landing tab under them would be a change nobody asked for.
   const defaultTab: TabId = hasResultsTab(status) ? 'results'
     : ['pool_generated', 'pool_live'].includes(status) ? 'pool'
     : ['bracket_generated', 'live'].includes(status) ? (endsInKnockout(format) ? 'bracket' : 'pool')
@@ -256,6 +274,15 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             isDoubles={isDoubles}
             waiverStates={waiverStates}
+          />
+        )}
+        {activeTab === 'desk' && (
+          <MatchDeskTab
+            matches={matches}
+            participants={participants}
+            pairs={pairs}
+            isDoubles={isDoubles}
+            canRunDesk={drawCapabilities.runDesk}
           />
         )}
         {activeTab === 'pool' && (

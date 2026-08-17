@@ -159,16 +159,22 @@ describe('CAPABILITY_GATES', () => {
   // capability was added or removed there: CAPABILITIES is 119 above, and the
   // one added by `players.consoleaccess.write` is the 134th site — setConsoleAccess,
   // which no other capability claims.
-  it('names 134 distinct enforcement points, none of them claimed twice', () => {
+  // 133 BECAME 136 when the desk got two more things to do. `tournaments.draw.
+  // checkin.mark.write` picked up setMatchReadyForPlayer and setMatchCourt —
+  // two new sites, no new capability, and no capability removed: CAPABILITIES is
+  // still 119 above. Both are the desk recording or answering "are you here",
+  // which is why they merged rather than minting a key; the reason is argued in
+  // that entry's `merged` prose, which this file's next test requires.
+  it('names 136 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(134);
-    expect(new Set(sites).size).toBe(134);
-    expect(ENFORCEMENT_POINTS).toBe(134);
+    expect(sites.length).toBe(136);
+    expect(new Set(sites).size).toBe(136);
+    expect(ENFORCEMENT_POINTS).toBe(136);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

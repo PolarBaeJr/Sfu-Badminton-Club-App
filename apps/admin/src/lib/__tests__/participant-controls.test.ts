@@ -24,6 +24,10 @@ const NOBODY: DrawCapabilities = {
   soloAdd: false,
   soloRemove: false,
   generate: false,
+  // Added for the Desk tab (00135). Listed here so the exhaustive sweeps below
+  // — which iterate Object.keys(NOBODY) — cover it: no participants control and
+  // no redraw button may start reading it by accident.
+  runDesk: false,
 };
 
 const EVERYTHING: DrawCapabilities = {
@@ -36,6 +40,7 @@ const EVERYTHING: DrawCapabilities = {
   soloAdd: true,
   soloRemove: true,
   generate: true,
+  runDesk: true,
 };
 
 const only = (key: keyof DrawCapabilities): DrawCapabilities => ({ ...NOBODY, [key]: true });
