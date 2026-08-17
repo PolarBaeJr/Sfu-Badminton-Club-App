@@ -127,10 +127,23 @@ type DeskState = 'live' | 'callable' | 'waiting';
  * a hex literal, which is what makes it mixable.
  */
 function tint(token: string, fill: number, edge: number): React.CSSProperties {
+  return { ...tintSurface(token, fill, edge), color: `var(${token})` };
+}
+
+/**
+ * The same fill and edge WITHOUT setting `color`, for a container.
+ *
+ * A row is tinted green while its match is on court, and `color` on a container
+ * is inherited: every child in there carries an explicit text colour today, so
+ * nothing leaks — but the next <p> somebody adds without one would come out
+ * green on a live row and black on every other, which is the kind of bug that
+ * gets called a theme problem. Splitting the two makes the leak impossible
+ * rather than merely absent.
+ */
+function tintSurface(token: string, fill: number, edge: number): React.CSSProperties {
   return {
     background: `color-mix(in oklab, var(${token}) ${fill}%, transparent)`,
     borderColor: `color-mix(in oklab, var(${token}) ${edge}%, transparent)`,
-    color: `var(${token})`,
   };
 }
 
@@ -208,10 +221,20 @@ export function CourtManagementTab({
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
 
-  // Only while the event is actually being played, matching what BracketTab asks
-  // before it offers score entry at all. A draw that exists but has not started
-  // is not a thing anybody is standing at a desk for.
-  const eventPlaying = eventIsPlaying(event.status) || event.status === 'bracket_generated';
+  // Only while the event is actually being played — but the UNION of what the two
+  // half-tabs ask, not a copy of one of them.
+  //
+  // BracketTab uses `eventIsPlaying || 'bracket_generated'` and RoundRobinTab adds
+  // `'pool_generated'`, because a pool is drawn and played before a knockout
+  // exists. This tab is deliberately given the WHOLE event so the desk works one
+  // queue across both halves, so taking either tab's predicate alone would have
+  // hidden Enter score here while the other tab still offered it — sending the desk
+  // back to the screen this tab exists to replace, on exactly the format
+  // (pool_to_bracket) where one queue matters most.
+  const eventPlaying =
+    eventIsPlaying(event.status) ||
+    event.status === 'bracket_generated' ||
+    event.status === 'pool_generated';
 
   const phaseRank = (m: TournamentMatchRow) => (m.phase === 'bracket' ? 1 : 0);
   const ordinal = (m: TournamentMatchRow) => m.match_number ?? m.bracket_position ?? 0;
@@ -417,9 +440,9 @@ function DeskRow({
       // Tailwind form of this renders nothing.
       style={
         state === 'live'
-          ? tint('--color-success', 6, 35)
+          ? tintSurface('--color-success', 6, 35)
           : isNext
-            ? tint('--color-accent', 6, 40)
+            ? tintSurface('--color-accent', 6, 40)
             : undefined
       }
     >

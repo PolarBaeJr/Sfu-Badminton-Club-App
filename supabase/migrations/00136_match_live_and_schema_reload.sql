@@ -88,9 +88,10 @@ NOTIFY pgrst, 'reload schema';
 --
 -- The owner's ask — "this should show 'active match'" — therefore cannot be
 -- satisfied by reading harder. It needs the transition to exist, so the Court
--- Management tab now owns it: startMatch / stopMatch in
+-- Management tab now owns it: setMatchLive(matchId, live) in
 -- apps/admin/src/lib/tournament-actions/scheduling.ts, gated on the same desk
--- capability as check-in, the court and the ready marks.
+-- capability as check-in, the court and the ready marks, and named there in
+-- CAPABILITY_GATES so a test fails if the function moves.
 --
 -- NO CHECK CONSTRAINT IS ADDED to police the transition, and that is deliberate
 -- rather than lazy. A legal-transition constraint would have to know that a
@@ -102,4 +103,4 @@ NOTIFY pgrst, 'reload schema';
 -- explained to the exec who tripped it.
 
 COMMENT ON COLUMN public.tournament_matches.status IS
-  'Where this match is in its life. pending = at least one side is still unknown. ready = both sides are known and it can be called. live = it is BEING PLAYED RIGHT NOW; written only by startMatch/stopMatch on the console''s Court Management tab, and unwritten by anything at all before 00136 — the value existed in the CHECK from 00001 and no code path produced it, which is why the player app''s "On court now" label had never been shown to anybody. completed = a score is recorded. walkover = awarded without play. voided = struck, recoverable via unvoidMatch. disputed = admitted by the CHECK and still written by nothing. Deliberately NOT policed by a transition constraint: regenerate, undo and void all move this column non-linearly by design, and the ordering rules live in the actions where a refusal can be explained.';
+  'Where this match is in its life. pending = at least one side is still unknown. ready = both sides are known and it can be called. live = it is BEING PLAYED RIGHT NOW; written only by setMatchLive() behind the console''s Court Management tab, and unwritten by anything at all before 00136 — the value existed in the CHECK from 00001 and no code path produced it, which is why the player app''s "On court now" label had never been shown to anybody. completed = a score is recorded. walkover = awarded without play. voided = struck, recoverable via unvoidMatch. disputed = admitted by the CHECK and still written by nothing. Deliberately NOT policed by a transition constraint: regenerate, undo and void all move this column non-linearly by design, and the ordering rules live in the actions where a refusal can be explained.';

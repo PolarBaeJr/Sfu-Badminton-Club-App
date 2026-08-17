@@ -620,9 +620,17 @@ export default async function EventDetailPage({
                   // making them wait for the other semi-final to finish before
                   // they can say "I'm here" would be the label problem again in
                   // a different costume. 00135's function agrees.
+                  //
+                  // 'live' IS NOT, AND THAT CHANGED. It used to be in this list on
+                  // the grounds that it was harmless — which was true only because
+                  // nothing in either app could write 'live' at all (00136 traces
+                  // it). Now that the desk can send a match on court, the state is
+                  // reachable, and offering "I'm ready" to somebody who is already
+                  // playing is a control with nothing behind it. The row says "On
+                  // court now" instead, which is the informative thing.
                   const canSayReady =
                     !!currentPlayer && !done && !playerOutOfEvent &&
-                    (matchStatus === 'ready' || matchStatus === 'pending' || matchStatus === 'live');
+                    (matchStatus === 'ready' || matchStatus === 'pending');
 
                   return (
                     <div
