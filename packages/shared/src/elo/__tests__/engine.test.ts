@@ -10,10 +10,13 @@ import {
   resolvedFormatWeight,
   eventEloMultiplier,
   eloWeightBreakdown,
+  storedWeight,
+  STORED_WEIGHT_DECIMALS,
   FORMAT_WEIGHTS,
   EVENT_MULTIPLIERS,
 } from '../engine';
 import type { RatingSettings } from '../engine';
+import { derivedFormatWeight } from '../../utils/constants';
 import { knockoutLadderShape, POOL_LADDER_SHAPE } from '../../utils/tournament-phases';
 
 describe('calculateExpected', () => {
@@ -337,43 +340,43 @@ describe('getKFactor', () => {
 
 describe('previewEloChange', () => {
   it('returns positive winDelta and negative lossDelta', () => {
-    const preview = previewEloChange(1200, 1200, 'single_21', 'rated_challenge', 'singles', false);
+    const preview = previewEloChange(1200, 1200, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false);
     expect(preview.winDelta).toBeGreaterThan(0);
     expect(preview.lossDelta).toBeLessThan(0);
   });
 
   it('produces symmetric deltas for equal-rated players', () => {
-    const preview = previewEloChange(1200, 1200, 'single_21', 'rated_challenge', 'singles', false);
+    const preview = previewEloChange(1200, 1200, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false);
     expect(preview.winDelta + preview.lossDelta).toBe(0);
   });
 
   it('produces larger deltas for provisional players', () => {
-    const established = previewEloChange(1200, 1200, 'single_21', 'rated_challenge', 'singles', false);
-    const provisional = previewEloChange(1200, 1200, 'single_21', 'rated_challenge', 'singles', true);
+    const established = previewEloChange(1200, 1200, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false);
+    const provisional = previewEloChange(1200, 1200, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', true);
     expect(provisional.winDelta).toBeGreaterThan(established.winDelta);
   });
 
   it('produces larger deltas for bo3 format', () => {
-    const single = previewEloChange(1200, 1200, 'single_21', 'rated_challenge', 'singles', false);
-    const bo3 = previewEloChange(1200, 1200, 'bo3_21', 'rated_challenge', 'singles', false);
+    const single = previewEloChange(1200, 1200, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false);
+    const bo3 = previewEloChange(1200, 1200, 'bo3_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false);
     expect(bo3.winDelta).toBeGreaterThan(single.winDelta);
   });
 
   it('produces zero deltas for casual events', () => {
-    const preview = previewEloChange(1200, 1400, 'single_21', 'casual', 'singles', false);
+    const preview = previewEloChange(1200, 1400, 'single_21', EVENT_MULTIPLIERS.casual, 'singles', false);
     // Use === to treat -0 and +0 as equal (Object.is, used by toBe, distinguishes them).
     expect(preview.winDelta === 0).toBe(true);
     expect(preview.lossDelta === 0).toBe(true);
   });
 
   it('applies eloWeightOverride', () => {
-    const normal = previewEloChange(1200, 1200, 'single_21', 'rated_challenge', 'singles', false);
-    const half = previewEloChange(1200, 1200, 'single_21', 'rated_challenge', 'singles', false, 0.5);
+    const normal = previewEloChange(1200, 1200, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false);
+    const half = previewEloChange(1200, 1200, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, 0.5);
     expect(Math.abs(half.winDelta)).toBeLessThan(Math.abs(normal.winDelta));
   });
 
   it('produces smaller win delta for an upset (beating stronger opponent expected)', () => {
-    const preview = previewEloChange(1200, 1600, 'single_21', 'rated_challenge', 'singles', false);
+    const preview = previewEloChange(1200, 1600, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false);
     expect(preview.winDelta).toBeGreaterThan(0);
     expect(preview.winDelta).toBeGreaterThan(12);
   });
@@ -428,7 +431,7 @@ describe('previewEloChange honours the configured rating settings', () => {
 
   it('agrees with calculateEloUpdate for an established player', () => {
     const preview = previewEloChange(
-      1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, LIVE,
+      1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30, undefined, LIVE,
     );
     const base = { playerRating: 1200, opponentRating: 1150, matchType: 'singles' as const, provisional: false, matchesPlayed: 30, settings: LIVE };
     expect(preview.winDelta).toBe(applied({ ...base, won: true }));
@@ -437,7 +440,7 @@ describe('previewEloChange honours the configured rating settings', () => {
 
   it('agrees with calculateEloUpdate for a provisional player', () => {
     const preview = previewEloChange(
-      1200, 1150, 'bo3_21', 'rated_challenge', 'doubles', true, undefined, 2, undefined, LIVE,
+      1200, 1150, 'bo3_21', EVENT_MULTIPLIERS.rated_challenge, 'doubles', true, undefined, 2, undefined, LIVE,
     );
     const base = { playerRating: 1200, opponentRating: 1150, matchType: 'doubles' as const, provisional: true, matchesPlayed: 2, settings: LIVE, format: 'bo3_21' as const };
     expect(preview.winDelta).toBe(applied({ ...base, won: true }));
@@ -449,10 +452,10 @@ describe('previewEloChange honours the configured rating settings', () => {
   // ignored settings overstated every established member's swing by a third.
   it('differs from the unconfigured preview whenever the club has retuned K', () => {
     const withSettings = previewEloChange(
-      1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, LIVE,
+      1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30, undefined, LIVE,
     );
     const withoutSettings = previewEloChange(
-      1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30,
+      1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30,
     );
     expect(withSettings.winDelta).not.toBe(withoutSettings.winDelta);
     // ...and the settings-aware one is the one getKFactor agrees with.
@@ -467,10 +470,10 @@ describe('previewEloChange honours the configured rating settings', () => {
   it('honours provisional_k_enabled: false', () => {
     const off: RatingSettings = { ...LIVE, provisional_k_enabled: false };
     const preview = previewEloChange(
-      1200, 1150, 'single_21', 'rated_challenge', 'singles', true, undefined, 0, undefined, off,
+      1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', true, undefined, 0, undefined, off,
     );
     const established = previewEloChange(
-      1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, off,
+      1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30, undefined, off,
     );
     expect(preview.winDelta).toBe(established.winDelta);
   });
@@ -479,10 +482,10 @@ describe('previewEloChange honours the configured rating settings', () => {
     const on: RatingSettings = { ...LIVE, provisional_k_enabled: true };
     for (const settings of [LIVE, on]) {
       const provisional = previewEloChange(
-        1200, 1150, 'single_21', 'rated_challenge', 'singles', true, undefined, 0, undefined, settings,
+        1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', true, undefined, 0, undefined, settings,
       );
       const established = previewEloChange(
-        1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, settings,
+        1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30, undefined, settings,
       );
       expect(provisional.winDelta).toBeGreaterThan(established.winDelta);
     }
@@ -493,8 +496,8 @@ describe('previewEloChange honours the configured rating settings', () => {
   // provisional at one of 50.
   it('reads provisional_threshold from settings', () => {
     const raised: RatingSettings = { ...LIVE, provisional_threshold: 50 };
-    const atLive = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, LIVE);
-    const atRaised = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, raised);
+    const atLive = previewEloChange(1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30, undefined, LIVE);
+    const atRaised = previewEloChange(1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30, undefined, raised);
     expect(atRaised.winDelta).toBeGreaterThan(atLive.winDelta);
   });
 
@@ -503,8 +506,8 @@ describe('previewEloChange honours the configured rating settings', () => {
   // constant would tell a 1495-rated member on a club with a ceiling of 3001
   // that they had almost nothing left to gain.
   it('clamps against the configured ceiling, not the constant', () => {
-    const near = previewEloChange(1495, 1100, 'bo3_21', 'rated_challenge', 'singles', true, undefined, 0, undefined, LIVE);
-    const clampedToConstant = previewEloChange(1495, 1100, 'bo3_21', 'rated_challenge', 'singles', true, undefined, 0);
+    const near = previewEloChange(1495, 1100, 'bo3_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', true, undefined, 0, undefined, LIVE);
+    const clampedToConstant = previewEloChange(1495, 1100, 'bo3_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', true, undefined, 0);
     expect(near.winDelta).toBeGreaterThan(clampedToConstant.winDelta);
     expect(1495 + near.winDelta).toBeGreaterThan(1500);
   });
@@ -513,8 +516,8 @@ describe('previewEloChange honours the configured rating settings', () => {
   // a figure rather than NaN — the same degradation getKFactor already promises
   // field by field.
   it('falls back to the shipped defaults for null or undefined settings', () => {
-    const withNull = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, null);
-    const withNothing = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30);
+    const withNull = previewEloChange(1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30, undefined, null);
+    const withNothing = previewEloChange(1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30);
     expect(withNull).toEqual(withNothing);
     expect(Number.isFinite(withNull.winDelta)).toBe(true);
   });
@@ -530,8 +533,8 @@ describe('previewEloChange honours the configured rating settings', () => {
       max_elo: 100,
       provisional_threshold: null,
     } as RatingSettings;
-    const preview = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, junk);
-    const defaults = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30);
+    const preview = previewEloChange(1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30, undefined, junk);
+    const defaults = previewEloChange(1200, 1150, 'single_21', EVENT_MULTIPLIERS.rated_challenge, 'singles', false, undefined, 30);
     expect(preview).toEqual(defaults);
   });
 });
@@ -636,5 +639,266 @@ describe('eloWeightBreakdown', () => {
     });
     // Equal ratings, so (actual - expected) is exactly 0.5.
     expect(viaEngine.delta).toBe(Math.round(48 * b.product * 0.5));
+  });
+});
+
+// ============================================================
+// THE TWO WEIGHT TABLES — the divergence is deliberate, so it is pinned
+// ============================================================
+//
+// See the ruling in engine.ts. FORMAT_WEIGHTS and derivedFormatWeight give
+// different answers for two of the four nominal shapes, because the SQL write
+// path gives different answers for them too (trigger_set_match_weights, 00031:
+// derived_format_weight when points_per_game is set, get_format_weight
+// otherwise). These tests exist so that reconciling one table without the
+// migration that reconciles the other FAILS rather than silently re-pricing
+// every short match.
+describe('the two weight tables disagree, on purpose', () => {
+  // get_format_weight, 00003_functions.sql, transcribed from the migration
+  // rather than read out of the engine — a test that read FORMAT_WEIGHTS on both
+  // sides would pass no matter what the table said.
+  const SQL_GET_FORMAT_WEIGHT = {
+    bo3_21: 1.25,
+    single_21: 1.00,
+    single_15: 0.75,
+    single_11: 0.50,
+  } as const;
+
+  it('keeps FORMAT_WEIGHTS identical to SQL get_format_weight', () => {
+    expect(FORMAT_WEIGHTS).toEqual(SQL_GET_FORMAT_WEIGHT);
+  });
+
+  it('agrees with the formula on the two full-length shapes', () => {
+    expect(derivedFormatWeight(3, 21)).toBe(FORMAT_WEIGHTS.bo3_21);
+    expect(derivedFormatWeight(1, 21)).toBe(FORMAT_WEIGHTS.single_21);
+  });
+
+  // The numbers, stated as the fractions the formula is: 15/21 and 11/21. The
+  // table says 0.75 and 0.50.
+  it('disagrees with the formula on the two short shapes, by these amounts', () => {
+    expect(derivedFormatWeight(1, 15)).toBeCloseTo(15 / 21, 10);
+    expect(derivedFormatWeight(1, 15)).not.toBe(FORMAT_WEIGHTS.single_15);
+    // The table is the HEAVIER of the two for a game to 15 (0.75 > 0.714…)
+    expect(FORMAT_WEIGHTS.single_15).toBeGreaterThan(derivedFormatWeight(1, 15));
+
+    expect(derivedFormatWeight(1, 11)).toBeCloseTo(11 / 21, 10);
+    expect(derivedFormatWeight(1, 11)).not.toBe(FORMAT_WEIGHTS.single_11);
+    // ...and the LIGHTER of the two for a game to 11 (0.50 < 0.523…), so the
+    // divergence does not even point the same way on both shapes. That is why
+    // reconciling is a re-pricing decision and not a tidy-up.
+    expect(FORMAT_WEIGHTS.single_11).toBeLessThan(derivedFormatWeight(1, 11));
+  });
+
+  // resolvedFormatWeight is the branch, and the branch is `points_per_game IS
+  // NOT NULL` — exactly what hasTypedFormat asks. Same nominal shape, two
+  // answers, chosen by how it was recorded.
+  it('routes the same nominal shape to whichever table recorded it', () => {
+    const inheriting = resolvedFormatWeight({ match_format: 'one_game_15' });
+    const typed = resolvedFormatWeight({ match_format: 'one_game_15', games_per_match: 1, points_per_game: 15 });
+    expect(inheriting).toBe(FORMAT_WEIGHTS.single_15);
+    expect(typed).toBeCloseTo(15 / 21, 10);
+    expect(inheriting).not.toBe(typed);
+  });
+});
+
+// ============================================================
+// EQUIVALENCE: the previewed delta IS the delta apply_match_result will write
+// ============================================================
+//
+// The write path for a challenge is SQL, and it does one thing the TypeScript
+// engine has no reason to do on its own: it rates the match off the STORED
+// weight. matches.format_weight is NUMERIC(4,2) (00001_schema.sql:389) and
+// apply_match_result reads `v_format_weight := v_match.format_weight`, so a
+// derived weight of 0.892857… is applied as 0.89. The delta is then ROUNDed to
+// an integer, which is how a difference in the third decimal becomes a whole
+// point on a member's screen.
+//
+// The model below is written FROM THE MIGRATIONS, not from the engine: its own
+// copy of the enum table, its own decimal narrowing (toFixed, not the engine's
+// multiply-and-round), its own half-away-from-zero rounding. Both sides of the
+// assertion must not come from the same code or the test passes whatever the
+// engine does.
+describe('previewEloChange equals what the challenge write path applies', () => {
+  const LIVE: RatingSettings = {
+    max_elo: 3001,
+    min_elo: 100,
+    singles_k_provisional: 64,
+    singles_k_established: 36,
+    doubles_k_provisional: 64,
+    doubles_k_established: 36,
+    provisional_threshold: 8,
+    sweep_margin_multiplier: 1.15,
+  };
+
+  /** derived_format_weight, 00031 — transcribed from the migration. */
+  function sqlDerivedFormatWeight(bestOf: number, target: number): number {
+    return Math.min(1.5, Math.max(0.25, (target / 21) * (bestOf > 1 ? 1.25 : 1.0)));
+  }
+
+  /** What NUMERIC(4,2) holds. Deliberately a different implementation to storedWeight. */
+  function asNumeric42(n: number): number {
+    return Number(n.toFixed(2));
+  }
+
+  /** Postgres ROUND() on a NUMERIC: half away from zero. */
+  function sqlRound(n: number): number {
+    return Math.sign(n) * Math.round(Math.abs(n));
+  }
+
+  /**
+   * apply_match_result (00127) + calculate_elo_update (00044), for one side of a
+   * custom-shape challenge with no walkover weighting and no sweep.
+   */
+  function appliedBySql(opts: {
+    playerRating: number;
+    opponentRating: number;
+    gamesPerMatch: number;
+    pointsPerGame: number;
+    kFactor: number;
+    eventMultiplier: number;
+    won: boolean;
+    ceiling: number;
+    floor: number;
+  }): number {
+    // trigger_set_match_weights: points_per_game is set, so the derived branch,
+    // then the column narrows it.
+    const formatWeight = asNumeric42(sqlDerivedFormatWeight(opts.gamesPerMatch, opts.pointsPerGame));
+    const eventMultiplier = asNumeric42(opts.eventMultiplier);
+    const expected = 1.0 / (1.0 + 10 ** ((opts.opponentRating - opts.playerRating) / 800));
+    const actual = opts.won ? 1.0 : 0.0;
+    const delta = sqlRound(opts.kFactor * formatWeight * eventMultiplier * (actual - expected));
+    const clamped = Math.max(opts.floor, Math.min(opts.ceiling, opts.playerRating + delta));
+    return clamped - opts.playerRating;
+  }
+
+  // Every shape the New Challenge form can produce, against a spread of rating
+  // gaps and both K-factors. The form's points field is bounded to [5, 30] by
+  // the CHECK constraint in 00031 and by the form itself.
+  const SHAPES = [1, 3, 5].flatMap(g => [5, 11, 13, 15, 17, 19, 21, 25, 30].map(p => ({ g, p })));
+  const GAPS = [-400, -150, -50, 0, 25, 75, 200, 500];
+
+  it('matches the SQL write path for every shape, gap and K-factor', () => {
+    for (const { g, p } of SHAPES) {
+      for (const gap of GAPS) {
+        for (const provisional of [true, false]) {
+          const playerRating = 1200;
+          const opponentRating = 1200 + gap;
+          const format = g > 1 ? 'bo3_21' : 'single_21';
+          const preview = previewEloChange(
+            playerRating, opponentRating, format,
+            EVENT_MULTIPLIERS.rated_challenge, 'singles',
+            provisional, undefined, provisional ? 0 : 30,
+            { gamesPerMatch: g, pointsPerGame: p },
+            LIVE,
+          );
+          const base = {
+            playerRating, opponentRating, gamesPerMatch: g, pointsPerGame: p,
+            // The K the SQL CASE would pick off the same settings row.
+            kFactor: provisional ? LIVE.singles_k_provisional! : LIVE.singles_k_established!,
+            eventMultiplier: 1.0,
+            ceiling: LIVE.max_elo!, floor: LIVE.min_elo!,
+          };
+          const label = `bo${g} to ${p}, gap ${gap}, ${provisional ? 'provisional' : 'established'}`;
+          expect(preview.winDelta, label).toBe(appliedBySql({ ...base, won: true }));
+          expect(preview.lossDelta, label).toBe(appliedBySql({ ...base, won: false }));
+        }
+      }
+    }
+  });
+
+  // THE TEST ABOVE MUST BE ABLE TO FAIL. If the preview used the full-precision
+  // weight — which is what it did before this fix — some of those cases would
+  // disagree with the write path. This names one and proves the sweep is
+  // discriminating rather than vacuously green.
+  it('is discriminating: full precision would give a different answer somewhere', () => {
+    const disagreements = SHAPES.flatMap(({ g, p }) =>
+      GAPS.flatMap(gap => [64, 36].map(k => {
+        const expected = 1.0 / (1.0 + 10 ** (gap / 800));
+        const exact = sqlDerivedFormatWeight(g, p);
+        const viaExact = sqlRound(k * exact * (1.0 - expected));
+        const viaStored = sqlRound(k * asNumeric42(exact) * (1.0 - expected));
+        return viaExact === viaStored ? null : { g, p, gap, k, viaExact, viaStored };
+      })),
+    ).filter(Boolean);
+    expect(disagreements.length).toBeGreaterThan(0);
+  });
+
+  // The case worked out in storedWeight's comment, spelled out so the report and
+  // the code cite the same numbers. Best of 3 to 15 is 5/84 = 0.892857…, stored
+  // as 0.89; at the live provisional K of 64 and equal ratings that is 28.571
+  // against 28.48, which round to 29 and 28.
+  it('would have over-promised a point on best of 3 to 15 at the placement K', () => {
+    const exact = sqlDerivedFormatWeight(3, 15);
+    expect(exact).toBeCloseTo(0.892857142857, 10);
+    expect(asNumeric42(exact)).toBe(0.89);
+    expect(sqlRound(64 * exact * 0.5)).toBe(29);
+    expect(sqlRound(64 * asNumeric42(exact) * 0.5)).toBe(28);
+
+    const preview = previewEloChange(
+      1200, 1200, 'bo3_21', EVENT_MULTIPLIERS.rated_challenge, 'singles',
+      true, undefined, 0, { gamesPerMatch: 3, pointsPerGame: 15 }, LIVE,
+    );
+    expect(preview.winDelta).toBe(28);
+  });
+
+  // The multiplier is now the caller's to supply, and the preview must use the
+  // one it was given rather than an enum lookup. This is the tournament case the
+  // old signature got wrong: EVENT_MULTIPLIERS.tournament is 1.15 while
+  // tournament_events.elo_multiplier defaults to 1.25.
+  it('uses the multiplier it is handed, not a table lookup', () => {
+    const atTable = previewEloChange(
+      1200, 1150, 'single_21', EVENT_MULTIPLIERS.tournament, 'singles', false, undefined, 30, undefined, LIVE,
+    );
+    const atEventColumn = previewEloChange(
+      1200, 1150, 'single_21', eventEloMultiplier(null), 'singles', false, undefined, 30, undefined, LIVE,
+    );
+    expect(EVENT_MULTIPLIERS.tournament).not.toBe(eventEloMultiplier(null));
+    expect(atEventColumn.winDelta).not.toBe(atTable.winDelta);
+    // ...and the one built from the event's own column is the one the tournament
+    // path would apply.
+    expect(atEventColumn.winDelta).toBe(
+      calculateEloUpdate({
+        playerRating: 1200,
+        opponentRating: 1150,
+        kFactor: getKFactor('singles', false, 30, LIVE),
+        formatWeight: FORMAT_WEIGHTS.single_21,
+        eventMultiplier: eventEloMultiplier(null),
+        won: true,
+        bounds: { min: LIVE.min_elo, max: LIVE.max_elo },
+      }).delta,
+    );
+  });
+
+  // 0 is a real multiplier — an unrated casual match — so it must survive being
+  // passed as a number. A `|| 1` anywhere on this path would rate every casual
+  // game.
+  it('keeps a multiplier of 0 meaning "this moves nothing"', () => {
+    const casual = previewEloChange(
+      1200, 1600, 'bo3_21', EVENT_MULTIPLIERS.casual, 'singles',
+      true, undefined, 0, { gamesPerMatch: 3, pointsPerGame: 21 }, LIVE,
+    );
+    expect(EVENT_MULTIPLIERS.casual).toBe(0);
+    expect(casual.winDelta === 0).toBe(true);
+    expect(casual.lossDelta === 0).toBe(true);
+  });
+});
+
+describe('storedWeight', () => {
+  it('narrows to the width of the NUMERIC column', () => {
+    expect(STORED_WEIGHT_DECIMALS).toBe(2);
+    expect(storedWeight(15 / 21)).toBe(0.71);
+    expect(storedWeight(11 / 21)).toBe(0.52);
+    expect(storedWeight((15 / 21) * 1.25)).toBe(0.89);
+  });
+
+  it('leaves the enum table alone — its entries are already two decimals', () => {
+    for (const w of Object.values(FORMAT_WEIGHTS)) expect(storedWeight(w)).toBe(w);
+    for (const m of Object.values(EVENT_MULTIPLIERS)) expect(storedWeight(m)).toBe(m);
+  });
+
+  it('rounds half away from zero, like NUMERIC, and keeps sign', () => {
+    expect(storedWeight(0.125)).toBe(0.13);
+    expect(storedWeight(-0.125)).toBe(-0.13);
+    expect(storedWeight(0)).toBe(0);
   });
 });

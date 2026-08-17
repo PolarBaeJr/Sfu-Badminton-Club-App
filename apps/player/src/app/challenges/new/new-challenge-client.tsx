@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Select, Input, Textarea, DatePicker, Button, PlayerPicker } from '@badminton/ui';
-import { previewEloChange } from '@badminton/shared';
+import { previewEloChange, getEventMultiplier } from '@badminton/shared';
 import type { RatingSettings } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
@@ -158,7 +158,13 @@ export default function NewChallengeClient({
     type === 'singles' ? myElo.singles : myElo.doubles,
     type === 'singles' ? opponent.singles_elo : opponent.doubles_elo,
     (isCustom ? (Number(customGames) > 1 ? 'bo3_21' : 'single_21') : format) as 'single_21' | 'bo3_21' | 'single_15' | 'single_11',
-    rated ? 'rated_challenge' : 'casual',
+    // The event multiplier, resolved HERE rather than inside the preview. A
+    // challenge is the one case where the enum table is the right answer:
+    // create_match_from_challenge stamps event_multiplier =
+    // get_event_multiplier(event_type) (00003), which is EVENT_MULTIPLIERS entry
+    // for entry — 1.00 rated, 0.00 casual. A tournament match is NOT this case,
+    // which is why the preview no longer takes an enum at all.
+    getEventMultiplier(rated ? 'rated_challenge' : 'casual'),
     type,
     // The viewer's own placement state and match count, not a hardcoded `true`
     // and a dropped count — the two arguments getKFactor combines with

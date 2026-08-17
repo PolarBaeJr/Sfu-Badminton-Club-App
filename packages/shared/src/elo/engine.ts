@@ -123,24 +123,52 @@ export function getEventMultiplier(eventType: EventType): number {
 }
 
 // ============================================================
-// What a TOURNAMENT round is worth — the two halves of the same product
+// THE TWO WEIGHT TABLES, AND WHY THEY ARE ALLOWED TO DISAGREE
 // ============================================================
 //
-// These exist so the console can SHOW the number the ladder is about to apply,
-// rather than a second, plausible copy of it. There are two ways to get a
-// format weight and they do not agree:
+// There are two ways to get a format weight in this codebase and they do not
+// agree:
 //
-//   * a round with a TYPED shape (games_per_match / points_per_game set —
-//     everything knockoutLadder() stamps, and every per-round override) is
-//     weighed by the formula, derivedFormatWeight = (target / 21) x 1.25 for a
-//     best-of;
-//   * a round that INHERITS the event's enum is weighed by the FORMAT_WEIGHTS
-//     table above.
+//   * a match with a TYPED shape (games_per_match / points_per_game set — every
+//     custom challenge, everything knockoutLadder() stamps, every per-round
+//     override) is weighed by the FORMULA, derivedFormatWeight =
+//     (target / 21) x (1.25 for a best-of), clamped to [0.25, 1.5];
+//   * a match that INHERITS an enum is weighed by the FORMAT_WEIGHTS TABLE
+//     above.
 //
-// The two disagree on half the shapes — a game to 15 is 0.71 derived and 0.75
-// tabulated, a game to 11 is 0.52 derived and 0.50 tabulated — so a display
-// that picked one branch would be wrong for every round on the other. Hence one
-// function, called by rateTournamentMatch AND by the two places that print it.
+// They agree exactly on the two shapes anybody plays by default and disagree on
+// the two short ones:
+//
+//     shape            table    formula        derivation
+//     best of 3 to 21   1.25     1.25          (21/21) x 1.25
+//     1 game to 21      1.00     1.00          21/21
+//     1 game to 15      0.75     0.7142857…    15/21
+//     1 game to 11      0.50     0.5238095…    11/21
+//
+// RULING (2026-08-17): BOTH STAY. This is not a display bug to reconcile, it is
+// a faithful mirror of the write path, and the write path is in SQL:
+//
+//     -- trigger_set_match_weights, migration 00031
+//     IF NEW.points_per_game IS NOT NULL THEN
+//       NEW.format_weight := derived_format_weight(...);   -- the formula
+//     ELSE
+//       NEW.format_weight := get_format_weight(NEW.format); -- the table
+//     END IF;
+//
+// and get_format_weight (00003_functions.sql) is FORMAT_WEIGHTS entry for
+// entry: 1.25 / 1.00 / 0.75 / 0.50. Changing either table in TypeScript would
+// make what members are SHOWN disagree with what the ladder APPLIES, which is
+// the opposite of the point. Changing the SQL side is a migration and a
+// restatement of what a shape is worth — the owner's call, not this module's,
+// and it is called out in the report rather than done quietly here.
+//
+// The disagreement is locked by a test (engine.test.ts, "the two weight tables")
+// so that "fixing" one of them fails loudly instead of silently re-pricing
+// every short match.
+//
+// resolvedFormatWeight below picks the same branch the trigger picks, so it is
+// the ONE function both rateTournamentMatch and every place that prints a
+// weight go through.
 
 /** Tournament match_format enum -> the ladder's own enum. */
 function toEloFormat(mf: string): MatchFormat | null {
@@ -160,12 +188,56 @@ function toEloFormat(mf: string): MatchFormat | null {
 /**
  * The format weight the rating engine will actually use for a resolved match
  * shape. Pass the output of `resolveMatchShape(match, event)`.
+ *
+ * DELIBERATELY UNQUANTIZED — do not wrap this in storedWeight(). The tournament
+ * path computes its deltas here in TypeScript and hands
+ * apply_tournament_match_rating the finished integers (see
+ * applyTournamentMatchElo), so nothing ever narrows this number to two
+ * decimals. Rounding it would make the console print a weight the tournament
+ * ladder does not use. The challenge path is the one that quantizes, and it does
+ * so inside previewEloChange, where the column that causes it lives.
  */
 export function resolvedFormatWeight(shape: EventMatchShape): number {
   const rules = getEventRules(shape);
   if (hasTypedFormat(shape)) return derivedFormatWeight(rules.bestOf, rules.target);
   const mapped = toEloFormat(String(shape.match_format));
   return mapped ? FORMAT_WEIGHTS[mapped] : derivedFormatWeight(rules.bestOf, rules.target);
+}
+
+/**
+ * How wide the `matches` weight columns are. `format_weight` and
+ * `event_multiplier` are both NUMERIC(4,2) (00001_schema.sql).
+ */
+export const STORED_WEIGHT_DECIMALS = 2;
+
+/**
+ * A weight as the CHALLENGE path will actually apply it.
+ *
+ * apply_match_result (00127) rates a challenge off the STORED column —
+ * `v_format_weight := v_match.format_weight` — not off the expression that
+ * produced it, and that column is NUMERIC(4,2). derived_format_weight returns
+ * full precision, so the number the ladder multiplies by is its 2-decimal
+ * rounding: a custom shape to 15 is written as 0.71, not 0.714285714…
+ *
+ * That gap is small but it is not cosmetic, because the delta is ROUNDed to an
+ * integer afterwards, so a fraction of a percent can move the answer by a whole
+ * point. Best of 3 to 15, two members level at 1200, production's provisional
+ * singles K of 64:
+ *
+ *     preview, unquantized:  64 x 0.892857… x 1.0 x 0.5 = 28.571 -> +29
+ *     ladder, as stored:     64 x 0.89      x 1.0 x 0.5 = 28.480 -> +28
+ *
+ * Every challenge takes the derived branch — the New Challenge form always
+ * sends games_per_match / points_per_game — so this applied to every custom
+ * shape whose weight was not already a round two decimals.
+ *
+ * Rounds half away from zero for the same reason roundHalfAwayFromZero exists:
+ * NUMERIC is exact decimal and rounds that way, and elo_multiplier is allowed
+ * to be negative.
+ */
+export function storedWeight(weight: number): number {
+  const scale = 10 ** STORED_WEIGHT_DECIMALS;
+  return (Math.sign(weight) * Math.round(Math.abs(weight) * scale)) / scale;
 }
 
 /**
@@ -322,7 +394,26 @@ export function previewEloChange(
   playerRating: number,
   opponentRating: number,
   format: MatchFormat,
-  eventType: EventType,
+  // THE MULTIPLIER ITSELF, NOT THE EVENT TYPE — and that is the fix, not a
+  // convenience. This used to take an `eventType` and look it up in
+  // EVENT_MULTIPLIERS, which is right for a challenge (SQL's
+  // get_event_multiplier is that table entry for entry) and WRONG for a
+  // tournament, because tournament_events.elo_multiplier is a per-event column
+  // an exec can edit and applyTournamentMatchElo rates off that column. Anybody
+  // previewing a tournament match through the enum would have quoted the
+  // table's 1.15 against the column's default of 1.25.
+  //
+  // Made an explicit number rather than an optional override alongside the enum
+  // so there is exactly one source: a challenge caller passes
+  // getEventMultiplier(...), a tournament caller passes
+  // eventEloMultiplier(event.elo_multiplier), and neither can be silently
+  // wrong. Changing the parameter's TYPE rather than adding one means an
+  // un-updated caller fails to compile instead of previewing the old number.
+  //
+  // NOT coerced or defaulted here. 0 is a legitimate value — it is what an
+  // unrated casual match is worth — so `|| 1` would turn "this moves nothing"
+  // into "this moves everything".
+  eventMultiplier: number,
   matchType: 'singles' | 'doubles',
   provisional: boolean,
   eloWeightOverride?: number,
@@ -350,10 +441,19 @@ export function previewEloChange(
   // The same four arguments apply_match_result assembles (00041/00127): the
   // configured K pair, the provisional threshold, and the 00127 off switch.
   const k = getKFactor(matchType, provisional, matchesPlayed, settings);
-  const fw = custom
-    ? derivedFormatWeight(custom.gamesPerMatch, custom.pointsPerGame)
-    : (getFormatWeight(format) ?? FORMAT_WEIGHTS.single_21);
-  const em = getEventMultiplier(eventType);
+  // storedWeight(), because a challenge is rated off matches.format_weight and
+  // that column is NUMERIC(4,2) — see storedWeight for the arithmetic and for
+  // the +29-vs-+28 case this was getting wrong. Applied to BOTH branches: the
+  // table's entries are already exact two-decimal values, so it is a no-op
+  // there, and doing it unconditionally means the preview cannot be right on one
+  // branch and wrong on the other.
+  const fw = storedWeight(
+    custom
+      ? derivedFormatWeight(custom.gamesPerMatch, custom.pointsPerGame)
+      : (getFormatWeight(format) ?? FORMAT_WEIGHTS.single_21),
+  );
+  // Same column, same width: matches.event_multiplier is NUMERIC(4,2) too.
+  const em = storedWeight(eventMultiplier);
   // The configured rating range, for the same reason. calculateEloUpdate derives
   // its delta from the CLAMPED rating, so a preview that fell back to the
   // MIN_ELO/MAX_ELO constants would understate the gain for anybody near 1500 on
