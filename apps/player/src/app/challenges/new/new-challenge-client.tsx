@@ -252,7 +252,7 @@ export default function NewChallengeClient({
       >
         {/* Page header */}
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-11 h-11 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center glow-red shrink-0">
+          <div className="w-11 h-11 rounded-xl bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] flex items-center justify-center glow-red shrink-0">
             <Swords className="w-5 h-5 text-[var(--color-accent)]" />
           </div>
           <div>
@@ -275,7 +275,7 @@ export default function NewChallengeClient({
                     onClick={() => setType(t)}
                     className={`flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-bold capitalize transition-all duration-200 press border ${
                       type === t
-                        ? 'bg-[var(--color-accent)]/15 border-[var(--color-accent)]/30 text-[var(--color-accent)] glow-red'
+                        ? 'bg-[color-mix(in_oklab,var(--color-accent)_15%,transparent)] border-[color-mix(in_oklab,var(--color-accent)_30%,transparent)] text-[var(--color-accent)] glow-red'
                         : 'bg-white/[0.03] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
                     }`}
                   >
@@ -385,7 +385,7 @@ export default function NewChallengeClient({
                 onClick={() => setRated(!rated)}
                 className={`w-full min-h-[44px] py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 press border ${
                   rated
-                    ? 'bg-[var(--color-gold)]/10 border-[var(--color-gold)]/25 text-[var(--color-gold)] glow-gold'
+                    ? 'bg-[color-mix(in_oklab,var(--color-gold)_10%,transparent)] border-[color-mix(in_oklab,var(--color-gold)_25%,transparent)] text-[var(--color-gold)] glow-gold'
                     : 'bg-white/[0.03] border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)]'
                 }`}
               >
@@ -408,14 +408,14 @@ export default function NewChallengeClient({
                   <span className="eyebrow">Elo Preview</span>
                 </div>
                 <div className="flex justify-between gap-3">
-                  <div className="flex items-center gap-2 bg-[var(--color-success)]/5 rounded-lg px-3 py-2 flex-1">
+                  <div className="flex items-center gap-2 bg-[color-mix(in_oklab,var(--color-success)_5%,transparent)] rounded-lg px-3 py-2 flex-1">
                     <TrendingUp className="w-4 h-4 text-[var(--color-success)] shrink-0" />
                     <div>
                       <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">Win</p>
                       <p className="nums text-base font-black text-[var(--color-success)]">+{eloPreview.winDelta}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 bg-[var(--color-accent)]/5 rounded-lg px-3 py-2 flex-1">
+                  <div className="flex items-center gap-2 bg-[color-mix(in_oklab,var(--color-accent)_5%,transparent)] rounded-lg px-3 py-2 flex-1">
                     <TrendingDown className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
                     <div>
                       <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">Loss</p>
@@ -456,7 +456,7 @@ export default function NewChallengeClient({
                   type="time"
                   value={scheduledTime}
                   onChange={(e) => setScheduledTime(e.target.value)}
-                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-transparent transition-colors min-h-[44px] w-full"
+                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[color-mix(in_oklab,var(--color-accent)_40%,transparent)] focus:border-transparent transition-colors min-h-[44px] w-full"
                 />
               </div>
             </div>
