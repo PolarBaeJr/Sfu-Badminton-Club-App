@@ -509,11 +509,18 @@ export default async function PlayersPage({
               <MergePlayersButton
                 players={(countRows ?? []).map((p) => ({
                   id: p.id,
-                  // Unfinished signups stay IN the picker on purpose: merging a
-                  // stub into the roster row an exec pre-added is exactly the
-                  // recovery an officer needs if one ever slips past the claim.
-                  // They are named rather than hidden, because an unlabelled
-                  // blank row in a merge dialog is the worst of both.
+                  // Unfinished signups stay IN the picker, named rather than
+                  // hidden — an unlabelled blank row in a merge dialog is the
+                  // worst of both — but merging one is NOT a recommended
+                  // recovery. merge_players() sets `onboarding_completed = TRUE`
+                  // on the survivor whenever it moves a login onto a row that
+                  // had none, so folding a stub into a pre-added roster row
+                  // marks somebody onboarded who has given no name and signed
+                  // nothing: the middleware gate then passes, and only the
+                  // layout's waiver gate stands between them and /feed. The
+                  // claim at first sign-in is what makes that duplicate not
+                  // happen in the first place; if one ever does, fixing the row
+                  // by hand is the cheaper repair.
                   full_name: p.full_name?.trim()
                     ? p.full_name
                     : `No name yet · ${p.email ?? 'unknown address'}`,

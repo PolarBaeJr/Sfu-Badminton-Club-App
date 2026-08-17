@@ -127,16 +127,35 @@
 -- function, and a backfill whose WHERE clause excludes every row it has already
 -- written.
 --
--- ORDER AGAINST THE APP DEPLOY: THIS FILE FIRST. The deploy calls
--- ensure_player_for_user() on every sign-in and reads privilege_claim_review on
--- /players. Ship the app against a database without this and the first sign-in
--- of the day gets `function public.ensure_player_for_user(uuid) does not exist`
--- — which is swallowed to Sentry rather than shown (see first-signin.ts), so
--- signup would quietly go back to today's behaviour rather than break — while
--- /players would fail its WHOLE PostgREST select on the missing column and
--- render an EMPTY ROSTER. That second one is the reason for the ordering.
--- Applying this early costs nothing: until the deploy, the function has no
--- caller and the column no reader.
+-- ORDER AGAINST THE APP DEPLOY: THIS FILE FIRST, AND IT IS MANDATORY, NOT A
+-- PREFERENCE. The deploy calls ensure_player_for_user() on every sign-in and
+-- selects privilege_claim_review on /players. Ship the app against a database
+-- without this file and TWO things break, one of them badly:
+--
+--   * A PRE-ADDED MEMBER CANNOT FINISH ONBOARDING. EVER. This is the one that
+--     matters. The app deploy also DELETES completeOnboarding's own copy of the
+--     roster claim, because the claim now lives in this file and two
+--     implementations could disagree. So with the function missing:
+--     ensurePlayerRowForUser swallows the "does not exist" error to Sentry and
+--     returns null → getCurrentPlayer() is null → nothing is claimed →
+--     completeOnboarding falls through to create_player_with_rating with that
+--     person's address → players_email_lower_key (00066) rejects it, because
+--     the pre-added roster row already holds that address. They see an error,
+--     press the button again, and see it again. There is no self-service escape
+--     and no amount of retrying helps — exactly the permanently-locked-out
+--     member roster-claim.ts spends a paragraph explaining is worse than any
+--     alternative. Somebody signing up fresh, with no roster row, is unaffected.
+--
+--   * /players RENDERS AN EMPTY ROSTER. A select naming a column that does not
+--     exist fails the WHOLE PostgREST request. Verified against the live
+--     PostgREST 14.12, which answers
+--     `{"code":"42703","message":"column players.privilege_claim_review does not
+--     exist"}` with a 400.
+--
+-- Applying this file EARLY, before the deploy, costs nothing and is safe: until
+-- the deploy the function has no caller and the column no reader, and section 6
+-- is the only part that touches existing rows. So the sequence is: apply this,
+-- confirm, then deploy.
 -- ============================================================
 
 
@@ -651,6 +670,21 @@ GRANT EXECUTE ON FUNCTION public.claim_privilege_attribution(uuid) TO service_ro
 -- and there is no row anywhere with onboarding_completed = false, because
 -- nothing has ever created one. So this tightens a door that is currently
 -- standing open on a room nobody is in.
+--
+-- NOT ALSO APPLIED TO is_admin(), DELIBERATELY, AND IT LEAVES A GAP WORTH
+-- NAMING. is_admin() is the other admin test — it is what `players_admin`
+-- (`FOR ALL USING (is_admin(auth.uid()))`, 00005:71) and the early return in
+-- guard_player_privileged_columns both ask. So a claim that KEEPS role='admin'
+-- gives that person full PostgREST reach over `players` between sign-in and
+-- finishing onboarding, even while this function refuses them the console.
+--
+-- Left alone because narrowing is_admin() changes the meaning of every RLS
+-- policy and every trigger that calls it, which is a far larger blast radius
+-- than this file should carry, and because the window is small and the
+-- privilege is one an exec was SHOWN to have granted deliberately (that is what
+-- "kept" means — an unattributable admin is held, and holds nothing). Naming it
+-- here rather than fixing it quietly: if the gap is ever closed, this is the
+-- paragraph that says why it was open.
 --
 -- Body is otherwise 00057_console_requires_good_standing.sql:26-58 verbatim.
 CREATE OR REPLACE FUNCTION public.admin_access_level(p_user_id uuid)
