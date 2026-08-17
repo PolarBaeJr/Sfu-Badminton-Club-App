@@ -570,8 +570,8 @@ export default async function EventDetailPage({
                       className={`p-3 border ${
                         done
                           ? won
-                            ? 'border-[var(--color-success)]/20 bg-[var(--color-success)]/5'
-                            : 'border-[var(--color-accent)]/20 bg-[var(--color-accent)]/5'
+                            ? 'border-[color-mix(in_oklab,var(--color-success)_20%,transparent)] bg-[color-mix(in_oklab,var(--color-success)_5%,transparent)]'
+                            : 'border-[color-mix(in_oklab,var(--color-accent)_20%,transparent)] bg-[color-mix(in_oklab,var(--color-accent)_5%,transparent)]'
                           : 'border-[var(--border)] bg-white/[0.02]'
                       }`}
                     >
@@ -768,7 +768,7 @@ export default async function EventDetailPage({
                     <div
                       key={e.id}
                       className={`flex items-center justify-between p-2.5 rounded-xl ${
-                        pos === 1 ? 'bg-[var(--color-gold)]/5 border border-[var(--color-gold)]/20' :
+                        pos === 1 ? 'bg-[color-mix(in_oklab,var(--color-gold)_5%,transparent)] border border-[color-mix(in_oklab,var(--color-gold)_20%,transparent)]' :
                         pos === 2 ? 'bg-white/[0.03] border border-white/[0.06]' :
                         pos === 3 ? 'bg-white/[0.02] border border-white/[0.04]' :
                         'bg-transparent border border-transparent'

@@ -232,7 +232,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
 
       {/* Suspension Banner — server actions enforce the actual blocking */}
       {tournament.suspended_at && (
-        <div className="rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-4 flex items-start gap-3" role="status">
+        <div className="rounded-xl border border-[color-mix(in_oklab,var(--color-accent)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-accent)_5%,transparent)] p-4 flex items-start gap-3" role="status">
           <Pause className="w-4 h-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
           <div>
             <p className="text-sm font-medium text-[var(--text-primary)]">This tournament is suspended — actions are paused until it is resumed.</p>

@@ -442,7 +442,7 @@ export function CreateSessionForm() {
                       aria-pressed={off}
                       className={`px-2 py-1 text-xs border transition-colors ${
                         off
-                          ? 'border-[var(--color-danger)]/40 text-[var(--text-muted)] line-through'
+                          ? 'border-[color-mix(in_oklab,var(--color-danger)_40%,transparent)] text-[var(--text-muted)] line-through'
                           : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--border-hover)]'
                       }`}
                     >
@@ -683,7 +683,7 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
               <button
                 onClick={() => { setReasonFor('delete'); setMenuOpen(false); }}
                 disabled={loading}
-                className={`${ITEM} text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10`}
+                className={`${ITEM} text-[var(--color-danger)] hover:bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)]`}
               >
                 Delete
               </button>

@@ -188,7 +188,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                       size="sm"
                       onClick={() => handleCheckIn(entry.id)}
                       loading={loading === entry.id}
-                      className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/80 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                      className="bg-[var(--color-success)] hover:bg-[color-mix(in_oklab,var(--color-success)_80%,transparent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
                     >
                       <CheckCircle className="w-3.5 h-3.5 mr-1" /> Check In
                     </Button>
@@ -278,7 +278,7 @@ function EntryCard({
     <div
       className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
         checked
-          ? 'bg-[var(--color-success)]/5 border-[var(--color-success)]/20'
+          ? 'bg-[color-mix(in_oklab,var(--color-success)_5%,transparent)] border-[color-mix(in_oklab,var(--color-success)_20%,transparent)]'
           : dimmed
           ? 'bg-[var(--bg-elevated)] border-[var(--border)] opacity-50'
           : 'bg-[var(--bg-elevated)] border-[var(--border)] hover:border-[var(--border-hover)]'

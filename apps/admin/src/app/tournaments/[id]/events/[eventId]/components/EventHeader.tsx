@@ -382,7 +382,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-lg bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] flex items-center justify-center">
               <Trophy className="w-5 h-5 text-[var(--color-accent)]" />
             </div>
             <div>

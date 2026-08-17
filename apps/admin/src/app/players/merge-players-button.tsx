@@ -119,7 +119,7 @@ export function MergePlayersButton({ players }: Props) {
           )}
 
           {bothHaveLogin && (
-            <div className="flex gap-2 p-3 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-sm">
+            <div className="flex gap-2 p-3 rounded-lg border border-[color-mix(in_oklab,var(--color-danger)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)] text-sm">
               <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--color-danger)] mt-0.5" />
               <span className="text-[var(--text-secondary)]">
                 Both accounts have a login. Delete one of the auth users first — otherwise the
@@ -129,7 +129,7 @@ export function MergePlayersButton({ players }: Props) {
           )}
 
           {blockers !== null && blockers.length > 0 && (
-            <div className="p-3 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-sm space-y-1">
+            <div className="p-3 rounded-lg border border-[color-mix(in_oklab,var(--color-danger)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)] text-sm space-y-1">
               <div className="flex items-center gap-2 text-[var(--color-danger)] font-medium">
                 <AlertTriangle className="w-4 h-4" /> Can&apos;t merge — the removed account has history
               </div>

@@ -164,7 +164,7 @@ export default async function MatchesPage() {
         <div className={boxed ? 'mt-2' : 'mt-3'}>
           <div
             className={`flex items-start gap-1.5 text-xs border-l-2 border-[var(--color-info)] ${
-              boxed ? 'px-2.5 py-1.5 bg-[var(--color-info)]/5' : 'pl-2.5 py-1'
+              boxed ? 'px-2.5 py-1.5 bg-[color-mix(in_oklab,var(--color-info)_5%,transparent)]' : 'pl-2.5 py-1'
             }`}
           >
             <StickyNote className="w-3.5 h-3.5 text-[var(--color-info)] mt-0.5 shrink-0" />
@@ -180,7 +180,7 @@ export default async function MatchesPage() {
             <div
               key={d.id as string}
               className={`flex items-start gap-1.5 text-xs border-l-2 border-[var(--color-danger)] ${
-                boxed ? 'rounded-md px-2.5 py-1.5 bg-[var(--color-danger)]/5' : 'pl-2.5 py-1'
+                boxed ? 'rounded-md px-2.5 py-1.5 bg-[color-mix(in_oklab,var(--color-danger)_5%,transparent)]' : 'pl-2.5 py-1'
               }`}
             >
               <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-danger)] mt-0.5 shrink-0" />
@@ -197,7 +197,7 @@ export default async function MatchesPage() {
             <div
               key={w.id as string}
               className={`flex items-start gap-1.5 text-xs border-l-2 border-[var(--color-warning)] ${
-                boxed ? 'rounded-md px-2.5 py-1.5 bg-[var(--color-warning)]/5' : 'pl-2.5 py-1'
+                boxed ? 'rounded-md px-2.5 py-1.5 bg-[color-mix(in_oklab,var(--color-warning)_5%,transparent)]' : 'pl-2.5 py-1'
               }`}
             >
               <Clock className="w-3.5 h-3.5 text-[var(--color-warning)] mt-0.5 shrink-0" />
