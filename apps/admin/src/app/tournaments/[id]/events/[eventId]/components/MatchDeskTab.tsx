@@ -88,15 +88,26 @@ export function MatchDeskTab({ matches, participants, pairs, isDoubles, canRunDe
     (typeof entryId === 'string' ? sides.get(entryId) : undefined) ??
     { entryId: null, label: 'TBD', players: [] };
 
-  // UNCOURTED FIRST, then by round and position. The sort IS the feature: an
-  // exec scanning this from the top is looking at exactly the matches that still
-  // need somewhere to play, which is the list they were keeping on paper.
+  // UNCOURTED FIRST, then pool before bracket, then by round and position. The
+  // sort IS the feature: an exec scanning this from the top is looking at exactly
+  // the matches that still need somewhere to play, which is the list they were
+  // keeping on paper.
+  //
+  // PHASE OUTRANKS ROUND, and it has to (00107). This tab is given the whole
+  // event rather than one half of it — unlike every other match tab, which gets
+  // poolMatches or bracketMatches — because the desk calls matches from both
+  // halves of a pool_to_bracket event out of one queue and does not want to
+  // switch tabs to find the next one. But `round_number` restarts at 1 in the
+  // bracket, so sorting on it alone would interleave a pool round 1 with a
+  // quarter-final and the top-down read would stop meaning anything.
+  const phaseRank = (m: TournamentMatchRow) => (m.phase === 'bracket' ? 1 : 0);
   const live = matches
     .filter((m) => !isPlayedMatch(m) && !m.is_bye && m.status !== 'voided')
     .sort((a, b) => {
       const ac = courtLabel(a.court) ? 1 : 0;
       const bc = courtLabel(b.court) ? 1 : 0;
       if (ac !== bc) return ac - bc;
+      if (phaseRank(a) !== phaseRank(b)) return phaseRank(a) - phaseRank(b);
       if (a.round_number !== b.round_number) return a.round_number - b.round_number;
       return (a.bracket_position ?? 0) - (b.bracket_position ?? 0);
     });
@@ -159,6 +170,7 @@ function DeskRow({
             {a.label} <span className="text-[var(--text-muted)]">vs</span> {b.label}
           </p>
           <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)] mt-0.5">
+            {match.phase === 'pool' ? 'Pool · ' : match.phase === 'bracket' ? 'Knockout · ' : ''}
             {match.round_name || `Round ${match.round_number}`}
             {match.match_number ? ` · M${match.match_number}` : ''}
             {everyone.length > 0 ? ` · ${readyCount} of ${everyone.length} here` : ''}
