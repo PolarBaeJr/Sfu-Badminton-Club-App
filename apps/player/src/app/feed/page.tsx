@@ -31,6 +31,7 @@ import {
 import { isUnderWay, runningEvents, type FeedTournament } from '@/lib/feed-tournament';
 import { countEnteredPlayers, occupiesAPlace } from '@/lib/tournament-index';
 import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
+import { onVisibleTracks } from '@/lib/session-track-filter';
 
 type PlayerEmbed = { id: string; full_name: string | null; handle: string | null; avatar_url: string | null };
 type MatchParticipantRow = {
@@ -145,13 +146,15 @@ export default async function FeedPage() {
     // The one session a member turning up tonight needs. Same track filter the
     // schedule uses — a session aimed at the other division is not "next" for
     // this member.
-    inActiveSeason(
-      supabase
-        .from('sessions')
-        .select('id, name, date, location, start_time, end_time')
-        .eq('status', 'open')
-        .in('track', [player.status, 'all'])
-        .gte('date', todayKey),
+    onVisibleTracks(
+      inActiveSeason(
+        supabase
+          .from('sessions')
+          .select('id, name, date, location, start_time, end_time')
+          .eq('status', 'open')
+          .gte('date', todayKey),
+      ),
+      player.status,
     )
       .order('date', { ascending: true })
       .limit(1),
@@ -159,12 +162,14 @@ export default async function FeedPage() {
     // this member was eligible for. Being ineligible for a session is not the
     // same as not turning up to it, so the track filter is what keeps the
     // streak honest.
-    inActiveSeason(
-      supabase
-        .from('sessions')
-        .select('id, date')
-        .in('track', [player.status, 'all'])
-        .lt('date', todayKey),
+    onVisibleTracks(
+      inActiveSeason(
+        supabase
+          .from('sessions')
+          .select('id, date')
+          .lt('date', todayKey),
+      ),
+      player.status,
     )
       .order('date', { ascending: false })
       .limit(20),
@@ -268,6 +273,23 @@ export default async function FeedPage() {
     ).order('start_date', { ascending: true }),
   ]);
 
+  // THE SAME TREATMENT THE TOURNAMENT READ GETS BELOW, AND FOR THE SAME REASON
+  // — see the long note at `liveTournamentsRes`. This is the landing surface, so
+  // a refused read must not become an error screen; but a bare `?? []` here is
+  // what let a `pending_approval` member be shown a feed with no next session
+  // and a broken attendance streak for months, because the track filter sent a
+  // `player_status` value into a `session_group` column and PostgREST answered
+  // 400. Report it, degrade to no card, and let somebody find out.
+  for (const [action, res] of [
+    ['feed:nextSession', nextSessionRes],
+    ['feed:pastSessions', pastSessionsRes],
+  ] as const) {
+    if (res.error) {
+      Sentry.captureException(new Error(res.error.message), {
+        extra: { action, details: res.error.details },
+      });
+    }
+  }
   const nextSession = (nextSessionRes.data ?? [])[0] as SessionRow | undefined;
   const pastSessions = (pastSessionsRes.data ?? []) as { id: string }[];
   const attendedIds = new Set((myAttendanceRes.data ?? []).map((r) => r.session_id as string));

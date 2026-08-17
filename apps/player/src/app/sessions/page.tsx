@@ -7,9 +7,11 @@ import {
   getCheckinWindow,
   isCheckinOpen,
   getAccountStanding,
+  unwrap,
   type AttendanceStatus,
   type SessionIntent,
 } from '@badminton/shared';
+import { onVisibleTracks } from '@/lib/session-track-filter';
 import { StandingNote } from '@/components/standing-notice';
 import { redirect } from 'next/navigation';
 import { SubscribeAllButton } from './subscribe-all';
@@ -73,20 +75,39 @@ export default async function SessionsPage() {
   const inActiveSeason = <T extends { or: (f: string) => T }>(q: T): T =>
     activeSeason ? q.or(`season_id.eq.${activeSeason.id},season_id.is.null`) : q;
 
-  const [{ data: openSessions }, { data: closedSessions }, { data: calendarSessions }, { data: myAttendance }, { data: attendanceRows }, { data: myRsvp }, { data: goingRows }] = await Promise.all([
-    inActiveSeason(
-      supabase
-        .from('sessions')
-        .select('*')
-        .eq('status', 'open')
-        .in('track', [player.status, 'all'])
+  // WHY THE THREE SESSION READS ARE `unwrap`ped AND THE FOUR BELOW ARE NOT.
+  //
+  // These three ARE the page. If one of them is refused there is no honest way
+  // to draw this screen: the empty state says "No sessions yet — nothing has
+  // been posted for [season] yet", and a member who reads that when twelve open
+  // sessions exist has been told a specific, confident lie and given no reason
+  // to report it. That is not a hypothetical — it is what a `pending_approval`
+  // member saw for months, because `?? []` renders a refused read and an empty
+  // club as the same value.
+  //
+  // `unwrap` throws, and sessions/error.tsx catches it: "something went wrong,
+  // try again" is a worse-looking screen and a truthful one. The four reads
+  // that follow keep `?? []` deliberately — an attendance or RSVP read that
+  // fails costs a chip and a count, and taking the whole schedule down over a
+  // missing "Going" badge would be the wrong trade in the other direction.
+  const [openSessionsRes, closedSessionsRes, calendarSessionsRes, { data: myAttendance }, { data: attendanceRows }, { data: myRsvp }, { data: goingRows }] = await Promise.all([
+    onVisibleTracks(
+      inActiveSeason(
+        supabase
+          .from('sessions')
+          .select('*')
+          .eq('status', 'open')
+      ),
+      player.status
     ).order('date', { ascending: true }).order('start_time', { ascending: true, nullsFirst: false }),
-    inActiveSeason(
-      supabase
-        .from('sessions')
-        .select('*')
-        .eq('status', 'closed')
-        .in('track', [player.status, 'all'])
+    onVisibleTracks(
+      inActiveSeason(
+        supabase
+          .from('sessions')
+          .select('*')
+          .eq('status', 'closed')
+      ),
+      player.status
     )
       .order('date', { ascending: false })
       .limit(10),
@@ -103,11 +124,13 @@ export default async function SessionsPage() {
     // season_id is selected for the month nav alone: the query deliberately
     // returns the active season's nights AND every season-less night, and the
     // nav has to tell those two apart — see calendarMonthKeys.
-    inActiveSeason(
-      supabase
-        .from('sessions')
-        .select('id, name, date, start_time, status, season_id')
-        .in('track', [player.status, 'all'])
+    onVisibleTracks(
+      inActiveSeason(
+        supabase
+          .from('sessions')
+          .select('id, name, date, start_time, status, season_id')
+      ),
+      player.status
     ).order('date', { ascending: true }).order('start_time', { ascending: true, nullsFirst: false }),
     supabase
       .from('session_attendance')
@@ -127,6 +150,12 @@ export default async function SessionsPage() {
       .select('session_id')
       .eq('intent', 'going'),
   ]);
+
+  // Refused reads become an exception here, not an empty schedule. `unwrap`
+  // throws on res.error; a successful query returns [] and passes through.
+  const openSessions = unwrap(openSessionsRes);
+  const closedSessions = unwrap(closedSessionsRes);
+  const calendarSessions = unwrap(calendarSessionsRes);
 
   const myStatusBySession = new Map<string, AttendanceStatus>(
     (myAttendance ?? []).map((r) => [r.session_id as string, r.status as AttendanceStatus])
@@ -157,7 +186,7 @@ export default async function SessionsPage() {
   // keeps tonight for as long as anyone can still check in, and drops a night
   // the moment it can no longer be acted on. A forgotten `status` can now only
   // make a night linger until its own end time, not indefinitely.
-  const upcoming = (openSessions ?? []).filter((s) =>
+  const upcoming = openSessions.filter((s) =>
     isStillUpcoming(getCheckinWindow(s, checkinSettings).closesAt, now)
   );
   const upcomingCount = upcoming.length;
@@ -187,7 +216,7 @@ export default async function SessionsPage() {
   // 'checked_in' and 'present' are the two statuses that mean the member was
   // actually there; 'no_show' and 'excused' are attendance rows too, and
   // counting them would turn "you missed it" into "you turned up".
-  const closed = closedSessions ?? [];
+  const closed = closedSessions;
   const attendedIds = new Set(
     (myAttendance ?? [])
       .filter((r) => r.status === 'checked_in' || r.status === 'present')
@@ -214,7 +243,7 @@ export default async function SessionsPage() {
   // iteration guard in monthKeysBetween stops a hang, not that. calendarMonthKeys
   // keeps the row (it is a real night, and it has a card) and drops only the
   // empty span behind it.
-  const calendar = calendarSessions ?? [];
+  const calendar = calendarSessions;
   const seasonDates = activeSeason
     ? calendar.filter((s) => s.season_id === activeSeason.id).map((s) => s.date as string)
     : [];

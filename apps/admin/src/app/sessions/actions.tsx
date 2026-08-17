@@ -167,6 +167,21 @@ export function AttendanceDialog({
       </Button>
 
       <Dialog open={open} onClose={() => setOpen(false)} title="Attendance">
+        {/* SAY WHY THE BUTTONS ARE MISSING. Without this the dialog opens on a
+            read-only roll with no Present / No-show / Excused / Remove and no
+            walk-in picker, and nothing anywhere explains it — an officer at the
+            door at 19:00 concludes the app is broken and has no idea what to
+            ask for. `sessions.attendance.write` is not in EXEC_BASELINE (it is
+            twelve reads by the club owner's decision), so an exec nobody has
+            assigned a role or a grant to lands here. This turns a silent
+            absence into an instruction. */}
+        {!canWrite && (
+          <p className="text-sm text-[var(--text-muted)] border border-[var(--border)] p-3 mb-3">
+            You can see who turned up but not change it. Marking attendance needs
+            the <span className="font-mono text-xs">sessions.attendance.write</span>{' '}
+            permission — an admin can grant it on the Permissions page.
+          </p>
+        )}
         {attendees.length === 0 ? (
           <p className="text-sm text-[var(--text-muted)] py-4 text-center">No check-ins yet.</p>
         ) : (
