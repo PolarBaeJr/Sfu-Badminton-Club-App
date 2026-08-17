@@ -999,6 +999,19 @@ COMMIT;
 --     the second application died on "policy already exists". CREATE POLICY has
 --     no OR REPLACE. Fixed; idempotence now passes on both pre-states.
 --
+-- THE APPLICATION SUITE was also run, in a separate scratch copy of the
+-- worktree with real per-workspace node_modules and every probe import asserted
+-- to resolve INSIDE the copy first (19/19) — because a green suite in a
+-- worktree without node_modules is vacuous:
+--
+--     npx --engine-strict=false turbo run type-check lint test build --force
+--     -> 11 tasks successful, 11 total.  2811 tests across 127 files, 0 failures
+--        (player 478, admin 1187, @badminton/shared 1146).
+--
+-- It proves only that this file changes nothing in the apps, which is the claim
+-- being made: 00138 TOUCHES NO APPLICATION CODE AT ALL. No .ts, .tsx or .json
+-- file is modified by this branch.
+--
 -- NOT PROVEN, and it is the one thing left: no PostgREST was put in front of the
 -- container, so the claim that no app path loses a verb rests on the grep of
 -- both apps recorded in §E.3 (four call sites, all INSERT or SELECT) rather than
