@@ -163,6 +163,13 @@ interface DrawProps {
    */
   title?: string;
   subtitle?: string;
+  /**
+   * THE CARD'S OWN HEADING — the `Trophy` + `<h2>Draw</h2>` row, authored by the
+   * page like every other card's on it, but rendered down here because it has to
+   * share a flex row with the Full screen button and that button cannot leave
+   * `.draw-chart-wrap`. See the note at the two render sites below.
+   */
+  heading?: ReactNode;
 }
 
 /** A skip match has one real entry and one empty slot; only the empty side is labelled. */
@@ -208,7 +215,7 @@ function footerText(m: DrawMatch): string {
   return 'vs';
 }
 
-export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: DrawProps) {
+export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, heading }: DrawProps) {
   const layout = computeDrawLayout(matches, GEOMETRY, { thirdPlace: !!thirdPlace });
   // THE HIGHEST round_number, not the COUNT of rounds. getRoundName counts back
   // from the final — `totalRounds - roundNumber + 1` — so the two arguments have
@@ -424,25 +431,45 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
       {/* THE CHART — tablet and up only. `display: none` below 768px, so on a
           phone it contributes no width at all and the page body cannot be
           pushed sideways by it. */}
-      <div className="draw-chart-wrap px-4 pb-4">
-        {/* ONE STRING, TWO PLACES. This sits above the shell, so it is outside
-            the element that goes full screen and would vanish there; the same
-            text reaches DrawScroller's full-screen header as the whole draw
-            view's own `note` rather than being written out twice. */}
-        <p className="text-xs text-[var(--text-muted)] mb-2">{readingNote}</p>
+      <div className="draw-chart-wrap px-4 pt-4 pb-4">
+        {/* THE HEADING GOES DOWN INTO THE SHELL, so it can share the shell's
+            existing header row with the Full screen button — "in the same row as
+            draw". It is handed to DrawScroller rather than printed here because
+            that row (`.draw-topline`) is inside the element that goes full
+            screen, and the button that has to sit in it is owned by the client
+            component that holds the fullscreen state.
+
+            The reading note goes with it, and it is the same `readingNote` as
+            ever: DrawScroller now prints it from the ACTIVE VIEW's own `note`.
+            Off full screen the active view is always `views[0]`, whose note IS
+            this string, so nothing has been duplicated or can drift — the
+            "one string, two places" this comment used to describe collapsed
+            into one string in one place with two containers. */}
         {/* The sized, positioned box the absolute offsets below are relative to
             is DrawScroller's innermost one — it owns it because it is the one
             being transformed to fit. Everything here is laid out at full size
             and scaled as a whole. */}
-        <DrawScroller title={title} subtitle={subtitle} views={views} />
+        <DrawScroller title={title} subtitle={subtitle} views={views} heading={heading} />
       </div>
 
+      {/* THE SAME HEADING AGAIN, FOR THE PHONE, and this is not a duplicate that
+          can double up: `.draw-rounds` and `.draw-chart-wrap` are exact
+          complements — one is `display:block` below 768px and `none` above, the
+          other the reverse — so at every width exactly one copy of the heading
+          paints and the card is never untitled and never titled twice. Reusing
+          that existing switch is why this needs no media query of its own.
+
+          It is rendered here rather than left in the page because the tablet
+          copy had to move inside `.draw-chart-wrap` to reach the button's row,
+          and a heading that lives only there would take the card's `<h2>` out of
+          the document outline on a phone. */}
       <DrawRounds
         layout={layout}
         thirdPlace={thirdPlace}
         nameOf={nameOf}
         seedOf={seedOf}
         roundName={roundName}
+        heading={heading}
       />
     </>
   );
@@ -670,13 +697,15 @@ function EntryName({ label, size }: { label: string; size: 'chart' | 'list' }) {
  * standing courtside actually came for.
  */
 function DrawRounds({
-  layout, thirdPlace, nameOf, seedOf, roundName,
+  layout, thirdPlace, nameOf, seedOf, roundName, heading,
 }: {
   layout: ReturnType<typeof computeDrawLayout<DrawMatch>>;
   thirdPlace: DrawMatch | null;
   nameOf: Record<string, string>;
   seedOf: Record<string, number | null>;
   roundName: (roundNumber: number) => string;
+  /** The card's heading, on the widths where the chart above is display:none. */
+  heading?: ReactNode;
 }) {
   const rounds: Array<{ roundNumber: number; nodes: typeof layout.nodes }> = [];
   for (const node of layout.nodes) {
@@ -717,7 +746,12 @@ function DrawRounds({
   if (focusIndex === -1) focusIndex = 0;
 
   return (
-    <div className="draw-rounds px-4 pb-4 space-y-2">
+    <div className="draw-rounds px-4 pt-4 pb-4 space-y-2">
+      {/* Matches the four sibling cards' heading row. The chart's copy of this
+          carries the Full screen button beside it; there is nothing to put
+          beside it here, because a phone never gets the chart that button
+          projects. */}
+      {heading && <div className="flex items-center gap-2 mb-3">{heading}</div>}
       {rounds.map((r, i) => (
         <RoundDisclosure
           key={r.roundNumber}
