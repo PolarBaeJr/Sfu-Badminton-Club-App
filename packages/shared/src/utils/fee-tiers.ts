@@ -116,3 +116,64 @@ export function selectFeeTier(
   const fallback = tiers.filter((t) => t.is_default).sort(bySortOrderThenName)[0];
   return fallback ? { tier: fallback, reason: 'default' } : null;
 }
+
+/** The subset of a club_fees entry row a quote can be read off. */
+export interface LedgerFee {
+  tier_id?: string | null;
+  amount_cents?: number | null;
+}
+
+export interface FeeQuote {
+  tierId: string | null;
+  amountCents: number | null;
+  /**
+   * WHERE THE NUMBER CAME FROM, because "why does it say that" is the question
+   * this whole file exists to be able to answer.
+   *
+   *   'ledger'  the member's own fee row already records a price
+   *   others    selectFeeTier's reason, for a member with no row yet
+   *   'none'    nothing prices this entry — render it as TBD, never as $0
+   */
+  source: 'ledger' | TierMatch['reason'] | 'none';
+}
+
+/**
+ * WHAT THIS MEMBER'S ENTRY COSTS — the one derivation every surface must use.
+ *
+ * THE BUG THIS EXISTS TO CLOSE. selectFeeTier is membership-aware and had
+ * exactly ONE caller in production, ensureEntryFees. Every other screen quoted
+ * `tiers.find(t => t.is_default)` instead, so there were two derivations of one
+ * number and the display picked the wrong branch. On the live tournament the
+ * default tier is External at $25 and internal members are priced at $15: the
+ * fees table read $15 off the ledger row (correctly) while the Mark Paid dialog
+ * opened from that same row said "External — $25.00", and one click stored $25
+ * against a member who owed $15. The member's own /fees screen then changed
+ * underneath them.
+ *
+ * THE LEDGER OUTRANKS THE TIER LIST, and it has to. ensureEntryFees SNAPSHOTS
+ * the price at the moment of entry precisely so that editing a tier — or
+ * changing somebody's membership_type — cannot silently re-price an entry that
+ * has already been made. Re-deriving on read would undo that guarantee on every
+ * screen at once. So a row that records a price IS the price, and the tier list
+ * is consulted only for somebody who has no row yet.
+ *
+ * A ROW WITH NEITHER FIELD SET falls through to the tier list rather than
+ * quoting nothing. That row means "the club had not priced this entry when it
+ * was made" — no figure exists to be protected, and tiers added since are the
+ * club's best current answer.
+ *
+ * `?? null` and `!= null` throughout, never `||`: zero is a legitimate amount
+ * (a waived row is $0) and truthiness would throw it away.
+ */
+export function quoteEntryFee(
+  membership: MembershipType | string | null | undefined,
+  tiers: readonly PricingTier[],
+  fee?: LedgerFee | null,
+): FeeQuote {
+  if (fee && (fee.amount_cents != null || fee.tier_id != null)) {
+    return { tierId: fee.tier_id ?? null, amountCents: fee.amount_cents ?? null, source: 'ledger' };
+  }
+  const match = selectFeeTier(membership, tiers);
+  if (!match) return { tierId: null, amountCents: null, source: 'none' };
+  return { tierId: match.tier.id, amountCents: match.tier.amount_cents, source: match.reason };
+}

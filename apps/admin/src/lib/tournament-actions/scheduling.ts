@@ -35,6 +35,35 @@ import {
 const COURT_MAX = 32;
 
 /**
+ * WHAT AN EXEC IS TOLD WHEN THE ROW MOVED UNDERNEATH THEM.
+ *
+ * Every write in this file reads the match first, reasons about what it read, and
+ * then updates it — and between those two statements is a whole second desk. Two
+ * execs share the Court Management tab at a live event by design, so this is the
+ * ordinary case rather than the exotic one: one presses Start while the other
+ * submits that match's score, and an UPDATE keyed on the id alone puts a
+ * completed match back on court with its result and its bracket advancement
+ * still applied.
+ *
+ * The fix is to carry the guard's premise INTO the write as a predicate, so the
+ * update either lands on the row the guard actually inspected or lands on
+ * nothing. PostgREST does not treat "matched no row" as an error, so the write
+ * asks for the affected rows back and an empty result IS the lost race.
+ *
+ * REFUSED OUT LOUD, and specifically not "succeeded quietly". The loser of the
+ * race is a person standing at a desk who believes they changed something; the
+ * only useful outcome is a sentence telling them to look again. It is also what
+ * keeps the audit trail true — the log entry is written only after a write that
+ * provably landed, so it can no longer assert a transition out of a state the
+ * match had already left.
+ */
+function staleRowRefusal(what: string): ExpectedError {
+  return new ExpectedError(
+    `This match changed while you were looking at it — someone else ${what} first. Reload the tab and check before trying again.`,
+  );
+}
+
+/**
  * WHICH COURT THIS MATCH IS ON.
  *
  * "give us a location setter ... so we can tell them where to play through the
@@ -83,14 +112,28 @@ async function setMatchCourtImpl(matchId: string, court: string) {
   // still hit the WAL and nudge every subscriber of this event.
   if (previous === next) return;
 
-  const { error } = await adminClient
+  // ONLY WHILE THE COURT IS STILL THE ONE WE READ. Without this the second exec
+  // to type into the same row overwrites the first, and the audit entry below
+  // records a `previous_court` that had already been replaced.
+  //
+  // `.is()` rather than `.eq()` when there was no court, and the difference is
+  // total: `.eq('court', null)` compiles to `court=eq.null`, which matches NO
+  // row in Postgres — so writing it that way would refuse every first-time court
+  // assignment, which is the common case. `.is('court', null)` is the IS NULL
+  // this actually means.
+  const write = adminClient
     .from('tournament_matches')
     .update({ court: next, updated_at: new Date().toISOString() })
     .eq('id', matchId);
+  const guarded = previous === null ? write.is('court', null) : write.eq('court', previous);
+  // Matching no row is not an error in PostgREST, so the returned rows are the
+  // only thing that can detect the lost race.
+  const { data: updated, error } = await guarded.select('id').maybeSingle();
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  if (!updated) throw staleRowRefusal('moved this match');
 
   // AUDITED INCLUDING THE PREVIOUS VALUE. A court that changes mid-event is the
   // case that strands somebody at the wrong net, so "who moved it, and from
@@ -253,14 +296,32 @@ async function setMatchLiveImpl(matchId: string, live: boolean) {
     if (status !== 'live') return; // Idempotent in this direction too.
   }
 
-  const { error } = await adminClient
+  // THE GUARD ABOVE, CARRIED INTO THE WRITE. Everything the block just decided
+  // was decided about `status` as it was read — and the read is over. The other
+  // exec on this tab submitting a score turns that row 'completed' in the
+  // meantime, and an UPDATE keyed on the id alone would put it back on court
+  // while the score rows and the next round's entrants stay exactly where the
+  // result put them.
+  //
+  // `.eq('status', status)` is not a second copy of the refusals; it is what
+  // makes them TRUE rather than advisory. It also fixes the audit entry by
+  // construction: if the row matched, then `status` provably WAS the previous
+  // value, so `previous_status` below can no longer name a transition that did
+  // not happen.
+  const { data: updated, error } = await adminClient
     .from('tournament_matches')
     .update({ status: live ? 'live' : 'ready', updated_at: new Date().toISOString() })
-    .eq('id', matchId);
+    .eq('id', matchId)
+    .eq('status', status)
+    // Matching no row is not an error in PostgREST, so the affected rows are the
+    // only way to tell a lost race from a successful write.
+    .select('id')
+    .maybeSingle();
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  if (!updated) throw staleRowRefusal('changed this match');
 
   await logAudit(adminClient, {
     tournament_id: tournamentId,

@@ -4,8 +4,8 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Card, Dialog, Input, Select, Switch, Badge } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
-import type { TournamentFeeTier, MembershipType } from '@badminton/shared';
-import { MEMBERSHIP_TYPES, formatMembershipType } from '@badminton/shared';
+import type { TournamentFeeTier, MembershipType, LedgerFee } from '@badminton/shared';
+import { MEMBERSHIP_TYPES, formatMembershipType, quoteEntryFee } from '@badminton/shared';
 import { resolvePaymentMethod } from '@badminton/shared';
 import {
   PaymentMethodFields,
@@ -129,23 +129,65 @@ function TierDialog({ tournamentId, tier, open, onClose }: TierDialogProps) {
   );
 }
 
-interface Props {
-  mode: 'tiers' | 'mark';
+interface BaseProps {
   tournamentId: string;
   tiers: TournamentFeeTier[];
-  playerId?: string;
-  playerName?: string;
-  paid?: boolean;
 }
 
-export function TournamentFeeActions({ mode, tournamentId, tiers, playerId, playerName, paid }: Props) {
+/**
+ * The per-member branch. Every field here is REQUIRED, which is the point.
+ *
+ * They used to be optional and this component simply did without them: it had no
+ * fee row and no membership, so the only price it could name was the
+ * tournament's flat default — $25 External, quoted over a $15 internal member's
+ * row. Making them required means a caller that forgets one fails type-check
+ * rather than silently quoting the wrong money.
+ */
+interface MarkProps extends BaseProps {
+  mode: 'mark';
+  playerId: string;
+  playerName: string;
+  paid: boolean;
+  /** internal / alumni / external — what decides which tier prices them. */
+  membershipType: MembershipType | string | null;
+  /** Their existing ledger row, which outranks the tier list. See quoteEntryFee. */
+  fee: LedgerFee | null;
+}
+
+/** The tier-editor branch, which is about the tournament and nobody in it. */
+interface TiersProps extends BaseProps {
+  mode: 'tiers';
+  playerId?: undefined;
+  playerName?: undefined;
+  paid?: undefined;
+  membershipType?: undefined;
+  fee?: undefined;
+}
+
+type Props = MarkProps | TiersProps;
+
+export function TournamentFeeActions({
+  mode, tournamentId, tiers, playerId, playerName, paid, membershipType, fee,
+}: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTier, setEditTier] = useState<TournamentFeeTier | null>(null);
   const [markOpen, setMarkOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const defaultTier = tiers.find((t) => t.is_default) ?? tiers[0] ?? null;
-  const [tierId, setTierId] = useState(defaultTier?.id ?? '');
-  const [amount, setAmount] = useState(defaultTier ? (defaultTier.amount_cents / 100).toFixed(2) : '');
+  // THE PRICE THIS DIALOG OPENS ON, and the whole point of the fix.
+  //
+  // It used to seed from `tiers.find(t => t.is_default)`, which on the live
+  // tournament is External at $25 — so opening Mark Paid from an internal
+  // member's $15 row quoted "External — $25.00", and one click stored $25
+  // against somebody who owed $15. The row beside the button read $15 the whole
+  // time, because the row and the dialog were two different derivations of one
+  // number, and only one of them asked selectFeeTier.
+  //
+  // Computed ONCE and used by both the initial state and the Mark Paid button
+  // below, so there is no second copy left to drift.
+  const quote = quoteEntryFee(membershipType, tiers, fee);
+  const quotedAmount = quote.amountCents != null ? (quote.amountCents / 100).toFixed(2) : '';
+  const [tierId, setTierId] = useState(quote.tierId ?? '');
+  const [amount, setAmount] = useState(quotedAmount);
   const [payment, setPayment] = useState<PaymentMethodState>(EMPTY_PAYMENT_METHOD);
   const { toast } = useToast();
   const router = useRouter();
@@ -262,7 +304,10 @@ export function TournamentFeeActions({ mode, tournamentId, tiers, playerId, play
 
   return (
     <>
-      <Button variant="ghost" size="sm" onClick={() => { setTierId(defaultTier?.id ?? ''); setAmount(defaultTier ? (defaultTier.amount_cents / 100).toFixed(2) : ''); setMarkOpen(true); }}>Mark Paid</Button>
+      {/* RE-SEEDED ON EVERY OPEN, from the same quote the initial state used —
+          the dialog is mounted once per row and reopened, so leaving stale
+          edits in place would quote whatever the last attempt typed. */}
+      <Button variant="ghost" size="sm" onClick={() => { setTierId(quote.tierId ?? ''); setAmount(quotedAmount); setMarkOpen(true); }}>Mark Paid</Button>
       <Dialog open={markOpen} onClose={() => setMarkOpen(false)} title={`Mark Fee Paid — ${playerName}`}>
         <div className="space-y-4">
           {tiers.length > 0 && (
@@ -270,7 +315,17 @@ export function TournamentFeeActions({ mode, tournamentId, tiers, playerId, play
               label="Tier"
               value={tierId}
               onChange={(e) => handleTierChange(e.target.value)}
-              options={tiers.map((t) => ({ value: t.id, label: `${t.name} — $${(t.amount_cents / 100).toFixed(2)}` }))}
+              // A "no tier" row, ONLY while that is genuinely the state. <select>
+              // has no notion of an unselected value: with `value=""` and no
+              // matching <option> the browser paints the first tier as chosen
+              // while the form holds '', which is the same disagreement between
+              // label and number this whole change exists to remove. It appears
+              // when no tier prices this member and disappears the moment one is
+              // picked.
+              options={[
+                ...(tierId === '' ? [{ value: '', label: 'No tier — enter an amount' }] : []),
+                ...tiers.map((t) => ({ value: t.id, label: `${t.name} — $${(t.amount_cents / 100).toFixed(2)}` })),
+              ]}
             />
           )}
           <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 10.00" />
