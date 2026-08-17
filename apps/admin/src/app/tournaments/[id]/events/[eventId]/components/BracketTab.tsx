@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getRoundName, eventIsPlaying, computeDrawLayout, fitScale, eventEloMultiplier, splitPairLabel, courtLabel } from '@badminton/shared';
+import { getRoundName, eventIsPlaying, computeDrawLayout, fitScale, splitPairLabel, courtLabel } from '@badminton/shared';
 import type { DrawSide } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
-import { RoundShapeControl } from './RoundShapeControl';
+import { RoundLadder } from './RoundLadder';
 import { Trophy } from 'lucide-react';
 import { getName } from './entry-name';
 import type {
@@ -267,51 +267,21 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
   return (
     <>
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4" role="region" aria-label="Tournament bracket">
-        {/* WHAT EACH ROUND IS PLAYED TO (00108), in a strip above the diagram
-            rather than on the round headings themselves. The headings sit
-            inside the CSS transform that zooms the bracket, so a select there
-            would shrink with it — at "fit" on a 32-draw it would be a
-            four-pixel control. Here it is always full size, always in one
-            place, and reads as the ladder it is: 11s, 15s, 21s, best of 3. */}
-        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[8px] border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-            Played to
-          </span>
-          {roundsInOrder.map((round) => (
-            <span key={round.roundNumber} className="flex items-center gap-1.5">
-              <span className="text-[11px] text-[var(--text-secondary)]">{round.name}</span>
-              <RoundShapeControl
-                event={event}
-                matches={round.matches}
-                phase={phase}
-                roundNumber={round.roundNumber}
-              />
-            </span>
-          ))}
-          {thirdPlace && (
-            <span className="flex items-center gap-1.5">
-              <span className="text-[11px] text-[var(--text-secondary)]">3rd Place</span>
-              <RoundShapeControl
-                event={event}
-                matches={[thirdPlace]}
-                phase={phase}
-                roundNumber={null}
-                thirdPlace
-              />
-            </span>
-          )}
-          {/* THE LEGEND FOR THE LINE UNDER EACH ROUND, said once rather than
-              eight times. The figure exists because "1 game to 11" reads as a
-              knock-down round and gives no clue what it is worth — the guess it
-              invites is 11/21 ≈ a half, or the 0.25 clamp floor, and both are
-              wrong for a round in an event whose multiplier is 1.25. */}
-          <p className="w-full text-[10px] leading-snug text-[var(--text-muted)]">
-            Elo is how hard a round moves ratings: the round&rsquo;s own weight (longer games count for more)
-            times this event&rsquo;s multiplier of{' '}
-            <span className="font-mono text-[var(--text-secondary)]">{eventEloMultiplier(event.elo_multiplier).toFixed(2)}</span>.
-            A rated challenge played to 21 is 1.00×.
-          </p>
-        </div>
+        {/* WHAT EACH ROUND IS PLAYED TO (00108), above the diagram rather than
+            on the round headings themselves. The headings sit inside the CSS
+            transform that zooms the bracket, so a select there would shrink with
+            it — at "fit" on a 32-draw it would be a four-pixel control. Here it
+            is always full size and always in one place.
+
+            The ladder owns its own layout now: it was a wrapping flex row of one
+            select per round, which repeated "Same as the event (Best of 3 to
+            21)" once per round and broke mid-sequence. See RoundLadder. */}
+        <RoundLadder
+          event={event}
+          rounds={roundsInOrder}
+          thirdPlace={thirdPlace}
+          phase={phase}
+        />
 
         {/* THE DRAW READS INWARDS FROM BOTH EDGES, which is not how anybody
             expects a bracket to read until they are told once. */}
