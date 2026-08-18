@@ -76,10 +76,14 @@ describe('another member\'s rating has a closed set of exits', () => {
   it('the profile page reads the flag and gates the figures on it', () => {
     const page = readFileSync(join(SRC, 'app/leaderboard/[playerId]/page.tsx'), 'utf8');
 
-    // Read at all. Without the column in the select there is nothing to gate
-    // on, and PostgREST would hand back `undefined` — which is falsy, so the
-    // gate would silently pass everyone.
-    expect(page).toMatch(/select\([^)]*hide_from_leaderboard/);
+    // Read at all. Without the column there is nothing to gate on, and a
+    // missing field arrives as `undefined` — which is falsy, so the gate would
+    // silently pass everyone. The select moved into lib/public-profile.ts when
+    // #11 took this page off the anon key; the column has to survive that move,
+    // and the shape the page destructures has to carry it.
+    const reader = readFileSync(join(SRC, 'lib/public-profile.ts'), 'utf8');
+    expect(reader).toMatch(/select\([^)]*hide_from_leaderboard/);
+    expect(reader).toMatch(/hide_from_leaderboard: data\.hide_from_leaderboard === true/);
 
     // Applied to OTHER people only. A member seeing their own numbers is not
     // the thing the switch turns off, and a gate without this clause would

@@ -1,4 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { getPublicProfile } from '@/lib/public-profile';
 import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, buildChallengeQrUrl, getAccountStanding } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Crosshair, QrCode, Trophy } from 'lucide-react';
@@ -21,12 +22,18 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const standing = getAccountStanding(viewer);
 
   const [
-    { data: player },
+    player,
     { data: rating },
     { data: recentMatchesRaw },
     { data: h2hStats },
   ] = await Promise.all([
-    supabase.from('players').select('id, full_name, avatar_url, status, bio, hide_from_leaderboard').eq('id', playerId).single(),
+    // FIX-LIST #11: this page no longer queries the members table with the
+    // viewer's own key. That key may read the status column, and the raw column
+    // says `suspended`. This helper reads it server-side and hands back only
+    // what this viewer is entitled to — see lib/public-profile.ts, which also
+    // re-applies players_select's row rule, because the service-role key skips
+    // RLS as well as the column grants.
+    getPublicProfile(playerId, viewer),
     supabase.from('ratings').select('*').eq('player_id', playerId).single(),
     supabase
       .from('match_participants')
@@ -110,9 +117,15 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               {player.full_name}
             </h1>
             <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-              <span className={'pill ' + (player.status === 'competitive' ? 'pill-red' : 'pill-out')}>
-                {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS]?.toUpperCase()}
-              </span>
+              {/* Null when the value is a moderation state and the viewer is
+                  not the member themselves — the pill disappears rather than
+                  being relabelled, because a euphemism ("Inactive") next to a
+                  member who is plainly active is its own disclosure. */}
+              {player.visibleStatus && (
+                <span className={'pill ' + (player.visibleStatus === 'competitive' ? 'pill-red' : 'pill-out')}>
+                  {PLAYER_STATUS_LABELS[player.visibleStatus]?.toUpperCase()}
+                </span>
+              )}
               {r?.singles_provisional && <span className="pill pill-out">PROVISIONAL</span>}
             </div>
             {player.bio && (
