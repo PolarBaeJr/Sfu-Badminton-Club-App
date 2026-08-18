@@ -12,7 +12,13 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const supabase = await createServerSupabaseClient();
   // The *viewer's* standing, not the profile's — this decides whether we offer
   // them the Challenge link, which createChallenge would refuse.
-  const standing = getAccountStanding(await getCurrentPlayer());
+  //
+  // The player row itself is kept now as well as the standing derived from it,
+  // because `hide_from_leaderboard` is a rule about OTHER people: a member who
+  // has opted out still sees their own numbers here, exactly as /my-stats and
+  // the feed's own-record card show them.
+  const viewer = await getCurrentPlayer();
+  const standing = getAccountStanding(viewer);
 
   const [
     { data: player },
@@ -20,7 +26,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     { data: recentMatchesRaw },
     { data: h2hStats },
   ] = await Promise.all([
-    supabase.from('players').select('id, full_name, avatar_url, status, bio').eq('id', playerId).single(),
+    supabase.from('players').select('id, full_name, avatar_url, status, bio, hide_from_leaderboard').eq('id', playerId).single(),
     supabase.from('ratings').select('*').eq('player_id', playerId).single(),
     supabase
       .from('match_participants')
@@ -36,7 +42,25 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   ]);
 
   if (!player) notFound();
-  const r = rating;
+
+  // FIX-LIST #14. `get_leaderboard()` honours this flag; this page did not, and
+  // the feed links every match row straight to it — so the control the settings
+  // screen offers ("Show on leaderboard · Your rank will be visible to others")
+  // was undone by one tap on somebody's name.
+  //
+  // WHAT IT HIDES IS THE RATING, NOT THE PERSON. The promise on that switch is
+  // about the member's rank, so the profile still renders: name, photo, bio,
+  // track, the Challenge link and the results themselves. Blanket-404ing the
+  // page would take away a surface the member never asked to lose and would
+  // break every match row in the feed that points at it. What goes is the pair
+  // of Elo cards and the per-match rating delta — the figures, and the numbers
+  // they can be reconstructed from.
+  //
+  // NOT APPLIED TO THE MEMBER'S OWN PROFILE. The flag governs what everyone
+  // else sees; hiding someone's rating from themselves would be a bug, not a
+  // privacy feature.
+  const hidesRatings = player.hide_from_leaderboard === true && player.id !== viewer?.id;
+  const r = hidesRatings ? null : rating;
 
   // QR encoding the absolute form of the Challenge link beside it, so another
   // member can point a phone camera at this profile and land on a prefilled
@@ -135,6 +159,14 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
         </div>
       </div>
 
+      {hidesRatings && (
+        <div className="card-base" style={{ padding: 16, marginBottom: 16 }}>
+          <div className="muted" style={{ fontSize: 13 }}>
+            {player.full_name.split(' ')[0]} has chosen not to show their rating.
+          </div>
+        </div>
+      )}
+
       {r && (
         <>
           <div className="grid grid-2" style={{ marginBottom: 16 }}>
@@ -227,7 +259,11 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                       {m.played_at ? formatDate(m.played_at as string).toUpperCase() : ''}
                     </div>
                   </div>
-                  {typeof delta === 'number' && (
+                  {/* Withheld with the Elo cards above, and for a stronger
+                      reason than symmetry: a run of deltas beside a known
+                      starting point reconstructs the number the member asked
+                      to withhold. */}
+                  {typeof delta === 'number' && !hidesRatings && (
                     <span
                       className="mono"
                       style={{

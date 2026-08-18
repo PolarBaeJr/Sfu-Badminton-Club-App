@@ -27,8 +27,12 @@ interface PlayerOption {
   full_name: string;
   handle: string | null;
   avatar_url?: string | null;
-  singles_elo: number;
-  doubles_elo: number;
+  // Null for a member who has set hide_from_leaderboard — see
+  // lib/challengeable-opponents.ts. Nullable here rather than defaulted so the
+  // two places that read it have to say what they do about it, instead of
+  // silently printing a stand-in number for a rating that was withheld.
+  singles_elo: number | null;
+  doubles_elo: number | null;
 }
 
 export default function NewChallengeClient({
@@ -164,9 +168,16 @@ export default function NewChallengeClient({
   }, []);
 
   const opponent = players.find((p) => p.id === opponentId);
-  const eloPreview = opponent ? previewEloChange(
+  // Their rating, or nothing at all. previewEloChange is a pure function of the
+  // two Elos, so leaving a fallback here would have let anyone recover a hidden
+  // rating by reading the predicted delta — the control would have survived on
+  // the screen and not in fact.
+  const opponentElo = opponent
+    ? (type === 'singles' ? opponent.singles_elo : opponent.doubles_elo)
+    : null;
+  const eloPreview = opponent && opponentElo !== null ? previewEloChange(
     type === 'singles' ? myElo.singles : myElo.doubles,
-    type === 'singles' ? opponent.singles_elo : opponent.doubles_elo,
+    opponentElo,
     (isCustom ? (Number(customGames) > 1 ? 'bo3_21' : 'single_21') : format) as 'single_21' | 'bo3_21' | 'single_15' | 'single_11',
     // The event multiplier, resolved HERE rather than inside the preview. A
     // challenge is the one case where the enum table is the right answer:
@@ -231,7 +242,11 @@ export default function NewChallengeClient({
     name: p.full_name,
     handle: p.handle,
     avatarUrl: p.avatar_url ?? null,
-    trailing: String(type === 'singles' ? p.singles_elo : p.doubles_elo),
+    // Absent, not zero and not a dash-with-a-number-behind-it: a member who
+    // has opted out of the leaderboard simply has no figure on this row.
+    trailing: (type === 'singles' ? p.singles_elo : p.doubles_elo) === null
+      ? undefined
+      : String(type === 'singles' ? p.singles_elo : p.doubles_elo),
   }));
 
   // Nobody can fill two slots on the court. Each select drops whoever is
@@ -403,6 +418,24 @@ export default function NewChallengeClient({
                 {rated ? 'Rated Match' : 'Casual (No Elo change)'}
               </button>
             </div>
+
+            {/* The preview's absence, explained. Without this the panel simply
+                does not appear for an opponent who has opted out of the
+                leaderboard, which reads as a bug on a screen where it shows up
+                for everybody else. It says what is true and stops — whose
+                choice it was, not what their rating is. */}
+            {!eloPreview && rated && opponent && (
+              <div className="card-surface rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Info className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                  <span className="eyebrow">Elo Preview</span>
+                </div>
+                <p className="text-[11px] leading-snug text-[var(--text-muted)]">
+                  {opponent.full_name.split(' ')[0]} has chosen not to show their rating, so there is
+                  nothing to preview against. The match still counts and still moves your Elo.
+                </p>
+              </div>
+            )}
 
             {/* Elo Preview */}
             {eloPreview && rated && (

@@ -1,0 +1,95 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
+// FIX-LIST #14 — "`hide_from_leaderboard` is enforced but bypassable by a click".
+//
+// The control is real in the database: `get_leaderboard()` has filtered on this
+// flag since 00003. What it never covered is every OTHER route to the same
+// number, and the feed links every match row straight to one of them.
+//
+// These are source assertions rather than render assertions, and deliberately.
+// The defect is not "a component drew the wrong thing on one path" — it is that
+// a number reached a caller at all, on paths a snapshot test would have to
+// enumerate to catch. What must hold is an ALLOWLIST: the set of files in the
+// members' app that can put another member's rating on a screen is small,
+// closed, and each entry has a reason. A new surface has to come and edit this
+// list, which is the point.
+
+function sourceFiles(dir: string, found: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === '.next') continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) sourceFiles(full, found);
+    else if (/\.tsx?$/.test(entry)) found.push(full);
+  }
+  return found;
+}
+
+const SRC = join(__dirname, '..', '..');
+const rel = (f: string) => f.slice(SRC.length + 1).replace(/\\/g, '/');
+
+// Every file allowed to name an absolute Elo column, and why it is safe.
+const ALLOWED = new Map<string, string>([
+  // Reads get_leaderboard(), which does the filtering in the database.
+  ['app/leaderboard/page.tsx', 'get_leaderboard() already excludes opted-out members'],
+  ['app/leaderboard/leaderboard-client.tsx', 'renders only what page.tsx passed it'],
+  ['app/page.tsx', 'top-N strip, also off get_leaderboard()'],
+  // The viewer's OWN row. The flag governs what everyone else sees.
+  ['app/layout.tsx', "the signed-in member's own rating, in their own header"],
+  // The profile page — gated, and asserted below.
+  ['app/leaderboard/[playerId]/page.tsx', 'gated on hidesRatings'],
+  // The picker source — nulls the figure, and asserted in
+  // challengeable-opponents.test.ts.
+  ['lib/challengeable-opponents.ts', 'returns null for an opted-out member'],
+  ['app/challenges/new/new-challenge-client.tsx', 'handles the null and previews nothing'],
+  // The viewer's own row again, reached other ways. Each was read to confirm
+  // it is scoped to the signed-in member before it was written down here.
+  ['app/feed/page.tsx', "own-record card; every other row's figures are already withheld"],
+  ['app/my-stats/page.tsx', 'own ratings row; the ladder it counts against is get_leaderboard()'],
+  ['app/my-stats/past-season.tsx', "season_final_ratings .eq('player_id', player.id)"],
+  ['lib/actions/profile.ts', 'a comment, no read'],
+  ['lib/actions/_shared.ts', 'getPlayerProps, built from the acting member'],
+  ['lib/posthog.ts', 'the analytics property type for that same self-identify'],
+  ['components/posthog-identify.tsx', 'identifies the signed-in member to themselves'],
+  ['lib/tournament-actions.ts', "elo_before for the entrant, .eq('player_id', player.id)"],
+]);
+
+describe('another member\'s rating has a closed set of exits', () => {
+  it('is named only in files that were reasoned about', () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles(SRC)) {
+      if (file.includes('__tests__')) continue;
+      const source = readFileSync(file, 'utf8');
+      if (!/\b(singles_elo|doubles_elo)\b/.test(source)) continue;
+      if (!ALLOWED.has(rel(file))) offenders.push(rel(file));
+    }
+    // The message names the rule rather than the symptom, because whoever sees
+    // this failure is adding a screen, not debugging a test.
+    expect(
+      offenders,
+      `these read another member's Elo and are not in the allowlist in ${rel(__filename)}. ` +
+      'Either honour hide_from_leaderboard there, or add the file with the reason it is safe.',
+    ).toEqual([]);
+  });
+
+  it('the profile page reads the flag and gates the figures on it', () => {
+    const page = readFileSync(join(SRC, 'app/leaderboard/[playerId]/page.tsx'), 'utf8');
+
+    // Read at all. Without the column in the select there is nothing to gate
+    // on, and PostgREST would hand back `undefined` — which is falsy, so the
+    // gate would silently pass everyone.
+    expect(page).toMatch(/select\([^)]*hide_from_leaderboard/);
+
+    // Applied to OTHER people only. A member seeing their own numbers is not
+    // the thing the switch turns off, and a gate without this clause would
+    // hide a member's rating from themselves.
+    expect(page).toMatch(/player\.hide_from_leaderboard === true && player\.id !== viewer\?\.id/);
+
+    // And the deltas go with the cards. A run of per-match deltas beside a
+    // known starting point reconstructs the withheld number, so hiding the
+    // cards alone would leave the control looking closed and arithmetically
+    // open.
+    expect(page).toMatch(/typeof delta === 'number' && !hidesRatings/);
+  });
+});

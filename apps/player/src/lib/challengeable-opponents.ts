@@ -33,8 +33,18 @@ export interface ChallengeableOpponent {
   id: string;
   full_name: string;
   handle: string | null;
-  singles_elo: number;
-  doubles_elo: number;
+  // NULL WHEN THE MEMBER HAS SET hide_from_leaderboard, and nullable in the type
+  // so a call site cannot forget — FIX-LIST #14. The picker printed every
+  // member's Elo as a trailing label, which handed out the exact number
+  // get_leaderboard() omits them from the ladder to withhold. It is the same
+  // control the profile page now honours, undone one screen over.
+  //
+  // The preview goes with the number, deliberately. previewEloChange is a pure
+  // function of the two ratings, so a member who could still see a predicted
+  // delta could recover the hidden rating from two or three probes — and a
+  // privacy control that survives arithmetic is not a control.
+  singles_elo: number | null;
+  doubles_elo: number | null;
 }
 
 // Minimal structural type so a test can pass a stub — the Supabase clients in
@@ -66,7 +76,7 @@ export async function listChallengeableOpponents(
   // than narrow it. is_banned is the one being added.
   let query = supabase
     .from('players')
-    .select('id, full_name, handle, ratings(singles_elo, doubles_elo)')
+    .select('id, full_name, handle, hide_from_leaderboard, ratings(singles_elo, doubles_elo)')
     .eq('active_flag', true)
     .eq('is_banned', false)
     .not('status', 'in', '("pending_approval","suspended")');
@@ -78,14 +88,20 @@ export async function listChallengeableOpponents(
 
   return (data ?? []).map((p: any) => {
     const r = Array.isArray(p.ratings) ? p.ratings[0] : p.ratings;
+    // Read as a FILTER on what is returned, never returned itself — the same
+    // shape is_banned is used in above. The browser has no business knowing
+    // which members have opted out, only that this one's rating is absent.
+    const hidden = p.hide_from_leaderboard === true;
     return {
       id: p.id,
       full_name: p.full_name,
       handle: p.handle ?? null,
       // 400 is the seed rating (create_player_with_rating, 00023), so a member
       // with no ratings row previews as a brand-new player rather than as 0.
-      singles_elo: r?.singles_elo ?? 400,
-      doubles_elo: r?.doubles_elo ?? 400,
+      // A member who has opted out gets null, which is a different statement
+      // from "unrated" and is why the field is nullable rather than defaulted.
+      singles_elo: hidden ? null : r?.singles_elo ?? 400,
+      doubles_elo: hidden ? null : r?.doubles_elo ?? 400,
     };
   });
 }
