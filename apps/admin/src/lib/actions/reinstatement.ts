@@ -16,33 +16,162 @@ import {
 import { requireCapability } from './_shared';
 import { ExpectedError } from '@badminton/shared';
 import { isAdminActor } from '../player-field-access';
+import { runAction, type ActionResult } from '../action-result';
 
 // Ban/unban is exec work — the club owner named it explicitly. Note that this
 // writes is_banned, which the guard_player_privileged_columns trigger also
 // lists; that trigger returns early when auth.uid() IS NULL, and this runs on
 // the service-role client, so it never fires here. The gate is this function.
-export async function banPlayer(input: BanInput) {
+//
+// RETURNS ITS REFUSALS RATHER THAN THROWING THEM, which is the change that makes
+// every guard below worth writing. Next replaces anything thrown out of a server
+// action in production with a generic message, so an ExpectedError raised here
+// would reach the exec as "an error occurred" — the two sentences added below
+// tell them what to do instead, and they only survive as a returned value.
+// handleBan in players/player-actions.tsx checks `res.ok` for the same reason;
+// it previously awaited a bare promise and toasted success unconditionally.
+export async function banPlayer(input: BanInput): Promise<ActionResult<void>> {
+  return runAction(() => banPlayerImpl(input));
+}
+
+async function banPlayerImpl(input: BanInput) {
   parseOrThrow(banSchema, input);
   const actor = await requireCapability('players.ban.write');
   const adminClient = createAdminClient();
 
-  const { error } = await adminClient
+  // This function used to write blind — no read of the row it was about to
+  // overwrite, and an audit entry carrying new_value only. Both of the guards
+  // below need the stored row, and the audit entry now carries it as old_value
+  // so that whatever a ban replaces is recoverable from /audit.
+  const { data: target } = await adminClient
+    .from('players')
+    .select('id, role, is_banned, banned_at, banned_by, ban_reason')
+    .eq('id', input.player_id)
+    .maybeSingle();
+  if (!target) throw new ExpectedError('That member no longer exists.');
+
+  // REFUSED RATHER THAN MADE A NO-OP, and banned_at is why. It is not a
+  // decorative timestamp: it is the identity of the ban episode.
+  // club_fees.ban_started_at snapshots it at reinstatement and
+  // club_fees_reinstatement_ban_key UNIQUE (player_id, ban_started_at) (00065,
+  // carried into 00094) is the only thing that makes one reinstatement fee per
+  // ban true rather than hoped for. So re-stamping it on a ban that was never
+  // lifted does two things, one certain and one racy:
+  //
+  //   * CERTAIN. banned_at, banned_by and ban_reason are overwritten, and until
+  //     this commit the audit row for a ban carried no old_value at all — so the
+  //     original moderation decision (who banned them, when, and what for) was
+  //     destroyed with no trace anywhere in the database.
+  //   * RACY, AND THIS IS WHAT THE INDEX WAS FOR. reinstatePlayer's own note:
+  //     two admins submitting the same reinstatement at once "both read
+  //     is_banned = true, so the precondition above cannot separate them — they
+  //     snapshot the same banned_at and the index does". Slide a re-ban between
+  //     the two reads and they no longer snapshot the same value: one inserts a
+  //     fee keyed on T1, the other on T2, the unique index cannot collide them,
+  //     and the member is charged twice for one ban.
+  //
+  // A no-op would leave the exec's typed reason silently discarded and report
+  // success for a write that did not happen. A refusal says what is true, and it
+  // is the same shape as reinstatePlayer's "not banned, so there is nothing to
+  // reinstate" one screen down. Unreachable from the console — rosterActionsFor
+  // offers Unban and never Ban for a banned member — which is exactly the
+  // approvePlayer situation: a client-side rule guarding a server action is a
+  // suggestion, and this is the guarantee.
+  if (target.is_banned) {
+    throw new ExpectedError(
+      'That member is already banned. Lift the existing ban first if it needs to be re-issued — ' +
+      're-banning would overwrite the record of the ban they are already serving.',
+    );
+  }
+
+  // THE CONSOLE MUST STAY REACHABLE, and since 00140 a ban is how you take that
+  // away. 00050 guards the three ways to end up with no admin who can get in —
+  // demoting the last one, deleting them, deleting their last passkey — with
+  // triggers, on the stated grounds that "a check in application code is a
+  // suggestion; this is the guarantee". is_banned was not one of the three,
+  // because in 00050's day a banned admin still passed is_admin() and still
+  // opened the console.
+  //
+  // 00140 ended that in both places at once: is_admin() and is_admin_or_coach()
+  // now return FALSE for a banned admin (45 + 3 RLS policies), and
+  // requireAdminPlayer refuses them with 'Account suspended pending
+  // reinstatement' before any capability is resolved. So banning the last
+  // passkey-holding admin is a full lockout whose only recovery is a manual
+  // UPDATE against production — and players.ban.write is EXEC-level, so an exec
+  // can do it to every admin the club has.
+  //
+  // Counted through admins_with_passkeys(), the same function
+  // guard_last_admin_role calls, rather than a second transcription of the join:
+  // enrolled_via = 'admin' matters (00051) and a copy would drift. 00126 revoked
+  // it from anon and authenticated and kept the service_role grant, which is the
+  // client this runs on.
+  //
+  // THIS LINE IS NOT COMPLETE ON ITS OWN AND THE COMPANION MIGRATION IS WHY.
+  // admins_with_passkeys filters role = 'admin' and does NOT filter is_banned,
+  // so with one admin already banned it still counts them as a live door and
+  // would let this ban through. 00145 adds the missing clause — and the
+  // is_banned arm to guard_last_admin_role, which is the half no app code can
+  // reach, since the same over-count lets guard_last_admin_role permit the
+  // DEMOTION or DELETION of the last unbanned admin.
+  if (target.role === 'admin') {
+    const { data: doors, error: doorsError } = await adminClient.rpc('admins_with_passkeys', {
+      p_excluding_player: input.player_id,
+    });
+    // Fails closed on both branches: an unreadable count is not permission to
+    // ban the last admin, and `null` from a function declared RETURNS INTEGER
+    // means something is wrong with the call rather than that there are doors.
+    if (doorsError) throw new Error(doorsError.message);
+    if (!doors) {
+      throw new ExpectedError(
+        'This is the only admin with a passkey. Give another admin a passkey before banning this one, ' +
+        'or the admin console becomes unreachable.',
+      );
+    }
+  }
+
+  const bannedAt = new Date().toISOString();
+  const { data: banned, error } = await adminClient
     .from('players')
     .update({
       is_banned: true,
-      banned_at: new Date().toISOString(),
+      banned_at: bannedAt,
       banned_by: actor.id,
       ban_reason: input.reason,
     })
-    .eq('id', input.player_id);
+    .eq('id', input.player_id)
+    // Re-checked in the WHERE clause, on approvePlayer's pattern: the read above
+    // is a moment old, and two execs acting on the same report would both pass
+    // the precondition. The loser matches no row, so the winner's banned_at
+    // stands and only one player_banned entry is filed.
+    .eq('is_banned', false)
+    // Matching zero rows is not an error in PostgREST, so without the count the
+    // loser would be told the ban landed and would file an audit row for a write
+    // that did nothing.
+    .select('id');
   if (error) throw new Error(error.message);
+  if (!banned?.length) {
+    throw new ExpectedError(
+      'That member was banned while you were banning them — most likely another exec got there first. ' +
+      'Reload the roster before trying again.',
+    );
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: actor.id,
     action_type: 'player_banned',
     target_type: 'player',
     target_id: input.player_id,
-    new_value: { reason: input.reason },
+    // The row this ban replaced. Empty for the ordinary case (nobody has been
+    // banned before), and the whole point when it is not: the precondition above
+    // refuses a re-ban, so this is the record that a hand-applied UPDATE or a
+    // future bulk path would otherwise erase without trace.
+    old_value: {
+      is_banned: target.is_banned,
+      banned_at: target.banned_at,
+      banned_by: target.banned_by,
+      ban_reason: target.ban_reason,
+    },
+    new_value: { is_banned: true, banned_at: bannedAt, banned_by: actor.id, reason: input.reason },
   }, { playerId: input.player_id });
 
   revalidatePath('/players');

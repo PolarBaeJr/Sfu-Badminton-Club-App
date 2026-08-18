@@ -215,10 +215,21 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
     );
   }
 
+  // NOT routed through run() above, for one small reason: run() clears `reason`
+  // and this dialog types into `banReason`.
+  //
+  // THE `res.ok` CHECK IS THE POINT. banPlayer returns its refusals as values now
+  // (already banned, last admin with a passkey, lost the race) because Next
+  // replaces a thrown error with a generic message in production. This awaited a
+  // bare promise and toasted "Player banned" whatever came back, so every one of
+  // those refusals would have painted a green toast over a ban that never
+  // happened — and the call signature did not change, so nothing would have
+  // failed to compile.
   function handleBan() {
     startTransition(async () => {
       try {
-        await banPlayer({ player_id: playerId, reason: banReason });
+        const res = await banPlayer({ player_id: playerId, reason: banReason });
+        if (!res.ok) { toast(res.error, 'error'); return; }
         toast('Player banned', 'success');
         setOpen(false);
         setBanReason('');
