@@ -176,6 +176,21 @@ export default async function SessionsPage({
   const supabase = createAdminClient();
   const today = clubToday();
 
+  // ---- THE QUERY BUDGET ---------------------------------------------------
+  // THIS PAGE IS RE-RUN ON EVERY CHECK-IN. Marking somebody present calls
+  // router.refresh() (sessions/actions.tsx), and live-attendance.tsx nudges the
+  // same refresh on every realtime event, so a 60-person queue re-renders this
+  // server component 60 times PER OPEN CONSOLE at the door.
+  //
+  // Every read below used to be its own `await`, one after the next, so each of
+  // those refreshes was eleven serial round trips to Postgres — most of them
+  // waiting on a query that needed nothing from the one before it. The reads
+  // are now issued in the three groups that genuinely depend on each other:
+  // seasons first, then everything keyed on the season, then everything keyed
+  // on the sessions it returned. Same queries, same results, a third of the
+  // wall clock, and the concurrency is bounded by the group sizes rather than
+  // by the roster.
+  //
   // ---- seasons ------------------------------------------------------------
   // The season picker is page furniture, not a ledger, and start_date is what
   // the header eyebrow counts weeks from.
@@ -227,28 +242,51 @@ export default async function SessionsPage({
   // (a season past 110 sessions would otherwise 414), and the paging inside
   // each chunk is what defeats db-max-rows. selectInChunks alone does only the
   // first, which is why it is not the helper used here.
-  const { data: attendanceRows, error: attendanceError } = await selectAllInChunks<{
+  // ISSUED TOGETHER. Both are keyed on the same sessionIds and neither reads
+  // the other, so awaiting them one after the other spent a whole round trip
+  // for nothing — on a page the door re-runs on EVERY check-in (see the note on
+  // the query budget above the seasons read).
+  const [
+    { data: attendanceRows, error: attendanceError },
+    { data: rsvpRows },
+  ] = await Promise.all([
+    selectAllInChunks<{
     session_id: string;
     player_id: string;
     checked_in_at: string | null;
     status: string;
     marked_by: string | null;
     marked_at: string | null;
-    players: { full_name: string; avatar_url: string | null } | null;
-  }>(sessionIds, (batch, from, to) =>
-    supabase
-      .from('session_attendance')
-      .select(
-        'session_id, player_id, checked_in_at, status, marked_by, marked_at, players!session_attendance_player_id_fkey(full_name, avatar_url)',
-      )
-      .in('session_id', batch)
-      // A range request over an unordered result is not a stable window: two
-      // pages can overlap or skip rows outright, which would show up here as a
-      // member missing from the door list rather than as an error.
-      .order('session_id')
-      .order('player_id')
-      .range(from, to) as never,
-  );
+      players: { full_name: string; avatar_url: string | null } | null;
+    }>(sessionIds, (batch, from, to) =>
+      supabase
+        .from('session_attendance')
+        .select(
+          'session_id, player_id, checked_in_at, status, marked_by, marked_at, players!session_attendance_player_id_fkey(full_name, avatar_url)',
+        )
+        .in('session_id', batch)
+        // A range request over an unordered result is not a stable window: two
+        // pages can overlap or skip rows outright, which would show up here as a
+        // member missing from the door list rather than as an error.
+        .order('session_id')
+        .order('player_id')
+        .range(from, to) as never,
+    ),
+    // Same two limits, same helper — see the note above.
+    selectAllInChunks<{
+      session_id: string;
+      intent: string;
+      players: { full_name: string } | null;
+    }>(sessionIds, (batch, from, to) =>
+      supabase
+        .from('session_rsvp')
+        .select('session_id, intent, players(full_name)')
+        .in('session_id', batch)
+        .order('session_id')
+        .order('player_id')
+        .range(from, to) as never,
+    ),
+  ]);
 
   // Deliberately not thrown: a broken read must not take the sessions page down
   // at the door. But it must never be silent again either — the bug above cost
@@ -257,21 +295,6 @@ export default async function SessionsPage({
     console.error('[sessions] attendance read failed:', attendanceError.message);
   }
 
-  // Same two limits, same helper — see the note above.
-  const { data: rsvpRows } = await selectAllInChunks<{
-    session_id: string;
-    intent: string;
-    players: { full_name: string } | null;
-  }>(sessionIds, (batch, from, to) =>
-    supabase
-      .from('session_rsvp')
-      .select('session_id, intent, players(full_name)')
-      .in('session_id', batch)
-      .order('session_id')
-      .order('player_id')
-      .range(from, to) as never,
-  );
-
   // ---- the walk-in roster -------------------------------------------------
   // ONLY FOR SOMEBODY WHO MAY MARK ATTENDANCE. This list feeds exactly one
   // control — the PlayerPicker inside the attendance dialog — and it was
@@ -279,8 +302,14 @@ export default async function SessionsPage({
   // component, so the club's whole active roster crossed into the RSC payload
   // for a viewer with no way to use it. Same class as the two leaks found on
   // /fees.
-  const { data: activePlayers } = canMarkAttendance
-    ? await supabase
+  //
+  // ISSUED WITH THE TWO BELOW. None of these three reads anything the others
+  // produce; they were three serial round trips purely because they were
+  // written in the order the page renders them. Declared as promises here and
+  // awaited together at the end of the group, which keeps each one next to the
+  // note explaining why it is gated the way it is.
+  const activePlayersQuery = canMarkAttendance
+    ? supabase
         .from('players')
         .select('id, full_name, avatar_url')
         .eq('active_flag', true)
@@ -291,7 +320,7 @@ export default async function SessionsPage({
         // somebody with no waiver, which is the thing check-in exists to check.
         .or('onboarding_completed.is.true,user_id.is.null')
         .order('full_name')
-    : { data: [] };
+    : Promise.resolve({ data: [] as { id: string; full_name: string; avatar_url: string | null }[] });
 
   // ---- QR check-in tokens -------------------------------------------------
   // ONLY FOR SOMEBODY WHO MAY ISSUE ONE. A token is the check-in secret: anyone
@@ -300,20 +329,23 @@ export default async function SessionsPage({
   // page then read it with the service-role client for every viewer and shipped
   // the URL into a client component. The capability that MINTS a token is the
   // one that may see it.
-  const { data: checkinTokens } = canIssueToken
-    ? await supabase.from('session_checkin_tokens').select('session_id, token')
-    : { data: [] };
+  const checkinTokensQuery = canIssueToken
+    ? supabase.from('session_checkin_tokens').select('session_id, token')
+    : Promise.resolve({ data: [] as { session_id: string; token: string }[] });
 
   // ---- the check-in window ------------------------------------------------
   // session_checkin_open() reads these two tunables out of platform_settings on
   // every call and is the enforcement source of truth; getCheckinWindow mirrors
   // it. Fetched rather than taken from the TypeScript fallback so the line this
   // page prints agrees with the gate the player app will actually hit.
-  const { data: checkinSetting } = await supabase
+  const checkinSettingQuery = supabase
     .from('platform_settings')
     .select('value')
     .eq('key', 'session_attendance')
     .maybeSingle();
+
+  const [{ data: activePlayers }, { data: checkinTokens }, { data: checkinSetting }] =
+    await Promise.all([activePlayersQuery, checkinTokensQuery, checkinSettingQuery]);
   const checkinSettings = parseCheckinSettings(checkinSetting?.value ?? null);
 
   // ------------------------------------------------------------------------
@@ -421,31 +453,40 @@ export default async function SessionsPage({
   // that do not exist.
   const feeSeasonId = scopedSeason?.id ?? null;
   const readFees = showFees && feeSeasonId !== null;
-  const { data: feeSeason } = readFees
-    ? await supabase
-        .from('seasons')
-        .select('competitive_fee_cents, recreational_fee_cents')
-        .eq('id', feeSeasonId)
-        .maybeSingle()
-    : { data: null };
-  const { data: payers } = readFees
-    ? await supabase
-        .from('players')
-        .select('id, status')
-        .in('status', ['competitive', 'recreational'])
-        .eq('is_exec', false)
-        .eq('fee_exempt', false)
-    : { data: [] };
-  const { data: feeRows } = readFees
-    ? await supabase
-        .from('club_fees')
-        .select('player_id, paid_at, method')
-        .eq('season_id', feeSeasonId)
-        // Dues only (00094). The door badge answers "has this member paid for
-        // the term", and feeByPlayer keys on player_id — an entry fee in the
-        // same table would answer in a season fee's place.
-        .eq('fee_type', 'dues')
-    : { data: [] };
+  //
+  // ISSUED TOGETHER, for the reason given in the query-budget note at the top:
+  // all three are gated on the same `readFees` and none reads the others, so
+  // three serial round trips bought nothing. They are still written as three
+  // ternaries because of the compile-time select parsing described just above.
+  const [{ data: feeSeason }, { data: payers }, { data: feeRows }] = await Promise.all([
+    readFees
+      ? supabase
+          .from('seasons')
+          .select('competitive_fee_cents, recreational_fee_cents')
+          .eq('id', feeSeasonId)
+          .maybeSingle()
+      : Promise.resolve({
+          data: null as { competitive_fee_cents: number; recreational_fee_cents: number } | null,
+        }),
+    readFees
+      ? supabase
+          .from('players')
+          .select('id, status')
+          .in('status', ['competitive', 'recreational'])
+          .eq('is_exec', false)
+          .eq('fee_exempt', false)
+      : Promise.resolve({ data: [] as { id: string; status: string }[] }),
+    readFees
+      ? supabase
+          .from('club_fees')
+          .select('player_id, paid_at, method')
+          .eq('season_id', feeSeasonId)
+          // Dues only (00094). The door badge answers "has this member paid for
+          // the term", and feeByPlayer keys on player_id — an entry fee in the
+          // same table would answer in a season fee's place.
+          .eq('fee_type', 'dues')
+      : Promise.resolve({ data: [] as { player_id: string | null; paid_at: string | null; method: string | null }[] }),
+  ]);
   const payerStatus = new Map((payers ?? []).map((p) => [p.id as string, p.status as string]));
   const feeByPlayer = new Map(
     (feeRows ?? []).filter((f) => f.player_id != null).map((f) => [f.player_id as string, f]),
