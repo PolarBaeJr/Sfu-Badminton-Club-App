@@ -26,9 +26,10 @@
 #     >> /home/polarbaejr/ssd/Deploy/badminton-snapshots/cron.log 2>&1
 #
 # ---------------------------------------------------------------------------
-# THREE THINGS THIS SCRIPT USED TO GET WRONG. All three were reproduced on a
-# pair of throwaway Postgres 16 clusters before being changed here, because
-# every one of them fails SILENTLY on a database nobody watches.
+# THREE THINGS THIS SCRIPT USED TO GET WRONG, and TWO GUARDS THE FIXES NEEDED.
+# All of it was reproduced on a pair of throwaway Postgres 16 clusters before
+# being changed here, because every one of these fails SILENTLY on a database
+# nobody watches.
 #
 # 1. THE DROP IS EXPLICIT NOW, because pg_dump's was not safe.
 #    `pg_dump --schema=public --clean` emits a bare `DROP SCHEMA IF EXISTS
@@ -80,6 +81,32 @@
 #    every live badge and the whole door page quietly never updating again on
 #    staging. scripts/sql/mirror-public-publications.sql re-adds prod's
 #    membership. REPLICA IDENTITY needs no help; pg_dump does carry that.
+#
+# 4. THE CASCADE IN (1) IS ITSELF A NEW RISK, so it is gated.
+#    The old drop could not cascade; ours can, and CASCADE reaches OUT of the
+#    schema. A trigger on auth.users calling a public.handle_new_user(), an
+#    extension installed into public, a foreign key from another schema into
+#    public.players, a view elsewhere selecting from public, a column typed as a
+#    public enum — CASCADE takes every one of them, and `--schema=public`
+#    restores none of them. Signup would then write no player row, for ever,
+#    with nothing in any log: the exact failure class the rest of this header is
+#    about. Grepping the migrations says this repo has no such dependent, but the
+#    migrations are not the whole database — Supabase's init ran first, the owner
+#    has run SQL by hand, and `CREATE EXTENSION IF NOT EXISTS` is a silent no-op
+#    that reveals nothing about where the extension actually landed. So the
+#    question is put to the live database every night instead:
+#    scripts/sql/check-public-dependents.sql lists anything outside public that
+#    depends on it, and any output is fatal BEFORE the drop. Ablated: a planted
+#    auth.users trigger names itself and stops the run with dev untouched; the
+#    same query returns zero rows once it is removed.
+#
+# 5. AN EMPTY PRIVILEGE MIRROR IS REFUSED.
+#    The generator in (2) returning zero rows still exits 0, which would wipe
+#    dev, restore it, apply a file of pure comments, and leave staging with no
+#    grants — empty pages rather than an error, since a failed PostgREST read
+#    arrives as an empty list. A floor of 20 statements is checked before the
+#    drop. Ablated: a generator stubbed to return nothing refuses the run and
+#    leaves dev's 64 grants in place.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -108,7 +135,7 @@ done
 # database, not after: a missing file discovered at step 7 means dev has been
 # wiped and left with no privileges, which reads as empty pages rather than an
 # error.
-for f in mirror-public-acls.sql mirror-public-publications.sql; do
+for f in mirror-public-acls.sql mirror-public-publications.sql check-public-dependents.sql; do
   if [ ! -r "$SCRIPT_DIR/sql/$f" ]; then
     echo "FATAL: $SCRIPT_DIR/sql/$f is missing. Pull the repo checkout on this host." >&2
     exit 1
@@ -137,6 +164,39 @@ docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -At -v ON_ERROR_ST
   < "$SCRIPT_DIR/sql/mirror-public-acls.sql" > "$ACL_SQL"
 docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 \
   < "$SCRIPT_DIR/sql/mirror-public-publications.sql" > "$PUB_SQL"
+
+# A generator that returns nothing still exits 0. That would drop dev, restore
+# it, apply a file of pure comments, and leave staging with no grants at all —
+# which surfaces as empty pages, not as an error, because a failed PostgREST read
+# arrives as an empty list. So put a floor under it BEFORE anything is dropped.
+# The two-table fixture this was developed against generated 39 statements; prod
+# generates hundreds. Twenty is far below any real answer and far above zero.
+acl_stmts=$(grep -c ';' "$ACL_SQL" 2>/dev/null || true)
+if [ "${acl_stmts:-0}" -lt 20 ]; then
+  echo "FATAL: the privilege mirror produced only ${acl_stmts:-0} statements." >&2
+  echo "       Refusing to wipe dev — it would come back with no grants and look" >&2
+  echo "       empty rather than broken. $ACL_SQL is kept for inspection." >&2
+  exit 1
+fi
+
+# WHAT CASCADE WOULD TAKE WITH IT. Asked of the database we are about to drop,
+# because the answer is not in this repo: Supabase's own init ran before any of
+# our migrations, `CREATE EXTENSION IF NOT EXISTS` is a silent no-op that reveals
+# nothing about where the extension landed, and the owner has run SQL by hand.
+# Anything this prints lives outside public, dies with the CASCADE, and is NOT in
+# a `--schema=public` dump — so it would be gone for good. Empty output is the
+# expected answer and the only one we proceed on.
+echo "[$(date -u +%FT%TZ)] checking for cross-schema dependents on public..."
+dependents=$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -qAt \
+  -v ON_ERROR_STOP=1 < "$SCRIPT_DIR/sql/check-public-dependents.sql")
+if [ -n "$dependents" ]; then
+  echo "FATAL: dropping public would also destroy these, and the dump restores none" >&2
+  echo "       of them (pg_dump --schema=public does not carry them):" >&2
+  echo "$dependents" | sed 's/^/         - /' >&2
+  echo "       Nothing has been changed. Move each one out of public's blast radius" >&2
+  echo "       (or add it to a post-restore step) before letting this run again." >&2
+  exit 1
+fi
 
 # CASCADE, and ours rather than pg_dump's. The NOTICEs list what dev had that
 # prod does not — normally the migrations being rehearsed on staging.
