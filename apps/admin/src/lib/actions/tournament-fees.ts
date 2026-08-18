@@ -297,8 +297,11 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
   // recorded entry fee is markTournamentFeeUnpaid, which preserves the amount
   // and audits it with an old_value; there is no correction workflow that goes
   // through here, and the fees page proves it — TournamentFeeActions renders
-  // "Mark Unpaid" for a paid row and never the Mark Paid dialog, so no rendered
-  // control reaches this branch. A server action is a public endpoint, though,
+  // "Mark Unpaid" for a paid row and "Unwaive" for a waived one, never the Mark
+  // Paid dialog, so no rendered control reaches this branch. (The waived half of
+  // that was NOT true until recently: `paid` is false for a waiver, so the page
+  // offered "Mark Paid" on a waived row and the only possible outcome was the
+  // error below.) A server action is a public endpoint, though,
   // and a stale tab is a client that still thinks the row is unpaid.
   //
   // A WAIVED ROW IS REFUSED TOO. isWaivedFee is paid_at plus method 'waived',

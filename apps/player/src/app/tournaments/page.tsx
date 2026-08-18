@@ -3,8 +3,10 @@ import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-ser
 import {
   CLUB_TIMEZONE,
   isDoublesEvent,
+  quoteEntryFee,
   scopeToActiveSeason,
   TOURNAMENT_EVENT_TYPE_LABELS,
+  type PricingTier,
   type TournamentEventType,
 } from '@badminton/shared';
 import { AvatarChip, Badge } from '@badminton/ui';
@@ -91,7 +93,7 @@ export default async function TournamentsPage() {
         .select(
           'id, name, start_date, status, suspended_at, ' +
           'tournament_events(id, event_type, status, max_participants), ' +
-          'tournament_fee_tiers(amount_cents, is_default, sort_order)',
+          'tournament_fee_tiers(id, name, amount_cents, is_default, sort_order, applies_to)',
         ),
       activeSeason?.id,
     ).order('start_date', { ascending: true }),
@@ -238,16 +240,23 @@ export default async function TournamentsPage() {
   );
   const heroEnterable = soleEnterableEvent(heroEvents);
 
-  // The entry fee, from the tournament's own tiers. The default tier is the one
-  // a member pays; failing an explicit default, the lowest — never a guess.
+  // WHAT THIS MEMBER WOULD PAY, not what the tournament's default tier says.
+  //
+  // This used to read `is_default` and fall back to the cheapest tier. On the
+  // live tournament the default is External at $25 while internal members are
+  // priced at $15, so the hero quoted an internal member $10 more than the fee
+  // their own registration would write — and the /fees screen then disagreed
+  // with the page that sent them there.
+  //
+  // quoteEntryFee is the one derivation every fee surface shares; here it is
+  // asked without a ledger row, so it answers purely from membership_type via
+  // selectFeeTier. A member who has already entered sees their snapshotted
+  // price on /fees, which is the row that actually binds.
   const heroTiers = (
-    (hero as unknown as { tournament_fee_tiers?: Array<{ amount_cents: number; is_default: boolean; sort_order: number }> } | null)
+    (hero as unknown as { tournament_fee_tiers?: PricingTier[] } | null)
       ?.tournament_fee_tiers ?? []
   );
-  const heroFeeCents =
-    heroTiers.find((t) => t.is_default)?.amount_cents ??
-    [...heroTiers].sort((a, b) => a.amount_cents - b.amount_cents)[0]?.amount_cents ??
-    null;
+  const heroFeeCents = quoteEntryFee(player?.membership_type, heroTiers).amountCents;
   const heroFee = heroFeeCents === null ? null : `$${(heroFeeCents / 100).toFixed(2).replace(/\.00$/, '')}`;
   const heroIAmIn = hero ? liveEntries.some((e) => e.event?.tournament?.id === hero.id) : false;
 

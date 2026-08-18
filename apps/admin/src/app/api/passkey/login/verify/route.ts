@@ -65,10 +65,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
 
-  // Tighter than the enrol/step-up routes (10/min): those sit behind a session,
-  // this one is reachable by anyone who can reach the login page.
+  // 20/min, matching the player app. 5/min put five console users behind one
+  // per-IP bucket — an exec team on shared campus NAT could lock itself out of
+  // its own console with correct credentials.
+  //
+  // What makes this safe is the same argument the player route documents: an
+  // attempt needs a valid single-use challenge cookie minted by /login/options
+  // AND a signature over it; the cookie is cleared on every outcome including
+  // failure, so an attempt cannot be retried against the same challenge; and
+  // every failure is uniform, so there is no oracle to grind. The options
+  // limiter is the real ceiling on how fast challenges can be minted at all.
   const ip = getClientIp(request);
-  const rl = rateLimit(`admin-pk-login-verify:${ip}`, 5, 60_000);
+  const rl = rateLimit(`admin-pk-login-verify:${ip}`, 20, 60_000);
   if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   let body: z.infer<typeof bodySchema>;

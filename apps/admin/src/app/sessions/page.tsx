@@ -82,7 +82,12 @@ function timeLabel(start: string | null, end: string | null): string {
   return 'Time not set';
 }
 
-const money = (cents: number) => `$${(cents / 100).toFixed(0)}`;
+// toFixed(2), NOT toFixed(0). The door badge is the only surface in the app
+// that rounded to the dollar: a $25.50 season fee read "$26" to the officer on
+// the door while the member's own /fees screen, /admin/fees and every receipt
+// line said $25.50. An officer collecting the badge figure over-charges by
+// fifty cents and the ledger disagrees with the till.
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /**
  * Which week of the term this is. Purely for the header eyebrow, and dropped

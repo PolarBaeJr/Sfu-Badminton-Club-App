@@ -18,8 +18,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
 
+  // 60/min, RAISED FROM 10 and for exactly the reason the player route was.
+  // The console login page auto-starts a conditional (autofill) ceremony on
+  // every view (login/page.tsx), so one page view costs one challenge whether
+  // or not a passkey is used — 10/min was ten console page views per minute for
+  // the whole exec. A 429 here does not merely skip the speculative offer: it
+  // also breaks the explicit "Sign in with a passkey" BUTTON, which mints from
+  // this same route. Throttling the default way in is the failure this limiter
+  // exists to avoid, not to cause.
+  //
+  // Safe to loosen because the response is not a secret: allowCredentials is
+  // empty by design (see below), so an unauthenticated caller learns nothing
+  // about who has console access no matter how many challenges they collect.
+  // The limiter that actually guards sign-in is on /login/verify.
   const ip = getClientIp(request);
-  const rl = rateLimit(`admin-pk-login-options:${ip}`, 10, 60_000);
+  const rl = rateLimit(`admin-pk-login-options:${ip}`, 60, 60_000);
   if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   // allowCredentials is deliberately EMPTY, unlike the step-up route which knows

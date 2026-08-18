@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import Link from 'next/link';
-import { scopeToActiveSeason, selectInChunks } from '@badminton/shared';
+import { scopeToActiveSeason, selectInChunks, quoteEntryFee, type PricingTier } from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import {
@@ -210,7 +210,7 @@ export default async function TournamentsPage({
   const featuredEventIds = new Set(featuredEvents.map((e) => e.id));
 
   // ---- ENTRY MONEY. Both reads are inside the capability, not beside it. ----
-  const feeTiersByTournament = new Map<string, { amount_cents: number; is_default: boolean }[]>();
+  const feeTiersByTournament = new Map<string, PricingTier[]>();
   let feesDueCents = 0;
   let featuredPaid = 0;
   let featuredUnpaid = 0;
@@ -218,7 +218,12 @@ export default async function TournamentsPage({
     const [{ data: tierData }, { data: feeData }] = await Promise.all([
       supabase
         .from('tournament_fee_tiers')
-        .select('tournament_id, amount_cents, is_default')
+        // EVERY COLUMN selectFeeTier reads, not just the amount. applies_to is
+        // what makes a tier membership-aware and sort_order is how ties are
+        // broken; selecting only amount_cents forced this page to fall back to
+        // the default tier for everybody, which on the live tournament is
+        // External at $25 while internal members are priced at $15.
+        .select('tournament_id, id, name, amount_cents, is_default, sort_order, applies_to')
         .in('tournament_id', tournamentIds),
       // Entry fees off the one ledger (00094). fee_type is required, not
       // tidiness: club_fees also holds dues and reinstatements, and neither
@@ -230,11 +235,7 @@ export default async function TournamentsPage({
         .eq('fee_type', 'tournament')
         .in('tournament_id', tournamentIds),
     ]);
-    const tiers = (tierData ?? []) as {
-      tournament_id: string;
-      amount_cents: number;
-      is_default: boolean;
-    }[];
+    const tiers = (tierData ?? []) as (PricingTier & { tournament_id: string })[];
     for (const tier of tiers) {
       const list = feeTiersByTournament.get(tier.tournament_id) ?? [];
       list.push(tier);
@@ -267,14 +268,21 @@ export default async function TournamentsPage({
       id: string;
       is_exec: boolean;
       fee_exempt: boolean;
+      membership_type: string | null;
     }>(Array.from(entrantIds), (ids) =>
-      supabase.from('players').select('id, is_exec, fee_exempt').in('id', ids) as never,
+      supabase.from('players').select('id, is_exec, fee_exempt, membership_type').in('id', ids) as never,
     );
+    const payers = (payerData ?? []) as {
+      id: string; is_exec: boolean; fee_exempt: boolean; membership_type: string | null;
+    }[];
     const liable = new Set(
-      ((payerData ?? []) as { id: string; is_exec: boolean; fee_exempt: boolean }[])
-        .filter((p) => !p.is_exec && !p.fee_exempt)
-        .map((p) => p.id),
+      payers.filter((p) => !p.is_exec && !p.fee_exempt).map((p) => p.id),
     );
+    // membership_type is what prices a member who has no fee row yet. Read for
+    // every entrant, not only the liable ones, because the quote below is keyed
+    // by player id and a missing entry would silently quote the default tier —
+    // the exact fallback this change exists to remove.
+    const membershipById = new Map(payers.map((p) => [p.id, p.membership_type]));
 
     // Per tournament, the distinct liable players entered in any of its events.
     const payersByTournament = new Map<string, Set<string>>();
@@ -305,18 +313,22 @@ export default async function TournamentsPage({
       payersByTournament.set(fee.tournament_id, set);
     }
 
-    for (const [tid, payers] of payersByTournament) {
-      const defaultTier =
-        feeTiersByTournament.get(tid)?.find((t) => t.is_default) ??
-        feeTiersByTournament.get(tid)?.[0] ??
-        null;
-      for (const playerId of payers) {
+    for (const [tid, tournamentPayers] of payersByTournament) {
+      const tournamentTiers = feeTiersByTournament.get(tid) ?? [];
+      for (const playerId of tournamentPayers) {
         const fee = feeByKey.get(`${tid}:${playerId}`);
-        // What a player owes is their own fee row when one exists, otherwise
-        // the tournament's default tier. No tier and no row means nobody has
-        // said this tournament costs anything — that is not a debt of $0, it is
-        // an absence, and it contributes nothing either way.
-        const owed = fee?.amount_cents ?? defaultTier?.amount_cents ?? null;
+        // ONE DERIVATION, the same one the tournament's own fee page and the
+        // Mark Paid dialog use. The ledger row outranks the tier list (an entry
+        // price is snapshotted at registration and must not be re-derived on
+        // read); failing a row, selectFeeTier prices the member by their
+        // membership_type. This used to read the tournament's is_default tier
+        // for everybody, so this headline over-stated what internal members owe
+        // by the internal/external spread — $10 a head on the live tournament.
+        //
+        // A null amount means nobody has said this tournament costs anything.
+        // That is not a debt of $0, it is an absence, and it contributes
+        // nothing either way.
+        const owed = quoteEntryFee(membershipById.get(playerId), tournamentTiers, fee).amountCents;
         const paid = Boolean(fee?.paid_at);
         if (featured && tid === featured.id) {
           if (paid) featuredPaid += 1;

@@ -213,6 +213,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                     playerName={player.full_name}
                     tiers={tiers}
                     paid={paid}
+                    waived={waived}
                     membershipType={player.membership_type}
                     fee={fee ?? null}
                   />
@@ -277,6 +278,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                         playerName={player.full_name}
                         tiers={tiers}
                         paid={paid}
+                        waived={waived}
                         membershipType={player.membership_type}
                         fee={fee ?? null}
                       />

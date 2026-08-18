@@ -148,6 +148,17 @@ interface MarkProps extends BaseProps {
   playerId: string;
   playerName: string;
   paid: boolean;
+  /**
+   * A WAIVER IS NOT A PAYMENT, and it is not an unpaid row either. It is stored
+   * as paid_at + method 'waived' (see isWaivedFee), so `paid` is deliberately
+   * false for it — which used to leave this component rendering "Mark Paid" on
+   * a waived row. markTournamentFeePaid refuses that write on purpose (writing
+   * a payment over a waiver would destroy the club's record that it had decided
+   * not to charge), so the button could only ever produce an error toast.
+   * /admin/fees has offered "Unwaive" for the dues ledger for a while; this is
+   * the same control on the entry-fee desk.
+   */
+  waived: boolean;
   /** internal / alumni / external — what decides which tier prices them. */
   membershipType: MembershipType | string | null;
   /** Their existing ledger row, which outranks the tier list. See quoteEntryFee. */
@@ -160,6 +171,7 @@ interface TiersProps extends BaseProps {
   playerId?: undefined;
   playerName?: undefined;
   paid?: undefined;
+  waived?: undefined;
   membershipType?: undefined;
   fee?: undefined;
 }
@@ -167,7 +179,7 @@ interface TiersProps extends BaseProps {
 type Props = MarkProps | TiersProps;
 
 export function TournamentFeeActions({
-  mode, tournamentId, tiers, playerId, playerName, paid, membershipType, fee,
+  mode, tournamentId, tiers, playerId, playerName, paid, waived, membershipType, fee,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTier, setEditTier] = useState<TournamentFeeTier | null>(null);
@@ -232,11 +244,11 @@ export function TournamentFeeActions({
     });
   }
 
-  function handleMarkUnpaid() {
+  function handleMarkUnpaid(message: string) {
     startTransition(async () => {
       try {
         await markTournamentFeeUnpaid(tournamentId, playerId!);
-        toast('Fee marked as unpaid', 'success');
+        toast(message, 'success');
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to mark fee unpaid', 'error');
@@ -296,8 +308,20 @@ export function TournamentFeeActions({
   // mode === 'mark'
   if (paid) {
     return (
-      <Button variant="ghost" size="sm" onClick={handleMarkUnpaid} loading={isPending}>
+      <Button variant="ghost" size="sm" onClick={() => handleMarkUnpaid('Fee marked as unpaid')} loading={isPending}>
         Mark Unpaid
+      </Button>
+    );
+  }
+
+  // The reversal for a waiver, not a second way to record money. It clears the
+  // same three payment columns markTournamentFeeUnpaid always cleared, which on
+  // a waived row means the entry goes back to owing — the club changed its
+  // mind about writing it off. Same wording and same action as /admin/fees.
+  if (waived) {
+    return (
+      <Button variant="ghost" size="sm" onClick={() => handleMarkUnpaid('Fee waiver removed')} loading={isPending}>
+        Unwaive
       </Button>
     );
   }
