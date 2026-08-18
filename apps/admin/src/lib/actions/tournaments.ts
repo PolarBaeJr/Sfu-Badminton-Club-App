@@ -22,7 +22,6 @@ import type {
   TournamentStatus,
   TournamentEventStatus,
   TournamentEventType,
-  EventCompletionBucket,
   CompletableMatch,
 } from '@badminton/shared';
 // By SUBPATH — node:crypto, server only.

@@ -26,6 +26,7 @@ import {
   recordEventWaiverAcceptance,
 } from './event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
+import { refuseClosedTournament } from './tournament-closed';
 
 // Revalidate every surface that surfaces tournament_participants /
 // tournament_pairs after a register/withdraw/check-in. The event detail
@@ -38,9 +39,17 @@ function revalidateTournamentPaths(tournamentId: string, eventId: string) {
 }
 
 // Supabase may return a to-one embed as object-or-array — unwrap defensively.
-function pickSuspension(embed: unknown): { suspended_at: string | null; suspension_reason: string | null; waiver_text?: string | null } | null {
+function pickSuspension(embed: unknown): {
+  suspended_at: string | null;
+  suspension_reason: string | null;
+  waiver_text?: string | null;
+  // The tournament's own status, so an entry path can tell a tournament that is
+  // OVER from one that is merely paused. Optional because not every select that
+  // goes through this unwrap asks for it.
+  status?: string | null;
+} | null {
   const row = Array.isArray(embed) ? embed[0] : embed;
-  return (row as { suspended_at: string | null; suspension_reason: string | null; waiver_text?: string | null } | null) ?? null;
+  return (row as { suspended_at: string | null; suspension_reason: string | null; waiver_text?: string | null; status?: string | null } | null) ?? null;
 }
 
 // Same object-or-array unwrap as pickSuspension, for the eligibility list.
@@ -94,7 +103,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, existingPairRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason, waiver_text, allowed_memberships, max_events_per_player)')
+      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships, max_events_per_player)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -118,6 +127,12 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   if (regTournament?.suspended_at) {
     throw new ExpectedError(`This tournament is currently suspended${regTournament.suspension_reason ? `: ${regTournament.suspension_reason}` : ''}`);
   }
+  // BEFORE the event's own status, because a finished tournament is the true
+  // reason and the more useful sentence. "Registration is closed" on an event
+  // still sitting at `registration` inside an archived tournament reads as a
+  // bug; nothing here told the member the tournament itself had ended.
+  const regClosed = refuseClosedTournament(regTournament?.status, 'enter this event');
+  if (regClosed) throw new ExpectedError(regClosed);
   // Membership gate. Some events are internal-only, some admit alumni, some are
   // open. Enforced here rather than in RLS because this action uses the
   // service-role key, which bypasses policies entirely — a policy would look
@@ -447,7 +462,7 @@ async function selfCheckInImpl(eventId: string) {
   // Parallel reads — event status and player participation row are independent.
   const [eventRes, participantRes] = await Promise.all([
     service.from('tournament_events')
-      .select('status, tournament_id, tournament:tournaments(suspended_at, suspension_reason)')
+      .select('status, tournament_id, tournament:tournaments(status, suspended_at, suspension_reason)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -459,6 +474,9 @@ async function selfCheckInImpl(eventId: string) {
   if (checkinTournament?.suspended_at) {
     throw new ExpectedError(`This tournament is currently suspended${checkinTournament.suspension_reason ? `: ${checkinTournament.suspension_reason}` : ''}`);
   }
+  // Same ordering as registerForEvent, for the same reason.
+  const checkinClosed = refuseClosedTournament(checkinTournament?.status, 'check in');
+  if (checkinClosed) throw new ExpectedError(checkinClosed);
   // Split so the two halves classify separately. A wrong STATUS is the member
   // arriving before check-in opens or after it closed — a refusal. A MISSING
   // event on a service-role read is a bad id or a row that went away, which is
