@@ -11,6 +11,7 @@ import {
   scopeToActiveSeason,
   type AttendanceStatus,
   type SessionGroupInput,
+  selectAllInChunks,
 } from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
@@ -213,14 +214,41 @@ export default async function SessionsPage({
   // so `data` was null and `?? []` below turned it into "nobody attended". The
   // whole door list, the turnout panel and the checked-in-today stat all read
   // this map, so every one of them silently showed an empty club.
-  const { data: attendanceRows, error: attendanceError } = sessionIds.length
-    ? await supabase
-        .from('session_attendance')
-        .select(
-          'session_id, player_id, checked_in_at, status, marked_by, marked_at, players!session_attendance_player_id_fkey(full_name, avatar_url)',
-        )
-        .in('session_id', sessionIds)
-    : { data: [], error: null };
+  //
+  // SCOPING WAS ONLY HALF OF IT. `sessionIds` is every session in the scoped
+  // season, so this read is one-to-many by construction: a full term of sixty
+  // nights at forty members is 2,400 rows, and production sets
+  // PGRST_DB_MAX_ROWS=1000. PostgREST truncates at that number WITHOUT an
+  // error, so the door list, the turnout panel and the term's no-show average
+  // were all computed over whichever thousand rows came back first.
+  //
+  // selectAllInChunks fixes both limits at once and they are genuinely
+  // different: chunkIds keeps the `.in()` inside the 8,192-byte request line
+  // (a season past 110 sessions would otherwise 414), and the paging inside
+  // each chunk is what defeats db-max-rows. selectInChunks alone does only the
+  // first, which is why it is not the helper used here.
+  const { data: attendanceRows, error: attendanceError } = await selectAllInChunks<{
+    session_id: string;
+    player_id: string;
+    checked_in_at: string | null;
+    status: string;
+    marked_by: string | null;
+    marked_at: string | null;
+    players: { full_name: string; avatar_url: string | null } | null;
+  }>(sessionIds, (batch, from, to) =>
+    supabase
+      .from('session_attendance')
+      .select(
+        'session_id, player_id, checked_in_at, status, marked_by, marked_at, players!session_attendance_player_id_fkey(full_name, avatar_url)',
+      )
+      .in('session_id', batch)
+      // A range request over an unordered result is not a stable window: two
+      // pages can overlap or skip rows outright, which would show up here as a
+      // member missing from the door list rather than as an error.
+      .order('session_id')
+      .order('player_id')
+      .range(from, to) as never,
+  );
 
   // Deliberately not thrown: a broken read must not take the sessions page down
   // at the door. But it must never be silent again either — the bug above cost
@@ -229,12 +257,20 @@ export default async function SessionsPage({
     console.error('[sessions] attendance read failed:', attendanceError.message);
   }
 
-  const { data: rsvpRows } = sessionIds.length
-    ? await supabase
-        .from('session_rsvp')
-        .select('session_id, intent, players(full_name)')
-        .in('session_id', sessionIds)
-    : { data: [] };
+  // Same two limits, same helper — see the note above.
+  const { data: rsvpRows } = await selectAllInChunks<{
+    session_id: string;
+    intent: string;
+    players: { full_name: string } | null;
+  }>(sessionIds, (batch, from, to) =>
+    supabase
+      .from('session_rsvp')
+      .select('session_id, intent, players(full_name)')
+      .in('session_id', batch)
+      .order('session_id')
+      .order('player_id')
+      .range(from, to) as never,
+  );
 
   // ---- the walk-in roster -------------------------------------------------
   // ONLY FOR SOMEBODY WHO MAY MARK ATTENDANCE. This list feeds exactly one

@@ -75,7 +75,7 @@ export type ChunkQueryError = {
   hint?: string | null;
 };
 
-type ChunkResult<T> = { data: T[] | null; error: ChunkQueryError | null };
+export type ChunkResult<T> = { data: T[] | null; error: ChunkQueryError | null };
 
 /**
  * Run one `.in()` read per chunk and concatenate the rows.
@@ -133,5 +133,104 @@ export async function selectInChunks<T>(
   // Data is still returned alongside an error so a caller that has decided
   // partial rows are acceptable can say so explicitly, rather than the helper
   // deciding for it.
+  return { data: rows, error: firstError };
+}
+
+/**
+ * PGRST_DB_MAX_ROWS IS A SECOND, DIFFERENT CLIFF — and selectInChunks above does
+ * NOT protect against it.
+ *
+ * That helper chunks by ID COUNT, sized entirely from the 8,192-byte request
+ * line (IN_CHUNK_SIZE = 110). For a read that returns ONE ROW PER ID — the
+ * players lookups it was written for — bounding the ids also bounds the rows,
+ * so one limit covers both. For a ONE-TO-MANY read it does not: 110 session ids
+ * against `session_attendance` is 110 × however many people turned up, which is
+ * thousands of rows in a single request. Production sets `db-max-rows` to
+ * 1,000, PostgREST truncates silently at that number, and the caller counts
+ * whatever survived. The chunking makes the URL legal; the answer is still
+ * wrong.
+ *
+ * That is the shape of the sessions bug: `/sessions` read the whole of
+ * `session_attendance` to tally card counts, crossed 1,000 rows at about 25
+ * sessions, and from then on quietly under-counted every night on the page.
+ * Scoping the read to the sessions actually rendered narrows it but does not
+ * close it — 25 sessions of 40 members is exactly 1,000 rows.
+ *
+ * So: page until a SHORT page comes back.
+ *
+ * PAGE_SIZE IS DELIBERATELY WELL UNDER db-max-rows, and that margin is the
+ * whole mechanism. "Short page means done" is only sound while the server
+ * cannot be the thing that shortened it. Ask for 1,000 against a 1,000 cap and
+ * a truncated page is indistinguishable from a final one; ask for 2,000 and
+ * EVERY page comes back at 1,000, reading as short, and the loop stops after
+ * one — the original bug with extra steps. At 500 the cap can only bite if
+ * somebody lowers db-max-rows below 500, which is why the number is named here
+ * rather than inlined.
+ */
+export const ROW_PAGE_SIZE = 500;
+
+/**
+ * Hard stop on the loop, so a server that keeps answering "full page" can cost
+ * a slow request rather than an unbounded one. 200 pages is 100,000 rows —
+ * orders of magnitude past any read in this app, so hitting it means something
+ * is wrong, and the error says so instead of the caller seeing a short list.
+ */
+export const MAX_ROW_PAGES = 200;
+
+/**
+ * Every row a query matches, fetched a page at a time.
+ *
+ * `run(from, to)` receives an inclusive range for `.range(from, to)`. Errors are
+ * returned rather than thrown, and rows collected so far come back alongside
+ * them, for exactly the reason selectInChunks documents: a helper that turned a
+ * failed page into an empty array would hand the caller a SHORT LIST instead of
+ * a failure, which is the bug this file exists to stop.
+ */
+export async function selectAllPages<T>(
+  run: (from: number, to: number) => PromiseLike<ChunkResult<T>>,
+  pageSize: number = ROW_PAGE_SIZE,
+): Promise<ChunkResult<T>> {
+  const rows: T[] = [];
+  for (let page = 0; page < MAX_ROW_PAGES; page++) {
+    const from = page * pageSize;
+    const res = await run(from, from + pageSize - 1);
+    if (res.error) return { data: rows, error: res.error };
+    const batch = res.data ?? [];
+    for (const row of batch) rows.push(row);
+    // Short page: the server had nothing more to give. See ROW_PAGE_SIZE for
+    // why this test is only trustworthy while pageSize < db-max-rows.
+    if (batch.length < pageSize) return { data: rows, error: null };
+  }
+  return {
+    data: rows,
+    error: {
+      message:
+        `Stopped after ${MAX_ROW_PAGES} pages of ${pageSize} rows. The query matched more rows ` +
+        'than any read in this app should, so the result is being reported as an error rather ' +
+        'than returned as a silently short list.',
+      code: 'PAGE_LIMIT',
+    },
+  };
+}
+
+/**
+ * The two limits composed: chunk the ids so the request line stays legal, and
+ * page WITHIN each chunk so db-max-rows cannot truncate it. This is the helper
+ * a one-to-many `.in()` read wants; selectInChunks alone is only correct when
+ * the read returns at most one row per id.
+ */
+export async function selectAllInChunks<T>(
+  ids: readonly string[],
+  run: (batch: string[], from: number, to: number) => PromiseLike<ChunkResult<T>>,
+  pageSize: number = ROW_PAGE_SIZE,
+): Promise<ChunkResult<T>> {
+  if (ids.length === 0) return { data: [], error: null };
+  const rows: T[] = [];
+  let firstError: ChunkQueryError | null = null;
+  for (const batch of chunkIds(ids)) {
+    const res = await selectAllPages<T>((from, to) => run(batch, from, to), pageSize);
+    for (const row of res.data ?? []) rows.push(row);
+    if (res.error && !firstError) firstError = res.error;
+  }
   return { data: rows, error: firstError };
 }

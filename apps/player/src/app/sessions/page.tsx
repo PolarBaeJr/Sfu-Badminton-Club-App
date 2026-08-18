@@ -10,6 +10,7 @@ import {
   unwrap,
   type AttendanceStatus,
   type SessionIntent,
+  selectAllInChunks,
 } from '@badminton/shared';
 import { onVisibleTracks } from '@/lib/session-track-filter';
 import { StandingNote } from '@/components/standing-notice';
@@ -90,7 +91,16 @@ export default async function SessionsPage() {
   // that follow keep `?? []` deliberately — an attendance or RSVP read that
   // fails costs a chip and a count, and taking the whole schedule down over a
   // missing "Going" badge would be the wrong trade in the other direction.
-  const [openSessionsRes, closedSessionsRes, calendarSessionsRes, { data: myAttendance }, { data: attendanceRows }, { data: myRsvp }, { data: goingRows }] = await Promise.all([
+  //
+  // THE TWO TABLE-WIDE READS ARE GONE FROM THIS BATCH. They used to sit here as
+  // `session_attendance.in('status', …)` and `session_rsvp.eq('intent','going')`
+  // with NO session, player or season filter — the entire tables, on every
+  // member's page load, to tally the counts printed on the cards. Production
+  // sets PGRST_DB_MAX_ROWS=1000, so past about 25 sessions PostgREST truncated
+  // them with no error and every card under-counted from then on. They now run
+  // below, scoped to the sessions this page actually draws and paged, which
+  // needs the session ids and therefore a second round trip.
+  const [openSessionsRes, closedSessionsRes, calendarSessionsRes, { data: myAttendance }, { data: myRsvp }] = await Promise.all([
     onVisibleTracks(
       inActiveSeason(
         supabase
@@ -132,23 +142,16 @@ export default async function SessionsPage() {
       ),
       player.status
     ).order('date', { ascending: true }).order('start_time', { ascending: true, nullsFirst: false }),
+    // Both of these are the member's OWN rows, so they are bounded by one
+    // person's history rather than the club's — they stay in this batch.
     supabase
       .from('session_attendance')
       .select('session_id, status')
       .eq('player_id', player.id),
-    // Attendee counts shown on cards exclude admin-marked no-show/excused rows.
-    supabase
-      .from('session_attendance')
-      .select('session_id')
-      .in('status', ['checked_in', 'present']),
     supabase
       .from('session_rsvp')
       .select('session_id, intent')
       .eq('player_id', player.id),
-    supabase
-      .from('session_rsvp')
-      .select('session_id')
-      .eq('intent', 'going'),
   ]);
 
   // Refused reads become an exception here, not an empty schedule. `unwrap`
@@ -156,6 +159,47 @@ export default async function SessionsPage() {
   const openSessions = unwrap(openSessionsRes);
   const closedSessions = unwrap(closedSessionsRes);
   const calendarSessions = unwrap(calendarSessionsRes);
+
+  // THE SESSIONS THAT ACTUALLY CARRY A COUNT, and nothing else. The cards under
+  // "Upcoming" are drawn from `openSessions` and the turnout line from
+  // `closedSessions` (itself .limit(10)); the calendar grid prints no tallies,
+  // so its far larger id list is deliberately not asked for.
+  //
+  // Scoping alone is NOT the fix, which is worth saying plainly because it
+  // looks like it should be: 25 sessions of 40 members is exactly the 1,000-row
+  // cap, so the narrowed read would start truncating again the moment the club
+  // got slightly busier. selectAllInChunks pages within each chunk, so the
+  // answer is exact at any size — see ROW_PAGE_SIZE for why "short page means
+  // done" is only sound with a page size under the cap.
+  const talliedSessionIds = Array.from(new Set([
+    ...openSessions.map((s) => s.id as string),
+    ...closedSessions.map((s) => s.id as string),
+  ]));
+
+  const [{ data: attendanceRows }, { data: goingRows }] = await Promise.all([
+    // Attendee counts shown on cards exclude admin-marked no-show/excused rows.
+    selectAllInChunks<{ session_id: string }>(talliedSessionIds, (batch, from, to) =>
+      supabase
+        .from('session_attendance')
+        .select('session_id')
+        .in('session_id', batch)
+        .in('status', ['checked_in', 'present'])
+        // Ordered because a range request over an unordered result is not a
+        // stable window: without it two pages can overlap or skip rows and the
+        // tally is wrong in a way no test on a small fixture would show.
+        .order('session_id')
+        .range(from, to) as never,
+    ),
+    selectAllInChunks<{ session_id: string }>(talliedSessionIds, (batch, from, to) =>
+      supabase
+        .from('session_rsvp')
+        .select('session_id')
+        .in('session_id', batch)
+        .eq('intent', 'going')
+        .order('session_id')
+        .range(from, to) as never,
+    ),
+  ]);
 
   const myStatusBySession = new Map<string, AttendanceStatus>(
     (myAttendance ?? []).map((r) => [r.session_id as string, r.status as AttendanceStatus])
