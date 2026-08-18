@@ -235,13 +235,24 @@ export function weeklyDigestEmail(
     wins: number;
     losses: number;
     eloChange: number;
-    singlesRating: number;
-    doublesRating: number;
+    // NULL where the member did not play that discipline this week. The caller
+    // used to report ONE figure as both, so somebody who played only doubles
+    // was told their singles rating had moved to a number they never held; and
+    // it defaulted to 0, which reads as a wiped rating rather than as no data.
+    singlesRating: number | null;
+    doublesRating: number | null;
     rank?: number;
   },
   url: string
 ): { subject: string; html: string } {
   const eloStr = data.eloChange >= 0 ? `+${data.eloChange}` : `${data.eloChange}`;
+  // Only the disciplines actually played. If neither was rated the line is
+  // dropped entirely rather than printed empty — the rest of the recap (matches,
+  // record, net Elo) still stands on its own.
+  const ratingParts = [
+    data.singlesRating !== null ? `Singles: <strong>${data.singlesRating}</strong>` : null,
+    data.doublesRating !== null ? `Doubles: <strong>${data.doublesRating}</strong>` : null,
+  ].filter(Boolean);
   return {
     subject: `Your weekly recap — ${eloStr} Elo`,
     html: wrap(`
@@ -252,7 +263,7 @@ export function weeklyDigestEmail(
         <p style="margin: 6px 0;">Matches Played: <strong>${data.matchesPlayed}</strong></p>
         <p style="margin: 6px 0;">Record: <strong>${data.wins}W - ${data.losses}L</strong></p>
         <p style="margin: 6px 0;">Net Elo: <strong style="color: ${data.eloChange >= 0 ? '#10B981' : '#EF4444'};">${eloStr}</strong></p>
-        <p style="margin: 6px 0;">Singles: <strong>${data.singlesRating}</strong> | Doubles: <strong>${data.doublesRating}</strong></p>
+        ${ratingParts.length > 0 ? `<p style="margin: 6px 0;">${ratingParts.join(' | ')}</p>` : ''}
         ${data.rank ? `<p style="margin: 6px 0;">Current Rank: <strong>#${data.rank}</strong></p>` : ''}
       </div>
       ${DIVIDER}

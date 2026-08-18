@@ -341,8 +341,9 @@ export async function sendWeeklyDigestEmail(
     wins: number;
     losses: number;
     eloChange: number;
-    singlesRating: number;
-    doublesRating: number;
+    /** NULL where the member did not play that discipline this week. */
+    singlesRating: number | null;
+    doublesRating: number | null;
     rank?: number;
   }
 ): Promise<SendOutcome> {
