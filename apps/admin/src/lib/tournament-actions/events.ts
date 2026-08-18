@@ -551,7 +551,16 @@ export async function deleteTournamentEvent(eventId: string) {
   revalidatePath(`/tournaments/${event.tournament_id}`);
 }
 
-export async function setEventStatus(eventId: string, status: TournamentEventStatus) {
+// EVERY REFUSAL IN HERE IS A SENTENCE THE EXEC HAS TO READ, so this is an Impl
+// and the exported action below returns them as values. Next.js replaces
+// anything THROWN out of a Server Action in production with a generic message,
+// and EventHeader's `catch` renders `err.message` straight into a toast — so on
+// the deployed console "Cannot go live — no bracket has been generated for this
+// event" arrived as the generic string, and the one press the whole page exists
+// for failed with nothing to act on. 599b8a0 / 057f5b3 / 20e8bea did this for
+// the actions next door; these two were missed because they are called from a
+// component that already checks `res.ok` for the generator calls beside them.
+async function setEventStatusImpl(eventId: string, status: TournamentEventStatus) {
   const admin = await requireCapability('tournaments.manage.event.status.write');
   const adminClient = createAdminClient();
 
@@ -572,7 +581,7 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
   const steps = statusStepsFor(event.format as string);
   const here = steps.indexOf(event.status as TournamentEventStatus);
   if (here < 0 || steps[here + 1] !== status) {
-    throw new Error(`Invalid transition from ${event.status} to ${status}`);
+    throw new ExpectedError(`This event cannot go from ${event.status} to ${status} — reload to see where it is.`);
   }
 
   // Guard: do not start a phase that has no matches.
@@ -600,7 +609,7 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
     if (startingPhase) q = q.eq('phase', startingPhase);
     const { count: matchCount } = await q;
     if (!matchCount || matchCount === 0) {
-      throw new Error(
+      throw new ExpectedError(
         startingPhase === 'pool'
           ? 'Cannot start the pool — no fixtures have been generated for it'
           : 'Cannot go live — no bracket has been generated for this event',
@@ -668,4 +677,11 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
+}
+
+export async function setEventStatus(
+  eventId: string,
+  status: TournamentEventStatus,
+): Promise<ActionResult<void>> {
+  return runAction(async () => { await setEventStatusImpl(eventId, status); });
 }

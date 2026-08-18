@@ -158,7 +158,10 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     setLoading(true);
     try {
       if (status === 'registration') {
-        await setEventStatus(event.id as string, 'checkin');
+        // Same `res.ok` shape as the two generator calls below it, and for the
+        // same reason: the refusals are sentences the exec has to read.
+        const res = await setEventStatus(event.id as string, 'checkin');
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Check-in opened', 'success');
       } else if (status === 'checkin') {
         // WHICH HALF IS BUILT FIRST. playsRoundRobin covers both round_robin and
@@ -179,7 +182,8 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast(poolToBracket ? 'Round robin generated' : 'Bracket generated', 'success');
       } else if (status === 'pool_generated') {
-        await setEventStatus(event.id as string, 'pool_live');
+        const res = await setEventStatus(event.id as string, 'pool_live');
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Round robin is live!', 'success');
       } else if (status === 'pool_live') {
         // THE ONE PRESS THE WHOLE FORMAT EXISTS FOR: the pool is played out and
@@ -190,7 +194,8 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Knockout drawn from the round-robin standings', 'success');
       } else if (status === 'bracket_generated') {
-        await setEventStatus(event.id as string, 'live');
+        const res = await setEventStatus(event.id as string, 'live');
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Tournament is live!', 'success');
       } else if (status === 'live') {
         await finalizeEvent(event.id as string);
