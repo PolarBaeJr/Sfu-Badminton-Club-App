@@ -41,7 +41,11 @@ export const profileSchema = z.object({
   phone: phoneSchema,
   bio: z.string().max(500).optional(),
   hide_from_leaderboard: z.boolean().optional(),
-  show_activity_status: z.boolean().optional(),
+  // The activity-status flag was removed from this schema with the switch that
+  // was its only writer (audit §2.5 — it read and wrote a column no screen
+  // ever consulted). The COLUMN is untouched: whatever members already set is
+  // still there, and if a surface that actually discloses activity is ever
+  // built, this is where the field comes back, next to that surface.
   // 00111 — which tournament draw this member competes in, labelled "Gender" in
   // the app since 00129.
   //

@@ -92,7 +92,6 @@ export default function SettingsPage() {
   // cannot.
   const [declaredCategory, setDeclaredCategory] = useState<CompetitionCategory | null>(null);
   const [showOnLeaderboard, setShowOnLeaderboard] = useState(true);
-  const [showActivity, setShowActivity] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
@@ -181,7 +180,6 @@ export default function SettingsPage() {
         setPhone(data.phone || '');
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
-        setShowActivity(data.show_activity_status !== false);
         setNotifPrefs(normalizeNotificationPreferences(data.notification_preferences));
         setEmailPrefs(normalizeEmailPreferences(data.notification_preferences));
         const mins = getReminderLeadMinutes(data.notification_preferences);
@@ -271,7 +269,6 @@ export default function SettingsPage() {
           ? undefined
           : (competitionCategory === '' ? null : competitionCategory),
         hide_from_leaderboard: !showOnLeaderboard,
-        show_activity_status: showActivity,
       });
       if (!res.ok) {
         if (res.error === HANDLE_TAKEN_MESSAGE) setHandleTaken(true);
@@ -736,19 +733,33 @@ export default function SettingsPage() {
 
           <Section icon={Shield} title="Privacy">
             <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>Saved when you tap <strong>Save profile</strong>.</p>
+            {/* "SHOW ACTIVITY STATUS" WAS HERE, AND IT GOVERNED NOTHING.
+                Audit §2.5. It read and wrote players.show_activity_status, and
+                a tree-wide grep found no other reader — not one screen, not one
+                query. `last_active_at` is not granted to `authenticated`
+                (00032), so no member can see another's last-active time
+                whatever the switch says, and there is no members' surface that
+                shows it for the switch to govern.
+
+                It was worse than inert. A member who turned it off had been
+                told they were now private about their activity, while the thing
+                it SOUNDS like it governs — when was this person last around —
+                was fully readable through session_attendance and session_rsvp
+                (both USING (true) until 00153). A control that manufactures
+                confidence it cannot deliver is worse than no control.
+
+                Removed rather than wired up, because wiring it up means first
+                building a surface that discloses activity, which nobody asked
+                for. The COLUMN is left alone: it costs nothing, whatever
+                members already set is still there, and if an activity surface
+                is ever built this is the switch it should honour — put the
+                control back then, next to the thing it governs. */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <Switch
                 checked={showOnLeaderboard}
                 onChange={setShowOnLeaderboard}
                 label="Show on leaderboard"
                 description="Your rank will be visible to others."
-              />
-              <div className="sep" />
-              <Switch
-                checked={showActivity}
-                onChange={setShowActivity}
-                label="Show activity status"
-                description="Others can see when you were last active."
               />
             </div>
           </Section>

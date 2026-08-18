@@ -41,7 +41,6 @@ export async function updateProfile(data: {
   phone?: string;
   bio?: string;
   hide_from_leaderboard?: boolean;
-  show_activity_status?: boolean;
   competition_category?: CompetitionCategory | null;
 }): Promise<ActionResult> {
   return runAction(() => updateProfileImpl(data));
@@ -141,7 +140,6 @@ async function updateProfileImpl(data: {
   phone?: string;
   bio?: string;
   hide_from_leaderboard?: boolean;
-  show_activity_status?: boolean;
   competition_category?: CompetitionCategory | null;
 }) {
   parseOrThrow(profileSchema, data);
@@ -174,7 +172,6 @@ async function updateProfileImpl(data: {
   if (data.phone !== undefined) update.phone = data.phone;
   if (data.bio !== undefined) update.bio = data.bio;
   if (data.hide_from_leaderboard !== undefined) update.hide_from_leaderboard = data.hide_from_leaderboard;
-  if (data.show_activity_status !== undefined) update.show_activity_status = data.show_activity_status;
   // 00111 — the competition category, "Gender" on screen. THE MEMBER'S ONLY
   // WRITE PATH TO IT, and since 00129 a write they get exactly once: the
   // database refuses any later change, including back to NULL.
