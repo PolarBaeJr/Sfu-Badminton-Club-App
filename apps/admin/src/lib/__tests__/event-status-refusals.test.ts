@@ -18,6 +18,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const single = vi.fn();
 const matchCount = vi.fn();
+// The predicated write's terminal value. The chain below is awaited directly at
+// that one call site, so it has to be a real thenable — leaving it inert would
+// let `{ error, count }` destructure to undefined/undefined, and a success-path
+// assertion would then pass without the write ever having been modelled.
+const updateResult = vi.fn();
 
 // One chainable stub for both tables the action reads. `single()` answers the
 // tournament_events lookup; the head-count select answers the fixture guard.
@@ -29,7 +34,8 @@ function makeClient() {
     eq: vi.fn(() => chain),
     update: vi.fn(() => chain),
     single,
-    then: undefined,
+    then: (res: (v: unknown) => void, rej: (e: unknown) => void) =>
+      Promise.resolve(updateResult()).then(res, rej),
   });
   return {
     from: vi.fn((table: string) => {
@@ -60,6 +66,8 @@ beforeEach(() => {
   single.mockReset();
   matchCount.mockReset();
   matchCount.mockReturnValue({ count: 0 });
+  updateResult.mockReset();
+  updateResult.mockReturnValue({ error: null, count: 1 });
 });
 
 describe('setEventStatus refuses by returning, not by throwing', () => {
@@ -101,6 +109,24 @@ describe('setEventStatus refuses by returning, not by throwing', () => {
 
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toContain('no fixtures have been generated');
+  });
+
+  it('a legal step still goes through, and comes back ok', async () => {
+    // THE ABLATION ONLY PROVED HALF OF IT. Three refusal tests all assert
+    // `ok: false`, and every one of them would still pass against a wrapper
+    // that refused everything — including the press that actually opens
+    // check-in on tournament day. registration -> checkin is a legal step on
+    // this format, takes no phase guard (it starts nothing), and writes
+    // predicated on the status this call read; count 1 means the row was
+    // still where we found it.
+    single.mockResolvedValue({
+      data: { id: EVENT, tournament_id: 't1', status: 'registration', format: 'single_elimination', event_type: 'mens_singles' },
+    });
+    updateResult.mockReturnValue({ error: null, count: 1 });
+    const { setEventStatus } = await import('../tournament-actions/events');
+    const res = await setEventStatus(EVENT, 'checkin');
+
+    expect(res.ok).toBe(true);
   });
 
   // 'Event not found' is deliberately NOT in here. It stays a plain Error, the
