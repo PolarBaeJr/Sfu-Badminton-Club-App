@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea, DatePicker, useConfirm } from '@badminton/ui';
 import { MEMBERSHIP_TYPES, ALL_MEMBERSHIP_TYPES, resolveEventWaiverTemplate } from '@badminton/shared';
-import { createTournament, updateTournament, eventWaiverEditImpact, archiveTournament, deleteTournament } from '@/lib/actions';
+import { createTournament, updateTournament, eventWaiverEditImpact, archiveTournament, completeTournamentWithEvents, deleteTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
 
@@ -280,17 +280,48 @@ export function TournamentRowActions({
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmArchiveEvents, setConfirmArchiveEvents] = useState(false);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
+  // archiveTournament RETURNS its refusals instead of throwing them, because
+  // Next.js replaces anything thrown out of a Server Action in production with
+  // a generic message. A returned refusal RESOLVES, so the previous
+  // `await ...; toast(success)` shape painted a green "Tournament archived"
+  // over every one of them — and TypeScript could not catch it, since the call
+  // takes the same string argument it always did. Read `ok`.
   async function handleArchive() {
-    try {
-      await archiveTournament(tournament.id);
+    const res = await archiveTournament(tournament.id);
+    if (res.ok) {
       toast('Tournament archived', 'success');
       router.refresh();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    } else {
+      toast(res.error, 'error');
+    }
+  }
+
+  // An archive is a completion too, so it is gated on the same unfinished
+  // events — which means it needs the same way through. Without this, a
+  // tournament whose events were abandoned (there is one on production:
+  // `Test Competition 1`, womens_singles live since 2026-07-24) could never be
+  // archived from this menu again.
+  async function handleArchiveWithEvents() {
+    const res = await completeTournamentWithEvents(tournament.id, 'archived');
+    if (res.ok) {
+      const { finalized, closed } = res.data;
+      const parts = [
+        finalized.length > 0 ? `${finalized.length} finalised` : null,
+        closed.length > 0 ? `${closed.length} closed without results` : null,
+      ].filter(Boolean);
+      toast(
+        parts.length > 0 ? `Tournament archived — ${parts.join(', ')}` : 'Tournament archived',
+        'success',
+      );
+      setConfirmArchiveEvents(false);
+      router.refresh();
+    } else {
+      toast(res.error, 'error');
     }
   }
 
@@ -311,7 +342,10 @@ export function TournamentRowActions({
   // offered where it does something — the same rule the old menu used.
   const overflow = [
     ...(canArchive && tournament.status !== 'archived'
-      ? [{ label: 'Archive', onClick: handleArchive }]
+      ? [
+          { label: 'Archive', onClick: handleArchive },
+          { label: 'Finalise events & archive', onClick: () => setConfirmArchiveEvents(true) },
+        ]
       : []),
     ...(canDelete ? [{ label: 'Delete', onClick: () => setConfirmDelete(true), danger: true }] : []),
   ];
@@ -352,6 +386,23 @@ export function TournamentRowActions({
         tournament={tournament}
         waiverTemplates={waiverTemplates}
       />
+
+      <Dialog open={confirmArchiveEvents} onClose={() => setConfirmArchiveEvents(false)} title={`Finalise events & archive ${tournament.name}`}>
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            Every event that is ready will be finalised — positions, points and placement
+            bonuses awarded exactly as a normal finish.
+          </p>
+          <p className="text-sm text-[var(--text-secondary)]">
+            Any event that was never finished will be <strong>closed without results</strong>:
+            its entrants get no position and no points. There is no undo.
+          </p>
+          <div className="flex items-center justify-between pt-2">
+            <Button variant="ghost" onClick={() => setConfirmArchiveEvents(false)} type="button">Cancel</Button>
+            <Button onClick={handleArchiveWithEvents}>Finalise &amp; Archive</Button>
+          </div>
+        </div>
+      </Dialog>
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete ${tournament.name}`}>
         <div className="space-y-4">

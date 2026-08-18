@@ -608,13 +608,31 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
     }
   }
 
-  const { error } = await adminClient.from('tournament_events')
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq('id', eventId);
+  // CONDITIONAL ON THE STATUS THIS REQUEST READ, modelled on the finalise flip
+  // in finalize.ts (the `.eq('status', 'live')` + count block) for the same
+  // reason it has one. The transition check above read the row and the write
+  // below did not name it, so two Go-Live clicks — one exec double-tapping, or
+  // two desks on the same event — both passed `checkin -> live`, both wrote
+  // `live`, and both then ran the forfeit sweep and logged
+  // `status_changed_to_live`. The audit trail says the event started twice.
+  //
+  // The comment further down explains why a sweep at pool_live and again at
+  // live is safe; it says nothing about the SAME step running twice, which is
+  // what this closes. The count has to be checked BEFORE the sweep, because the
+  // sweep is the expensive, rating-adjacent half.
+  const { error, count } = await adminClient.from('tournament_events')
+    .update({ status, updated_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('id', eventId)
+    .eq('status', event.status);
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
+  }
+  if (count === 0) {
+    throw new ExpectedError(
+      'This event has already moved on — another desk changed it while you were changing it. Reload to see where it is.',
+    );
   }
 
   // Anyone who withdrew while the draw was merely published is still sitting in

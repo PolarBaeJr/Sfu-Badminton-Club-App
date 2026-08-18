@@ -67,6 +67,7 @@ export {
 export {
   createTournament,
   updateTournamentStatus,
+  completeTournamentWithEvents,
   updateTournament,
   eventWaiverEditImpact,
   suspendTournament,

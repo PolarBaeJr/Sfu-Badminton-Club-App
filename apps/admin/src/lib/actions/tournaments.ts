@@ -8,12 +8,29 @@ import {
   parseOrThrow,
   tournamentCreateSchema,
   tournamentSuspendSchema,
+  tournamentStatusUpdateSchema,
   requireActiveSeasonId,
   resolveEventWaiverText,
+  ExpectedError,
+  isDoublesEvent,
+  classifyEventForCompletion,
+  selectAllInChunks,
+  TOURNAMENT_EVENT_TYPE_LABELS,
+  TOURNAMENT_EVENT_STATUS_LABELS,
+} from '@badminton/shared';
+import type {
+  TournamentStatus,
+  TournamentEventStatus,
+  TournamentEventType,
+  EventCompletionBucket,
+  CompletableMatch,
 } from '@badminton/shared';
 // By SUBPATH — node:crypto, server only.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { requireCapability } from './_shared';
+import { runAction, type ActionResult } from '../action-result';
+import { finalizeEvent } from '../tournament-actions/finalize';
+import { setEventStatus } from '../tournament-actions/events';
 
 export async function createTournament(data: {
   name: string;
@@ -70,37 +87,287 @@ export async function createTournament(data: {
   return tournament.id;
 }
 
-export async function updateTournamentStatus(tournamentId: string, status: string) {
+// ============================================================
+// COMPLETING A TOURNAMENT: WHAT ITS EVENTS ARE DOING
+// ============================================================
+//
+// A tournament could be marked completed — and archived — with its events left
+// sitting in Registration, Check-in, Bracket Generated and Live. The parent row
+// said finished, the children said otherwise, and nobody in those events was
+// ever given a position, a point or a placement bonus, because only
+// finalizeEvent awards those and nothing had called it. `Test Competition 1` is
+// archived on production today with a `womens_singles` event live since
+// 2026-07-24.
+//
+// The rule is now: a tournament cannot be closed over the top of unfinished
+// events. The exec is told which events and why, and is offered the one action
+// that resolves it — finalise each event, then complete.
+
+interface EventCompletionBlocker {
+  id: string;
+  label: string;
+  status: TournamentEventStatus;
+  statusLabel: string;
+  bucket: EventCompletionBucket;
+  incomplete: number;
+  matchCount: number;
+}
+
+// Named rather than `*`: isRealIncompleteMatch and summariseRedrawBlockers
+// between them read exactly these six, and spelling them out is what makes it
+// reviewable that the classifier is not being starved of a field it branches
+// on. Adding a branch to either means adding a column here.
+const COMPLETION_MATCH_COLUMNS =
+  'event_id, status, is_bye, elo_snapshot, participant_a_id, participant_b_id, pair_a_id, pair_b_id';
+
+/**
+ * Every event of this tournament that is not already `completed`, classified.
+ *
+ * PAGED, not a bare `.in()`. PGRST_DB_MAX_ROWS is 1000 on production and
+ * PostgREST truncates at it SILENTLY — supabase-js resolves rather than
+ * rejects — so an unpaged read of a 128 draw's matches comes back short and the
+ * rows past the cap are simply never counted as incomplete. A gate that fails
+ * open once the draw gets big is worse than no gate at all, because it is the
+ * big tournaments whose positions matter.
+ */
+async function loadEventCompletionBlockers(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+): Promise<EventCompletionBlocker[]> {
+  const { data: events, error: eventsError } = await adminClient
+    .from('tournament_events')
+    .select('id, event_type, status')
+    .eq('tournament_id', tournamentId)
+    .neq('status', 'completed')
+    .order('event_type');
+  // NOT swallowed. A failed read arrives as an empty list, and an empty list
+  // here reads as "nothing is blocking" — the gate would wave through exactly
+  // the tournament it exists to stop.
+  if (eventsError) throw new Error(eventsError.message);
+  if (!events || events.length === 0) return [];
+
+  const eventIds = events.map((e) => e.id as string);
+  const { data: matches, error: matchesError } = await selectAllInChunks<CompletableMatch & { event_id: string }>(
+    eventIds,
+    (batch, from, to) =>
+      adminClient
+        .from('tournament_matches')
+        .select(COMPLETION_MATCH_COLUMNS)
+        .in('event_id', batch)
+        .order('event_id')
+        .order('id')
+        .range(from, to) as never,
+  );
+  if (matchesError) throw new Error(matchesError.message);
+
+  const byEvent = new Map<string, (CompletableMatch & { event_id: string })[]>();
+  for (const m of matches ?? []) {
+    const list = byEvent.get(m.event_id);
+    if (list) list.push(m);
+    else byEvent.set(m.event_id, [m]);
+  }
+
+  return events.map((e) => {
+    const eventType = e.event_type as TournamentEventType;
+    const status = e.status as TournamentEventStatus;
+    const eventMatches = byEvent.get(e.id as string) ?? [];
+    const counts = classifyEventForCompletion(status, eventMatches, isDoublesEvent(eventType));
+    return {
+      id: e.id as string,
+      label: TOURNAMENT_EVENT_TYPE_LABELS[eventType] ?? eventType,
+      status,
+      statusLabel: TOURNAMENT_EVENT_STATUS_LABELS[status] ?? status,
+      bucket: counts.bucket,
+      incomplete: counts.incomplete,
+      matchCount: eventMatches.length,
+    };
+  });
+}
+
+/**
+ * The refusal the exec reads.
+ *
+ * It names every event rather than counting them, because the next thing they
+ * will do is go and finish one, and "3 events are unfinished" does not say
+ * which. The unplayed-match count is included where there is one, since that is
+ * the number that decides whether finishing it by hand is five minutes' work or
+ * an abandoned draw.
+ */
+function describeCompletionBlockers(blockers: EventCompletionBlocker[]): string {
+  const parts = blockers.map((b) => {
+    const detail = b.incomplete > 0 ? `${b.statusLabel}, ${b.incomplete} unplayed` : b.statusLabel;
+    return `${b.label} (${detail})`;
+  });
+  const noun = blockers.length === 1 ? 'event has' : 'events have';
+  return `${blockers.length} ${noun} not finished — ${parts.join('; ')}. `
+    + 'Finish them individually, or use "Finalise events & complete" to settle them all now.';
+}
+
+/**
+ * THE OPT-IN. Settle every unfinished event, then close the tournament.
+ *
+ * Three treatments, because "finalise everything" cannot be applied blindly —
+ * finalizeEvent accepts nothing but a `live` event with every match decided:
+ *
+ *   finalisable          -> finalizeEvent. Positions, points and placement
+ *                           bonuses are awarded exactly as a normal finish.
+ *   decided but not live -> stepped to `live`, then finalizeEvent. This is the
+ *                           walkover-only draw: every match is settled, but
+ *                           nobody ever pressed Go Live, so finalizeEvent would
+ *                           refuse it on the status alone. `bracket_generated
+ *                           -> live` is a single legal step on both format
+ *                           paths (statusStepsFor), and setEventStatus's own
+ *                           "no bracket generated" guard is satisfied by
+ *                           definition here — there are matches.
+ *   anything else        -> closed WITHOUT awards.
+ *
+ * That last one is the whole reason this is opt-in and not the default. An
+ * abandoned half-played draw has no defensible finishing order, so nothing is
+ * invented: the event is marked completed, the entrants get no position, and
+ * the audit row records that it was force-closed and by whom.
+ *
+ * Nothing here deletes a match. tournament_matches carries elo_snapshot, the
+ * only record that a rated delta was ever applied, so destroying a row is the
+ * one route to a permanently wrong ladder.
+ */
+async function completeTournamentWithEventsImpl(tournamentId: string, target: TournamentStatus) {
+  if (target !== 'completed' && target !== 'archived') {
+    throw new ExpectedError('This action only completes or archives a tournament.');
+  }
+  const admin = await requireCapability('tournaments.manage.status.write');
+  const adminClient = createAdminClient();
+
+  const blockers = await loadEventCompletionBlockers(adminClient, tournamentId);
+
+  const finalized: string[] = [];
+  const closed: string[] = [];
+
+  // SEQUENTIAL ON PURPOSE. finalizeEvent writes ratings and placement points;
+  // running several at once against the same players is exactly the shape the
+  // advisory lock in the rating RPCs exists to serialise, and doing it in the
+  // app instead means a failure stops the run at a known point rather than
+  // halfway through four concurrent ones.
+  for (const b of blockers) {
+    if (b.bucket === 'finalisable') {
+      await finalizeEvent(b.id);
+      finalized.push(b.label);
+      continue;
+    }
+
+    // Decided, but never taken live. Walk it the one step and finalise it
+    // properly rather than closing it unawarded — the entrants played (or were
+    // walked over), so they have earned their positions.
+    if (b.incomplete === 0 && b.matchCount > 0 && b.status === 'bracket_generated') {
+      await setEventStatus(b.id, 'live');
+      await finalizeEvent(b.id);
+      finalized.push(b.label);
+      continue;
+    }
+
+    // FORCE-CLOSED, no awards. Written directly rather than through
+    // setEventStatus because that action is forward-only and one step at a
+    // time by design — `registration -> completed` is not a transition it can
+    // express, and loosening it would also loosen the path a redraw walks.
+    const { error, count } = await adminClient
+      .from('tournament_events')
+      .update({ status: 'completed', updated_at: new Date().toISOString() }, { count: 'exact' })
+      .eq('id', b.id)
+      .eq('status', b.status);
+    if (error) throw new Error(error.message);
+    if (count === 0) {
+      throw new ExpectedError(
+        `${b.label} changed while the tournament was being completed — reload and try again.`,
+      );
+    }
+
+    await logAdminAudit(adminClient, {
+      actor_id: admin.id,
+      action_type: 'tournament_event_force_completed',
+      target_type: 'tournament_event',
+      target_id: b.id,
+      old_value: { status: b.status, incomplete_matches: b.incomplete },
+      new_value: { status: 'completed', awarded: false },
+    }, { tournamentId });
+    closed.push(b.label);
+  }
+
+  // Delegated rather than inlined, so the tournament row is closed by the same
+  // guarded write as always — including its own re-check of the blockers, which
+  // is now a genuine post-condition on the loop above.
+  if (target === 'archived') await archiveTournamentImpl(tournamentId);
+  else await updateTournamentStatusImpl(tournamentId, 'completed');
+
+  return { finalized, closed };
+}
+
+export async function completeTournamentWithEvents(
+  tournamentId: string,
+  target: TournamentStatus,
+): Promise<ActionResult<{ finalized: string[]; closed: string[] }>> {
+  return runAction(() => completeTournamentWithEventsImpl(tournamentId, target));
+}
+
+async function updateTournamentStatusImpl(tournamentId: string, status: TournamentStatus) {
+  // VALIDATED FIRST, exactly as suspendTournament does. The parameter was
+  // `status: string` and went straight into `.update({ status })`, so anything
+  // a caller sent reached the column.
+  parseOrThrow(tournamentStatusUpdateSchema, { tournament_id: tournamentId, status });
   const admin = await requireCapability('tournaments.manage.status.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('status, name').eq('id', tournamentId).single();
+  // Without this the predicate below reads `.eq('status', undefined)`, which is
+  // a malformed filter rather than a filter that matches nothing.
+  if (!old) throw new ExpectedError('Tournament not found');
 
+  // A tournament is not finished while its events are not. Closing the parent
+  // row over the top of a live event is what left events showing as 'Live' on a
+  // completed tournament, with no entrant ever given a position or a point.
+  // completeTournamentWithEvents is the path that actually settles them.
+  if (status === 'completed' || status === 'archived') {
+    const blockers = await loadEventCompletionBlockers(adminClient, tournamentId);
+    if (blockers.length > 0) throw new ExpectedError(describeCompletionBlockers(blockers));
+  }
+
+  // CONDITIONAL ON THE STATUS THIS REQUEST READ. Two clicks — or two execs —
+  // both read `draft`, both wrote `active`, and both then ran the fan-out below:
+  // every eligible member got "Tournament registration open" twice, in-app and
+  // as a push. PostgREST reports "matched no rows" as SUCCESS, so the count is
+  // the only way the loser of that race finds out it did not fire.
+  //
   // An explicit status change also lifts any suspension, so completing a
   // suspended tournament doesn't leave it flagged as paused.
-  const { error } = await adminClient.from('tournaments')
-    .update({ status, suspended_at: null, suspension_reason: null })
-    .eq('id', tournamentId);
+  const { error, count } = await adminClient.from('tournaments')
+    .update({ status, suspended_at: null, suspension_reason: null }, { count: 'exact' })
+    .eq('id', tournamentId)
+    .eq('status', old.status);
   if (error) throw new Error(error.message);
+  if (count === 0) {
+    throw new ExpectedError('This tournament changed while you were changing it — reload to see where it is.');
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'tournament_status_changed',
     target_type: 'tournament',
     target_id: tournamentId,
-    old_value: { status: old?.status },
+    old_value: { status: old.status },
     new_value: { status },
   }, { tournamentId });
 
   // Registration opens when a tournament goes draft→active: tell every
   // eligible member so they can sign up. Rare + important, so push too.
-  if (status === 'active' && old?.status !== 'active') {
+  //
+  // This guard catches the SEQUENTIAL double-click (the second request reads
+  // 'active' and says nothing); the predicate on the UPDATE above catches the
+  // CONCURRENT one, where both requests read 'draft'.
+  if (status === 'active' && old.status !== 'active') {
     const { data: players } = await adminClient
       .from('players')
       .select('id')
       .in('status', ['competitive', 'recreational']);
     const playerIds = (players ?? []).map((p) => p.id).filter((id) => id !== admin.id);
-    const name = old?.name ?? 'A tournament';
+    const name = old.name ?? 'A tournament';
     await notifyPlayers(
       adminClient,
       playerIds,
@@ -117,6 +384,18 @@ export async function updateTournamentStatus(tournamentId: string, status: strin
 
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
+}
+
+// Public entry point. Next.js replaces anything thrown out of a Server Action
+// in production with a generic message, so the refusal — "three events have not
+// finished", "this tournament changed while you were changing it" — comes back
+// as a value instead, and runAction keeps it out of Sentry. Without this every
+// one of them renders as "An error occurred in the Server Components render".
+export async function updateTournamentStatus(
+  tournamentId: string,
+  status: TournamentStatus,
+): Promise<ActionResult<void>> {
+  return runAction(async () => { await updateTournamentStatusImpl(tournamentId, status); });
 }
 
 export async function updateTournament(tournamentId: string, data: {
@@ -298,28 +577,50 @@ export async function resumeTournament(tournamentId: string) {
   revalidatePath(`/tournaments/${tournamentId}`);
 }
 
-export async function archiveTournament(tournamentId: string) {
+async function archiveTournamentImpl(tournamentId: string) {
   const admin = await requireCapability('tournaments.manage.archive.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
+  // Same reason as updateTournamentStatus: `.eq('status', undefined)` is a
+  // malformed filter, not one that matches nothing.
+  if (!old) throw new ExpectedError('Tournament not found');
 
+  // Archiving is a completion too — an archived tournament with a live event in
+  // it is the same lie a completed one is.
+  const blockers = await loadEventCompletionBlockers(adminClient, tournamentId);
+  if (blockers.length > 0) throw new ExpectedError(describeCompletionBlockers(blockers));
+
+  // CONDITIONAL ON THE STATUS THIS REQUEST READ, for the reason spelled out on
+  // updateTournamentStatus: PostgREST reports "matched no rows" as success, so
+  // without the count the loser of a race would go on to write an audit row
+  // claiming it archived the tournament.
+  //
   // Archiving lifts any suspension (same rationale as updateTournamentStatus).
-  const { error } = await adminClient.from('tournaments')
-    .update({ status: 'archived', suspended_at: null, suspension_reason: null })
-    .eq('id', tournamentId);
+  const { error, count } = await adminClient.from('tournaments')
+    .update({ status: 'archived', suspended_at: null, suspension_reason: null }, { count: 'exact' })
+    .eq('id', tournamentId)
+    .eq('status', old.status);
   if (error) throw new Error(error.message);
+  if (count === 0) {
+    throw new ExpectedError('This tournament changed while you were changing it — reload to see where it is.');
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'tournament_archived',
     target_type: 'tournament',
     target_id: tournamentId,
-    old_value: { status: old?.status },
+    old_value: { status: old.status },
     new_value: { status: 'archived' },
   }, { tournamentId });
 
   revalidatePath('/tournaments');
+}
+
+// Public entry point, for the same reason updateTournamentStatus has one.
+export async function archiveTournament(tournamentId: string): Promise<ActionResult<void>> {
+  return runAction(async () => { await archiveTournamentImpl(tournamentId); });
 }
 
 export async function deleteTournament(tournamentId: string) {

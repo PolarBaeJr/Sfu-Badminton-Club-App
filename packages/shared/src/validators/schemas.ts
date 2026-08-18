@@ -274,6 +274,21 @@ export const tournamentSuspendSchema = z.object({
   reason: z.string().min(2, 'Reason is required').max(500),
 });
 
+// The four statuses a tournament row may be moved to.
+//
+// updateTournamentStatus took `status: string` and passed it straight into
+// `.update({ status })`, so any string a caller cared to send reached the
+// column — 'complete', 'Completed', 'finished'. The CHECK constraint refuses
+// most of them, but a rejected UPDATE resolves rather than throws in
+// supabase-js, and the caller then went on to fan a "registration open"
+// notification out to the whole club for a status change that never landed.
+// Shaped like tournamentSuspendSchema so parseOrThrow's message carries the
+// field prefix the exec needs to read it.
+export const tournamentStatusUpdateSchema = z.object({
+  tournament_id: z.string().uuid(),
+  status: z.enum(['draft', 'active', 'completed', 'archived']),
+});
+
 export const adminPlayerUpdateSchema = z.object({
   status: z.enum([
     'competitive', 'recreational', 'suspended', 'pending_approval',
@@ -674,6 +689,7 @@ export type AttendanceMarkInput = z.infer<typeof attendanceMarkSchema>;
 export type SessionIntentInput = z.infer<typeof sessionIntentSchema>;
 export type TournamentCreateInput = z.infer<typeof tournamentCreateSchema>;
 export type TournamentSuspendInput = z.infer<typeof tournamentSuspendSchema>;
+export type TournamentStatusUpdateInput = z.infer<typeof tournamentStatusUpdateSchema>;
 export type AdminPlayerUpdateInput = z.infer<typeof adminPlayerUpdateSchema>;
 export type WalkoverReportInput = z.infer<typeof walkoverReportSchema>;
 export type DisputeResolveInput = z.infer<typeof disputeResolveSchema>;

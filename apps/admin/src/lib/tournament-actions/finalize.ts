@@ -10,6 +10,7 @@ import {
   endsInKnockout,
   isPoolToBracket,
   phaseValueFor,
+  isRealIncompleteMatch,
 } from '@badminton/shared';
 import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings } from '../platform-settings';
@@ -647,11 +648,23 @@ export async function finalizeEvent(eventId: string) {
     .not('status', 'in', '("completed","walkover","voided","bye")')
     .not('is_bye', 'eq', true);
 
-  const realIncomplete = (incompleteMatches ?? []).filter(m => {
-    return doubles
-      ? (m.pair_a_id || m.pair_b_id)
-      : (m.participant_a_id || m.participant_b_id);
-  });
+  // THE SAME PREDICATE THE COMPLETION CLASSIFIER USES
+  // (classifyEventForCompletion, shared/utils/tournament-withdrawal.ts), so the
+  // console's "this event is ready to finalise" and this refusal are one piece
+  // of arithmetic rather than two that agree today.
+  //
+  // A BEHAVIOURAL NO-OP HERE, and deliberately so. The projection above selects
+  // neither `status` nor `is_bye`, so both of the predicate's first two clauses
+  // read `undefined` and are inert on this call site — the query already
+  // filtered the settled statuses and the byes server-side, and what is left is
+  // character for character the participant/pair test this line always was.
+  // The fetch was NOT widened: `.not('is_bye', 'eq', true)` drops rows where
+  // is_bye IS NULL (NOT (NULL = true) is NULL) whereas the TS predicate's
+  // `is_bye === true` keeps them, so the shared side counts MORE rows as
+  // incomplete than the query does. That divergence pushes towards refusing to
+  // finalise, never towards finalising something unfinished, and widening the
+  // fetch in the highest-risk function in the codebase buys nothing.
+  const realIncomplete = (incompleteMatches ?? []).filter(m => isRealIncompleteMatch(m, doubles));
 
   if (realIncomplete.length > 0) {
     throw new Error(`${realIncomplete.length} match(es) still incomplete`);

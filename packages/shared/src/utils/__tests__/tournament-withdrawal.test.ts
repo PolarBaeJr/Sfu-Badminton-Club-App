@@ -11,6 +11,8 @@ import {
   carriesAppliedRating,
   summariseRedrawBlockers,
   hasRedrawBlockers,
+  isRealIncompleteMatch,
+  classifyEventForCompletion,
 } from '../tournament-withdrawal';
 
 describe('eventHasDraw', () => {
@@ -276,5 +278,100 @@ describe('summariseRedrawBlockers — what a redraw would destroy', () => {
     // Which is why the server guard names the column in its projection. Stated
     // as a test so the behaviour is deliberate rather than discovered.
     expect(carriesAppliedRating({ status: 'completed' })).toBe(false);
+  });
+});
+
+describe('isRealIncompleteMatch — what finalizeEvent counts', () => {
+  // A knockout drawn to the next power of two leaves rows with neither side
+  // filled whenever the field is not one. They are not matches anybody is
+  // waiting to play, and counting them would make those events unfinishable.
+  it('does not count an unused bracket slot', () => {
+    expect(
+      isRealIncompleteMatch({ status: 'pending', participant_a_id: null, participant_b_id: null }, false),
+    ).toBe(false);
+  });
+
+  it('counts a pending match that has somebody in it', () => {
+    expect(
+      isRealIncompleteMatch({ status: 'pending', participant_a_id: 'p1', participant_b_id: null }, false),
+    ).toBe(true);
+  });
+
+  // The transposition this catches is invisible on any fixture where both
+  // column families are populated, which is every fixture anybody writes by
+  // hand — a doubles row only ever carries pair ids, and a singles row only
+  // ever carries participant ids.
+  it('reads the pair columns on a doubles event and the participant columns otherwise', () => {
+    expect(isRealIncompleteMatch({ status: 'pending', pair_a_id: 'x' }, true)).toBe(true);
+    expect(isRealIncompleteMatch({ status: 'pending', pair_a_id: 'x' }, false)).toBe(false);
+  });
+
+  it('does not count a settled match, and a disputed one is not settled', () => {
+    for (const status of ['completed', 'walkover', 'voided', 'bye']) {
+      expect(isRealIncompleteMatch({ status, participant_a_id: 'p1' }, false), status).toBe(false);
+    }
+    expect(isRealIncompleteMatch({ status: 'disputed', participant_a_id: 'p1' }, false)).toBe(true);
+  });
+
+  it('does not count a bye', () => {
+    expect(
+      isRealIncompleteMatch({ status: 'pending', is_bye: true, participant_a_id: 'p1' }, false),
+    ).toBe(false);
+  });
+});
+
+describe('classifyEventForCompletion — which of the three things happens to this event', () => {
+  // THE (a)/(c) BOUNDARY, and the assertion that proves the predicate is
+  // genuinely shared with finalizeEvent: a re-implementation that forgets the
+  // empty-slot clause flips this pair, and the console would then refuse to
+  // complete any event whose field was not a power of two.
+  it('finalises a live event whose only open rows are empty slots', () => {
+    expect(
+      classifyEventForCompletion(
+        'live', [{ status: 'pending', participant_a_id: null, participant_b_id: null }], false,
+      ).bucket,
+    ).toBe('finalisable');
+    expect(
+      classifyEventForCompletion(
+        'live', [{ status: 'pending', participant_a_id: 'p1', participant_b_id: null }], false,
+      ).bucket,
+    ).toBe('part_played');
+  });
+
+  // THE (b)/(c) BOUNDARY. A generated bracket nobody has touched has the same
+  // played/rated/in-progress counts as a registration nobody entered; only the
+  // incomplete count tells them apart, and only one of them may be closed
+  // without asking.
+  it('will not silently close a full draw nobody has played yet', () => {
+    expect(
+      classifyEventForCompletion(
+        'bracket_generated', [{ status: 'pending', participant_a_id: 'p1' }], false,
+      ).bucket,
+    ).toBe('part_played');
+    expect(classifyEventForCompletion('bracket_generated', [], false).bucket).toBe('unplayed');
+  });
+
+  // finalizeEvent throws 'Event must be live to finalize' before it reads a
+  // single match, so no pool status can ever be handed to it.
+  it('never finalises a pool status however clean it looks', () => {
+    expect(classifyEventForCompletion('pool_live', [], false).bucket).toBe('unplayed');
+    expect(classifyEventForCompletion('pool_generated', [], false).bucket).toBe('unplayed');
+  });
+
+  it('blocks on a disputed match — it has no settled result', () => {
+    const c = classifyEventForCompletion('live', [{ status: 'disputed', participant_a_id: 'p1' }], false);
+    expect(c.bucket).toBe('part_played');
+    expect(c.incomplete).toBe(1);
+    expect(c.played).toBe(1);
+  });
+
+  it('counts what a forced close would be abandoning', () => {
+    const c = classifyEventForCompletion('live', [
+      { status: 'completed', participant_a_id: 'p1', participant_b_id: 'p2' },
+      { status: 'live', participant_a_id: 'p3', participant_b_id: 'p4' },
+      { status: 'pending', participant_a_id: 'p5', participant_b_id: null },
+      { status: 'completed', is_bye: true },
+    ], false);
+    expect(c).toEqual({ incomplete: 2, played: 1, rated: 0, inProgress: 1, bucket: 'part_played' });
   });
 });

@@ -174,6 +174,101 @@ export function hasRedrawBlockers(b: RedrawBlockers): boolean {
   return b.played > 0 || b.rated > 0 || b.inProgress > 0;
 }
 
+// ------------------------------------------------------------
+// "IS THIS EVENT FINISHED" — THE SAME COUNT finalizeEvent TAKES
+// ------------------------------------------------------------
+//
+// A VERBATIM EXTRACTION of the check at the top of finalizeEvent (admin
+// tournament-actions/finalize.ts), moved here so exactly one function owns it.
+// The console now offers "complete the tournament", which has to say in advance
+// what will happen to each event, and that answer is only worth anything if it
+// is the same arithmetic the finalise itself performs.
+//
+// THE FAILURE THIS PREVENTS is a classifier that says "finalisable" and a
+// finalizeEvent that then throws "N match(es) still incomplete" halfway through
+// the cascade. The exec reads that as the console being broken — it has just
+// told them the event was ready — rather than as a refusal, and by then some
+// earlier event in the same run has already been finalised and rated. One
+// definition, two callers, no drift.
+export interface CompletableMatch extends RedrawableMatch {
+  participant_a_id?: string | null;
+  participant_b_id?: string | null;
+  pair_a_id?: string | null;
+  pair_b_id?: string | null;
+}
+
+// Exactly finalize.ts's list. `disputed` is deliberately absent — a disputed
+// match has no settled result and must block.
+const SETTLED_MATCH_STATUSES = ['completed', 'walkover', 'voided', 'bye'] as const;
+
+/**
+ * Is this a match somebody is still waiting to play?
+ *
+ * The empty-slot clause is the whole subtlety. A single-elimination draw is
+ * generated to the next power of two, so every field that is not one leaves
+ * bracket rows with neither side filled — a semi-final whose feeders were byes
+ * never gets an entrant written into it. Counting those as incomplete would
+ * make every such event permanently unfinishable.
+ */
+export function isRealIncompleteMatch(match: CompletableMatch, doubles: boolean): boolean {
+  if (match.is_bye === true) return false;
+  if ((SETTLED_MATCH_STATUSES as readonly string[]).includes(match.status ?? '')) return false;
+  // An unused bracket slot has neither side filled and is not a match anybody
+  // is waiting to play.
+  return doubles
+    ? Boolean(match.pair_a_id || match.pair_b_id)
+    : Boolean(match.participant_a_id || match.participant_b_id);
+}
+
+/**
+ * What completing the tournament would do to one event.
+ *
+ * - 'finalisable'  — hand it to finalizeEvent: positions, points and placement
+ *                    bonuses get awarded.
+ * - 'unplayed'     — nothing ever happened here; close it, award nothing.
+ * - 'part_played'  — something happened and something is unfinished. Refuse,
+ *                    unless the exec explicitly forces it.
+ */
+export type EventCompletionBucket = 'finalisable' | 'unplayed' | 'part_played';
+
+export interface EventCompletionCounts {
+  incomplete: number;
+  played: number;
+  rated: number;
+  inProgress: number;
+  bucket: EventCompletionBucket;
+}
+
+export function classifyEventForCompletion(
+  status: string | null | undefined,
+  matches: CompletableMatch[],
+  doubles: boolean,
+): EventCompletionCounts {
+  const incomplete = matches.filter((m) => isRealIncompleteMatch(m, doubles)).length;
+  const { played, rated, inProgress } = summariseRedrawBlockers(matches);
+
+  // `status === 'live'` IS LOAD-BEARING. finalizeEvent accepts nothing else —
+  // it throws 'Event must be live to finalize' before it reads a single match —
+  // so pool_generated, pool_live and bracket_generated can never reach the
+  // finalise path however clean their matches look. Dropping this test would
+  // hand those events to a function guaranteed to refuse them, mid-cascade.
+  if (status === 'live' && incomplete === 0) {
+    return { incomplete, played, rated, inProgress, bucket: 'finalisable' };
+  }
+
+  // `incomplete === 0` HERE IS LOAD-BEARING TOO, and for the opposite reason.
+  // It is the only thing separating "a registration nobody entered" from "a
+  // full draw nobody has touched yet": both have played === rated ===
+  // inProgress === 0. Without it a bracket_generated event with a complete,
+  // unplayed bracket would be silently closed as if it had never existed, and
+  // every entrant would find their event marked completed with no result.
+  if (incomplete === 0 && played === 0 && rated === 0 && inProgress === 0) {
+    return { incomplete, played, rated, inProgress, bucket: 'unplayed' };
+  }
+
+  return { incomplete, played, rated, inProgress, bucket: 'part_played' };
+}
+
 export interface ForfeitableMatch {
   participant_a_id?: string | null;
   participant_b_id?: string | null;

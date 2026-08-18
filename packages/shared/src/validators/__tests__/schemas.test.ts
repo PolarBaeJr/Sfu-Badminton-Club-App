@@ -8,6 +8,7 @@ import {
   sessionCreateSchema,
   tournamentCreateSchema,
   tournamentSuspendSchema,
+  tournamentStatusUpdateSchema,
   adminPlayerUpdateSchema,
   walkoverReportSchema,
   disputeResolveSchema,
@@ -313,6 +314,25 @@ describe('tournamentSuspendSchema', () => {
   it('rejects an empty reason', () => {
     expect(
       tournamentSuspendSchema.safeParse({ tournament_id: UUID_A, reason: '' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('tournamentStatusUpdateSchema', () => {
+  it('accepts each of the four statuses the column allows', () => {
+    for (const status of ['draft', 'active', 'completed', 'archived'] as const) {
+      expect(
+        tournamentStatusUpdateSchema.safeParse({ tournament_id: UUID_A, status }).success, status,
+      ).toBe(true);
+    }
+  });
+
+  // The action took `status: string` and handed it to `.update({ status })`, so
+  // a plausible-looking word nobody defined reached the column — and a rejected
+  // UPDATE resolves rather than throws.
+  it('rejects a status the tournament lifecycle has never had', () => {
+    expect(
+      tournamentStatusUpdateSchema.safeParse({ tournament_id: UUID_A, status: 'finished' }).success,
     ).toBe(false);
   });
 });
