@@ -12,6 +12,7 @@ import {
   type SessionIntent,
   selectAllInChunks,
 } from '@badminton/shared';
+import { attendeeCountsBySession } from '@/lib/session-attendee-counts';
 import { onVisibleTracks } from '@/lib/session-track-filter';
 import { StandingNote } from '@/components/standing-notice';
 import { redirect } from 'next/navigation';
@@ -176,20 +177,15 @@ export default async function SessionsPage() {
     ...closedSessions.map((s) => s.id as string),
   ]));
 
-  const [{ data: attendanceRows }, { data: goingRows }] = await Promise.all([
-    // Attendee counts shown on cards exclude admin-marked no-show/excused rows.
-    selectAllInChunks<{ session_id: string }>(talliedSessionIds, (batch, from, to) =>
-      supabase
-        .from('session_attendance')
-        .select('session_id')
-        .in('session_id', batch)
-        .in('status', ['checked_in', 'present'])
-        // Ordered because a range request over an unordered result is not a
-        // stable window: without it two pages can overlap or skip rows and the
-        // tally is wrong in a way no test on a small fixture would show.
-        .order('session_id')
-        .range(from, to) as never,
-    ),
+  const [checkedInCounts, { data: goingRows }] = await Promise.all([
+    // FIX-LIST #12. This used to read the attendance ROWS and count them here.
+    // The card only ever needed the number, and the rows carry each member's
+    // no-show and excused-absence history — so the number now comes from an
+    // aggregate the database computes (get_session_attendee_counts, 00152) and
+    // the rows stop being readable at all (00153). Admin-marked no-show and
+    // excused rows are excluded there, exactly as the `.in('status', …)` here
+    // excluded them.
+    attendeeCountsBySession(supabase as never, talliedSessionIds),
     selectAllInChunks<{ session_id: string }>(talliedSessionIds, (batch, from, to) =>
       supabase
         .from('session_rsvp')
@@ -207,7 +203,7 @@ export default async function SessionsPage() {
   const myIntentBySession = new Map<string, SessionIntent>(
     (myRsvp ?? []).map((r) => [r.session_id as string, r.intent as SessionIntent])
   );
-  const checkedInBySession = tallyBySession(attendanceRows);
+  const checkedInBySession = checkedInCounts;
   const goingBySession = tallyBySession(goingRows);
 
   // One clock reading for the whole render. Every "Today"/"Tomorrow" heading
