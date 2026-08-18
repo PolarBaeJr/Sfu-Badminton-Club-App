@@ -30,6 +30,10 @@ const FAIL_SOFT_SECRETS = [
   // Passkey sign-in answers 503 and the member blames their device.
   'PASSKEY_COOKIE_SECRET',
   'ADMIN_PASSKEY_COOKIE_SECRET',
+  // Bounces and spam complaints are discarded — the route 503s, Resend retries
+  // and then gives up, and email_suppressions stays empty while the club keeps
+  // mailing addresses that permanently rejected it.
+  'RESEND_WEBHOOK_SECRET',
   // Push is a silent no-op without all three.
   'NEXT_PUBLIC_VAPID_PUBLIC_KEY',
   'VAPID_PRIVATE_KEY',
