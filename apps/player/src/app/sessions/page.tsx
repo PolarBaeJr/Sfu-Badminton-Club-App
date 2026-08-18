@@ -185,6 +185,14 @@ export default async function SessionsPage() {
     // the rows stop being readable at all (00153). Admin-marked no-show and
     // excused rows are excluded there, exactly as the `.in('status', …)` here
     // excluded them.
+    //
+    // `as never` is the same cast the sibling call below already carries: the
+    // generated Database type makes tsc give up on this builder chain with
+    // TS2589 (excessively deep), whichever type the parameter is declared as.
+    // So the compiler is NOT checking the fallback's chain here. What stands in
+    // for it is that the fallback IS the read that was at this call site before
+    // ab9a2b1 — same table, same filters, same order/range — running in
+    // production today, moved rather than written.
     attendeeCountsBySession(supabase as never, talliedSessionIds),
     selectAllInChunks<{ session_id: string }>(talliedSessionIds, (batch, from, to) =>
       supabase

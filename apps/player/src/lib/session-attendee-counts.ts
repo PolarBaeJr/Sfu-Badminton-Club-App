@@ -28,7 +28,11 @@ import { selectAllInChunks } from '@badminton/shared';
  * going" on every card. It falls back to the old read, which still works
  * because 00153 (the policy narrowing) is applied after the deploy, and warns
  * once so the window is visible rather than silent. Once 00152 and 00153 are
- * both applied everywhere, the fallback is dead code and can be deleted.
+ * both applied everywhere, the fallback is dead code and can be deleted — and
+ * PRESENT below goes with it, since it exists only to mirror 00152's status
+ * list for that one path. Until then the two are duplicated on purpose, and if
+ * they ever disagree the symptom is a count that changes the day the migration
+ * lands.
  */
 
 /** The statuses that mean somebody was actually there. Mirrored in 00152. */
