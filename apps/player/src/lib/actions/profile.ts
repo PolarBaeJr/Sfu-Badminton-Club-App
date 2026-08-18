@@ -25,6 +25,7 @@ import {
   type CompetitionCategory,
   type LegalAcceptanceInput,
   type WaiverDocument,
+  rosterRestoreColumns,
 } from '@badminton/shared';
 import { getSkillTierOptions, type SkillTierOption } from '../rating-tiers';
 import { normalizeEmail } from '../roster-claim';
@@ -372,9 +373,15 @@ async function restoreMyAccountImpl() {
   if (!player.deletion_requested_at) throw new ExpectedError('No deletion is scheduled for this account');
 
   const service = createServiceRoleClient();
+  // The member's twin of cancelAccountDeletion, and it takes the same full
+  // restore column set for the same reason: without the last_active_at bump the
+  // nightly job re-deactivates them and mails the inactivity notice, so the
+  // member cancels a deletion and is told the next morning that their
+  // membership has lapsed.
+  const restore = rosterRestoreColumns(new Date().toISOString());
   const { error } = await service
     .from('players')
-    .update({ deletion_requested_at: null, active_flag: true })
+    .update({ deletion_requested_at: null, ...restore })
     .eq('id', player.id);
   if (error) {
     Sentry.captureException(error, { extra: { action: 'restoreMyAccount', playerId: player.id } });
@@ -390,8 +397,13 @@ async function restoreMyAccountImpl() {
   await logMemberAudit({
     playerId: player.id,
     actionType: 'self_deletion_cancelled',
-    oldValue: { deletion_requested_at: player.deletion_requested_at, active_flag: false },
-    newValue: { deletion_requested_at: null, active_flag: true },
+    oldValue: {
+      deletion_requested_at: player.deletion_requested_at,
+      active_flag: false,
+      last_active_at: player.last_active_at,
+      inactive_since: player.inactive_since,
+    },
+    newValue: { deletion_requested_at: null, ...restore },
     reason: 'Member cancelled the deletion of their own account',
   });
 

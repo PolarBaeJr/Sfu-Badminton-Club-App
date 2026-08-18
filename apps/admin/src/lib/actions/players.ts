@@ -15,6 +15,7 @@ import {
   describePrivileges,
   ExpectedError,
   type AdminPlayerUpdateInput,
+  rosterRestoreColumns,
 } from '@badminton/shared';
 import { requireCapability } from './_shared';
 import {
@@ -77,11 +78,17 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
     );
   }
 
+  // The full restore column set, not a bare `active_flag: true`. Approval is
+  // an admission rather than a restore, but the failure mode is identical: a
+  // signup that sat in Needs Attention past the inactivity cutoff — a frosh
+  // week form approved late in the term — would be admitted with a
+  // months-stale last_active_at and deactivated by the nightly job before the
+  // member ever saw the club.
   const { data: approved, error } = await adminClient
     .from('players')
     .update({
       status,
-      active_flag: true,
+      ...rosterRestoreColumns(new Date().toISOString()),
     })
     .eq('id', playerId)
     // Re-checked in the WHERE clause, because the read above is a moment old and
@@ -335,9 +342,16 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   // for the same reason the members' app clears it on sign-in: they are back on
   // the roster, so the year that would have anonymised them must not keep
   // running underneath.
+  //
+  // last_active_at IS THE ONE THIS USED TO MISS, and missing it made the whole
+  // block self-defeating. mark-inactive-players selects on `active_flag = true
+  // AND last_active_at < cutoff`, so a console restore that left the column
+  // 120+ days stale put the member straight back into that job's result set:
+  // deactivated again the same night, and — because the notice stamp had just
+  // been cleared — emailed "your membership is now inactive" a second time.
+  // One restore, one silent reversal, one wrong email.
   if (playerUpdate.active_flag === true) {
-    playerUpdate.inactivity_notice_sent_at = null;
-    playerUpdate.inactive_since = null;
+    Object.assign(playerUpdate, rosterRestoreColumns(new Date().toISOString()));
   }
   // role / is_exec / is_trainer are DELIBERATELY ABSENT from this assembly, and
   // the guard above means they can never arrive here anyway. Console access is
@@ -434,9 +448,15 @@ async function cancelAccountDeletionImpl(playerId: string) {
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
   if (!oldPlayer?.deletion_requested_at) throw new Error('No deletion is scheduled for this player');
 
+  // A cancelled deletion puts them back on the roster, so it is a restore and
+  // takes the full column set — not just the two fields the name suggests.
+  // Somebody who requested deletion after going quiet has a stale
+  // last_active_at by definition, which made this the restore path MOST likely
+  // to be undone overnight.
+  const restore = rosterRestoreColumns(new Date().toISOString());
   const { error } = await adminClient
     .from('players')
-    .update({ deletion_requested_at: null, active_flag: true })
+    .update({ deletion_requested_at: null, ...restore })
     .eq('id', playerId);
 
   if (error) throw new Error(error.message);
@@ -446,8 +466,13 @@ async function cancelAccountDeletionImpl(playerId: string) {
     action_type: 'account_deletion_cancelled',
     target_type: 'player',
     target_id: playerId,
-    old_value: { deletion_requested_at: oldPlayer.deletion_requested_at },
-    new_value: { deletion_requested_at: null, active_flag: true },
+    old_value: {
+      deletion_requested_at: oldPlayer.deletion_requested_at,
+      active_flag: oldPlayer.active_flag,
+      last_active_at: oldPlayer.last_active_at,
+      inactive_since: oldPlayer.inactive_since,
+    },
+    new_value: { deletion_requested_at: null, ...restore },
   }, { playerId });
 
   revalidatePath('/players');

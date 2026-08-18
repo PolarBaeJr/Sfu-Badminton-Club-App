@@ -14,7 +14,7 @@
 // ever be got right or wrong once.
 
 import * as Sentry from '@sentry/nextjs';
-import { isSelfReactivatable } from '@badminton/shared';
+import { isSelfReactivatable, rosterRestoreColumns } from '@badminton/shared';
 import { createServiceRoleClient } from './supabase-server';
 import { logMemberAudit } from './member-audit';
 
@@ -24,6 +24,12 @@ export interface ReactivatablePlayer {
   status?: string | null;
   is_banned?: boolean | null;
   deletion_requested_at?: string | null;
+  // Not read by isSelfReactivatable — these two exist so the audit row can say
+  // what the restore replaced. Optional, because a caller that only has the
+  // decision fields is still allowed to reactivate; the audit then records the
+  // old values as null rather than blocking the member's sign-in over them.
+  last_active_at?: string | null;
+  inactive_since?: string | null;
 }
 
 /**
@@ -59,21 +65,11 @@ export async function reactivateLapsedMember(
   // only one UPDATE matches, so only one audit row is written.
   const { data, error } = await service
     .from('players')
-    .update({
-      active_flag: true,
-      last_active_at: now,
-      // They are back on the roster, so the "you have been marked inactive"
-      // notice is spent. Clearing it re-arms the notice for a future lapse
-      // (00059) — a member who lapses twice should be told twice.
-      inactivity_notice_sent_at: null,
-      // Stops the retention clock dead (00062). Signing in is the documented
-      // way to keep an account, and the email now promises exactly that, so
-      // this line is what makes the promise true — a returning member left
-      // with a stale inactive_since would still be anonymised on schedule
-      // despite being back on the roster.
-      inactive_since: null,
-      updated_at: now,
-    })
+    // The five columns a restore has to write, from the one place that spells
+    // them out. This function had all five and the three other restore paths
+    // had two or three each; rosterRestoreColumns is where the rationale for
+    // every one of them now lives.
+    .update(rosterRestoreColumns(now))
     .eq('id', player.id)
     .eq('active_flag', false)
     .select('id');
@@ -99,8 +95,15 @@ export async function reactivateLapsedMember(
   await logMemberAudit({
     playerId: player.id,
     actionType: 'self_reactivated',
-    oldValue: { active_flag: false },
-    newValue: { active_flag: true },
+    oldValue: {
+      active_flag: false,
+      last_active_at: player.last_active_at ?? null,
+      inactive_since: player.inactive_since ?? null,
+    },
+    // The whole restore, not just the flag. An /audit reader asking "why is
+    // this member's last_active_at today when they have not checked in since
+    // April" needs this row to be the answer.
+    newValue: rosterRestoreColumns(now),
     reason: 'Signed in after being marked inactive',
   });
 
