@@ -106,7 +106,10 @@
 #    grants — empty pages rather than an error, since a failed PostgREST read
 #    arrives as an empty list. A floor of 20 statements is checked before the
 #    drop. Ablated: a generator stubbed to return nothing refuses the run and
-#    leaves dev's 64 grants in place.
+#    leaves dev's 64 grants in place. The publication generator gets the same
+#    treatment, except that its floor has to be a COMPARISON against prod rather
+#    than a threshold: zero blocks is the correct answer for a `FOR ALL TABLES`
+#    publication, so a fixed minimum would block such a database every night.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -179,6 +182,28 @@ if [ "${acl_stmts:-0}" -lt 20 ]; then
   exit 1
 fi
 
+# The same floor for the publication generator, and it cannot be a threshold.
+# An empty PUB_SQL is DEFECT 3 itself — supabase_realtime comes back existing and
+# holding nothing, every live badge and the whole door page quietly stop
+# updating, and nothing errors anywhere. But zero blocks is also the CORRECT
+# answer when prod's publication is FOR ALL TABLES, which the generator rightly
+# skips (a member list is not something to re-add table by table). A fixed
+# minimum would either miss the failure or block every night on such a database.
+# So ask prod how many pairs there should be and compare.
+pub_expected=$(docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -qAt \
+  -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_publication p
+     JOIN pg_publication_rel r ON r.prpubid = p.oid
+     JOIN pg_class c ON c.oid = r.prrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+    WHERE NOT p.puballtables;")
+pub_got=$(grep -c 'END \$do\$;' "$PUB_SQL" 2>/dev/null || true)
+if [ "${pub_expected:-0}" -gt 0 ] && [ "${pub_got:-0}" -lt "${pub_expected}" ]; then
+  echo "FATAL: prod publishes ${pub_expected} public table(s), but the generator emitted" >&2
+  echo "       only ${pub_got:-0} statement(s). Refusing to wipe dev — realtime would come" >&2
+  echo "       back subscribed to nothing, which is silent everywhere. $PUB_SQL kept." >&2
+  exit 1
+fi
+
 # WHAT CASCADE WOULD TAKE WITH IT. Asked of the database we are about to drop,
 # because the answer is not in this repo: Supabase's own init ran before any of
 # our migrations, `CREATE EXTENSION IF NOT EXISTS` is a silent no-op that reveals
@@ -233,5 +258,5 @@ find "$OUT_DIR" -maxdepth 1 -name 'publications-*.sql' -mtime +14 -delete 2>/dev
 echo "[$(date -u +%FT%TZ)] snapshot $TS complete."
 echo "  public: $(ls -lh "$PUBLIC_DUMP" 2>/dev/null | awk '{print $5}')"
 echo "  auth:   $(ls -lh "$AUTH_DUMP"   2>/dev/null | awk '{print $5}')"
-echo "  acl statements:         $(grep -c ';' "$ACL_SQL" 2>/dev/null || echo 0)"
-echo "  publication statements: $(grep -c 'END \$do\$;' "$PUB_SQL" 2>/dev/null || echo 0)"
+echo "  acl statements:         $(grep -c ';' "$ACL_SQL" 2>/dev/null || true)"
+echo "  publication statements: $(grep -c 'END \$do\$;' "$PUB_SQL" 2>/dev/null || true)"
