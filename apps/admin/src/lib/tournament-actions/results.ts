@@ -34,6 +34,7 @@ import {
   advanceWinner,
   advanceLoser,
   recordWalkover,
+  DESK_WALKOVER_REASON,
   undoDecidedResult,
   entrySideField,
   routeOf,
@@ -547,7 +548,25 @@ async function enterWalkoverImpl(
   // The row write, Elo and advancement all live in recordWalkover so that a
   // withdrawal-driven forfeit and a manually entered walkover cannot drift
   // apart — they are the same event with different triggers.
-  await recordWalkover(adminClient, match, doubles, winnerPosition, reason, admin.id);
+  //
+  // A BOUNDED PHRASE ON THE ROW, THE EXEC'S SENTENCE IN THE PRIVATE TABLE.
+  // `tournament_matches` is published to supabase_realtime and replication
+  // ignores column grants, so anything passed here reaches every phone watching
+  // the bracket. See PUBLIC_WALKOVER_REASONS.
+  await recordWalkover(adminClient, match, doubles, winnerPosition, DESK_WALKOVER_REASON, admin.id);
+
+  // AFTER THE WALKOVER, BEFORE THE AUDIT, AND IT DOES NOT THROW — the same
+  // order and the same reasoning as voidMatchImpl above. By this line the match
+  // is stamped, rated and the winner advanced; throwing on an annotation would
+  // skip logAudit and leave an unaudited walkover.
+  const note = await writePrivateNote(
+    adminClient, TOURNAMENT_MATCH_NOTES, matchId, reason, admin.id,
+  );
+  if (note.error) {
+    Sentry.captureException(new Error(`Walkover note not recorded: ${note.error}`), {
+      extra: { matchId, action: 'enter_walkover' },
+    });
+  }
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
@@ -555,7 +574,9 @@ async function enterWalkoverImpl(
     match_id: matchId,
     action: 'walkover_entered',
     performed_by: admin.id,
-    details: { winner_position: winnerPosition, reason },
+    // `reason` stays in the audit row regardless, so a note that did not land
+    // (a database without 00118) is degraded rather than lost.
+    details: { winner_position: winnerPosition, reason, note_recorded: note.recorded },
   });
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);

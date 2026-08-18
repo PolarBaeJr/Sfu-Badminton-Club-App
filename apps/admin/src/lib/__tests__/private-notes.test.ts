@@ -80,12 +80,21 @@ describe('who may read a private note', () => {
     //
     // exitDrawImpl is the single writer of both entry tables, which is why
     // those two are one-element sets rather than an oversight.
+    //
+    // `…walkover.write` joined the match set with FIX-LIST #18 and is a genuine
+    // fourth WRITER, not a widening for convenience: enterWalkoverImpl now
+    // records the exec's sentence in tournament_match_notes instead of in
+    // tournament_matches.walkover_reason, which 00113 broadcasts to every
+    // subscriber. The rule the set encodes is unchanged — you may read what you
+    // may write — and the officer who awards walkovers must be able to read
+    // back the reason they gave for one.
     expect([...PARTICIPANT_NOTES.capabilities]).toEqual(['tournaments.draw.exit.write']);
     expect([...PAIR_NOTES.capabilities]).toEqual(['tournaments.draw.exit.write']);
     expect([...TOURNAMENT_MATCH_NOTES.capabilities].sort()).toEqual([
       'tournaments.results.doublenoshow.write',
       'tournaments.results.unvoid.write',
       'tournaments.results.void.write',
+      'tournaments.results.walkover.write',
     ]);
     expect([...WALKOVER_NOTES.capabilities].sort()).toEqual([
       'walkovers.confirm.write',

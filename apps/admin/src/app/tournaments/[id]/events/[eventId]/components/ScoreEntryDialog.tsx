@@ -400,7 +400,14 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   const recordedSummary = recorded.length > 0
     ? recorded.map((g) => `${g.a}-${g.b}`).join(', ')
     : match.status === 'walkover'
-    ? `walkover${match.walkover_reason ? ` — ${match.walkover_reason}` : ''}`
+    // `notes` FIRST, walkover_reason SECOND, and the order is the whole point.
+    // The exec's own sentence now lives in tournament_match_notes and reaches
+    // this component through `match.notes`, which the page nulls for anyone
+    // without the capability to read it. `walkover_reason` is the bounded
+    // public phrase ("Opponent withdrew from the event") and is all that is
+    // left for a viewer who may not see the note — or for a walkover recorded
+    // before the sentence moved.
+    ? `walkover${match.notes || match.walkover_reason ? ` — ${match.notes || match.walkover_reason}` : ''}`
     : 'no scores recorded';
 
   // NOTHING BELOW THIS LINE IS REACHED once the result has landed, and that is

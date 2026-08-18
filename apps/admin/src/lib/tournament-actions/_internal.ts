@@ -1590,10 +1590,48 @@ export type DrawExitStatus = 'withdrawn' | 'disqualified';
 
 // Written onto a match forfeited automatically, so the opponent's walkover
 // says why rather than just appearing.
-export const FORFEIT_REASON: Record<DrawExitStatus, string> = {
+//
+// `as const satisfies`, not `: Record<…, string>` — the literal types are what
+// make these assignable to PublicWalkoverReason below, and the `satisfies` half
+// still fails the build if a DrawExitStatus is ever added without a sentence.
+export const FORFEIT_REASON = {
   withdrawn: 'Opponent withdrew from the event',
   disqualified: 'Opponent was disqualified',
-};
+} as const satisfies Record<DrawExitStatus, string>;
+
+/**
+ * What a manually entered walkover puts on the MATCH ROW.
+ *
+ * The exec types a sentence into the walkover panel. Until now that sentence
+ * went straight into `tournament_matches.walkover_reason`, which is the exact
+ * shape 00117 / 00118 / 00125 exist to undo — and worse here than at most of
+ * those sites, because 00113 publishes `tournament_matches` to
+ * supabase_realtime and REPLICATION IGNORES COLUMN GRANTS. Every phone watching
+ * the bracket received the payload. The four sweeps that closed the others were
+ * scoped by the word "note" and never reached a column called `reason`.
+ *
+ * So the row now carries a bounded phrase and the exec's own words go to
+ * `tournament_match_notes`, beside the void and no-show reasons written from
+ * the same dialog. This is 00135's `court` decision in reverse: broadcasting
+ * *that* it was a walkover is the feature, so the fact stays public — bounded,
+ * not privatised — while the sentence behind it does not.
+ */
+export const DESK_WALKOVER_REASON = 'Walkover awarded by the desk';
+
+/**
+ * The complete vocabulary of `tournament_matches.walkover_reason`.
+ *
+ * Exported so a migration's CHECK constraint and a test can both be written
+ * against one list rather than three copies of it. NULL is also legal on the
+ * column and always has been — a walkover recorded before this existed.
+ */
+export const PUBLIC_WALKOVER_REASONS = [
+  FORFEIT_REASON.withdrawn,
+  FORFEIT_REASON.disqualified,
+  DESK_WALKOVER_REASON,
+] as const;
+
+export type PublicWalkoverReason = (typeof PUBLIC_WALKOVER_REASONS)[number];
 
 /**
  * The mechanical half of a walkover: stamp the result on the match, rate it,
@@ -1619,7 +1657,10 @@ export async function recordWalkover(
   match: Record<string, unknown>,
   doubles: boolean,
   winnerPosition: 'a' | 'b',
-  reason: string,
+  // BOUNDED, and typed rather than commented so a caller cannot hand this the
+  // exec's free text again. Whatever arrives here is broadcast — see
+  // PUBLIC_WALKOVER_REASONS.
+  publicReason: PublicWalkoverReason,
   enteredBy: string,
 ) {
   const matchId = match.id as string;
@@ -1646,7 +1687,7 @@ export async function recordWalkover(
   const { error: writeError, count } = await adminClient.from('tournament_matches').update({
     status: 'walkover',
     walkover_winner: winnerPosition,
-    walkover_reason: reason,
+    walkover_reason: publicReason,
     [winnerField]: winnerId,
     [loserField]: loserId,
     result_entered_by: enteredBy,
@@ -1867,7 +1908,9 @@ export async function forfeitOpenMatchesForEntry(
   eventId: string,
   entryId: string,
   doubles: boolean,
-  reason: string,
+  // Bounded for the same reason recordWalkover's is — this value ends up on the
+  // published match row. Every caller passes a FORFEIT_REASON entry.
+  reason: PublicWalkoverReason,
   enteredBy: string,
 ): Promise<{ forfeited: number; unresolved: number }> {
   const { data: candidates } = await adminClient.from('tournament_matches')

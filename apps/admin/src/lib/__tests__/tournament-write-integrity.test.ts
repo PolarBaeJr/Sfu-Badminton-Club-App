@@ -483,6 +483,7 @@ import { autoSeedEventByElo } from '../tournament-actions/seeding';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
+  FORFEIT_REASON, PUBLIC_WALKOVER_REASONS,
 } from '../tournament-actions/_internal';
 import { createAdminClient } from '../supabase-server';
 
@@ -971,6 +972,46 @@ describe('winner must agree with the scores', () => {
 
     expect(match(QF).winner_participant_id).toBe('p-bob');
     expect(match(QF).loser_participant_id).toBe('p-alice');
+  });
+
+  it("keeps the exec's own sentence off the published match row", async () => {
+    // FIX-LIST #18. `tournament_matches` is published to supabase_realtime by
+    // 00113, and REPLICATION IGNORES COLUMN GRANTS — so whatever this action
+    // put in `walkover_reason` was delivered to every phone watching the
+    // bracket, on top of being readable through PostgREST by any signed-in
+    // member. 00117/00118/00125 swept four columns of exec free text into
+    // private tables and missed this one, because all four passes were scoped
+    // by the word "note" and this column is called `reason`.
+    //
+    // The assertion is deliberately on the WHOLE ROW, not just the one column.
+    // The bug was never that a particular field was wrong — it was that the
+    // sentence travelled at all, and a `walkover_reason`-only check would pass
+    // against a fix that merely moved it to a different published column.
+    const sentence = 'Bob showed up drunk and I sent him home';
+    expect((await enterWalkover(QF, 'a', sentence)).ok).toBe(true);
+
+    expect(match(QF).walkover_reason).toBe('Walkover awarded by the desk');
+    expect(JSON.stringify(match(QF))).not.toContain('drunk');
+
+    // Not lost, though — the exec still has to be able to read back why they
+    // awarded it. It is in the private table beside the void and no-show
+    // reasons the same dialog writes.
+    const note = (store.db.tournament_match_notes ?? []).find((n) => n.match_id === QF);
+    expect(note?.note).toBe(sentence);
+  });
+
+  it('leaves the automatic forfeit phrase alone — that one IS the feature', async () => {
+    // The withdrawal cascade writes one of two canned sentences, and those are
+    // exactly what the opponent should see on the bracket: a walkover that
+    // appears with no explanation is worse than one that says why. Bounding the
+    // column is the fix, not emptying it, so the vocabulary has to stay
+    // reachable — a test that only pinned the desk phrase would pass against a
+    // change that nulled these too.
+    expect(FORFEIT_REASON.withdrawn).toBe('Opponent withdrew from the event');
+    expect(PUBLIC_WALKOVER_REASONS).toContain(FORFEIT_REASON.withdrawn);
+    expect(PUBLIC_WALKOVER_REASONS).toContain(FORFEIT_REASON.disqualified);
+    expect(PUBLIC_WALKOVER_REASONS).toContain('Walkover awarded by the desk');
+    expect(PUBLIC_WALKOVER_REASONS).toHaveLength(3);
   });
 
   it('refuses through editMatchResult too — the same hole on the correction path', async () => {

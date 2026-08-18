@@ -125,13 +125,22 @@ export const PAIR_NOTES: PrivateNoteTable = {
 };
 
 /**
- * Void / double-no-show / restore reasons.
+ * Void / double-no-show / restore / walkover reasons.
  *
- * THREE WRITERS, THREE CAPABILITIES, and no one of them covers the others:
+ * FOUR WRITERS, FOUR CAPABILITIES, and no one of them covers the others:
  * voidMatchImpl requires `tournaments.results.void.write`, recordDoubleNoShow
- * `…doublenoshow.write`, unvoidMatch `…unvoid.write`. The restore panel quotes
- * the void reason back at whoever is restoring, so an unvoid-only officer must
- * be able to read what a void-only officer wrote — which is the union, exactly.
+ * `…doublenoshow.write`, unvoidMatch `…unvoid.write`, enterWalkover
+ * `…walkover.write`. The restore panel quotes the void reason back at whoever
+ * is restoring, so an unvoid-only officer must be able to read what a void-only
+ * officer wrote — which is the union, exactly.
+ *
+ * The walkover reason joined this list last and from a different direction: the
+ * other three were moved off `tournament_matches.notes` by 00118, while the
+ * walkover's sentence sat in `walkover_reason` — a column no sweep scoped by
+ * the word "note" ever looked at — and was broadcast on every bracket channel
+ * until it was moved here. It is written from the same dialog as the other
+ * three and read from the same summary line, so it belongs in the same table
+ * rather than in a fifth one.
  */
 export const TOURNAMENT_MATCH_NOTES: PrivateNoteTable = {
   table: 'tournament_match_notes',
@@ -140,6 +149,7 @@ export const TOURNAMENT_MATCH_NOTES: PrivateNoteTable = {
     'tournaments.results.void.write',
     'tournaments.results.doublenoshow.write',
     'tournaments.results.unvoid.write',
+    'tournaments.results.walkover.write',
   ],
 };
 
