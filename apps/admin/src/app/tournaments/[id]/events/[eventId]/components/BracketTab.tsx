@@ -534,10 +534,6 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
   // NO WINNER IS ANNOUNCED ON A SKIP. It is 'completed' with a winner the
   // generator put there, so this clause was telling a screen reader that
   // somebody won a match nobody played.
-  const label = `${roundLabel}. Match ${m.match_number ?? ''}: ${sideLabel(aId)} vs ${sideLabel(bId)}${
-    isCompleted && !isSkip ? `, winner: ${getEntryName(winnerId)}` : ''
-  }${actionable ? `. ${actionLabel ?? 'Change the recorded result'}` : ''}`;
-
   // *** THE SCORELINE IS ON THE FOOTER STRIP, NOT ON THE ENTRANT ROWS, AND THAT
   // REVERSES THE CALL THIS CARD WAS BUILT ON. ***
   //
@@ -560,6 +556,18 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
   // SPACE-SEPARATED PAIRS rather than the player card's ", ": 17 mono characters
   // instead of 19, on a strip that also has to carry a status word.
   const scoreLine = scores?.length ? scores.map((g) => `${g.a}–${g.b}`).join(' ') : null;
+
+  // THE SCORE IS IN HERE BECAUSE THE STRIP CANNOT ALWAYS SHOW IT. The note on
+  // the scoreline below has always said the full thing was "spelled out in the
+  // card's aria-label" and justified clipping digits on that basis -- but it was
+  // not: this label carried the round, the entrants, the winner and the action,
+  // and never the digits. So a best-of-5 lost the tail of its score from the
+  // strip and there was nowhere else to read it, for anybody. Now the strip
+  // clips and the accessible name is complete, which is what the trade-off was
+  // always claimed to be.
+  const label = `${roundLabel}. Match ${m.match_number ?? ''}: ${sideLabel(aId)} vs ${sideLabel(bId)}${
+    isCompleted && !isSkip ? `, winner: ${getEntryName(winnerId)}` : ''
+  }${scoreLine ? `. Score: ${scoreLine}` : ''}${actionable ? `. ${actionLabel ?? 'Change the recorded result'}` : ''}`;
 
   const body = (
     <>
@@ -617,7 +625,8 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
             truncate. `games_per_match` is legal up to 7 (00031), so something has
             to give on a long match whatever this does, and the scoreline is the
             part whose full text is one press away in the score dialog and already
-            spelled out in the card's aria-label. Everything beside it is
+            spelled out in the card's aria-label (it is now -- see `label`
+            above; it was not when this note was first written). Everything beside it is
             `shrink-0`, so the strip degrades by clipping digits off the right
             rather than by pushing the status or the action out of the card.
             MEASURED in headless Chrome, against the 194px the strip has inside
@@ -629,7 +638,10 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
             strip as well. Those keep their words and lose digits, which is the
             right way round — the words are what the digits cannot say. */}
         {scoreLine && (
-          <span className="min-w-0 truncate font-mono text-[10px] text-[var(--text-secondary)]">
+          // `title` because `truncate` is a visual crop and nothing else: the
+          // digits it removes are a result, not decoration. Hover recovers them
+          // for a mouse, the aria-label for a reader.
+          <span title={scoreLine} className="min-w-0 truncate font-mono text-[10px] text-[var(--text-secondary)]">
             {scoreLine}
           </span>
         )}

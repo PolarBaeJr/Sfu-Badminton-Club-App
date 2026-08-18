@@ -821,7 +821,19 @@ function ChartCard({
         className="nums flex items-center justify-center text-[10px] text-[var(--text-dim)] border-t border-[var(--border)] shrink-0"
         style={{ height: FOOT_H }}
       >
-        {footer}
+        {/* TRUNCATED, NOT WRAPPED. The strip is FOOT_H (16px) of a CARD_H (64px)
+            card with overflow-hidden, and the text had nothing stopping it
+            wrapping — so a best-of-5 line laid itself out on two lines and the
+            card shaved BOTH of them, top and bottom, leaving a band of clipped
+            glyphs with no ellipsis to say anything had been cut. Truncating
+            keeps the early games readable and marks the cut; `min-w-0` is what
+            lets a flex child shrink below its content at all.
+
+            `title` recovers the rest for a mouse. A reader already has it: this
+            card is a plain div, so its text content IS its accessible text —
+            unlike the admin card, whose aria-label overrides its contents and
+            therefore had to be given the scoreline explicitly. */}
+        <span title={footer} className="min-w-0 truncate px-1">{footer}</span>
       </div>
     </div>
   );
