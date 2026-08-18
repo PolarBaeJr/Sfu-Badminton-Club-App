@@ -612,6 +612,18 @@ async function refuseOvertakenVoid(
   // that still reads as decided. Nothing here can put it back — reversal is
   // idempotent per snapshot, not undoable — so this goes to Sentry as a plain
   // Error and names the row for the human who has to look at it.
+  //
+  // DEFENSIVE, and deliberately kept after being traced. No action in this
+  // module can reach it today: getting here needs the row to still read
+  // completed/walkover with a null snapshot after our reversal, and every
+  // action that could move a settled match's status either refuses it
+  // (enterWalkover, setMatchEntry) or writes a fresh snapshot in the same
+  // breath (editMatchResult), which lands on the branch below instead. It
+  // becomes live the moment a status write and its rating stop being one unit —
+  // a re-rating RPC that fails after the status lands, which is a shape this
+  // file's tests already model. Pinned by "reports the one outcome that is a
+  // FAULT, not a refusal" in tournament-recovery.test.ts, whose comment says
+  // why that test hand-writes the state instead of driving an action to it.
   if (
     reversedElo && now && now.elo_snapshot == null
     && (now.status === 'completed' || now.status === 'walkover')

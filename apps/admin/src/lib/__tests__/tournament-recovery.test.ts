@@ -657,6 +657,52 @@ describe('overtaken by another desk', () => {
       expect(store.db.tournament_audit_log!.find((r) => r.action === 'match_voided')).toBeUndefined();
     });
 
+    it('reports the one outcome that is a FAULT, not a refusal', async () => {
+      // The fourth branch of refuseOvertakenVoid, and the only one that throws a
+      // plain Error rather than an ExpectedError — so it reaches Sentry instead
+      // of only reaching the exec. It was flagged as possibly unreachable and
+      // it is not: this is the sequence.
+      //
+      // We read a completed, rated match, so `reversedElo` is true. The other
+      // desk then records a walkover over it, which moves the status. We reverse
+      // OUR snapshot — reversal is per-snapshot and idempotent, and there is no
+      // undoing it — and only then does the write fire, fails its
+      // `.eq('status', 'completed')`, and returns count 0.
+      //
+      // What is left is the row shape nothing else in this file produces: a
+      // match that still reads as DECIDED and now carries NO rating, with a
+      // delta taken off the ladder for a result that was never erased. No
+      // refusal sentence is honest about that, because there is nothing the exec
+      // can press to fix it, which is why this branch says "check it by hand"
+      // and goes to Sentry.
+      await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a');
+      expect(match(QF).elo_snapshot).not.toBeNull();
+
+      // Hand-written, and it has to be: no action in this module produces this
+      // transition, because every one of them refuses a settled match. It is the
+      // half-completed write that the "re-rates the match under it" test above
+      // already names — a status change whose rating RPC then failed — and that
+      // test constructs its shape the same way for the same reason. What is
+      // being pinned here is the RESPONSE to the state, not a route into it.
+      store.afterMatchRead = () => {
+        Object.assign(match(QF), { status: 'walkover' });
+      };
+
+      const res = await voidMatch(QF, 'Court collapsed');
+
+      expect(res.ok).toBe(false);
+      // Not the generic "reload and check it before voiding again" — that one
+      // would tell the exec to retry, and retrying cannot put the rating back.
+      expect(res.ok === false && res.error).toMatch(/was NOT voided/i);
+      expect(res.ok === false && res.error).toMatch(/WAS already reversed/i);
+
+      // The state the message describes, asserted rather than trusted.
+      expect(match(QF).status).toBe('walkover');
+      expect(match(QF).elo_snapshot).toBeNull();
+      // And the void is not on record, because it did not happen.
+      expect(store.db.tournament_audit_log!.find((r) => r.action === 'match_voided')).toBeUndefined();
+    });
+
     it('still voids when nothing overtakes it', async () => {
       // The conditions have to leave the ordinary path alone. Three of them on
       // one write is three ways to refuse a void that should have happened.
