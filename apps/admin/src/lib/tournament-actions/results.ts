@@ -561,6 +561,61 @@ async function enterWalkoverImpl(
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
+/**
+ * The void was overtaken. Say by WHAT, then refuse.
+ *
+ * One extra read on a path that only runs when a guarded write matched nothing,
+ * bought because "this changed, reload" is not a message the desk can act on and
+ * the three things that can have changed have three different remedies. Undoing
+ * a result, re-voiding, and simply reloading are not interchangeable at 9pm with
+ * a queue of matches waiting for a court.
+ *
+ * Not exported: this is a 'use server' module, where every export must be an
+ * async server action.
+ */
+async function refuseOvertakenVoid(
+  adminClient: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  reversedElo: boolean,
+): Promise<never> {
+  // A failed read here must not turn a refusal into anything else, so `now` is
+  // simply absent and the generic refusal below stands.
+  const { data: now } = await adminClient.from('tournament_matches')
+    .select('status, elo_snapshot')
+    .eq('id', matchId)
+    .maybeSingle();
+
+  // THE ONE THAT IS A FAULT, not a refusal, and it is the same trade
+  // editMatchResult makes and reports in the same words. We found a snapshot,
+  // reversed it, and then could not void: the delta is off the ladder for a match
+  // that still reads as decided. Nothing here can put it back — reversal is
+  // idempotent per snapshot, not undoable — so this goes to Sentry as a plain
+  // Error and names the row for the human who has to look at it.
+  if (
+    reversedElo && now && now.elo_snapshot == null
+    && (now.status === 'completed' || now.status === 'walkover')
+  ) {
+    throw new Error(
+      `Match ${matchId} changed while it was being voided, so it was NOT voided — but its rating ` +
+      `WAS already reversed. It now reads as decided and unrated. Reload the bracket and check it by hand.`,
+    );
+  }
+
+  if (now?.elo_snapshot != null) {
+    throw new ExpectedError(
+      'A result was entered for this match while you were voiding it, and its rating is already on the ' +
+      'ladder. Reload the bracket, undo that result, then void it.',
+    );
+  }
+  if (now?.status === 'voided') {
+    throw new ExpectedError('Another desk voided this match first — it is already voided.');
+  }
+  throw new ExpectedError(
+    'This match changed while you were voiding it — its result or the entries in it are not what the ' +
+    'bracket showed you. Reload and check it before voiding again.',
+  );
+}
+
 async function voidMatchImpl(matchId: string, reason: string) {
   const admin = await requireCapability('tournaments.results.void.write');
   const adminClient = createAdminClient();
@@ -620,10 +675,67 @@ async function voidMatchImpl(matchId: string, reason: string) {
   // tournament_match_notes (00118). 00113 published `tournament_matches`, so
   // this reason used to stream verbatim to every subscriber of the live
   // bracket, on top of being readable off the row by any signed-in member.
-  await adminClient.from('tournament_matches').update({
+  //
+  // THREE CONDITIONS, NOT ONE, AND THE COUNT IS HOW WE FIND OUT. This write used
+  // to name the id alone, and PostgREST reports "matched no rows" as SUCCESS
+  // while supabase-js RESOLVES rather than rejects — so the loser of a race
+  // walked straight on and wrote an audit row claiming things it had not done.
+  //
+  //   .eq('status', …)         The status this request READ. Another desk
+  //                            entering a result on a match we read as `ready`
+  //                            left it `completed`, rated and advanced; the
+  //                            void then stamped `voided` over the top, and the
+  //                            audit row truthfully reported reversed_elo:false
+  //                            while the delta sat on the ladder and the winner
+  //                            sat in the next round. tournament-withdrawal.ts
+  //                            documents that exact row shape as a redraw
+  //                            blocker — this is where it came from.
+  //
+  //   .is('elo_snapshot', …)   NO RATING ON THE LADDER, and it is unconditional
+  //                            because it means the same thing in both
+  //                            directions. Read a null snapshot: assert none
+  //                            appeared under us. Read one and reversed it:
+  //                            reverse_tournament_match_rating (00078) nulls it
+  //                            in the same transaction, so asserting null asserts
+  //                            OUR reversal is still the last word. The status
+  //                            alone cannot catch the second case —
+  //                            editMatchResult reverses, re-rates and leaves the
+  //                            status on `completed`, so a void of a
+  //                            completed-but-unrated match would pass a status
+  //                            check and still void a rated row.
+  //
+  //   matchSlotFilter          The occupants, because status alone admits an ABA
+  //                            (see the helper). Voiding "Alice v Bob" after it
+  //                            has quietly become "Alice v Carol" erases a
+  //                            fixture nobody looked at.
+  //
+  // NOT MOVED ABOVE THE REVERSAL, which is the obvious alternative and is wrong
+  // here. Claiming the row first would mean a failed reversal leaves a match
+  // reading `voided` with its delta still applied — the very row shape above —
+  // and two existing tests pin the current order as deliberate: "leaves every
+  // rating and the snapshot untouched when the reversal fails" asserts the match
+  // is still `completed` afterwards, and "reverses exactly once when the void is
+  // retried" depends on that, since a voided match refuses a second void. The
+  // ordering costs nothing in the race this closes: when the snapshot we read is
+  // null, `reversedElo` is false and NOTHING irreversible has run by this line.
+  // clearAdvancedEntries has, but each of its writes is individually conditional
+  // on the slot still holding this match's entry, and it reports what it cleared.
+  const voidUpdate = adminClient.from('tournament_matches').update({
     status: 'voided',
     updated_at: new Date().toISOString(),
-  }).eq('id', matchId);
+  }, { count: 'exact' })
+    .eq('id', matchId)
+    .eq('status', match.status)
+    .is('elo_snapshot', null);
+  const { error: voidError, count: voidCount } = await matchSlotFilter(voidUpdate, match, doubles);
+
+  if (voidError) {
+    Sentry.captureException(voidError);
+    throw new Error(voidError.message);
+  }
+  if (voidCount === 0) {
+    await refuseOvertakenVoid(adminClient, matchId, reversedElo);
+  }
 
   // AFTER THE VOID, BEFORE THE AUDIT, AND IT DOES NOT THROW — the order is the
   // point. The match is already voided and the Elo already reversed by the time
@@ -973,17 +1085,55 @@ async function setMatchEntryImpl(
     throw new ExpectedError('That slot is already empty.');
   }
 
-  const { error } = await adminClient.from('tournament_matches').update({
+  // CONDITIONAL ON THE STATUS AND ON BOTH SLOTS THIS REQUEST READ, and the count
+  // is how the loser of a race finds out — PostgREST reports "matched no rows"
+  // as SUCCESS and supabase-js resolves rather than rejects.
+  //
+  // The status condition is the one that matters most. Every guard above was
+  // checked against a row that was read and then let go of, so a desk entering
+  // the result of a match this request read as `ready` left it `completed`,
+  // rated and advanced — and this write then stamped `ready` back over it with
+  // the winner, the scores and the elo_snapshot all still on the row. The match
+  // reads as unplayed to everything that counts it, so finalizeEvent's
+  // "N match(es) still incomplete" refuses the event outright, and the only
+  // record that a delta was applied is a column nothing looks at any more.
+  //
+  // BOTH SLOTS ARE PINNED NULL-AWARE rather than through matchSlotFilter, and
+  // this is the one write where that difference is load-bearing. matchSlotFilter
+  // SKIPS a null slot on the argument that filling an empty one moves the status
+  // — true everywhere else, and false precisely here, because this action is
+  // what computes the status FROM the slots: with the opposite side empty,
+  // pending -> pending either way. So two desks filling the SAME empty slot both
+  // read `pending`, both pass the "that slot is already filled" guard, and the
+  // second silently evicts the first. `.is(col, null)` expresses "still empty",
+  // which `.eq(col, null)` cannot — PostgREST renders that as `col=eq.null` and
+  // SQL's NULL = NULL is unknown, so it would match nothing and report every
+  // fill as a lost race.
+  const pinSlot = <T extends { eq(c: string, v: string): T; is(c: string, v: null): T }>(
+    q: T, column: string, value: string | null,
+  ): T => (value == null ? q.is(column, null) : q.eq(column, value));
+
+  const entryUpdate = adminClient.from('tournament_matches').update({
     [field]: entryId,
     // 'ready' is what the bracket reads to offer score entry, so it has to
     // track whether both sides are actually known.
     status: entryId && other ? 'ready' : 'pending',
     updated_at: new Date().toISOString(),
-  }).eq('id', matchId);
+  }, { count: 'exact' })
+    .eq('id', matchId)
+    .eq('status', match.status);
+
+  const { error, count } = await pinSlot(pinSlot(entryUpdate, field, current), otherField, other);
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
+  }
+  if (count === 0) {
+    throw new ExpectedError(
+      'This match changed while you were editing the draw — a result was entered, or somebody else ' +
+      'moved an entry into it. Reload the bracket and check it before editing again.',
+    );
   }
 
   await logAudit(adminClient, {

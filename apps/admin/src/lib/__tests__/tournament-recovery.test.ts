@@ -7,12 +7,38 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 type Row = Record<string, unknown>;
 
-const store = vi.hoisted(() => ({ db: {} as Record<string, Row[]> }));
+const store = vi.hoisted(() => ({
+  db: {} as Record<string, Row[]>,
+  /**
+   * THE RACE WINDOW. Fires ONCE, immediately after the next single-row read of
+   * `tournament_matches` and before the caller does anything with the answer —
+   * which in voidMatchImpl and setMatchEntryImpl is the read every guard below
+   * it is checked against. That is exactly where the other desk's write commits
+   * in production, and it is the only way to reach these cases at all.
+   *
+   * Modelled on `store.beforeDeletePhase` in tournament-write-integrity.test.ts,
+   * which does the same job for the redraw. Async, so a test can stage the race
+   * by driving the REAL other-desk action rather than hand-writing the row it
+   * would have left behind — a hand-written row proves the assertion, not the
+   * behaviour.
+   */
+  afterMatchRead: null as null | (() => void | Promise<void>),
+}));
 
 // Minimal PostgREST-shaped query builder: enough of select/eq/in/update/insert
 // for the results actions, and thenable so `await client.from(t).update(x).eq()`
 // resolves the way the real client does.
 const makeClient = vi.hoisted(() => () => {
+  // Cleared BEFORE it runs, so the other desk's action — which reads matches
+  // itself — cannot re-enter it. One race per test, at the first match read.
+  async function fireRace(table: string) {
+    if (table !== 'tournament_matches') return;
+    const staged = store.afterMatchRead;
+    if (!staged) return;
+    store.afterMatchRead = null;
+    await staged();
+  }
+
   function query(table: string) {
     const filters: Array<[string, unknown]> = [];
     const inFilters: Array<[string, unknown[]]> = [];
@@ -92,8 +118,21 @@ const makeClient = vi.hoisted(() => () => {
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },
       is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
-      async single() { const r = matching()[0]; return { data: r ? embed(r) : null, error: null }; },
-      async maybeSingle() { const r = matching()[0]; return { data: r ? embed(r) : null, error: null }; },
+      // The answer is decoded BEFORE the race fires, because the real client
+      // decodes a row out of an HTTP response: the caller holds the row as it
+      // was, which is the whole premise of a compare-and-swap.
+      async single() {
+        const r = matching()[0];
+        const out = { data: r ? embed(r) : null, error: null };
+        await fireRace(table);
+        return out;
+      },
+      async maybeSingle() {
+        const r = matching()[0];
+        const out = { data: r ? embed(r) : null, error: null };
+        await fireRace(table);
+        return out;
+      },
       then(resolve: (v: unknown) => unknown) { return Promise.resolve(run()).then(resolve); },
     };
     return api;
@@ -244,7 +283,7 @@ vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'admin-1' }) }));
 
-import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, undoMatchResult } from '../tournament-actions/results';
+import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, undoMatchResult, editMatchResult } from '../tournament-actions/results';
 import { reverseEloSnapshot } from '../tournament-actions/_internal';
 import { createAdminClient } from '../supabase-server';
 
@@ -262,6 +301,7 @@ function match(id: string) {
 // One quarter-final feeding position 'a' of a semi-final — the exact shape of
 // the stuck bracket this recovery path was written for.
 beforeEach(() => {
+  store.afterMatchRead = null;
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
     tournament_events: [{
@@ -496,5 +536,195 @@ describe('unopposed advancement', () => {
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/nobody to award/i);
     expect(match(SF).status).toBe('pending');
+  });
+});
+
+// ============================================================
+// Overtaken by another desk
+// ============================================================
+//
+// Every guard in voidMatchImpl and setMatchEntryImpl is checked against a row
+// that is read and then let go of, and the write that followed named the id
+// ALONE. PostgREST reports "matched no rows" as SUCCESS and supabase-js resolves
+// rather than rejects, so nothing in either action could tell a write that fired
+// from one that was overtaken — the loser of the race carried on and logged an
+// audit row for work it had not done.
+//
+// `store.afterMatchRead` opens that window at the one instant it exists, and
+// each test below drives the REAL action the other desk would have run, so what
+// is asserted is the state the console actually produces rather than a row this
+// file invented.
+describe('overtaken by another desk', () => {
+  describe('voiding', () => {
+    it('refuses when the result is entered under it, leaving the result whole', async () => {
+      // THE DEFECT. The void read `ready` and reversed nothing, because there was
+      // nothing to reverse yet; by the time it wrote, the match was completed,
+      // rated and advanced. It stamped `voided` over the top and logged
+      // reversed_elo: false — truthfully, which is what makes it so hard to see:
+      // the delta stayed on the ladder, Alice stayed in the semi-final, and the
+      // row became the "voided but still carries an applied rating" shape that
+      // summariseRedrawBlockers has to refuse to delete.
+      store.afterMatchRead = async () => {
+        expect((await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a')).ok).toBe(true);
+      };
+
+      const res = await voidMatch(QF, 'Court collapsed');
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toMatch(/rating is already on the ladder/i);
+      expect(res.ok === false && res.error).toMatch(/undo that result/i);
+
+      // The result is untouched — the void did not happen.
+      expect(match(QF).status).toBe('completed');
+      expect(match(QF).elo_snapshot).not.toBeNull();
+      expect(ratingOf('pl-alice')).toBeGreaterThan(1000);
+      expect(match(SF).participant_a_id).toBe('p-alice');
+      // And nothing claims it did. The audit row was the worst part of this:
+      // it recorded a void that had erased nothing.
+      expect(store.db.tournament_audit_log!.find((r) => r.action === 'match_voided')).toBeUndefined();
+    });
+
+    it('refuses the CONCURRENT double-void, which the read-time guard cannot see', async () => {
+      // The status condition is the only one that catches this: nothing was
+      // rated, so the snapshot stays null, and nobody touched the slots. The
+      // "this match is already voided" guard above sees a row read before the
+      // other desk wrote, so it waves this straight through — it catches the
+      // SEQUENTIAL double-click (covered above), not two execs on the same match.
+      //
+      // Without the condition both voids wrote, both wrote a note over each
+      // other's, and the audit log recorded the match being erased twice by two
+      // different people.
+      store.afterMatchRead = async () => {
+        expect((await voidMatch(QF, 'the other desk got there first')).ok).toBe(true);
+      };
+
+      const res = await voidMatch(QF, 'Court collapsed');
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toMatch(/another desk voided this match first/i);
+      // Exactly one void on record, with the reason the desk that actually did
+      // it typed.
+      const voided = store.db.tournament_audit_log!.filter((r) => r.action === 'match_voided');
+      expect(voided).toHaveLength(1);
+      expect((voided[0]!.details as Row).reason).toBe('the other desk got there first');
+    });
+
+    it('refuses when a correction re-rates the match under it', async () => {
+      // The status condition CANNOT catch this one, which is why the write also
+      // asserts the snapshot is null. editMatchResult reverses, re-applies and
+      // leaves the status on `completed`, so a void of a completed-but-unrated
+      // match — the shape a match is left in when the rating RPC failed after the
+      // result was written — passes a status check and still voids a rated row.
+      Object.assign(match(QF), {
+        status: 'completed',
+        winner_participant_id: 'p-alice',
+        loser_participant_id: 'p-bob',
+        scores: [{ a: 21, b: 15 }],
+        elo_snapshot: null,
+      });
+
+      store.afterMatchRead = async () => {
+        expect((await editMatchResult(QF, [{ a: 15, b: 21 }], 'b', 'Sides transposed')).ok).toBe(true);
+      };
+
+      const res = await voidMatch(QF, 'Scoresheet lost');
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toMatch(/rating is already on the ladder/i);
+      expect(match(QF).status).toBe('completed');
+      // The correction's delta is still applied and still reversible.
+      expect(match(QF).elo_snapshot).not.toBeNull();
+      expect(ratingOf('pl-bob')).toBeGreaterThan(1000);
+      expect(store.db.tournament_audit_log!.find((r) => r.action === 'match_voided')).toBeUndefined();
+    });
+
+    it('refuses when the entries are swapped and the status lands back where it was', async () => {
+      // The ABA the occupant conditions exist for. ready -> pending -> ready, so
+      // the status this request read is true again and a status-only
+      // compare-and-swap matches. The exec pressed Void on "Alice v Bob"; the
+      // fixture is now "Alice v Carol", which is not the match they looked at.
+      store.afterMatchRead = async () => {
+        expect((await setMatchEntry(QF, 'b', null, 'wrong player on the sheet')).ok).toBe(true);
+        expect((await setMatchEntry(QF, 'b', 'p-carol', 'the real opponent')).ok).toBe(true);
+      };
+
+      const res = await voidMatch(QF, 'Court collapsed');
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toMatch(/entries in it are not what the bracket showed you/i);
+      expect(match(QF).status).toBe('ready');
+      expect(match(QF).participant_b_id).toBe('p-carol');
+      expect(store.db.tournament_audit_log!.find((r) => r.action === 'match_voided')).toBeUndefined();
+    });
+
+    it('still voids when nothing overtakes it', async () => {
+      // The conditions have to leave the ordinary path alone. Three of them on
+      // one write is three ways to refuse a void that should have happened.
+      await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a');
+
+      expect((await voidMatch(QF, 'Court collapsed')).ok).toBe(true);
+      expect(match(QF).status).toBe('voided');
+      expect(match(QF).elo_snapshot).toBeNull();
+      expect(ratingOf('pl-alice')).toBe(1000);
+    });
+  });
+
+  describe('editing the draw', () => {
+    it('refuses to stomp a settled match back to ready', async () => {
+      // THE DEFECT. Both sides known and a walkover recorded, and this write put
+      // `ready` back over it with the winner, the scores and the snapshot all
+      // still on the row. Nothing downstream reads it as decided any more, so
+      // finalizeEvent counts it among the "N match(es) still incomplete" and
+      // refuses to finalise the event at all — a walkover the desk recorded
+      // correctly, and an event that can never be closed.
+      expect((await setMatchEntry(SF, 'b', 'p-carol', 'QF voided')).ok).toBe(true);
+      expect(match(SF).status).toBe('pending');
+
+      store.afterMatchRead = async () => {
+        expect((await enterWalkover(SF, 'b', 'Other half of the draw was voided')).ok).toBe(true);
+      };
+
+      const res = await setMatchEntry(SF, 'a', 'p-alice', 'filling the orphaned slot');
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toMatch(/reload the bracket/i);
+      expect(match(SF).status).toBe('walkover');
+      expect(match(SF).winner_participant_id).toBe('p-carol');
+      expect(match(SF).participant_a_id).toBeNull();
+    });
+
+    it('refuses to evict an entry another desk placed into the same empty slot', async () => {
+      // Neither the "that slot is already filled" guard nor the status condition
+      // reaches this: the guard was checked against a row read before Carol was
+      // placed, and filling one side of a match whose other side is empty does
+      // NOT move the status — pending -> pending — so the compare-and-swap on the
+      // status alone matches. This is why both slots are pinned null-aware
+      // instead of going through matchSlotFilter, which skips a null slot.
+      store.afterMatchRead = async () => {
+        expect((await setMatchEntry(SF, 'a', 'p-carol', 'other half collapsed')).ok).toBe(true);
+      };
+
+      const res = await setMatchEntry(SF, 'a', 'p-alice', 'other half collapsed');
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toMatch(/somebody else moved an entry into it/i);
+      expect(match(SF).participant_a_id).toBe('p-carol');
+      expect(match(SF).status).toBe('pending');
+    });
+
+    it('still fills, clears and re-fills a slot when nothing overtakes it', async () => {
+      // The other side of the same coin: an empty slot must still be fillable,
+      // and `.is(col, null)` is what makes that expressible — `.eq(col, null)`
+      // renders as `col=eq.null` and would match nothing, reporting every
+      // ordinary fill as a lost race.
+      expect((await setMatchEntry(SF, 'a', 'p-alice', 'QF voided')).ok).toBe(true);
+      expect((await setMatchEntry(SF, 'b', 'p-carol', 'QF voided')).ok).toBe(true);
+      expect(match(SF).status).toBe('ready');
+
+      expect((await setMatchEntry(SF, 'b', null, 'wrong entry')).ok).toBe(true);
+      expect(match(SF).status).toBe('pending');
+      expect((await setMatchEntry(SF, 'b', 'p-carol', 'put it back')).ok).toBe(true);
+      expect(match(SF).status).toBe('ready');
+    });
   });
 });
