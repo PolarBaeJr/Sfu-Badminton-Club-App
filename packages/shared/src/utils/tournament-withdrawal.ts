@@ -111,10 +111,14 @@ export function isPlayedMatch(match: PlayableMatch): boolean {
 //    of the deltas a rated match put on the ladder (00078); delete the row and
 //    reverse_tournament_match_rating has nothing to read and the ladder is
 //    permanently wrong. Normally a rated match is also `completed`, so (1)
-//    would catch it — but voidMatchImpl writes status on the id alone, so a
-//    void racing a result entry leaves a row reading 'voided' that still
-//    carries the delta. A properly voided match has had its snapshot nulled by
-//    the reversal, so it does NOT count here and void-then-redraw still works.
+//    would catch it — but rows in exactly that shape EXIST ON PRODUCTION, left
+//    by a void racing a result entry back when voidMatchImpl wrote status on
+//    the id alone. That race is closed now (the write is conditional on the
+//    status, a null snapshot and the occupants), so no NEW row can reach this
+//    shape — but the old ones are still there and this guard is the only thing
+//    standing between them and a redraw. It stays. A properly voided match has
+//    had its snapshot nulled by the reversal, so it does NOT count here and
+//    void-then-redraw still works.
 //
 // THE SERVER IS THE AUTHORITY, NOT THIS. These counts grey the button and say
 // why; migration 00144's delete_phase_matches re-checks the same three

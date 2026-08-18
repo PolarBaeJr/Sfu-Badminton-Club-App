@@ -227,10 +227,11 @@ describe('summariseRedrawBlockers — what a redraw would destroy', () => {
   });
 
   it('counts an unreversed rating on a row whose status says otherwise', () => {
-    // voidMatchImpl writes status on the id alone, so a void racing a result
-    // entry leaves a row reading `voided` that still carries the delta. Deleting
-    // it puts a rating on the ladder that reverse_tournament_match_rating can
-    // never take back, because the snapshot it reads went with the row.
+    // Production holds rows in this shape: a void racing a result entry, from
+    // when voidMatchImpl wrote status on the id alone. That race is closed now,
+    // but the rows it already made are not going anywhere. Deleting one puts a
+    // rating on the ladder that reverse_tournament_match_rating can never take
+    // back, because the snapshot it reads went with the row.
     const b = summariseRedrawBlockers([
       { status: 'voided', is_bye: false, elo_snapshot: { discipline: 'singles', entries: [] } },
       { status: 'voided', is_bye: false, elo_snapshot: null },

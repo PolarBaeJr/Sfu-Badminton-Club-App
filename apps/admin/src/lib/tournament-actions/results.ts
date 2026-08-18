@@ -832,6 +832,53 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
     await reverseEloSnapshot(adminClient, matchId);
   }
 
+  // `notes` moved to tournament_match_notes (00118) — see voidMatchImpl above.
+  //
+  // CLAIMED BEFORE ANYBODY IS MARKED ABSENT, which is where this differs from
+  // voidMatchImpl's ordering. The two writes below are not bookkeeping: marking
+  // both entries `no_show` is the half that feeds check_noshow_threshold, which
+  // auto-flags a member at 3 and auto-suspends at 5. Running them first meant a
+  // no-show that was then REFUSED still pushed two members a third of the way to
+  // a suspension for a match they were never recorded as missing. Reversing the
+  // order costs nothing: everything after this line is conditional on having won
+  // the row.
+  //
+  // CONDITIONED EXACTLY AS voidMatchImpl'S WRITE IS, and for the same reason:
+  // this is the same erasure by another name. It read the status, reversed the
+  // rating if there was a snapshot, and then wrote on the id alone — so a
+  // result entered by another desk in between was voided anyway, with
+  // `reversed_elo` in the audit row reporting on a snapshot that no longer
+  // described the match. The three conditions are argued in full above
+  // voidMatchImpl's write; the short version is that the status catches the
+  // concurrent second erasure, `elo_snapshot IS NULL` catches editMatchResult
+  // re-rating underneath (which leaves the status on `completed` and so is
+  // invisible to a status check), and matchSlotFilter catches the A-B-A where
+  // the occupants changed and the status came back to where it started.
+  const noShowUpdate = adminClient.from('tournament_matches').update({
+    status: 'voided',
+    winner_participant_id: null,
+    winner_pair_id: null,
+    loser_participant_id: null,
+    loser_pair_id: null,
+    scores: null,
+    updated_at: new Date().toISOString(),
+  }, { count: 'exact' })
+    .eq('id', matchId)
+    .eq('status', match.status)
+    .is('elo_snapshot', null);
+  const { error: noShowError, count: noShowCount } = await matchSlotFilter(noShowUpdate, match, doubles);
+
+  if (noShowError) {
+    Sentry.captureException(noShowError);
+    throw new Error(noShowError.message);
+  }
+  // Shares voidMatchImpl's refusal wording. It says "voiding", which is what a
+  // double no-show does to the match — and the remedies it distinguishes
+  // ("undo that result first", "already voided", "reload") are the same three.
+  if (noShowCount === 0) {
+    await refuseOvertakenVoid(adminClient, matchId, reversedElo);
+  }
+
   // Nobody advances. Anyone previously parked in the next round — or in the
   // third-place playoff — on the strength of this match comes back out.
   const cleared = await clearAdvancedEntries(adminClient, match, doubles);
@@ -846,16 +893,6 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
     .in('id', [aId, bId]);
   if (entryErr) throw new Error(entryErr.message);
 
-  // `notes` moved to tournament_match_notes (00118) — see voidMatchImpl above.
-  await adminClient.from('tournament_matches').update({
-    status: 'voided',
-    winner_participant_id: null,
-    winner_pair_id: null,
-    loser_participant_id: null,
-    loser_pair_id: null,
-    scores: null,
-    updated_at: new Date().toISOString(),
-  }).eq('id', matchId);
 
   // After the match write, before the audit, and it does not throw. Same
   // reasoning as voidMatchImpl: both entries are already marked absent and the
@@ -977,13 +1014,26 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
     resetData.loser_participant_id = null;
   }
 
-  const { error } = await adminClient.from('tournament_matches')
-    .update(resetData)
-    .eq('id', matchId);
+  // STILL VOIDED. The check at the top of this function read the status; this
+  // write did not name it, so between the two another desk could restore the
+  // match and enter a result on it — and this reset would then stomp a
+  // `completed` match back to `ready` with its winner and scores wiped, which is
+  // item 20's failure by a different route. Only the status is pinned, not the
+  // slots or the snapshot: a restore does not read the occupants, and a voided
+  // row's snapshot is already null.
+  const { error, count } = await adminClient.from('tournament_matches')
+    .update(resetData, { count: 'exact' })
+    .eq('id', matchId)
+    .eq('status', 'voided');
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
+  }
+  if (count === 0) {
+    throw new ExpectedError(
+      'This match is no longer voided — another desk restored it while you were restoring it. Reload the bracket.',
+    );
   }
 
   // An empty restore reason CLEARS the note rather than storing '', which is

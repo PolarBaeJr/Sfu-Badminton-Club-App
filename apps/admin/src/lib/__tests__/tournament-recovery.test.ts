@@ -283,7 +283,7 @@ vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'admin-1' }) }));
 
-import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, undoMatchResult, editMatchResult } from '../tournament-actions/results';
+import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, undoMatchResult, editMatchResult, recordDoubleNoShow } from '../tournament-actions/results';
 import { reverseEloSnapshot } from '../tournament-actions/_internal';
 import { createAdminClient } from '../supabase-server';
 
@@ -725,6 +725,49 @@ describe('overtaken by another desk', () => {
       expect(match(SF).status).toBe('pending');
       expect((await setMatchEntry(SF, 'b', 'p-carol', 'put it back')).ok).toBe(true);
       expect(match(SF).status).toBe('ready');
+    });
+  });
+  // The same defect, found in the two functions next door once the pattern was
+  // named. Neither was in the original report.
+  describe('the other two erasures', () => {
+    it('refuses a double no-show that another desk voided out from under it', async () => {
+      // recordDoubleNoShowImpl is voidMatchImpl by another name -- it reverses
+      // the rating if there is a snapshot and writes `voided` -- and it wrote on
+      // the id alone. So this erased a match a second time and filed a
+      // `reversed_elo` claim about a snapshot that no longer described it.
+      store.afterMatchRead = async () => {
+        expect((await voidMatch(QF, 'the other desk got there first')).ok).toBe(true);
+      };
+
+      const res = await recordDoubleNoShow(QF, 'neither pair turned up');
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toMatch(/already voided/i);
+      // Both entries stay as they were: a no-show that did not happen must not
+      // feed check_noshow_threshold, which auto-flags at 3 and suspends at 5.
+      const entries = store.db.tournament_participants!.filter((e) => e.status === 'no_show');
+      expect(entries).toHaveLength(0);
+    });
+
+    it('refuses a restore of a match another desk already restored AND decided', async () => {
+      expect((await voidMatch(QF, 'court flooded')).ok).toBe(true);
+
+      // The read at the top of unvoidMatchImpl sees `voided`; by the time it
+      // writes, the match has been restored and played. Without the status on
+      // the write this reset stomped a completed match back to `ready` and wiped
+      // its winner and scores -- item 20's failure by a different route.
+      store.afterMatchRead = async () => {
+        expect((await unvoidMatch(QF, 'court reopened')).ok).toBe(true);
+        expect((await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a')).ok).toBe(true);
+      };
+
+      const res = await unvoidMatch(QF, 'court reopened');
+
+      expect(res.ok).toBe(false);
+      expect(res.ok === false && res.error).toMatch(/no longer voided/i);
+      // The result the other desk entered survives intact.
+      expect(match(QF).status).toBe('completed');
+      expect(match(QF).winner_participant_id).toBe('p-alice');
     });
   });
 });

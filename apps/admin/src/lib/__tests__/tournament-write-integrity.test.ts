@@ -1874,10 +1874,11 @@ describe('regenerating a draw that already exists', () => {
   });
 
   it('refuses a row that reads `voided` but still carries an applied rating', async () => {
-    // voidMatchImpl writes status on the id alone, so a void racing a result
-    // entry leaves a match that says it was erased and still has the delta on
-    // the ladder. "Void it first" is a dead end for that row — it IS voided —
-    // so the refusal has to name the two-step that actually reverses it.
+    // Production holds matches in this shape: a void racing a result entry,
+    // from when voidMatchImpl wrote status on the id alone. That race is closed
+    // now, but these rows remain. "Void it first" is a dead end for one — it IS
+    // voided — so the refusal has to name the two-step that actually reverses
+    // it.
     seedField(4);
     expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
     const semi = store.db.tournament_matches!.find((m) => m.round_number === 1 && !m.is_bye)!;
