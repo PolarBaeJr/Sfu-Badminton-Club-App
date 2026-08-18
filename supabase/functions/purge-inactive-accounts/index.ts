@@ -25,6 +25,10 @@
 // avatar, bio — survives. The cron line sends stderr to /dev/null, so it has
 // been failing silently. Do not reintroduce it here.
 //
+// The field list itself now lives in _shared/anonymize.ts, shared with
+// purge-deleted-accounts, along with the reasoning for each column — including
+// the two both copies had been missing.
+//
 // SAFETY: DRY RUN IS THE DEFAULT.
 // Writes happen only when PURGE_INACTIVE_ENABLED is exactly 'true'. Unset or
 // anything else = report who WOULD be purged and change nothing. The variable
@@ -36,6 +40,7 @@
 
 import { requireCronSecret } from '../_shared/auth.ts';
 import { createServiceClient, jsonResponse } from '../_shared/client.ts';
+import { anonymizedPlayerFields } from '../_shared/anonymize.ts';
 
 Deno.serve(async (req) => {
   const denied = requireCronSecret(req);
@@ -125,24 +130,7 @@ Deno.serve(async (req) => {
 
     const { error: anonError } = await supabase
       .from('players')
-      .update({
-        // Two parts, never full_name — see the header. These regenerate the
-        // same 'Deleted Player' that every existing reader expects.
-        first_name: 'Deleted',
-        last_name: 'Player',
-        display_name: null,
-        email: `deleted+${player.id}@deleted.invalid`,
-        phone: null,
-        avatar_url: null,
-        bio: null,
-        // 00130 split the one bio into two. The inactivity notice promises the
-        // member's "name, email, phone, photo, bio" are erased, and an officer's
-        // exec_bio is a bio — erased here too rather than left behind because
-        // active_flag: false happens to take them off /exec.
-        exec_bio: null,
-        active_flag: false,
-        user_id: null,
-      })
+      .update(anonymizedPlayerFields(player.id))
       .eq('id', player.id);
 
     if (anonError) {

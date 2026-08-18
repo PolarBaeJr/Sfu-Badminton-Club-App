@@ -4,9 +4,16 @@
 // user. Matches, ratings, session_attendance, and waiver_acceptances are
 // deliberately never touched — history and legal evidence stay, attributed
 // to the anonymized row.
+//
+// WHICH FIELDS ARE ERASED IS NO LONGER DECIDED HERE. It is
+// _shared/anonymize.ts, shared with purge-inactive-accounts, because the two
+// lists were maintained by hand and both had missed `exec_photo_url` (a photo
+// of the person's face, on /exec) and `handle` (their one chosen name, public
+// and searchable) since 00130 and 00092 respectively. See that file.
 
 import { requireCronSecret } from '../_shared/auth.ts';
 import { createServiceClient, jsonResponse } from '../_shared/client.ts';
+import { anonymizedPlayerFields } from '../_shared/anonymize.ts';
 
 const RETENTION_DAYS = 30;
 
@@ -62,25 +69,7 @@ Deno.serve(async (req) => {
 
     const { error: anonError } = await supabase
       .from('players')
-      .update({
-        // Two parts, not one string: full_name is generated (00023), and these
-        // regenerate the same 'Deleted Player' every reader already expects.
-        first_name: 'Deleted',
-        last_name: 'Player',
-        display_name: null,
-        email: `deleted+${player.id}@deleted.invalid`,
-        phone: null,
-        avatar_url: null,
-        bio: null,
-        // 00130 split the one bio into two. The deletion email promises "profile
-        // photo and bio are erased for good", and an officer's exec_bio is words
-        // they wrote about themselves just as much as bio is — so it is erased
-        // here too, not merely hidden. active_flag: false already takes them off
-        // /exec, but "off the page" is not what was promised.
-        exec_bio: null,
-        active_flag: false,
-        user_id: null,
-      })
+      .update(anonymizedPlayerFields(player.id))
       .eq('id', player.id);
 
     if (anonError) {

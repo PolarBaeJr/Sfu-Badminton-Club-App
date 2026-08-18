@@ -3,6 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
+import { auditablePlayer } from '../auditable-player';
 import { revalidatePath } from 'next/cache';
 import {
   parseOrThrow,
@@ -148,7 +149,7 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
     action_type: 'player_approved',
     target_type: 'player',
     target_id: playerId,
-    old_value: oldPlayer,
+    old_value: auditablePlayer(oldPlayer),
     // The key changes with the column. Audit rows written before 00092 became a
     // code still carry `member_number`, and that is correct — an audit entry is
     // a record of what was written on the day, not a view that gets migrated.
@@ -403,7 +404,7 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
     action_type: 'player_updated',
     target_type: 'player',
     target_id: playerId,
-    old_value: { player: oldPlayer, rating: oldRating },
+    old_value: { player: auditablePlayer(oldPlayer), rating: oldRating },
     new_value: { ...playerUpdate, ...ratingUpdate },
     reason: data.reason,
   }, { playerId });
@@ -549,7 +550,7 @@ async function removePlayerImpl(playerId: string, reason: string) {
     action_type: 'player_removed',
     target_type: 'player',
     target_id: playerId,
-    old_value: oldPlayer,
+    old_value: auditablePlayer(oldPlayer),
     reason,
   }, { playerId });
 

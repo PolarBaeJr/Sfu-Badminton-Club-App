@@ -7,6 +7,7 @@ import { createAdminClient } from '../supabase-server';
 import { requireCapability } from './_shared';
 import { requireReason } from '../audit-reason';
 import { logAdminAudit } from '../audit';
+import { auditablePlayer } from '../auditable-player';
 import { runAction, type ActionResult } from '../action-result';
 // listOf / missingFrom / assertLevelClosure live there rather than here now that
 // resolvePrivilegeClaimReview needs the same closure test — see the block at the
@@ -609,7 +610,7 @@ async function writeConsoleLevel(
       // `rating` is absent rather than null: updatePlayer carries one because it
       // can write ratings, and this cannot. An absent key says "not part of this
       // act"; a null would claim one was read and found empty.
-      old_value: { player: oldPlayer },
+      old_value: { player: auditablePlayer(oldPlayer) },
       new_value: { ...columns },
       reason,
     },
