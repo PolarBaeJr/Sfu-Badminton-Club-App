@@ -506,6 +506,26 @@ export function maxFirstRoundByes(fieldSize: number): number {
 export const SEED_SKIP_BOUNDS = { min: 0, max: 64 } as const;
 
 /**
+ * HOW A BYE IS SPELLED, in the two places it is written.
+ *
+ * It was spelled four ways across the two draw renderers — 'SKIP', 'Skip',
+ * 'Skip - auto-advance' and 'Skip · auto-advance' — on cards that sit next to
+ * each other on the same sheet. Two STRINGS is the design, not an accident of
+ * consolidation: `SKIP_SLOT_LABEL` names the empty half of a bye card, where it
+ * stands in for an entrant's name and has an entrant's room; `SKIP_STATUS_LABEL`
+ * is the status strip, where there is room to say what the card means.
+ *
+ * "Skip" is the house word already — `seed_skip_count`, 00124's "Seeds Skipping
+ * Round One", ParticipantsTab's "(N skips)". Do not introduce "Bye".
+ *
+ * Casing is left to CSS: the console's status strip is `uppercase` like every
+ * other branch of its StatusLabel, and that is a typeface decision rather than
+ * a fifth spelling.
+ */
+export const SKIP_SLOT_LABEL = 'Skip';
+export const SKIP_STATUS_LABEL = 'Skip · auto-advance';
+
+/**
  * What an event's Elo multiplier may be set to.
  *
  * `tournament_events.elo_multiplier` is DECIMAL(4,2) with a default of 1.25 and

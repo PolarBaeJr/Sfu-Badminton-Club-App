@@ -140,8 +140,18 @@ export interface DrawColumn {
  * Horizontal segments have `h === 1`, vertical ones `w === 1`; a renderer paints
  * them with a background colour and needs no geometry of its own.
  *
- * `dashed` is the third-place playoff's link, which means "these two play in it"
- * rather than the solid lines' "the winner advances to here".
+ * THE 1 IS A MATHEMATICAL HAIRLINE, NOT A PAINTED THICKNESS. It is the axis the
+ * segment has no extent on, and both renderers treat it as a sentinel and paint
+ * a couple of CSS pixels centred on it — a literal 1px line, filled with an
+ * 8-14% alpha border token and then multiplied down by the sheet's sub-1
+ * `transform: scale()`, was invisible on screen. Keeping the 1 here is what
+ * keeps this file's assertions about edges and centre lines true.
+ *
+ * There was a `dashed` flag here, reserved for the third-place playoff's link.
+ * Nothing ever set it and no renderer ever read it: in a converging draw the
+ * two beaten semi-finalists are on opposite halves, so the playoff card is
+ * drawn unconnected and every link that IS drawn is solid. It was documentation
+ * of an intention that was never implemented, so it is gone.
  */
 export interface DrawConnector {
   key: string;
@@ -149,7 +159,6 @@ export interface DrawConnector {
   y: number;
   w: number;
   h: number;
-  dashed?: boolean;
 }
 
 export interface DrawLayout<M extends DrawInputMatch> {
@@ -328,14 +337,13 @@ function linkSegments(
   parentCentreY: number,
   dir: 1 | -1,
   linkW: number,
-  dashed?: boolean,
 ): DrawConnector[] {
   const mid = childOuterEdge + (dir * linkW) / 2;
   const stubX = dir === 1 ? childOuterEdge : mid;
   const entryX = dir === 1 ? mid : parentInnerEdge;
   const out: DrawConnector[] = [
-    { key: `${key}-stub`, x: stubX, y: childCentreY, w: linkW / 2, h: 1, dashed },
-    { key: `${key}-entry`, x: entryX, y: parentCentreY, w: linkW / 2, h: 1, dashed },
+    { key: `${key}-stub`, x: stubX, y: childCentreY, w: linkW / 2, h: 1 },
+    { key: `${key}-entry`, x: entryX, y: parentCentreY, w: linkW / 2, h: 1 },
   ];
   if (childCentreY !== parentCentreY) {
     out.push({
@@ -344,7 +352,6 @@ function linkSegments(
       y: Math.min(childCentreY, parentCentreY),
       w: 1,
       h: Math.abs(parentCentreY - childCentreY),
-      dashed,
     });
   }
   return out;

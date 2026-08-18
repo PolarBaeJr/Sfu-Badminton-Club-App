@@ -14,6 +14,15 @@
   --text-muted: #888;
   --border: hsla(0, 0%, 100%, 0.08);
   --border-hover: hsla(0, 0%, 100%, 0.14);
+  /* THE BRACKET'S CONNECTOR WORK, and it is OPAQUE on purpose. The elbows were
+     painted with --border-hover; a 1px line at 14% over --bg-card is about
+     1.5:1 against a 3:1 non-text threshold, and the diagram is then multiplied
+     down by the zoom — at the 0.5 default a 128 draw opens at, that 1px covers
+     half a device pixel and the lines were simply not on the screen. #666 on
+     #111 is 3.3:1, with headroom for the transform. NOT --border-hover at a
+     bigger alpha: an alpha over the card is what the defect was, and a Tailwind
+     opacity modifier on a var() colour compiles to nothing in this repo. */
+  --draw-link: #666;
   --color-accent: #c00;
   --color-accent-hover: #a30000;
   --color-success: #4ade80;
@@ -32,6 +41,8 @@
   --text-muted: #888;
   --border: rgba(0, 0, 0, 0.08);
   --border-hover: rgba(0, 0, 0, 0.16);
+  /* See the dark theme's note. #888 on #fff is 3.5:1. */
+  --draw-link: #888;
   --color-accent: #c00;
   --color-accent-hover: #a30000;
   --color-success: #16a34a;
@@ -491,3 +502,24 @@ html, body { overflow-x: clip; }
 [data-theme="dark"] .avatar[data-tone="5"] { background: #1E2A3D; color: #A8BBD8; }
 [data-theme="dark"] .avatar[data-tone="6"] { background: #32261A; color: #D8B88C; }
 [data-theme="dark"] .avatar[data-tone="7"] { background: #2A2824; color: #BFB9B0; }
+
+/* THE BRACKET'S SCROLL BOX. A diagram narrower than the pane sits in the middle
+   of it: the box is sized to the ZOOMED diagram, so a 128 draw held at the 0.5
+   usable floor drew ~1442px into a ~1975px pane and left a third of the card
+   blank down its right, which reads as a rendering fault rather than as a zoom.
+   Grid because this box has exactly one child.
+
+   `safe` is load-bearing. Plain `center` on a scroll container centres
+   OVERFLOWING content too, which puts its top-left in negative scroll space that
+   no scrollbar can reach — a 128 draw at 100% would be cropped on every side
+   with no way back. `safe` falls back to start alignment the moment the diagram
+   is wider than the box, so a zoomed-in bracket behaves exactly as it did; a
+   browser without `safe` drops the declaration and also behaves as before.
+
+   A CLASS, not `[justify-content:safe_center]` on the element: Tailwind here is
+   3.4, which has no `*-safe` variants, and an arbitrary property has nowhere to
+   carry this note. */
+.bracket-viewport {
+  display: grid;
+  justify-content: safe center;
+}

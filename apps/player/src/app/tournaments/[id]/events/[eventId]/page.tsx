@@ -14,6 +14,7 @@ import {
   endsInKnockout,
   courtLabel,
   courtLabelOrTbc,
+  SKIP_SLOT_LABEL,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -348,10 +349,14 @@ export default async function EventDetailPage({
     const pid = match[key] as string | null;
     // A skip match has one real entry and one empty slot — label only the empty
     // side, otherwise both names read as the placeholder.
-    if (!pid) return match.is_bye ? 'SKIP' : 'TBD';
+    if (!pid) return match.is_bye ? SKIP_SLOT_LABEL : 'TBD';
     return participantNameMap[pid] || 'TBD';
   }
 
+  // NO BYE GUARD HERE, unlike Draw's own isWinner. This one only ever sees pool
+  // and non-bracket rows: every bracket match is handed to <Draw />, and the
+  // generator only ever creates a skip inside a bracket. A defensive guard here
+  // would be a guard against a case the data cannot produce.
   function isWinner(match: Record<string, unknown>, side: 'a' | 'b'): boolean {
     const key      = doubles ? (side === 'a' ? 'pair_a_id' : 'pair_b_id') : (side === 'a' ? 'participant_a_id' : 'participant_b_id');
     const winnerKey= doubles ? 'winner_pair_id' : 'winner_participant_id';

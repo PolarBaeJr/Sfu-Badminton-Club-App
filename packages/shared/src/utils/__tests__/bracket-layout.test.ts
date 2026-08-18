@@ -267,7 +267,22 @@ describe('computeDrawLayout — the third-place playoff', () => {
     expect(l.thirdPlace!.y).toBeGreaterThan(final.y + GEO.cardH);
     // No line touches it: its two entrants are on OPPOSITE halves of a
     // converging draw, so there is no single path back to draw.
-    expect(l.connectors.some((c) => c.dashed)).toBe(false);
+    //
+    // Asserted as a 2D box test rather than "nothing is drawn below the final",
+    // because the outer rounds' risers run the full height of the sheet and
+    // span the playoff card's y band on both sides of it — a y-only assertion
+    // would fail on a layout that is correct. Every comparison is strict, so a
+    // segment that merely ABUTS the box is clear: an entry segment ends exactly
+    // on the final's x (see 'lands every connector on the edge of the cards it
+    // joins'), and the playoff card shares the final's column.
+    const crossing = l.connectors.filter(
+      (c) =>
+        c.x + c.w > l.thirdPlace!.x
+        && c.x < l.thirdPlace!.x + GEO.colW
+        && c.y + c.h > l.thirdPlace!.y
+        && c.y < l.thirdPlace!.y + GEO.cardH,
+    );
+    expect(crossing.map((c) => c.key)).toEqual([]);
   });
 
   it('makes room for the card and its caption', () => {

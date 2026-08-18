@@ -28,6 +28,17 @@
   --ghost:         #ccc;
   --line:          rgba(0, 0, 0, 0.08);
   --line-2:        rgba(0, 0, 0, 0.16);
+  /* THE DRAW'S CONNECTOR WORK, and it is OPAQUE on purpose.
+     The elbows used to be painted with --border (--line, 8% alpha). A 1px line
+     at 8% over .card-surface is about 1.2:1 against a 3:1 non-text threshold,
+     and the chart is then multiplied down by a sub-1 transform — at the 0.68
+     page floor that 1px rasterises at ~68% coverage, i.e. an effective ~5%.
+     The lines were simply not on the screen. #888 on --surface is 3.5:1 (light)
+     and #666 on #111 is 3.3:1 (dark), which leaves headroom for the transform.
+     NOT --line with a bigger alpha: an alpha over the card surface is what the
+     defect was, and a Tailwind opacity modifier on a var() colour compiles to
+     nothing in this repo — color-mix() is the tool if a blend is ever wanted. */
+  --draw-link:     #888;
   --win:           #16a34a;
   --win-wash:      rgba(22, 163, 74, 0.08);
   --loss:          #c00;
@@ -127,6 +138,9 @@
   --ghost:         #333;
   --line:          hsla(0, 0%, 100%, 0.08);
   --line-2:        hsla(0, 0%, 100%, 0.14);
+  /* See the light theme's note: opaque, because an alpha over the card surface
+     is the defect this token exists to fix. */
+  --draw-link:     #666;
   --win:           #4ade80;
   --win-wash:      rgba(74, 222, 128, 0.1);
   --loss:          #c00;
@@ -4190,6 +4204,25 @@ a.cal-ev:hover { filter: brightness(1.15); }
   -webkit-overflow-scrolling: touch;
   min-width: 0;
   max-width: 100%;
+  /* A SHEET NARROWER THAN THE PANE SITS IN THE MIDDLE OF IT. The box is sized
+     to the SCALED chart, so a 32-draw — capped at scale 1 in the page, 1704px
+     wide — left ~271px of dead card down the right of a 1975px pane and read as
+     a chart that had been shoved into the corner. Grid because this box has
+     exactly one child and exactly one mount site (DrawScroller's scroll box).
+
+     `safe` is load-bearing, for the reason the fullscreen rule at :4503 spells
+     out at length: plain `center` centres OVERFLOWING content too, which puts
+     its left edge in negative scroll space that no scrollbar can reach. `safe`
+     falls back to start the moment the sheet is wider than the pane, so a 128
+     draw still opens at its left edge and drags. A browser without `safe` drops
+     the declaration and behaves exactly as it did before.
+
+     No `align-content` here, unlike :4503. That box is `flex: 1 1 auto` inside
+     a fullscreen shell and has a real height to centre within; this one has no
+     fixed height at all — it is as tall as the chart — so vertical centring
+     would be a no-op. */
+  display: grid;
+  justify-content: safe center;
 }
 .draw-scroll:focus-visible {
   outline: 2px solid var(--red);

@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getRoundName, eventIsPlaying, computeDrawLayout, fitScale, splitPairLabel, courtLabel } from '@badminton/shared';
+import {
+  getRoundName, eventIsPlaying, computeDrawLayout, fitScale, splitPairLabel, courtLabel,
+  SKIP_SLOT_LABEL, SKIP_STATUS_LABEL,
+} from '@badminton/shared';
 import type { DrawSide } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { RoundLadder } from './RoundLadder';
@@ -34,12 +37,29 @@ const FOOT_H = 24;                // card footer strip (status / action)
 const CARD_H = META_H + SIDE_H * 2 + FOOT_H;   // 88
 const CARD_GAP = 12;              // gap between sibling cards in the first round
 const COL_W = 196;                // width of a round column
+// DO NOT NARROW THIS TO CLAW BACK PANE WIDTH: while the height binds, the zoom
+// is budget/h, so a narrower sheet is drawn at the SAME zoom and merely ends up
+// smaller — cutting LINK_W increases the dead margin it was meant to close.
 const LINK_W = 28;                // width of the connector gutter between rounds
 const HEAD_H = 30;                // round heading strip above the diagram
 // Heading + the explanatory sentence under the playoff card, measured for the
 // sentence WRAPPING at COL_W rather than for one line: this number only feeds
 // the diagram's height, and being short by a line clips the caption.
 const PLAYOFF_CAPTION_H = 76;
+
+/**
+ * HOW THICK A CONNECTOR IS PAINTED, which is not how thick the engine says it
+ * is. `computeDrawLayout` emits mathematical hairlines — 1 on whichever axis the
+ * segment has no extent on — and a literal 1px span filled with a 14%-alpha
+ * border token, then multiplied down by the zoom, was invisible on screen.
+ *
+ * Thickened HERE, at the paint, and not in the shared geometry: the engine's 1
+ * is what bracket-layout.test.ts identifies risers by and measures its edge and
+ * centre-line landings against. Each segment grows on its hairline axis and is
+ * backed off by half the growth, so the line stays centred on the coordinate
+ * those assertions are about.
+ */
+const LINK_PX = 2;
 
 const GEOMETRY = {
   cardH: CARD_H,
@@ -59,8 +79,27 @@ const ZOOM_USABLE_FLOOR = 0.5;
  * The share of the window the diagram may claim before it scrolls inside its
  * own box. Used for the fit arithmetic as well as for the cap, so the scale
  * that "Fit" reports is the scale that actually fits.
+ *
+ * 0.88, up from 0.78, because once the diagram is taller than it is wide the
+ * HEIGHT is what binds and the width pays for it. The gain is exactly the ratio
+ * of the two shares, ~13%, and it is safe to compute against because `viewportH`
+ * is derived from window.innerHeight (never from the box's own clientHeight,
+ * which is content-driven until the cap bites) and the same constant sets the
+ * maxHeight cap below — so what "Fit" reports stays what actually fits.
+ *
+ * WHERE IT BITES, measured on a 1080px window / 1975px pane. A 64 draw
+ * (2436x1618) is the size this is for: fit 0.520 -> 0.587, so 1268px of diagram
+ * becomes 1430px. A 32 (1988x818) is width-bound at 0.993 and does not move. A
+ * 128 (2884x3218) does not move either, and it is worth saying why: its fit is
+ * 0.262, and 0.295 is still under ZOOM_USABLE_FLOOR, so the default is the 0.5
+ * floor before and after. The dead margin on a 128 is closed by centring the
+ * viewport, not by this.
+ *
+ * The price: the diagram may now claim 88vh, so the RoundLadder and the sentence
+ * above it are likelier to be scrolled off. 0.82 keeps most of the gain if that
+ * turns out to be the wrong trade.
  */
-const VIEWPORT_H_SHARE = 0.78;
+const VIEWPORT_H_SHARE = 0.88;
 
 interface Props {
   event: TournamentEventRow;
@@ -305,7 +344,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
             bracket still flows with the page and grows no inner scrollbar. */}
         <div
           ref={viewportRef}
-          className="overflow-auto"
+          className="bracket-viewport overflow-auto"
           style={{ maxHeight: `${Math.round(VIEWPORT_H_SHARE * 100)}vh` }}
         >
           <div style={{ width: layout.width * zoom, height: layout.height * zoom }}>
@@ -339,11 +378,20 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
 
               {/* The connector work, as flat boxes the engine positioned. */}
               <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
+                {/* The two axes grow independently, not as an either/or: a
+                    stub or an entry is a hairline in h with a real w, a riser
+                    the other way round, and nothing guarantees a segment can
+                    only ever be one of the two. See LINK_PX. */}
                 {layout.connectors.map((c) => (
                   <span
                     key={c.key}
-                    className="absolute bg-[var(--border-hover)]"
-                    style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
+                    className="absolute bg-[var(--draw-link)]"
+                    style={{
+                      left: c.w === 1 ? c.x - (LINK_PX - 1) / 2 : c.x,
+                      top: c.h === 1 ? c.y - (LINK_PX - 1) / 2 : c.y,
+                      width: c.w === 1 ? LINK_PX : c.w,
+                      height: c.h === 1 ? LINK_PX : c.h,
+                    }}
                   />
                 ))}
               </div>
@@ -482,9 +530,12 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
   const scores = m.scores as GameScore[] | null;
   // Either side can be the empty one — the generator gives the skip to whichever
   // slot the seed landed in, not always slot B.
-  const sideLabel = (id: string | null) => (isSkip && !id ? 'skip' : getEntryName(id));
+  const sideLabel = (id: string | null) => (isSkip && !id ? SKIP_SLOT_LABEL : getEntryName(id));
+  // NO WINNER IS ANNOUNCED ON A SKIP. It is 'completed' with a winner the
+  // generator put there, so this clause was telling a screen reader that
+  // somebody won a match nobody played.
   const label = `${roundLabel}. Match ${m.match_number ?? ''}: ${sideLabel(aId)} vs ${sideLabel(bId)}${
-    isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''
+    isCompleted && !isSkip ? `, winner: ${getEntryName(winnerId)}` : ''
   }${actionable ? `. ${actionLabel ?? 'Change the recorded result'}` : ''}`;
 
   // *** THE SCORELINE IS ON THE FOOTER STRIP, NOT ON THE ENTRANT ROWS, AND THAT
@@ -530,10 +581,17 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
       </div>
 
       <Side
-        name={isSkip && !aId ? 'SKIP' : getEntryName(aId)}
+        name={isSkip && !aId ? SKIP_SLOT_LABEL : getEntryName(aId)}
         seed={getSeed(aId)}
         isPlaceholder={!aId}
-        won={isCompleted && winnerId === aId}
+        // A BYE IS NOT A WIN, and the guard is needed because the DATA says it
+        // is: the generator completes a skip with the real entrant already in
+        // winner_*_id. Without !isSkip the entrant who merely walked into the
+        // next round got the success colour, the bold weight and an sr-only
+        // "(Winner)" for a match nobody played. Same position the rest of the
+        // codebase takes — tournament-withdrawal.test.ts:133 has
+        // isPlayedMatch({ status: 'completed', is_bye: true }) === false.
+        won={isCompleted && !isSkip && winnerId === aId}
         // An empty slot has no result to strike through — a skip match is
         // "completed" with a winner, so without the id guard SKIP renders struck.
         lost={isCompleted && !!winnerId && !!aId && winnerId !== aId}
@@ -541,10 +599,10 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
       />
       <div className="border-t border-[var(--border)]" />
       <Side
-        name={isSkip && !bId ? 'SKIP' : getEntryName(bId)}
+        name={isSkip && !bId ? SKIP_SLOT_LABEL : getEntryName(bId)}
         seed={getSeed(bId)}
         isPlaceholder={!bId}
-        won={isCompleted && winnerId === bId}
+        won={isCompleted && !isSkip && winnerId === bId}
         lost={isCompleted && !!winnerId && !!bId && winnerId !== bId}
         mirrored={side === 'right'}
       />
@@ -733,7 +791,7 @@ function StatusLabel({ status, isSkip }: { status: string; isSkip: boolean }) {
     return <span className="text-[10px] font-medium text-[var(--color-danger)]" role="status">✕ VOIDED</span>;
   }
   if (isSkip) {
-    return <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Skip · auto-advance</span>;
+    return <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">{SKIP_STATUS_LABEL}</span>;
   }
   if (status === 'completed') {
     return <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-success)]">Final</span>;

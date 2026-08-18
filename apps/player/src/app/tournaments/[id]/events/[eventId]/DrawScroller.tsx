@@ -461,7 +461,41 @@ export function DrawScroller({
   const sheetW = active.width;
   const sheetH = active.height;
   const fit = fitOf(sheetW, sheetH);
-  const scale = fit === null ? 1 : Math.max(floor, fit);
+
+  /**
+   * IN THE PAGE, THE WIDTH IS THE ONLY REAL CONSTRAINT, so the sheet is allowed
+   * to grow to it. In full screen it is not, and that is the whole difference.
+   *
+   * "the draw has way too much empty space around it". The floor is what caused
+   * it. On a 1975px pane a 128 draw (2472x2384) fits at budget/h ≈ 0.41, which
+   * the 0.68 floor overrides — and a floored draw has ALREADY accepted vertical
+   * overflow, because the page has no vertical clip to overflow out of
+   * (.draw-scroll sets overflow-x only, and overflowsDown below is gated on
+   * `full` for exactly this reason: in the page a tall chart simply makes a tall
+   * block and the PAGE scrolls). So the height budget has stopped constraining
+   * anything by then, while the sheet is still drawn 18% smaller than the pane
+   * could carry, with ~294px of dead card down its right.
+   *
+   * The three cases, measured against the same 1975px pane the complaint came
+   * from: a 128 goes 0.68 -> 0.799, fills the pane exactly and gains 18% on
+   * every card; on a 1352px laptop the same 128 wants 0.547 on width alone,
+   * which is below the floor, so it stays at 0.68 and scrolls as before; a 32
+   * (1704px) is already capped at 1 and does not move.
+   *
+   * Reduces to `max(floor, min(1, avail / sheetW))` — `fit` is itself the min of
+   * the two axes, so it can never beat `avail / sheetW`. It is written the long
+   * way because that says the intended thing ("never below what fits today")
+   * rather than an identity that only holds while fitOf is what it is now.
+   *
+   * FULL SCREEN IS EXCLUDED because there the height budget is a genuine clip:
+   * there is no page behind the shell to scroll, so a sheet widened past the
+   * budget is a sheet cropped on a projector. Nothing here touches `fit` or
+   * `wholeFit` themselves — those feed the view-switch decisions above.
+   */
+  const scale =
+    fit === null ? 1
+    : full ? Math.max(floor, fit)
+    : Math.max(floor, Math.min(1, Math.max(fit, avail / sheetW)));
 
   const scaledW = Math.ceil(sheetW * scale);
   // COMPUTED, NOT READ BACK OFF THE DOM. scrollWidth is the wrong instrument
@@ -470,11 +504,13 @@ export function DrawScroller({
   // drag that scaling had already removed. These two numbers are exact, and the
   // +1 absorbs the sub-pixel a fractional pane width leaves behind.
   //
-  // STILL WIDTH ALONE, now that the scale fits both axes, and it stays exact:
-  // if the height binds then the scale is below the width's own fit and the
-  // width has room to spare, if the width binds it fits exactly, and only at
-  // the floor can either overflow. So this cannot claim a drag that is not
-  // there.
+  // STILL WIDTH ALONE, and it stays exact. In FULL SCREEN the scale fits both
+  // axes: if the height binds then the scale is below the width's own fit and
+  // the width has room to spare, if the width binds it fits exactly, and only
+  // at the floor can either overflow. IN THE PAGE the height budget no longer
+  // enters the scale at all — see the note on `scale` — so the width is the
+  // only axis there is, and this is exact by construction rather than by
+  // argument. Either way it cannot claim a drag that is not there.
   //
   const overflows = avail > 0 && scaledW > avail + 1;
 

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   getRoundName, computeDrawLayout, drawHalves, drawQuarters, drawLastRounds, splitPairLabel,
+  SKIP_SLOT_LABEL, SKIP_STATUS_LABEL,
 } from '@badminton/shared';
 import type { DrawSide, DrawLayout } from '@badminton/shared';
 import { DrawScroller, type DrawView } from './DrawScroller';
@@ -32,9 +33,28 @@ const FOOT_H = 16;
 const CARD_H = SIDE_H * 2 + FOOT_H;   // 64
 const CARD_GAP = 10;
 const COL_W = 168;
+// DO NOT NARROW THIS TO CLAW BACK PAGE WIDTH. While the height binds, the scale
+// is budget/h, so a narrower sheet is drawn at the SAME scale and only ends up
+// smaller — a LINK_W cut increases the dead margin it was meant to close.
+// CARD_GAP is the only geometry constant whose reduction touches h, and COL_W is
+// untouchable (its measured truncation figures are on EntryName below).
 const LINK_W = 24;
 const HEAD_H = 26;
 const PLAYOFF_CAPTION_H = 64;
+/**
+ * HOW THICK A CONNECTOR IS PAINTED, which is not how thick the engine says it
+ * is. `computeDrawLayout` emits mathematical hairlines — 1 on whichever axis the
+ * segment has no extent on — and a literal 1px span filled with --border (8%
+ * alpha) then multiplied down by the sheet's transform was invisible: at the
+ * 0.68 page floor it rasterised at ~68% coverage of an already 1.2:1 line.
+ *
+ * The fix is here, at the paint, and not in the shared geometry: the engine's 1
+ * is what `bracket-layout.test.ts` identifies risers by and measures edge and
+ * centre-line landings against. Each segment is grown from its hairline axis and
+ * backed off by half the growth, so the painted line stays centred on the
+ * coordinate those assertions are about.
+ */
+const LINK_PX = 2;
 
 const GEOMETRY = {
   cardH: CARD_H,
@@ -213,7 +233,7 @@ interface DrawProps {
 /** A skip match has one real entry and one empty slot; only the empty side is labelled. */
 function entryName(m: DrawMatch, side: 'a' | 'b', nameOf: Record<string, string>): string {
   const id = side === 'a' ? m.aId : m.bId;
-  if (!id) return m.is_bye ? 'SKIP' : 'TBD';
+  if (!id) return m.is_bye ? SKIP_SLOT_LABEL : 'TBD';
   return nameOf[id] || 'TBD';
 }
 
@@ -222,7 +242,21 @@ function entrySeed(m: DrawMatch, side: 'a' | 'b', seedOf: Record<string, number 
   return id ? seedOf[id] ?? null : null;
 }
 
+/**
+ * A BYE IS NOT A WIN, and the guard has to be here because the DATA says it is.
+ * The generator completes a skip match with the real entrant already in
+ * `winner_*_id`, so without this line the entrant who walked into the next round
+ * got .match-winner — the red accent and the glow — for a match nobody played,
+ * plus an sr-only "(Winner)" announcing it. This is the position the rest of the
+ * codebase already takes: see tournament-withdrawal.test.ts:133, where
+ * `isPlayedMatch({ status: 'completed', is_bye: true })` is false.
+ *
+ * One boolean, not a CSS change: .match-winner styles every winner in the app
+ * and the skip card's own muted treatment (opacity-50, secondary text) is
+ * already right — what it needed was for nothing to override it.
+ */
 function isWinner(m: DrawMatch, side: 'a' | 'b'): boolean {
+  if (m.is_bye) return false;
   const id = side === 'a' ? m.aId : m.bId;
   return !!id && !!m.winnerId && id === m.winnerId;
 }
@@ -245,7 +279,7 @@ function scoreLine(m: DrawMatch): string {
  * that was otherwise carrying the word "vs".
  */
 function footerText(m: DrawMatch): string {
-  if (m.is_bye) return 'Skip';
+  if (m.is_bye) return SKIP_SLOT_LABEL;
   const line = scoreLine(m);
   if (line) return m.status === 'walkover' ? `${line} W/O` : line;
   if (m.status === 'completed' || m.status === 'walkover') return 'W/O';
@@ -682,11 +716,20 @@ function ChartBody({
       ))}
 
       <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
+        {/* The two axes are grown independently, not as an either/or: a stub or
+            an entry is a hairline in h with a real w, a riser the other way
+            round, and nothing guarantees a segment can only ever be one of the
+            two. See LINK_PX. */}
         {layout.connectors.map((c) => (
           <span
             key={c.key}
-            className="absolute bg-[var(--border)]"
-            style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
+            className="absolute bg-[var(--draw-link)]"
+            style={{
+              left: c.w === 1 ? c.x - (LINK_PX - 1) / 2 : c.x,
+              top: c.h === 1 ? c.y - (LINK_PX - 1) / 2 : c.y,
+              width: c.w === 1 ? LINK_PX : c.w,
+              height: c.h === 1 ? LINK_PX : c.h,
+            }}
           />
         ))}
       </div>
@@ -992,7 +1035,7 @@ function ListRow({
   const played = !!m.scores && m.scores.length > 0;
   // The strip only appears when it has something to say. On an unplayed match
   // the two stacked names already read as "these two play each other".
-  const note = m.is_bye ? 'Skip - auto-advance'
+  const note = m.is_bye ? SKIP_STATUS_LABEL
     : played && m.status === 'walkover' ? 'Walkover'
     : !played && decided ? 'Walkover'
     : m.status === 'live' ? 'In progress'
