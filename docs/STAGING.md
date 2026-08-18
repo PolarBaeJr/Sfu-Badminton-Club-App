@@ -15,6 +15,18 @@ database. Production is never touched by anything done here.
 | Sentry / PostHog | on | off |
 | auto-update | on | on |
 
+**The port column is what `docker-compose*.yml` declares, not what is running.**
+Measured 2026-08-18: none of the four containers publishes a host port at all —
+`docker ps` shows a bare `3000/tcp` / `3001/tcp` with no mapping. proxy-manager
+creates the live containers itself and reaches them over the `edge` network by
+`proxy.*` label, so the published ports only reappear if somebody runs
+`docker compose up` by hand. Do not use them to reach a running app, and do not
+read their absence as a broken deploy.
+
+The staging host is parameterised now: `PROXY_DOMAIN` in `.env.staging`
+(currently `badminton.polardev.org`) feeds `proxy.host` in the compose labels,
+rather than the hostname being hardcoded per service.
+
 ## Why staging needs its own image, not just its own config
 
 Every `NEXT_PUBLIC_*` value is a Docker **build arg**, inlined into the client
@@ -50,15 +62,27 @@ to that host and is not usable against production, and vice versa.
 ## The data
 
 Schema is a `pg_dump --schema-only` of production's `public` schema — a read;
-production is never written to. Verified at parity: 46 tables, 104 RLS policies,
-53 functions, 27 triggers.
+production is never written to. **Re-measured 2026-08-18 and at exact parity:
+53 tables, 103 RLS policies, 82 functions, 37 triggers — identical on both.**
+(The figures here previously read 46/104/53/27, which had drifted by ~30
+migrations.)
+
+Migrations are applied **by hand** on both hosts and there is no
+`supabase_migrations.schema_migrations` table on either, so never compare by
+version number — probe for a specific artifact instead, e.g.
+`SELECT count(*) FROM pg_proc WHERE proname='scrub_deleted_identity'`.
 
 Configuration rows (`platform_settings`, `legal_documents`, `seasons`) are
 copied because they are settings, not people. **No production member data is
 copied.** The roster is 14 synthetic accounts covering every state the admin UI
 has controls for — competitive, recreational, pending approval, suspended,
 banned, inactive, exec, trainer — plus two admin accounts on the owner's own
-addresses.
+addresses. **The roster is now 100 accounts, not the 14 this said originally.**
+
+Re-verified 2026-08-18: of 100 staging emails and 7 production emails, exactly
+**2 overlap, and both are the owner's own admin accounts** (`Matthew Cheng` on
+both, and production's `wui KI Cheng` appearing as `Matthew Cheng2`). That is
+the documented exception above, so the no-production-member-data promise holds.
 
 ## Deploying a change to staging
 
@@ -106,8 +130,9 @@ docker buildx build --target runner-player \
 docker save ghcr.io/polarbaejr/badminton-player-staging:latest \
   | gzip -1 | ssh pi 'gunzip | docker load'
 
-# then on the Pi
-cd /mnt/ssd/Deploy/badminton
+# then on the Pi — NOTE the directory: docker-compose.staging.yml lives in
+# badminton-staging, NOT badminton. This path was wrong here until 2026-08-18.
+cd /mnt/ssd/Deploy/badminton-staging
 sudo docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
 ```
 
