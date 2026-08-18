@@ -6,6 +6,7 @@ import { ArrowLeft, Clock, Zap, Trophy, MessageSquare, Crosshair } from 'lucide-
 import Link from 'next/link';
 import { AvatarChip } from '@badminton/ui';
 import { CHALLENGE_STATUS_TAG, PARTICIPANT_CONFIRM_TAG } from '@badminton/shared';
+import { viewerMaySeeChallenge } from '@/lib/challenge-visibility';
 
 export default async function ChallengeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -20,7 +21,13 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
     .eq('id', id)
     .single();
 
-  if (!challenge) notFound();
+  // NOT JUST "does this row exist". `challenges_select` is USING (TRUE) and the
+  // row carries `note`, the free text one member writes at another — so reading
+  // by id alone handed any signed-in member anybody's challenge, and the list
+  // page next door has always scoped itself with .eq('player_id', player.id).
+  // See lib/challenge-visibility.ts for why the creator is a separate disjunct
+  // and for the RLS half that closes the bulk PostgREST read (00156).
+  if (!challenge || !viewerMaySeeChallenge(challenge, player.id)) notFound();
 
   // NAMED COLUMNS, NOT `*`. This is a member's own session reading the club's
   // match ledger, and it needs four fields off it: the status badge, the
