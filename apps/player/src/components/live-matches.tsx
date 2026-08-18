@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLiveChannel } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 
 /**
@@ -116,6 +117,18 @@ export function useLiveMatches({
   enabled?: boolean;
 }) {
   const router = useRouter();
+
+  // THE SAME NUDGE, FOR THE EVENTS THE SOCKET WAS NOT ALIVE TO DELIVER.
+  //
+  // The `enabled` transition below already handles one way this screen can
+  // miss a window — the member's own dialog — and the reasoning there applies
+  // unchanged to the other way: there is no replay and no catch-up. A channel
+  // killed by a deploy or by a binding mismatch has exactly the same effect as
+  // a parked one, and this file's binding count is what makes the mismatch a
+  // live concern rather than a theoretical one (see the note on `challengeIds`
+  // — past Realtime's cap the extras are refused, which is what a mismatch
+  // IS). Recovery therefore does what re-enabling does: refresh once.
+  const subscribe = useLiveChannel(() => router.refresh());
 
   // THE DEPENDENCY IS THE JOINED KEY, NOT THE ARRAY. `challengeIds` is built
   // by a .map() in a server component, so it is a new array identity on every
@@ -287,15 +300,19 @@ export function useLiveMatches({
       );
     }
 
-    channel.subscribe();
+    const stopWatching = subscribe(channel);
 
     return () => {
       // The timer as well as the channel: a refresh queued a moment before the
       // member navigated away would otherwise fire against an unmounted tree.
       clearTimeout(timer);
+      // BEFORE removeChannel, not after: removing a channel unsubscribes it,
+      // which delivers CLOSED to the status callback, and a watcher still
+      // listening would read this teardown as an outage and queue a rebuild.
+      stopWatching();
       void supabase.removeChannel(channel);
     };
-  }, [channelName, playerId, key, withMatch, clubMatches, enabled, router]);
+  }, [channelName, playerId, key, withMatch, clubMatches, enabled, router, subscribe]);
 }
 
 /**

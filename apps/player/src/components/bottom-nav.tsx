@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { cn } from '@badminton/ui';
+import { cn, useLiveChannel } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import {
   ANNOUNCEMENT_VISIBILITY_COLUMNS,
@@ -152,6 +152,21 @@ export function BottomNav({
   // Nothing is subscribed until the viewer is resolved. A signed-out visitor
   // has no badge to keep up to date — publicNavItems has no Feed tab — so a
   // socket for them would be a socket for nothing.
+  // RE-COUNT WHEN THE CHANNEL COMES BACK, and note this one does NOT refresh
+  // the route — it re-runs the same count query the two listeners below run,
+  // which is the right recovery here for the same reason it is the right
+  // callback there: the badge is client state in a layout component that never
+  // unmounts, so a router.refresh() would not recompute it.
+  //
+  // THIS IS THE SURFACE THE DEFECT HURTS LONGEST. The nav is mounted in the
+  // layout and survives every navigation in the app, so its channel is the one
+  // that has been open across the deploy window, and nothing else ever
+  // re-mounts it. The navigation-based re-read above covers leaving
+  // /announcements and nothing else. See use-live-channel.ts.
+  const subscribe = useLiveChannel(() => {
+    void checkUnread();
+  });
+
   useEffect(() => {
     if (!playerId) return;
 
@@ -187,13 +202,18 @@ export function BottomNav({
         () => {
           void checkUnread();
         },
-      )
-      .subscribe();
+      );
+
+    const stopWatching = subscribe(channel);
 
     return () => {
+      // BEFORE removeChannel: removing a channel unsubscribes it, which
+      // delivers CLOSED to the status callback, and a watcher still listening
+      // would read this teardown as an outage and queue a rebuild.
+      stopWatching();
       supabase.removeChannel(channel);
     };
-  }, [checkUnread, supabase, playerId]);
+  }, [checkUnread, supabase, playerId, subscribe]);
 
   // Auth / onboarding screens render their own full-screen layout — no app chrome.
   if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding') {

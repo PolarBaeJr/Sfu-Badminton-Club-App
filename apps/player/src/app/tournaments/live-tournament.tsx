@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLiveChannel } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 
 /**
@@ -74,6 +75,16 @@ export function LiveTournament({
   draw?: boolean;
 }) {
   const router = useRouter();
+
+  // AND THE SAME NUDGE WHEN THE CHANNEL ITSELF COMES BACK. This surface opens
+  // the most bindings of any in the app — three per event, plus the
+  // tournament-wide one — and Realtime caps how many a connection will accept;
+  // past the cap the server's binding list disagrees with the client's, at
+  // which point supabase-js unsubscribes the WHOLE channel and says so only
+  // through the status callback. That is the bracket going permanently dead
+  // mid-tournament while still looking live. There is no replay to catch it up
+  // afterwards, so recovery re-fetches. See use-live-channel.ts.
+  const subscribe = useLiveChannel(() => router.refresh());
 
   // THE DEPENDENCY IS THE JOINED KEY, NOT THE ARRAY. `eventIds` is built by a
   // .map() in the server component, so it is a new array identity on every
@@ -194,15 +205,19 @@ export function LiveTournament({
       }
     }
 
-    channel.subscribe();
+    const stopWatching = subscribe(channel);
 
     return () => {
       // The timer as well as the channel: a refresh queued a moment before the
       // reader navigated away would otherwise fire against an unmounted tree.
       clearTimeout(timer);
+      // BEFORE removeChannel, not after: removing a channel unsubscribes it,
+      // which delivers CLOSED to the status callback, and a watcher still
+      // listening would read this teardown as an outage and queue a rebuild.
+      stopWatching();
       void supabase.removeChannel(channel);
     };
-  }, [channelName, tournamentId, key, draw, router]);
+  }, [channelName, tournamentId, key, draw, router, subscribe]);
 
   return null;
 }

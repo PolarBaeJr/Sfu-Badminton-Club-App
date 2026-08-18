@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLiveChannel } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 
 /**
@@ -62,6 +63,12 @@ const COALESCE_MS = 800;
 
 export function LiveRating({ playerId }: { playerId: string }) {
   const router = useRouter();
+  // THE SAME REFRESH THE LISTENER DOES, for the case the listener was not
+  // there to do it. A channel that dies and comes back has missed every
+  // `ratings` UPDATE in between and will never be sent them — CDC has no
+  // replay — so the member's own number would sit at its pre-match value with
+  // a healthy-looking socket underneath it. See use-live-channel.ts.
+  const subscribe = useLiveChannel(() => router.refresh());
 
   useEffect(() => {
     const supabase = createClient();
@@ -93,16 +100,21 @@ export function LiveRating({ playerId }: { playerId: string }) {
           clearTimeout(timer);
           timer = setTimeout(() => router.refresh(), COALESCE_MS);
         },
-      )
-      .subscribe();
+      );
+
+    const stopWatching = subscribe(channel);
 
     return () => {
       // The timer as well as the channel: a refresh queued a moment before the
       // member navigated away would otherwise fire against an unmounted tree.
       clearTimeout(timer);
+      // BEFORE removeChannel, not after: removing a channel unsubscribes it,
+      // which delivers CLOSED to the status callback, and a watcher still
+      // listening would read this teardown as an outage and queue a rebuild.
+      stopWatching();
       void supabase.removeChannel(channel);
     };
-  }, [playerId, router]);
+  }, [playerId, router, subscribe]);
 
   return null;
 }

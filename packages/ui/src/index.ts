@@ -11,4 +11,5 @@ export {
   selectableOptions,
   selectedOptions,
 } from './player-selection';
+export { useLiveChannel, type RecoverableChannel } from './use-live-channel';
 export { cn } from './utils';

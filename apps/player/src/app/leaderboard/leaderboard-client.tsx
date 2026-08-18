@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { getPostHogClient } from '@/lib/posthog';
 import { createClient } from '@/lib/supabase-browser';
 import { Search, Crosshair, Trophy, ArrowDownToLine } from 'lucide-react';
-import { AvatarChip, PageHeader, normalizeSearchQuery } from '@badminton/ui';
+import { AvatarChip, PageHeader, normalizeSearchQuery, useLiveChannel } from '@badminton/ui';
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
 import { useStanding } from '@/components/standing-provider';
 import { StandingNote } from '@/components/standing-notice';
@@ -221,6 +221,14 @@ export default function LeaderboardClient({
   // Live-refresh: when any rating changes (a match confirms), re-run the server
   // component to pull fresh standings. Debounced so a burst of updates triggers
   // one refresh. Data still comes from the server (RSC) — this only nudges it.
+  //
+  // AND ONCE MORE WHENEVER THE CHANNEL COMES BACK. This is the unfiltered
+  // subscription — one binding, every member's `ratings` row — so it is also
+  // the one with the most to lose from a silent drop: an evening of club play
+  // moves nearly every row in the table, none of it replayed to a subscriber
+  // that was not connected, and the ladder is the screen members read to decide
+  // who to challenge. See use-live-channel.ts.
+  const subscribe = useLiveChannel(() => router.refresh());
   useEffect(() => {
     const supabase = createClient();
     let t: ReturnType<typeof setTimeout> | undefined;
@@ -229,13 +237,17 @@ export default function LeaderboardClient({
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
         clearTimeout(t);
         t = setTimeout(() => router.refresh(), 2500);
-      })
-      .subscribe();
+      });
+    const stopWatching = subscribe(channel);
     return () => {
       clearTimeout(t);
+      // BEFORE removeChannel: removing a channel unsubscribes it, which
+      // delivers CLOSED to the status callback, and a watcher still listening
+      // would read this teardown as an outage and queue a rebuild.
+      stopWatching();
       supabase.removeChannel(channel);
     };
-  }, [router]);
+  }, [router, subscribe]);
 
   const isDoubles = activeTab.includes('doubles');
   const isTpts = activeTab === 'tournament_points';

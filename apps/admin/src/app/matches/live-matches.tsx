@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLiveChannel } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 
 /**
@@ -101,6 +102,14 @@ const COALESCE_MS = 700;
 export function LiveMatches() {
   const router = useRouter();
 
+  // AND THE SAME NUDGE WHEN THE CHANNEL ITSELF COMES BACK. This one is
+  // unfiltered, so it hears every result the whole club submits all evening —
+  // which makes it the listener with the most to miss, and nothing replays a
+  // gap: Postgres CDC sends a subscriber what happens after it joins and
+  // nothing before. An exec watching the ledger through a deploy would see the
+  // evening simply stop. See use-live-channel.ts.
+  const subscribe = useLiveChannel(() => router.refresh());
+
   useEffect(() => {
     const supabase = createClient();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -126,16 +135,21 @@ export function LiveMatches() {
           clearTimeout(timer);
           timer = setTimeout(() => router.refresh(), COALESCE_MS);
         },
-      )
-      .subscribe();
+      );
+
+    const stopWatching = subscribe(channel);
 
     return () => {
       // The timer as well as the channel: a refresh queued a moment before the
       // exec navigated away would otherwise fire against an unmounted tree.
       clearTimeout(timer);
+      // BEFORE removeChannel, not after: removing a channel unsubscribes it,
+      // which delivers CLOSED to the status callback, and a watcher still
+      // listening would read this teardown as an outage and queue a rebuild.
+      stopWatching();
       void supabase.removeChannel(channel);
     };
-  }, [router]);
+  }, [router, subscribe]);
 
   return null;
 }
