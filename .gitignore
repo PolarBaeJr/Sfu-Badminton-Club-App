@@ -63,6 +63,16 @@ scripts/*
 # migration"), so the generator has to ship with the file it generates.
 !scripts/gen-db-types.mjs
 
+# prod-to-dev-snapshot.sh is itself tracked, and as of 2026-08-18 it refuses to
+# run without these two — it exits FATAL if either is missing. A tracked script
+# whose dependencies are gitignored is a script that is broken on every fresh
+# checkout, which is exactly the Pi-side checkout the cron line points at.
+# The DIRECTORY has to be unexcluded, not the files: per the note above, git
+# never descends into an excluded directory, so `!scripts/sql/*.sql` alone
+# would never be reached. They contain catalogue queries and no infrastructure
+# detail, so they are safe in a public repo.
+!scripts/sql/
+
 # Internal working notes / security findings — keep out of the public repo
 docs/sensitive/
 
