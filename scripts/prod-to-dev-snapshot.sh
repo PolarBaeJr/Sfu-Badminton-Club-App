@@ -26,6 +26,20 @@
 #     >> /home/polarbaejr/ssd/Deploy/badminton-snapshots/cron.log 2>&1
 #
 # ---------------------------------------------------------------------------
+# READ THIS FIRST: IT HAS NOT RUN SINCE 7 JULY 2026.
+#
+# Everything below describes defects in what this script DOES. Before any of
+# them could matter it has to get past its own container check, and it has not:
+# the two names were `supabase_db_badminton` / `..._dev`, which do not exist.
+# `cron.log` is 4,493 lines, one FATAL per night, and the newest real dump is
+# `public-20260707T110001Z.sql.gz`. Fixed at the top of this file.
+#
+# So read (1)-(3) as "what would have happened, measured on throwaway clusters",
+# NOT as "what has been happening nightly". In particular the blanket GRANT in
+# (2) has not been re-opening `anon`'s access every night for the last six weeks,
+# because it has not been reached. Whatever staging drift 00157 cleans up
+# predates 7 July.
+# ---------------------------------------------------------------------------
 # THREE THINGS THIS SCRIPT USED TO GET WRONG, and TWO GUARDS THE FIXES NEEDED.
 # All of it was reproduced on a pair of throwaway Postgres 16 clusters before
 # being changed here, because every one of these fails SILENTLY on a database
@@ -114,8 +128,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROD_CONTAINER="supabase_db_badminton"
-DEV_CONTAINER="supabase_db_badminton_dev"
+# THE NAMES WERE WRONG, AND THAT IS WHY NOTHING HAS RUN SINCE 7 JULY 2026.
+# `supabase_db_badminton` / `..._dev` do not exist on the Pi and have not for
+# weeks: the stacks are compose projects `supabase` and `supabase-staging`
+# (/mnt/ssd/Deploy/supabase-prod and /mnt/ssd/Deploy/supabase-staging), whose db
+# services are plain `supabase-db` and `supabase-staging-db`. Verified from
+# `com.docker.compose.project.working_dir`, not from the names alone — the names
+# are suggestive, the label is proof. cron.log is 4,493 lines of
+# "FATAL: container supabase_db_badminton is not running", one per night, and the
+# newest real dump is public-20260707T110001Z.sql.gz.
+#
+# Overridable, because the next rename should be a one-line env change and not
+# another six weeks of silence.
+PROD_CONTAINER="${PROD_CONTAINER:-supabase-db}"
+DEV_CONTAINER="${DEV_CONTAINER:-supabase-staging-db}"
 OUT_DIR="${HOME}/ssd/Deploy/badminton-snapshots"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 
