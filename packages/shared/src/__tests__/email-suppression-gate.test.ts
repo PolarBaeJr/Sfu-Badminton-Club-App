@@ -101,3 +101,83 @@ describe('sendCategoryEmail suppression gate', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('the missing unsubscribe secret is no longer silent', () => {
+  // FIX-LIST #7. The degradation is deliberate — a notification without a
+  // footer beats no notification — but it was also invisible: no log line, no
+  // error, no difference an operator could see in a sent email. These pin the
+  // half that changed, which is the reporting, not the fallback.
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    send.mockClear();
+    answers.email_suppressions = { data: null, error: null };
+    answers.players = { data: null, error: null };
+    vi.stubEnv('RESEND_API_KEY', 'test-key');
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://supabase.test');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-role-test-key');
+    vi.stubEnv('NEXT_PUBLIC_PLAYER_URL', 'https://player.test');
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it('names EMAIL_UNSUBSCRIBE_SECRET when that is what is missing', async () => {
+    vi.stubEnv('EMAIL_UNSUBSCRIBE_SECRET', '');
+    const { sendChallengeReceivedEmail } = await loadSender();
+
+    const outcome = await sendChallengeReceivedEmail('x@sfu.ca', 'Opponent', 'singles', 'ladder', 'c1');
+
+    // Still sent. That is the whole trade and it must not have moved.
+    expect(outcome).toEqual({ sent: true });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain('EMAIL_UNSUBSCRIBE_SECRET');
+  });
+
+  it('distinguishes the OTHER cause of the same null', async () => {
+    // An absent base URL and an absent secret produce an identical `null` from
+    // safeUnsubscribeUrl, and they are fixed in different places. A message
+    // that guessed would send the operator to the wrong file.
+    vi.stubEnv('EMAIL_UNSUBSCRIBE_SECRET', 'unsubscribe-test-secret');
+    vi.stubEnv('NEXT_PUBLIC_PLAYER_URL', '');
+    const { sendChallengeReceivedEmail } = await loadSender();
+
+    await sendChallengeReceivedEmail('x@sfu.ca', 'Opponent', 'singles', 'ladder', 'c1');
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain('NEXT_PUBLIC_PLAYER_URL');
+    expect(String(warn.mock.calls[0]![0])).not.toContain('EMAIL_UNSUBSCRIBE_SECRET');
+  });
+
+  it('says it once, not once per email', async () => {
+    // The weekly digest alone would otherwise bury the log in a few hundred
+    // identical lines, and a warning nobody can read is the state this exists
+    // to leave.
+    vi.stubEnv('EMAIL_UNSUBSCRIBE_SECRET', '');
+    const { sendChallengeReceivedEmail } = await loadSender();
+
+    await sendChallengeReceivedEmail('a@sfu.ca', 'Opponent', 'singles', 'ladder', 'c1');
+    await sendChallengeReceivedEmail('b@sfu.ca', 'Opponent', 'singles', 'ladder', 'c2');
+    await sendChallengeReceivedEmail('c@sfu.ca', 'Opponent', 'singles', 'ladder', 'c3');
+
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays quiet when the secret IS set', async () => {
+    // Otherwise the previous three would pass against a warning that fires
+    // unconditionally, which would be worse than the silence it replaced.
+    vi.stubEnv('EMAIL_UNSUBSCRIBE_SECRET', 'unsubscribe-test-secret');
+    const { sendChallengeReceivedEmail } = await loadSender();
+
+    await sendChallengeReceivedEmail('x@sfu.ca', 'Opponent', 'singles', 'ladder', 'c1');
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});

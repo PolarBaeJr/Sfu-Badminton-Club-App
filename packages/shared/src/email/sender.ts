@@ -168,6 +168,9 @@ async function sendCategoryEmail(
   const base = process.env.NEXT_PUBLIC_PLAYER_URL;
   const allUrl = safeUnsubscribeUrl(base, address);
   const oneUrl = safeUnsubscribeUrl(base, address, category);
+  // The degradation below is deliberate and stays. What was missing was any way
+  // to KNOW it had happened — see warnUnsubscribeUnavailable.
+  if (!allUrl && !oneUrl) warnUnsubscribeUnavailable(base);
 
   const headers: Record<string, string> = {};
   if (allUrl) {
@@ -180,6 +183,49 @@ async function sendCategoryEmail(
 
   await sendEmail(to, subject, withUnsubscribeFooter(html, oneUrl, allUrl), headers);
   return { sent: true };
+}
+
+// ONCE PER PROCESS, TO THE CONTAINER LOG, AND NOT TO THE RECIPIENT.
+//
+// EMAIL_UNSUBSCRIBE_SECRET was never set on production, and the reason it went
+// unnoticed for the club's entire history of sending mail is this file: the
+// catch below turns "not set" into `null`, `null` skips the RFC 8058 headers,
+// and a `null` for BOTH urls also short-circuits withUnsubscribeFooter — so all
+// ten senders quietly dropped every unsubscribe affordance they have and left
+// "Report spam" as the recipient's only lever. Nothing was logged, nothing
+// failed, and no email looked wrong.
+//
+// Failing open is still right: the footer and the header are additive, and
+// losing a notification is worse than losing its footer. So this does not
+// change what happens to the mail — it changes whether anyone can find out.
+//
+// ONCE, because the alternative is a line per notification: the weekly digest
+// alone would bury the log in a few hundred identical warnings, and a warning
+// nobody can read is the state this is trying to leave. Follows the readiness
+// probe's convention — console to the container log, where an operator can see
+// it and a recipient cannot.
+//
+// The variable is NAMED, and which one it is gets worked out here rather than
+// guessed by whoever reads the log: an absent base URL and an absent secret
+// produce exactly the same `null`, and they are fixed in different places.
+let unsubscribeWarningIssued = false;
+
+function warnUnsubscribeUnavailable(base: string | undefined): void {
+  if (unsubscribeWarningIssued) return;
+  unsubscribeWarningIssued = true;
+
+  const cause = !base
+    ? 'NEXT_PUBLIC_PLAYER_URL is not set'
+    : !process.env.EMAIL_UNSUBSCRIBE_SECRET
+    ? 'EMAIL_UNSUBSCRIBE_SECRET is not set'
+    : `NEXT_PUBLIC_PLAYER_URL (${base}) did not produce a usable unsubscribe URL`;
+
+  console.warn(
+    `email: sending with NO unsubscribe link and NO List-Unsubscribe header — ${cause}. ` +
+    'Every notification email from this container leaves "Report spam" as the recipient\'s only ' +
+    'option, which costs sender reputation for the whole club. Set it in .env and restart. ' +
+    'Reported once per process.',
+  );
 }
 
 // Never let a missing secret or base URL turn into a failed notification: the
