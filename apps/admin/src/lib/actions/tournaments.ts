@@ -31,6 +31,12 @@ import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 import { finalizeEvent } from '../tournament-actions/finalize';
 import { setEventStatus } from '../tournament-actions/events';
+import {
+  describeCompletionBlockers,
+  REMEDY_ARCHIVE,
+  REMEDY_COMPLETE,
+  type EventCompletionBlocker,
+} from '../tournament-actions/completion-blockers';
 
 export async function createTournament(data: {
   name: string;
@@ -103,16 +109,6 @@ export async function createTournament(data: {
 // events. The exec is told which events and why, and is offered the one action
 // that resolves it — finalise each event, then complete.
 
-interface EventCompletionBlocker {
-  id: string;
-  label: string;
-  status: TournamentEventStatus;
-  statusLabel: string;
-  bucket: EventCompletionBucket;
-  incomplete: number;
-  matchCount: number;
-}
-
 // Named rather than `*`: isRealIncompleteMatch and summariseRedrawBlockers
 // between them read exactly these six, and spelling them out is what makes it
 // reviewable that the classifier is not being starved of a field it branches
@@ -182,25 +178,6 @@ async function loadEventCompletionBlockers(
       matchCount: eventMatches.length,
     };
   });
-}
-
-/**
- * The refusal the exec reads.
- *
- * It names every event rather than counting them, because the next thing they
- * will do is go and finish one, and "3 events are unfinished" does not say
- * which. The unplayed-match count is included where there is one, since that is
- * the number that decides whether finishing it by hand is five minutes' work or
- * an abandoned draw.
- */
-function describeCompletionBlockers(blockers: EventCompletionBlocker[]): string {
-  const parts = blockers.map((b) => {
-    const detail = b.incomplete > 0 ? `${b.statusLabel}, ${b.incomplete} unplayed` : b.statusLabel;
-    return `${b.label} (${detail})`;
-  });
-  const noun = blockers.length === 1 ? 'event has' : 'events have';
-  return `${blockers.length} ${noun} not finished — ${parts.join('; ')}. `
-    + 'Finish them individually, or use "Finalise events & complete" to settle them all now.';
 }
 
 /**
@@ -326,7 +303,13 @@ async function updateTournamentStatusImpl(tournamentId: string, status: Tourname
   // completeTournamentWithEvents is the path that actually settles them.
   if (status === 'completed' || status === 'archived') {
     const blockers = await loadEventCompletionBlockers(adminClient, tournamentId);
-    if (blockers.length > 0) throw new ExpectedError(describeCompletionBlockers(blockers));
+    if (blockers.length > 0) {
+      // This one action serves both closes, so the remedy tracks the status
+      // being written rather than the action being called.
+      throw new ExpectedError(
+        describeCompletionBlockers(blockers, status === 'archived' ? REMEDY_ARCHIVE : REMEDY_COMPLETE),
+      );
+    }
   }
 
   // CONDITIONAL ON THE STATUS THIS REQUEST READ. Two clicks — or two execs —
@@ -589,7 +572,7 @@ async function archiveTournamentImpl(tournamentId: string) {
   // Archiving is a completion too — an archived tournament with a live event in
   // it is the same lie a completed one is.
   const blockers = await loadEventCompletionBlockers(adminClient, tournamentId);
-  if (blockers.length > 0) throw new ExpectedError(describeCompletionBlockers(blockers));
+  if (blockers.length > 0) throw new ExpectedError(describeCompletionBlockers(blockers, REMEDY_ARCHIVE));
 
   // CONDITIONAL ON THE STATUS THIS REQUEST READ, for the reason spelled out on
   // updateTournamentStatus: PostgREST reports "matched no rows" as success, so
