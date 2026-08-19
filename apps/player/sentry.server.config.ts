@@ -32,21 +32,27 @@ const profiling = loadProfilingIntegration();
 const TRACES_RAW = process.env.SENTRY_TRACES_SAMPLE_RATE;
 const tracesSampleRate =
   TRACES_RAW === undefined || TRACES_RAW === ''
-    ? 0.1
+    ? 0.3
     : Math.min(Math.max(Number(TRACES_RAW) || 0, 0), 1);
 
 // CPU profiling sample rate — the expensive half. profileLifecycle 'trace'
 // samples the stack continuously for every traced request, and the native
 // binary does load on the ARM Pi (verified in the running container), so this
-// really was profiling 100% of requests. It applies on top of the trace rate
-// above, so 0.1 x 0.1 profiles ~1% of requests: enough to keep flame graphs,
-// not enough to pay for on every render.
+// really was profiling 100% of requests.
 //
+// Profiling only fires on requests that are already traced, so the two rates
+// multiply. We want ~1% of ALL requests profiled, so derive the session rate
+// from the trace rate instead of hardcoding it — that keeps the 1% intact if
+// the trace rate is ever changed. At tracesSampleRate 0.3 this resolves to
+// 0.0333, i.e. 0.3 x 0.0333 = 1.00% of all requests.
+//
+// Worth raising temporarily when hunting a specific slow page.
 // Override with SENTRY_PROFILES_SAMPLE_RATE at build time.
+const PROFILED_SHARE_OF_ALL_REQUESTS = 0.01;
 const PROFILES_RAW = process.env.SENTRY_PROFILES_SAMPLE_RATE;
 const profileSessionSampleRate =
   PROFILES_RAW === undefined || PROFILES_RAW === ''
-    ? 0.1
+    ? Math.min(PROFILED_SHARE_OF_ALL_REQUESTS / (tracesSampleRate || 1), 1)
     : Math.min(Math.max(Number(PROFILES_RAW) || 0, 0), 1);
 
 Sentry.init({
