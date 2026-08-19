@@ -32,7 +32,7 @@ const profiling = loadProfilingIntegration();
 const TRACES_RAW = process.env.SENTRY_TRACES_SAMPLE_RATE;
 const tracesSampleRate =
   TRACES_RAW === undefined || TRACES_RAW === ''
-    ? 0.3
+    ? 0.1
     : Math.min(Math.max(Number(TRACES_RAW) || 0, 0), 1);
 
 // CPU profiling sample rate — the expensive half. profileLifecycle 'trace'
@@ -43,8 +43,8 @@ const tracesSampleRate =
 // Profiling only fires on requests that are already traced, so the two rates
 // multiply. We want ~1% of ALL requests profiled, so derive the session rate
 // from the trace rate instead of hardcoding it — that keeps the 1% intact if
-// the trace rate is ever changed. At tracesSampleRate 0.3 this resolves to
-// 0.0333, i.e. 0.3 x 0.0333 = 1.00% of all requests.
+// the trace rate is ever changed. At tracesSampleRate 0.1 this resolves to
+// 0.1, i.e. 0.1 x 0.1 = 1.00% of all requests.
 //
 // Worth raising temporarily when hunting a specific slow page.
 // Override with SENTRY_PROFILES_SAMPLE_RATE at build time.

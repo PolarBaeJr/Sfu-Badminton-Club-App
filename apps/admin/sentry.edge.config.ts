@@ -15,7 +15,7 @@ import { supabaseIntegration } from '@supabase/sentry-js-integration';
 const TRACES_RAW = process.env.SENTRY_TRACES_SAMPLE_RATE;
 const tracesSampleRate =
   TRACES_RAW === undefined || TRACES_RAW === ''
-    ? 0.3
+    ? 0.1
     : Math.min(Math.max(Number(TRACES_RAW) || 0, 0), 1);
 
 Sentry.init({

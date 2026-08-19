@@ -17,7 +17,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const TRACES_RAW = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
 const tracesSampleRate =
   TRACES_RAW === undefined || TRACES_RAW === ''
-    ? 0.3
+    ? 0.1
     : Math.min(Math.max(Number(TRACES_RAW) || 0, 0), 1);
 
 Sentry.init({
