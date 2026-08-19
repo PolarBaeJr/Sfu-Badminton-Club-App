@@ -108,3 +108,10 @@ SELECT cron.schedule(
   '*/15 * * * *',
   $$DELETE FROM public.rate_limits WHERE reset_at < now() - interval '1 hour'$$
 );
+
+-- PostgREST caches the schema, and a function it cannot see returns PGRST202,
+-- which the caller treats as a DB error and swallows into its fail-open path.
+-- The fix would then ship and do nothing, indistinguishable from working. This
+-- is idempotent and removes the question from the deploy entirely rather than
+-- leaving it to whether this instance has the pgrst_ddl_watch event trigger.
+NOTIFY pgrst, 'reload schema';

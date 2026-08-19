@@ -34,11 +34,6 @@ function getAdmin(): SupabaseClient | null {
   return admin;
 }
 
-/** Test seam: drop the memoised client so env changes take effect. */
-export function resetSharedRateLimitClient(): void {
-  admin = null;
-}
-
 /**
  * Fixed-window rate limiter shared across every replica of a service.
  *
