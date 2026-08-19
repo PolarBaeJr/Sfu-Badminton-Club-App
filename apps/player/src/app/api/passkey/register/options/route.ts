@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { generateRegistrationOptions } from '@simplewebauthn/server';
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
-import { rateLimit, getClientIp } from '@badminton/shared';
+import { getClientIp } from '@badminton/shared';
+import { sharedRateLimit } from '@/lib/rate-limit';
 import { getCurrentPlayer, createServiceRoleClient } from '@/lib/supabase-server';
 import { signPayload } from '@/lib/passkey/cookie';
 import {
@@ -18,7 +19,7 @@ export async function POST(request: Request) {
   }
 
   const ip = getClientIp(request);
-  const rl = rateLimit(`pk-reg-options:${ip}`, 10, 60_000);
+  const rl = await sharedRateLimit(`pk-reg-options:${ip}`, 10, 60_000);
   if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   // Enrolment requires an existing session — you prove who you are with an

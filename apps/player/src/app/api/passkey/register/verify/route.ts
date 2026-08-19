@@ -4,7 +4,8 @@ import { verifyRegistrationResponse } from '@simplewebauthn/server';
 import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
-import { rateLimit, getClientIp, parseOrThrow } from '@badminton/shared';
+import { getClientIp, parseOrThrow } from '@badminton/shared';
+import { sharedRateLimit } from '@/lib/rate-limit';
 import { getCurrentPlayer, createServiceRoleClient } from '@/lib/supabase-server';
 import { verifyPayload } from '@/lib/passkey/cookie';
 import {
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
   }
 
   const ip = getClientIp(request);
-  const rl = rateLimit(`pk-reg-verify:${ip}`, 10, 60_000);
+  const rl = await sharedRateLimit(`pk-reg-verify:${ip}`, 10, 60_000);
   if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   const player = await getCurrentPlayer();

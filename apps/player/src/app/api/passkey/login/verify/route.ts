@@ -6,12 +6,12 @@ import type { AuthenticationResponseJSON, AuthenticatorTransportFuture } from '@
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
 import {
-  rateLimit,
   getClientIp,
   parseOrThrow,
   AUTH_COOKIE_OPTIONS,
   hostOnlyAuthCookieClears,
 } from '@badminton/shared';
+import { sharedRateLimit } from '@/lib/rate-limit';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { verifyPayload } from '@/lib/passkey/cookie';
 import {
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
   // to grind. The options limiter above bounds how fast challenges can be
   // minted in the first place, which is the real ceiling on this route.
   const ip = getClientIp(request);
-  const rl = rateLimit(`pk-login-verify:${ip}`, 20, 60_000);
+  const rl = await sharedRateLimit(`pk-login-verify:${ip}`, 20, 60_000);
   if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   let body: z.infer<typeof bodySchema>;

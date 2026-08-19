@@ -1,8 +1,9 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { CHECKIN_TOKEN_REGEX, rateLimit, getClientIp } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, getClientIp } from '@badminton/shared';
 import { AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
+import { sharedRateLimit } from '@/lib/rate-limit';
 import { reactivateLapsedMemberByUserId } from '@/lib/reactivate';
 import { ensurePlayerRowForUser } from '@/lib/first-signin';
 
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
 
   // Rate limit: 10 callback attempts per IP per minute (defense against brute force)
   const ip = getClientIp(request);
-  const rl = rateLimit(`auth-cb:${ip}`, 10, 60_000);
+  const rl = await sharedRateLimit(`auth-cb:${ip}`, 10, 60_000);
   if (!rl.success) {
     return new NextResponse('Too many requests', { status: 429 });
   }

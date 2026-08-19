@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
-import { rateLimit, getClientIp } from '@badminton/shared';
+import { getClientIp } from '@badminton/shared';
+import { sharedRateLimit } from '@/lib/rate-limit';
 import { signPayload } from '@/lib/passkey/cookie';
 import {
   getRpId,
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
   // about who has an account no matter how many challenges they collect. The
   // limiter that actually guards sign-in is on /login/verify.
   const ip = getClientIp(request);
-  const rl = rateLimit(`pk-login-options:${ip}`, 60, 60_000);
+  const rl = await sharedRateLimit(`pk-login-options:${ip}`, 60, 60_000);
   if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   // allowCredentials is deliberately EMPTY. The alternative — asking for an

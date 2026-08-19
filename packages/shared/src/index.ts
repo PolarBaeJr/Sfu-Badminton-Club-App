@@ -18,6 +18,7 @@ export * from './utils/expected-error';
 export * from './utils/stale-build';
 export * from './utils/theme';
 export * from './utils/rate-limit';
+export * from './utils/rate-limit-shared';
 export * from './utils/supabase-helpers';
 export * from './utils/query-chunks';
 export * from './utils/roster-restore';
