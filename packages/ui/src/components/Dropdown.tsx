@@ -6,7 +6,10 @@ import { cn } from '../utils';
 
 interface DropdownProps {
   trigger: React.ReactNode;
-  items: { label: string; onClick: () => void; danger?: boolean }[];
+  /** `disabled` greys the item and makes it inert — for an action that is
+   *  already in flight. It does NOT hide the item: a caller that means "this
+   *  person may not do this" leaves the entry out of the array entirely. */
+  items: { label: string; onClick: () => void; danger?: boolean; disabled?: boolean }[];
 }
 
 export function Dropdown({ trigger, items }: DropdownProps) {
@@ -70,12 +73,14 @@ export function Dropdown({ trigger, items }: DropdownProps) {
               <button
                 key={i}
                 role="menuitem"
+                disabled={item.disabled}
                 onClick={() => {
                   item.onClick();
                   setOpen(false);
                 }}
                 className={cn(
                   'w-full text-left px-4 min-h-[40px] text-sm hover:bg-[var(--border-hover)] transition-colors flex items-center',
+                  'disabled:opacity-50 disabled:pointer-events-none',
                   item.danger ? 'text-[var(--color-danger)]' : 'text-[var(--text-secondary)]'
                 )}
               >
