@@ -45,11 +45,11 @@ export interface ActiveSeason {
 /** A ledger is null when it was not asked for — nothing was fetched for it. */
 export interface DashboardFinances {
   season: ActiveSeason;
-  /** club_expenses: total, categories, dated payments, and what execs are owed. */
+  /** club_ledger, direction 'expense': total, categories, dated payments, and what execs are owed. */
   expenses: SeasonExpenses | null;
   /** club_fees where fee_type = 'dues'. Entry fees and reinstatements are other capabilities' books. */
   clubFees: LedgerRead | null;
-  /** other_income: donations, grants, socials. */
+  /** club_ledger, direction 'income': donations, grants, socials. */
   otherIncome: LedgerRead | null;
 }
 

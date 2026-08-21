@@ -123,17 +123,24 @@ export async function LedgerCard({
 }) {
   const supabase = createAdminClient();
   const isIncome = kind === 'income';
-  const table = isIncome ? 'other_income' : 'club_expenses';
+  // ONE TABLE SINCE 00159, and `direction` is what used to be the table name.
+  // This component is rendered twice on /fees — once per tab — under two
+  // SEPARATE capabilities, so the filter is the only thing that still stops the
+  // income tab drawing the club's spending. It is not derived from `kind` at
+  // the query site by accident: `kind` decides the columns, the heading, the
+  // actions and now the rows, so all four move together or none do.
+  const direction = isIncome ? 'income' : 'expense';
 
-  // season_id is NOT NULL on both tables (00073), so unlike the reinstatement
-  // card there is no "attached to no season" bucket to sweep up: every row
-  // belongs to exactly one season and this query cannot miss one.
+  // season_id is NOT NULL on the ledger (00073, carried into 00159), so unlike
+  // the reinstatement card there is no "attached to no season" bucket to sweep
+  // up: every row belongs to exactly one season and this query cannot miss one.
   const rows = canRead
     ? (unwrap(
         await supabase
-          .from(table)
+          .from('club_ledger')
           .select(isIncome ? INCOME_COLS : EXPENSE_COLS)
           .eq('season_id', seasonId)
+          .eq('direction', direction)
           .order('paid_at', { ascending: false, nullsFirst: true })
           .order('created_at', { ascending: false }),
       ) as unknown as LedgerRow[])
@@ -141,7 +148,7 @@ export async function LedgerCard({
 
   // Names for the payer / confirmer ids, in ONE lookup.
   //
-  // Not a PostgREST embed: club_expenses now has three foreign keys to players
+  // Not a PostgREST embed: club_ledger has three foreign keys to players
   // (marked_by, paid_by, reimbursed_by), and an embed across an ambiguous
   // relationship fails outright with "more than one relationship was found"
   // unless every one is disambiguated by constraint name. A plain `.in()` on
@@ -213,7 +220,7 @@ export async function LedgerCard({
    *
    * "Club funds" is a real answer, not a missing one: paid_by IS NULL means the
    * club account paid directly and there is nobody to reimburse (00077's
-   * club_expenses_reimbursement_needs_payer CHECK enforces that no such row can
+   * club_ledger_reimbursement_needs_payer CHECK enforces that no such row can
    * ever be marked reimbursed). Showing it explicitly is what stops an exec
    * reading a blank as "they forgot about me".
    */

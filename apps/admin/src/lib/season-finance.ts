@@ -16,7 +16,7 @@ import { getSeasonIncome, type SeasonIncome, type SeasonWindow } from './season-
  *
  * Income comes from getSeasonIncome — this wraps it rather than reimplementing
  * it, so a new income ledger has exactly one place to be added and reaches
- * every net figure automatically. (other_income was added THERE, not here, for
+ * every net figure automatically. (Other income was added THERE, not here, for
  * that reason.) getSeasonIncome now has exactly one caller, this function, and
  * both pages that show money call this one.
  *
@@ -61,7 +61,7 @@ import { getSeasonIncome, type SeasonIncome, type SeasonWindow } from './season-
 export interface SeasonFinances {
   /** Every income ledger, itemised. `income.totalCents` is money in. */
   income: SeasonIncome;
-  /** Money out: club_expenses rows for this season with paid_at set. */
+  /** Money out: club_ledger rows for this season, direction 'expense', with paid_at set. */
   expenseCents: number;
   /** Money out per category, for the breakdown. Only categories with spend. */
   expensesByCategory: { category: string; cents: number }[];
@@ -175,19 +175,26 @@ export async function getSeasonExpenses(
   season: SeasonWindow,
 ): Promise<SeasonExpenses> {
   const expenses = await supabase
-    .from('club_expenses')
+    .from('club_ledger')
     // paid_at, reimbursed_at and paid_by ride along with the two columns the
     // total needs. They are the same ledger under the same capability
     // (fees.expenses.read), so this widens no permission — and fetching them
     // together is what keeps the chart and the headline the same arithmetic.
     .select('amount_cents, category, paid_at, reimbursed_at, paid_by')
     .eq('season_id', season.id)
+    // WITHOUT THIS FILTER THIS FUNCTION RETURNS THE CLUB'S INCOME AS SPENDING.
+    // 00159 put both halves in one table; the reader is what keeps them apart,
+    // and this one is called under fees.expenses.read for somebody who may hold
+    // no income capability at all. netCents subtracts what comes back here, so
+    // an unfiltered read would book every donation as money out — twice wrong,
+    // once in each direction.
+    .eq('direction', 'expense')
     .not('paid_at', 'is', null);
 
   // unwrap, NOT `data ?? []`. A failed expense query read as an empty ledger
   // would make netCents equal income exactly — the club would be reported as
   // maximally in the positives at the precise moment the expense data could not
-  // be read. Between this code deploying and 00073 being applied by hand, that
+  // be read. Between this code deploying and 00159 being applied by hand, that
   // query DOES fail, so this is the normal path on the day of the deploy, not a
   // hypothetical.
   return summariseExpenseRows(
@@ -202,8 +209,8 @@ export async function getSeasonExpenses(
  * out of readLedger: /fees' Expenses tab already selects this exact ledger, row
  * by row, to list it — so a chart of what the club spent needs no query at all,
  * only this arithmetic applied to rows the page is holding. Asking the database
- * for club_expenses a second time on the same render, to draw a picture of rows
- * already on screen, is a round trip for nothing.
+ * for the expense ledger a second time on the same render, to draw a picture of
+ * rows already on screen, is a round trip for nothing.
  *
  * ONE FOLD, TWO CALLERS. A second CALLER of one piece of arithmetic is not what
  * the note at the top of this file forbids; a second piece of arithmetic is.

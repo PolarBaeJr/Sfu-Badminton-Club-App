@@ -14,7 +14,7 @@ import { unwrap, type FeeType } from '@badminton/shared';
  * the retired tables throw.
  *
  *   club_fees    season_id directly, split by fee_type
- *   other_income season_id directly, NOT NULL, since 00073
+ *   club_ledger  season_id directly, NOT NULL, split by direction (00159)
  *
  * SEASON IS A COLUMN, NEVER A JOIN AND NEVER A DATE WINDOW. Entry fees used to
  * reach a season through tournaments.season_id; they now carry the season
@@ -32,7 +32,7 @@ import { unwrap, type FeeType } from '@badminton/shared';
  * create one, see its comment.
  *
  * EVERY LEDGER IS FOLDED INTO totalCents HERE, and a caller wanting "income"
- * reads that field rather than adding ledgers up itself. other_income
+ * reads that field rather than adding ledgers up itself. Other income
  * (donations, grants, socials) was added to this function for that reason and
  * reached both /fees and /dashboard at once: a total assembled out of parts by
  * a page that only remembered some of them is precisely how the figure came to
@@ -139,7 +139,7 @@ export type LedgerAmountRow = {
  * Split out of readLedger so that a screen ALREADY HOLDING the rows can reach
  * the same three readings without asking the database for them a second time.
  * /fees is that screen twice over: its fee table selects the dues ledger to
- * decide who has paid, and its ledger card selects other_income row by row to
+ * decide who has paid, and its ledger card selects the income ledger row by row to
  * list it — in both cases the rows a chart needs are already in memory, and a
  * second read of the same table to draw a picture of it would be a round trip
  * for data the page is holding.
@@ -193,7 +193,7 @@ export function foldLedgerRows(rows: readonly LedgerAmountRow[]): LedgerRead {
  * it is short by however much the failed ledger held. The first time it would
  * have bitten is the deploy of 00073 itself — the console ships through CI
  * while migrations are applied BY HAND, so between the two there is a window
- * where other_income does not exist yet and every query against it fails.
+ * where club_ledger does not exist yet and every query against it fails.
  * Silently, that window reports a plausible wrong total; loudly, it reports an
  * error somebody fixes by applying the migration.
  *
@@ -267,10 +267,18 @@ export async function getClubFeeLedger(
  * The other-income ledger on its own — donations, grants, socials (00073).
  * Same reason as getClubFeeLedger above, and the same paid_at rule.
  *
- * `category` is selected here and not for club_fees because other_income
+ * `category` is selected here and not for club_fees because this ledger
  * actually has the column — sponsorships, grants and socials are different
  * kinds of money to the club, and unlike club_fees' fee_type they are all the
  * same permission.
+ *
+ * `.eq('direction', 'income')` IS THE PERMISSION BOUNDARY, not a tidy-up.
+ * Since 00159 income and expenses share one table, and what the club SPENT
+ * answers to fees.expenses.read while this function is called for a holder of
+ * fees.otherincome.read. Dropping the filter would add the club's spending to
+ * its income — a total that is wrong in the flattering direction, on the one
+ * figure the owner asked for by name ("are we in the positives"). It is the
+ * same hazard 00094 documented for fee_type, one table further along.
  */
 export async function getOtherIncomeLedger(
   supabase: SupabaseClient,
@@ -278,9 +286,10 @@ export async function getOtherIncomeLedger(
 ): Promise<LedgerRead> {
   return readLedger(
     await supabase
-      .from('other_income')
+      .from('club_ledger')
       .select('amount_cents, paid_at, category')
       .eq('season_id', season.id)
+      .eq('direction', 'income')
       .not('paid_at', 'is', null),
   );
 }
@@ -289,7 +298,7 @@ export async function getSeasonIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
 ): Promise<SeasonIncome> {
-  // THREE DISJOINT SLICES OF ONE TABLE, plus other_income. fee_type is a
+  // THREE DISJOINT SLICES OF ONE TABLE, plus the income half of club_ledger. fee_type is a
   // single NOT NULL column with a three-value CHECK, so these three filters
   // cannot overlap and cannot leave a paid fee out: the only way a row escapes
   // all three is a fourth fee_type, which the CHECK forbids. That is what makes
@@ -305,9 +314,10 @@ export async function getSeasonIncome(
     feeLedger(supabase, season, 'tournament'),
     feeLedger(supabase, season, 'reinstatement'),
 
-    // 00073. season_id is NOT NULL here, so unlike fees there is no "attached
-    // to no season" row to worry about — but the paid_at rule is the same, so a
-    // row recorded before the money actually arrived stays out.
+    // 00073, now the income half of club_ledger (00159). season_id is NOT NULL
+    // here, so unlike fees there is no "attached to no season" row to worry
+    // about — but the paid_at rule is the same, so a row recorded before the
+    // money actually arrived stays out.
     getOtherIncomeLedger(supabase, season),
   ]);
 

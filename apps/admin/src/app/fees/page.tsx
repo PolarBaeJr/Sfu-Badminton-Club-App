@@ -191,8 +191,8 @@ export default async function FeesPage({
       <div className="space-y-6">
         <PageHeader eyebrow="No season" title={pageTitle} watermark={pageWatermark} />
         <Card>
-          {/* No season means no net position either: other_income and
-              club_expenses are season_id NOT NULL (00073), so there is nothing
+          {/* No season means no net position either: club_ledger is
+              season_id NOT NULL (00073, kept by 00159), so there is nothing
               to add up and no season to add it up for. Said out loud here
               rather than leaving an admin to wonder where the tabs went. */}
           {/* The way out is offered to whoever can actually take it. This read

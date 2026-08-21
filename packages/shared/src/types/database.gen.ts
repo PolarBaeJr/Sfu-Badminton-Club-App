@@ -356,89 +356,6 @@ export type Database = {
           },
         ]
       }
-      club_expenses: {
-        Row: {
-          amount_cents: number
-          category: string
-          created_at: string
-          description: string
-          id: string
-          marked_by: string | null
-          method: string | null
-          paid_at: string | null
-          paid_by: string | null
-          quantity: number | null
-          ref_no: number
-          reference: string | null
-          reimbursed_at: string | null
-          reimbursed_by: string | null
-          season_id: string
-        }
-        Insert: {
-          amount_cents: number
-          category: string
-          created_at?: string
-          description: string
-          id?: string
-          marked_by?: string | null
-          method?: string | null
-          paid_at?: string | null
-          paid_by?: string | null
-          quantity?: number | null
-          ref_no?: number
-          reference?: string | null
-          reimbursed_at?: string | null
-          reimbursed_by?: string | null
-          season_id: string
-        }
-        Update: {
-          amount_cents?: number
-          category?: string
-          created_at?: string
-          description?: string
-          id?: string
-          marked_by?: string | null
-          method?: string | null
-          paid_at?: string | null
-          paid_by?: string | null
-          quantity?: number | null
-          ref_no?: number
-          reference?: string | null
-          reimbursed_at?: string | null
-          reimbursed_by?: string | null
-          season_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "club_expenses_marked_by_fkey"
-            columns: ["marked_by"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "club_expenses_paid_by_fkey"
-            columns: ["paid_by"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "club_expenses_reimbursed_by_fkey"
-            columns: ["reimbursed_by"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "club_expenses_season_id_fkey"
-            columns: ["season_id"]
-            isOneToOne: false
-            referencedRelation: "seasons"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       club_fees: {
         Row: {
           amount_cents: number | null
@@ -525,6 +442,92 @@ export type Database = {
             columns: ["tournament_id"]
             isOneToOne: false
             referencedRelation: "tournaments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      club_ledger: {
+        Row: {
+          amount_cents: number
+          category: string
+          created_at: string
+          description: string
+          direction: string
+          id: string
+          marked_by: string | null
+          method: string | null
+          paid_at: string | null
+          paid_by: string | null
+          quantity: number | null
+          ref_no: number
+          reference: string | null
+          reimbursed_at: string | null
+          reimbursed_by: string | null
+          season_id: string
+        }
+        Insert: {
+          amount_cents: number
+          category: string
+          created_at?: string
+          description: string
+          direction: string
+          id?: string
+          marked_by?: string | null
+          method?: string | null
+          paid_at?: string | null
+          paid_by?: string | null
+          quantity?: number | null
+          ref_no?: never
+          reference?: string | null
+          reimbursed_at?: string | null
+          reimbursed_by?: string | null
+          season_id: string
+        }
+        Update: {
+          amount_cents?: number
+          category?: string
+          created_at?: string
+          description?: string
+          direction?: string
+          id?: string
+          marked_by?: string | null
+          method?: string | null
+          paid_at?: string | null
+          paid_by?: string | null
+          quantity?: number | null
+          ref_no?: never
+          reference?: string | null
+          reimbursed_at?: string | null
+          reimbursed_by?: string | null
+          season_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "club_ledger_marked_by_fkey"
+            columns: ["marked_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "club_ledger_paid_by_fkey"
+            columns: ["paid_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "club_ledger_reimbursed_by_fkey"
+            columns: ["reimbursed_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "club_ledger_season_id_fkey"
+            columns: ["season_id"]
+            isOneToOne: false
+            referencedRelation: "seasons"
             referencedColumns: ["id"]
           },
         ]
@@ -1168,63 +1171,6 @@ export type Database = {
             columns: ["player_id"]
             isOneToOne: false
             referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      other_income: {
-        Row: {
-          amount_cents: number
-          category: string
-          created_at: string
-          description: string
-          id: string
-          marked_by: string | null
-          method: string | null
-          paid_at: string | null
-          ref_no: number
-          reference: string | null
-          season_id: string
-        }
-        Insert: {
-          amount_cents: number
-          category: string
-          created_at?: string
-          description: string
-          id?: string
-          marked_by?: string | null
-          method?: string | null
-          paid_at?: string | null
-          ref_no?: number
-          reference?: string | null
-          season_id: string
-        }
-        Update: {
-          amount_cents?: number
-          category?: string
-          created_at?: string
-          description?: string
-          id?: string
-          marked_by?: string | null
-          method?: string | null
-          paid_at?: string | null
-          ref_no?: number
-          reference?: string | null
-          season_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "other_income_marked_by_fkey"
-            columns: ["marked_by"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "other_income_season_id_fkey"
-            columns: ["season_id"]
-            isOneToOne: false
-            referencedRelation: "seasons"
             referencedColumns: ["id"]
           },
         ]

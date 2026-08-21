@@ -171,7 +171,7 @@ export function LedgerChartPanel({
  * money area: dues, other income and the net position are each their own
  * capability and each admin-only. So this is the whole of what the club's
  * finance exec may honestly be shown, and every figure on it comes out of
- * club_expenses.
+ * the expense half of club_ledger.
  */
 export function ExpensePanel({
   season,

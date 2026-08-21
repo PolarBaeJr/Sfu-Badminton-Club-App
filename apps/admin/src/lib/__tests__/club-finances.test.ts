@@ -195,8 +195,14 @@ const MEMBER = '55555555-5555-4555-8555-555555555555';
  */
 const CONFIRM = { amountCents: 8400, paidBy: OTHER_EXEC };
 
-const income = () => store.db.other_income ?? [];
-const expenses = () => store.db.club_expenses ?? [];
+// ONE TABLE, TWO BOOKS (00159). The rows live together in the store exactly as
+// they now live together in Postgres, and these accessors split them the way a
+// query has to. That is deliberate rather than convenient: if an action forgets
+// its `direction` filter, its delete or update reaches a row in the OTHER book,
+// and a fake that kept two arrays could never show it.
+const ledger = () => store.db.club_ledger ?? [];
+const income = () => ledger().filter((r) => r.direction === 'income');
+const expenses = () => ledger().filter((r) => r.direction === 'expense');
 const audits = () => store.db.audit_logs ?? [];
 
 /** An expense in the store, plus its id, for the tests that act on one. */
@@ -217,8 +223,7 @@ beforeEach(() => {
   store.swallowDeletes = false;
   store.swallowUpdates = false;
   store.db = {
-    other_income: [],
-    club_expenses: [],
+    club_ledger: [],
     audit_logs: [],
     seasons: [{ id: SEASON, active_flag: true }],
     // The roster the payer check reads. Only an exec or an admin may be named
@@ -441,6 +446,79 @@ describe('removeOtherIncome / removeExpense', () => {
     await expect(removeExpense('00000000-0000-4000-8000-000000009999')).rejects.toThrow(/not found/i);
     await expect(removeOtherIncome('00000000-0000-4000-8000-000000009999')).rejects.toThrow(/not found/i);
   });
+
+  // ============================================================
+  // THE INTERLOCK 00159 MADE NECESSARY
+  // ============================================================
+  // Before the merge, the table name was the boundary: removeOtherIncome could
+  // not physically reach an expense, because expenses were in another table.
+  // Now ids are unique across ONE ledger, so an expense id handed to the income
+  // action would find a real row — and delete it — unless every id-keyed
+  // statement also filters on `direction`.
+  //
+  // That matters beyond a mixed-up id. The two halves are separate
+  // capabilities: a person may hold fees.otherincome.remove.write and NOT
+  // fees.expenses.remove.write. Without the filter, the capability they DO hold
+  // becomes a way to destroy rows in the book they do not. These two tests are
+  // the only place that is checked, so they are worth more than their length.
+  it('will not let the income action delete an expense', async () => {
+    const expenseId = await recordExpense();
+    expect(expenses()).toHaveLength(1);
+
+    await expect(removeOtherIncome(expenseId)).rejects.toThrow(/not found/i);
+
+    // Refused, and — the part that actually matters — the row is still there.
+    expect(expenses()).toHaveLength(1);
+    expect(audits().some((a) => a.action_type === 'other_income_removed')).toBe(false);
+  });
+
+  it('will not let the expense action delete an income entry', async () => {
+    await addOtherIncome({
+      season_id: SEASON,
+      category: 'donation',
+      description: 'Alumni',
+      amount_cents: 15000,
+    });
+    const incomeId = income()[0]!.id as string;
+    expect(income()).toHaveLength(1);
+
+    await expect(removeExpense(incomeId)).rejects.toThrow(/not found/i);
+
+    expect(income()).toHaveLength(1);
+    expect(audits().some((a) => a.action_type === 'expense_removed')).toBe(false);
+  });
+
+  // The same interlock on the write paths, which are worse: a delete that
+  // crossed books at least removes something the caller pointed at, while an
+  // update that crosses books REWRITES a row in the other ledger and leaves it
+  // looking ordinary.
+  it('will not let the expense edit or settlement reach an income entry', async () => {
+    await addOtherIncome({
+      season_id: SEASON,
+      category: 'donation',
+      description: 'Alumni',
+      amount_cents: 15000,
+    });
+    const incomeId = income()[0]!.id as string;
+
+    await expect(
+      updateExpense({
+        id: incomeId,
+        category: 'shuttles',
+        description: 'rewritten',
+        amount_cents: 1,
+      } as Parameters<typeof updateExpense>[0]),
+    ).rejects.toThrow(/not found/i);
+
+    await expect(
+      markExpenseReimbursed(incomeId, { amountCents: 15000, paidBy: OTHER_EXEC }),
+    ).rejects.toThrow(/not found/i);
+
+    const row = income()[0]!;
+    expect(row.description).toBe('Alumni');
+    expect(row.amount_cents).toBe(15000);
+    expect(row.reimbursed_at ?? null).toBeNull();
+  });
 });
 
 describe('markExpenseReimbursed', () => {
@@ -473,7 +551,7 @@ describe('markExpenseReimbursed', () => {
 
   // Nothing to reimburse when the club account paid: marking such a row would
   // assert the club refunded itself, and would show a "Reimbursed" badge for
-  // money nobody spent. 00077's club_expenses_reimbursement_needs_payer CHECK
+  // money nobody spent. 00077's club_ledger_reimbursement_needs_payer CHECK
   // is the same rule stated in the database.
   it('refuses a row the club paid for directly', async () => {
     const id = await recordExpense();

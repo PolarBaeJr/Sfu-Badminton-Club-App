@@ -92,6 +92,11 @@ export async function addOtherIncome(input: OtherIncomeInput) {
 
   const row = {
     season_id: parsed.season_id,
+    // 00159 merged this ledger with club_expenses. The column has NO DEFAULT,
+    // so an insert that forgot it fails loudly rather than filing a donation as
+    // a spend — which would subtract it from the season instead of adding it,
+    // moving the club's net position by twice the amount.
+    direction: 'income' as const,
     category: parsed.category,
     description: parsed.description,
     amount_cents: parsed.amount_cents,
@@ -102,7 +107,7 @@ export async function addOtherIncome(input: OtherIncomeInput) {
   };
 
   const { data: created, error } = await adminClient
-    .from('other_income')
+    .from('club_ledger')
     .insert(row)
     .select('id')
     .single();
@@ -110,6 +115,11 @@ export async function addOtherIncome(input: OtherIncomeInput) {
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
+    // The audit vocabulary is UNCHANGED by 00159, on purpose. There are
+    // already rows on production carrying these strings, and audit-log-view.ts
+    // matches on them; renaming the type to match the new table would orphan
+    // the history it exists to preserve. The table moved, the record of what
+    // happened did not.
     action_type: 'other_income_added',
     target_type: 'other_income',
     target_id: created.id,
@@ -127,19 +137,27 @@ export async function removeOtherIncome(id: string) {
   // log records that an amount was deleted but not which one — there is a
   // fee_waived row on production with an empty old_value for exactly that
   // reason (see waiveFee).
+  // `.eq('direction', 'income')` IS A SAFETY INTERLOCK, NOT A FILTER.
+  // Since 00159 ids are unique across the WHOLE ledger, so an expense id passed
+  // to this action would otherwise read — and below, DELETE — a row belonging to
+  // the other book, under fees.otherincome.remove.write, which its holder may
+  // not have. Before the merge the table name made that impossible. Now this
+  // does. Every id-keyed statement in this file carries it.
   const { data: existing } = await adminClient
-    .from('other_income')
+    .from('club_ledger')
     .select('id, season_id, category, description, amount_cents, paid_at, method, reference')
     .eq('id', id)
+    .eq('direction', 'income')
     .maybeSingle();
   if (!existing) throw new Error('Income entry not found');
 
   // .select() so the deleted rows come back. Without it a delete matching
   // nothing is indistinguishable from a delete that worked.
   const { data: deleted, error } = await adminClient
-    .from('other_income')
+    .from('club_ledger')
     .delete()
     .eq('id', id)
+    .eq('direction', 'income')
     .select('id');
   if (error) throw new Error(error.message);
   if (!deleted || deleted.length !== 1) {
@@ -175,6 +193,11 @@ export async function addExpense(input: ClubExpenseInput) {
 
   const row = {
     season_id: parsed.season_id,
+    // See addOtherIncome. `direction` also gates the CHECK constraints: only an
+    // expense row may carry paid_by, quantity or the reimbursement columns, so
+    // a misfiled row is refused by the database rather than rendered with a
+    // reimbursement badge on somebody's donation.
+    direction: 'expense' as const,
     category: parsed.category,
     description: parsed.description,
     amount_cents: parsed.amount_cents,
@@ -187,7 +210,7 @@ export async function addExpense(input: ClubExpenseInput) {
   };
 
   const { data: created, error } = await adminClient
-    .from('club_expenses')
+    .from('club_ledger')
     .insert(row)
     .select('id')
     .single();
@@ -249,9 +272,10 @@ export async function updateExpense(input: ClubExpenseUpdateInput) {
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient
-    .from('club_expenses')
+    .from('club_ledger')
     .select('id, season_id, category, description, amount_cents, quantity, paid_at, paid_by, reimbursed_at, reimbursed_by, method, reference')
     .eq('id', parsed.id)
+    .eq('direction', 'expense')
     .maybeSingle();
   if (!existing) throw new Error('Expense not found');
 
@@ -295,7 +319,15 @@ export async function updateExpense(input: ClubExpenseUpdateInput) {
   // row anyway and the guard would have been decoration. When the row was
   // already settled the filter matches on its stored timestamp instead, so the
   // still-permitted edits (description, category, ...) go through.
-  const query = adminClient.from('club_expenses').update(patch).eq('id', parsed.id);
+  const query = adminClient
+    .from('club_ledger')
+    .update(patch)
+    .eq('id', parsed.id)
+    // Not redundant with the read above: the read proves the row WAS an
+    // expense, this proves the row being written still is. Both are needed for
+    // the same reason the reimbursed_at filter below is — a concurrent writer
+    // between the two statements.
+    .eq('direction', 'expense');
   const scoped = settled
     ? query.eq('reimbursed_at', existing.reimbursed_at)
     : query.is('reimbursed_at', null);
@@ -367,9 +399,10 @@ export async function markExpenseReimbursed(
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient
-    .from('club_expenses')
+    .from('club_ledger')
     .select('id, season_id, description, amount_cents, paid_by, reimbursed_at, reimbursed_by')
     .eq('id', id)
+    .eq('direction', 'expense')
     .maybeSingle();
   if (!existing) throw new Error('Expense not found');
   if (!existing.paid_by) {
@@ -385,9 +418,10 @@ export async function markExpenseReimbursed(
   const reimbursed_at = new Date().toISOString();
 
   const { data: updated, error } = await adminClient
-    .from('club_expenses')
+    .from('club_ledger')
     .update({ reimbursed_at, reimbursed_by: admin.id })
     .eq('id', id)
+    .eq('direction', 'expense')
     .is('reimbursed_at', null)
     .eq('amount_cents', confirmed.amountCents)
     .eq('paid_by', confirmed.paidBy)
@@ -422,16 +456,18 @@ export async function removeExpense(id: string) {
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient
-    .from('club_expenses')
+    .from('club_ledger')
     .select('id, season_id, category, description, amount_cents, quantity, paid_at, paid_by, reimbursed_at, reimbursed_by, method, reference')
     .eq('id', id)
+    .eq('direction', 'expense')
     .maybeSingle();
   if (!existing) throw new Error('Expense not found');
 
   const { data: deleted, error } = await adminClient
-    .from('club_expenses')
+    .from('club_ledger')
     .delete()
     .eq('id', id)
+    .eq('direction', 'expense')
     .select('id');
   if (error) throw new Error(error.message);
   if (!deleted || deleted.length !== 1) {

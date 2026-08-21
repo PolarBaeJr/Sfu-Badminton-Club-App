@@ -15,8 +15,8 @@ function makeClient(rows: {
   dues?: Record<string, unknown>[];
   tournament?: Record<string, unknown>[];
   reinstatement?: Record<string, unknown>[];
-  other_income?: Record<string, unknown>[];
-  club_expenses?: Record<string, unknown>[];
+  income?: Record<string, unknown>[];
+  expense?: Record<string, unknown>[];
 }) {
   const calls: { table: string; filters: string[] }[] = [];
   return {
@@ -25,10 +25,12 @@ function makeClient(rows: {
       const entry = { table, filters: [] as string[] };
       calls.push(entry);
       let feeType: string | null = null;
+      let direction: string | null = null;
       const chain: Record<string, unknown> = {
         select: () => chain,
         eq: (col: string, val: unknown) => {
           if (col === 'fee_type') feeType = String(val);
+          if (col === 'direction') direction = String(val);
           entry.filters.push(`eq:${col}=${val}`);
           return chain;
         },
@@ -43,7 +45,19 @@ function makeClient(rows: {
                 : [...(rows.dues ?? []), ...(rows.tournament ?? []), ...(rows.reinstatement ?? [])],
             });
           }
-          return resolve({ data: rows[table as 'other_income' | 'club_expenses'] ?? [] });
+          if (table === 'club_ledger') {
+            // Same modelling as club_fees above and for the same reason (00159):
+            // an unfiltered read gets BOTH directions. Here that is worse than a
+            // double count — getSeasonFinances SUBTRACTS what this returns, so
+            // an unfiltered expense read books the club's income as spending and
+            // moves the net position by twice every donation.
+            return resolve({
+              data: direction
+                ? rows[direction as 'income' | 'expense'] ?? []
+                : [...(rows.income ?? []), ...(rows.expense ?? [])],
+            });
+          }
+          return resolve({ data: [] });
         },
       };
       return chain;
@@ -61,7 +75,7 @@ describe('getSeasonFinances', () => {
   it('nets expenses off income', async () => {
     const client = makeClient({
       dues: [{ amount_cents: 20000 }],
-      club_expenses: [{ amount_cents: 8400, category: 'shuttles' }],
+      expense: [{ amount_cents: 8400, category: 'shuttles' }],
     });
 
     const f = await getSeasonFinances(client as never, SEASON);
@@ -78,7 +92,7 @@ describe('getSeasonFinances', () => {
   it('reports a negative net rather than clamping at zero', async () => {
     const client = makeClient({
       dues: [{ amount_cents: 5000 }],
-      club_expenses: [{ amount_cents: 12000, category: 'court_rental' }],
+      expense: [{ amount_cents: 12000, category: 'court_rental' }],
     });
 
     const f = await getSeasonFinances(client as never, SEASON);
@@ -90,8 +104,8 @@ describe('getSeasonFinances', () => {
   // together rather than each reading its own subset of the ledgers.
   it('counts other income on the income side of the net', async () => {
     const client = makeClient({
-      other_income: [{ amount_cents: 10000 }],
-      club_expenses: [{ amount_cents: 2500, category: 'food' }],
+      income: [{ amount_cents: 10000 }],
+      expense: [{ amount_cents: 2500, category: 'food' }],
     });
 
     const f = await getSeasonFinances(client as never, SEASON);
@@ -104,11 +118,11 @@ describe('getSeasonFinances', () => {
   // outside every window and vanished from every total (00069). A shuttle
   // order placed in August for a September season is the identical shape.
   it('scopes expenses by season_id and not by date', async () => {
-    const client = makeClient({ club_expenses: [{ amount_cents: 700, category: 'shuttles' }] });
+    const client = makeClient({ expense: [{ amount_cents: 700, category: 'shuttles' }] });
     const f = await getSeasonFinances(client as never, SEASON);
     expect(f.expenseCents).toBe(700);
 
-    const expenses = client.calls.find((c) => c.table === 'club_expenses')!;
+    const expenses = client.calls.find((c) => c.table === 'club_ledger')!;
     expect(expenses.filters).toContain('eq:season_id=season-1');
     expect(expenses.filters.some((x) => x.includes('paid_at='))).toBe(false);
     // Same paid_at rule as every income ledger: money that has not left yet is
@@ -121,7 +135,7 @@ describe('getSeasonFinances', () => {
   // and a breakdown that does not add up to its own total is worse than none.
   it('breaks expenses down into parts that add up to the whole', async () => {
     const client = makeClient({
-      club_expenses: [
+      expense: [
         { amount_cents: 4000, category: 'shuttles' },
         { amount_cents: 2000, category: 'shuttles' },
         { amount_cents: 9000, category: 'court_rental' },
@@ -145,7 +159,7 @@ describe('getSeasonFinances', () => {
   // feature was written around.
   it('keeps a null-category row in the total', async () => {
     const client = makeClient({
-      club_expenses: [
+      expense: [
         { amount_cents: 1000, category: null },
         { amount_cents: 500, category: 'food' },
       ],
@@ -161,7 +175,7 @@ describe('getSeasonFinances', () => {
   it('treats a missing amount as zero rather than NaN', async () => {
     const client = makeClient({
       dues: [{ amount_cents: 5000 }],
-      club_expenses: [{ amount_cents: null, category: 'other' }, { amount_cents: 100, category: 'other' }],
+      expense: [{ amount_cents: null, category: 'other' }, { amount_cents: 100, category: 'other' }],
     });
 
     const f = await getSeasonFinances(client as never, SEASON);
@@ -184,7 +198,7 @@ describe('getSeasonFinances', () => {
   //
   // Not hypothetical: this console deploys through CI while migrations are
   // applied BY HAND, so between the deploy of this code and 00073 being run the
-  // club_expenses query fails every time. Throwing turns that window into an
+  // club_ledger query fails every time. Throwing turns that window into an
   // error page somebody fixes; swallowing it turns it into a wrong figure
   // nobody questions.
   it('throws rather than reporting a failed expense query as zero spend', async () => {
@@ -195,13 +209,13 @@ describe('getSeasonFinances', () => {
           eq: () => chain,
           not: () => chain,
           then: (resolve: (v: unknown) => unknown) =>
-            resolve({ data: null, error: { message: 'relation "club_expenses" does not exist' } }),
+            resolve({ data: null, error: { message: 'relation "club_ledger" does not exist' } }),
         };
         return chain;
       },
     };
 
-    await expect(getSeasonFinances(client as never, SEASON)).rejects.toThrow(/club_expenses/);
+    await expect(getSeasonFinances(client as never, SEASON)).rejects.toThrow(/club_ledger/);
   });
 
   // THE NET-POSITION DECISION FOR REIMBURSEMENT (00077), pinned.
@@ -219,7 +233,7 @@ describe('getSeasonFinances', () => {
   it('counts a reimbursed expense exactly the same as an unreimbursed one', async () => {
     const rows = (reimbursed: boolean) => ({
       dues: [{ amount_cents: 20000 }],
-      club_expenses: [
+      expense: [
         {
           amount_cents: 8400,
           category: 'shuttles',
@@ -242,11 +256,11 @@ describe('getSeasonFinances', () => {
   // `.is(...)` on reimbursed_at appearing here would be the cash-basis change
   // arriving by accident, quietly moving every net figure on two pages.
   it('does not filter the expense query on reimbursement state', async () => {
-    const client = makeClient({ club_expenses: [{ amount_cents: 8400, category: 'shuttles' }] });
+    const client = makeClient({ expense: [{ amount_cents: 8400, category: 'shuttles' }] });
 
     await getSeasonFinances(client as never, SEASON);
 
-    const expenseQuery = client.calls.find((c) => c.table === 'club_expenses')!;
+    const expenseQuery = client.calls.find((c) => c.table === 'club_ledger')!;
     expect(expenseQuery.filters.some((f) => f.includes('reimbursed'))).toBe(false);
   });
 });
