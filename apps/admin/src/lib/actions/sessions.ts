@@ -31,6 +31,7 @@ export async function createSession(data: {
   notes?: string;
   track: SessionGroupInput;
   repeat_until?: string;
+  repeat_frequency?: 'daily' | 'weekly';
   excluded_dates?: string[];
 }): Promise<ActionResult<Awaited<ReturnType<typeof createSessionImpl>>>> {
   return runAction(() => createSessionImpl(data));
@@ -56,27 +57,40 @@ async function createSessionImpl(data: {
   notes?: string;
   track: SessionGroupInput;
   repeat_until?: string;
+  repeat_frequency?: 'daily' | 'weekly';
   excluded_dates?: string[];
 }) {
   parseOrThrow(sessionCreateSchema, data);
   const admin = await requireCapability('sessions.create.write');
   const adminClient = createAdminClient();
 
-  // Weekly recurrence: same weekday, stepping +7 days up to repeat_until.
+  // Recurrence: step forward from `date` up to and including repeat_until.
+  // 'weekly' lands on the same weekday every time; 'daily' takes consecutive
+  // days, which is how a multi-day event is built — a Saturday-Sunday camp is
+  // this loop run once with a step of 1 and an end date one day out.
+  //
   // UTC math on the YYYY-MM-DD string — a local Date would drift across DST.
+  // The client mirrors this loop to preview the chips; the two must agree, so
+  // the step lives in one named constant on each side rather than inline.
+  const stepDays = data.repeat_frequency === 'daily' ? 1 : 7;
   const series = [data.date];
   if (data.repeat_until) {
     // Date-only strings parse as UTC midnight per the ECMAScript spec.
     let ms = Date.parse(data.date);
     for (;;) {
-      ms += 7 * 86400000;
+      ms += stepDays * 86400000;
       const next = new Date(ms).toISOString().slice(0, 10);
       if (next > data.repeat_until) break;
       series.push(next);
     }
   }
   // The 40-cap is on the pre-exclusion series: it bounds the date window being
-  // reviewed, so excluding dates doesn't buy a longer window.
+  // reviewed, so excluding dates doesn't buy a longer window. It stays 40 for
+  // BOTH frequencies. The cap is about how many rows one submit may create —
+  // how many chips a person has to actually read before pressing the button —
+  // not about how far ahead the window reaches, so it does not want scaling by
+  // the step. Daily therefore tops out at 40 consecutive days, which is far
+  // past any real multi-day event.
   if (series.length > 40) {
     throw new Error('Too many sessions (max 40) — pick an earlier end date');
   }

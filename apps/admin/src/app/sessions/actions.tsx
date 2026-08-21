@@ -350,15 +350,28 @@ export function CheckinQrDialog({ sessionId, url, svg }: CheckinQrDialogProps) {
   );
 }
 
-// Mirrors the server's weekly recurrence in createSession: UTC math on the
-// YYYY-MM-DD strings so the preview never drifts across DST. Capped at 41 so a
-// typo'd far-future end date can't flood the dialog with chips (the server
-// rejects anything over 40 anyway).
-function weeklySeriesDates(start: string, until: string): string[] {
+// The two recurrences a session series can have. 'daily' is what makes a
+// MULTI-DAY EVENT expressible — a Saturday-Sunday camp is two rows one day
+// apart. See sessionCreateSchema for why that is two rows and not one.
+const REPEAT_OPTIONS = [
+  { value: 'weekly', label: 'Every week' },
+  { value: 'daily', label: 'Every day' },
+];
+
+// Step in days per frequency. The server has the same two numbers in
+// createSession; they must agree or the chip count lies about what gets made.
+const STEP_DAYS: Record<'daily' | 'weekly', number> = { weekly: 7, daily: 1 };
+
+// Mirrors the server's recurrence in createSession: UTC math on the YYYY-MM-DD
+// strings so the preview never drifts across DST. Capped at 41 so a typo'd
+// far-future end date can't flood the dialog with chips (the server rejects
+// anything over 40 anyway) — the cap is on the COUNT, not the span, so it is
+// the same 41 for both frequencies, matching the server's 40.
+function seriesDates(start: string, until: string, stepDays: number): string[] {
   const dates = [start];
   let ms = Date.parse(start);
   while (dates.length <= 40) {
-    ms += 7 * 86400000;
+    ms += stepDays * 86400000;
     const next = new Date(ms).toISOString().slice(0, 10);
     if (next > until) break;
     dates.push(next);
@@ -379,14 +392,15 @@ export function CreateSessionForm() {
   const [location, setLocation] = useState('');
   const [notes, setNotes] = useState('');
   const [track, setTrack] = useState<SessionGroupInput>('all');
-  const [repeatWeekly, setRepeatWeekly] = useState(false);
+  const [repeats, setRepeats] = useState(false);
+  const [repeatFrequency, setRepeatFrequency] = useState<'daily' | 'weekly'>('weekly');
   const [repeatUntil, setRepeatUntil] = useState('');
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  const series = repeatWeekly && date && repeatUntil && repeatUntil >= date
-    ? weeklySeriesDates(date, repeatUntil)
+  const series = repeats && date && repeatUntil && repeatUntil >= date
+    ? seriesDates(date, repeatUntil, STEP_DAYS[repeatFrequency])
     : [];
   const excludedInSeries = series.filter((d) => excluded.has(d));
 
@@ -410,7 +424,8 @@ export function CreateSessionForm() {
         location,
         notes: notes || undefined,
         track,
-        repeat_until: repeatWeekly && repeatUntil ? repeatUntil : undefined,
+        repeat_until: repeats && repeatUntil ? repeatUntil : undefined,
+        repeat_frequency: repeatFrequency,
         excluded_dates: excludedInSeries.length > 0 ? excludedInSeries : undefined,
       });
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
@@ -418,7 +433,7 @@ export function CreateSessionForm() {
       toast(count > 1 ? `Created ${count} sessions` : 'Session created', 'success');
       setOpen(false);
       setName(''); setDate(''); setTime(''); setEndTime(''); setLocation(''); setNotes(''); setTrack('all');
-      setRepeatWeekly(false); setRepeatUntil(''); setExcluded(new Set());
+      setRepeats(false); setRepeatFrequency('weekly'); setRepeatUntil(''); setExcluded(new Set());
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -432,17 +447,36 @@ export function CreateSessionForm() {
         <form onSubmit={handleCreate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
           <DatePicker label="Date" value={date} onChange={(v) => { setDate(v); setExcluded(new Set()); }} required />
+          {/* REPEATS, not "Repeat weekly". The frequency moved out of the
+              checkbox label and into its own Select so that "every day" is
+              reachable, which is the only way this form can describe a
+              MULTI-DAY EVENT: a weekend camp is Sat + Sun as two rows, made in
+              one submit. Weekly stays the default, so the click path for the
+              ordinary case — tick, pick an end date — is the one it was.
+
+              Changing the frequency clears the exclusions along with it. The
+              chips are keyed by date and daily and weekly share almost none of
+              them, so a kept exclusion would silently apply to a date the
+              person never saw, or to none at all. */}
           <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
             <input
               type="checkbox"
-              checked={repeatWeekly}
-              onChange={(e) => setRepeatWeekly(e.target.checked)}
+              checked={repeats}
+              onChange={(e) => { setRepeats(e.target.checked); setExcluded(new Set()); }}
               className="rounded border-[var(--border)]"
             />
-            Repeat weekly
+            Repeats
           </label>
-          {repeatWeekly && (
-            <DatePicker label="Repeat until" value={repeatUntil} min={date || undefined} onChange={(v) => { setRepeatUntil(v); setExcluded(new Set()); }} required />
+          {repeats && (
+            <div className="grid grid-cols-2 gap-3">
+              <Select
+                label="Frequency"
+                options={REPEAT_OPTIONS}
+                value={repeatFrequency}
+                onChange={(e) => { setRepeatFrequency(e.target.value as 'daily' | 'weekly'); setExcluded(new Set()); }}
+              />
+              <DatePicker label="Repeat until" value={repeatUntil} min={date || undefined} onChange={(v) => { setRepeatUntil(v); setExcluded(new Set()); }} required />
+            </div>
           )}
           {series.length > 0 && (
             <div className="space-y-2">
@@ -728,7 +762,7 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
               Not on the Create form. A night is made strict once somebody has
               decided it should be, which is rarely the moment it is scheduled,
               and putting it there would also stamp the choice across a whole
-              40-week weekly series in one click.
+              40-session series in one click.
 
               The consequence is spelled out under the label rather than left to
               be discovered on a member's phone at the door: with this on, the

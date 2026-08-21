@@ -205,10 +205,26 @@ export const sessionCreateSchema = z.object({
   notes: z.string().max(500).optional(),
   season_id: z.string().uuid().optional(),
   track: sessionGroupSchema.default('all'),
-  // Weekly recurrence: when set, sessions repeat on the same weekday up to and
-  // including this date. YYYY-MM-DD strings compare correctly lexicographically.
+  // Recurrence: when set, sessions repeat up to and including this date.
+  // YYYY-MM-DD strings compare correctly lexicographically.
   repeat_until: z.string().optional(),
-  // Dates to skip within the weekly series (same YYYY-MM-DD format as `date`).
+  // How the series steps. 'weekly' keeps the original behaviour — same weekday,
+  // +7 days — and is the default so every existing caller is unchanged.
+  //
+  // 'daily' is what makes a MULTI-DAY EVENT expressible: a Saturday-Sunday camp
+  // is two rows one day apart, not one row with two dates. That is deliberate.
+  // A session is the unit the whole app counts — check-in opens against it,
+  // attendance hangs off it, reminders fire per row — so a weekend camp really
+  // is two doors on two nights, and modelling it as two rows means every one of
+  // those behaviours works with no change. The cost is that it READS as two
+  // rows in Upcoming and members RSVP to each day.
+  //
+  // This does NOT make an OVERNIGHT session possible: a 9pm-1am night still
+  // needs `sessions` to carry an end DATE, which it does not (see 00110 — the
+  // generated ends_at is club_local_instant(date, end_time), same date). That
+  // is a migration, and a separate change.
+  repeat_frequency: z.enum(['daily', 'weekly']).default('weekly'),
+  // Dates to skip within the series (same YYYY-MM-DD format as `date`).
   // Only meaningful alongside repeat_until; stray exclusions without a series
   // are ignored server-side rather than rejected. Capped at the series max.
   excluded_dates: z.array(z.string()).max(40).optional(),

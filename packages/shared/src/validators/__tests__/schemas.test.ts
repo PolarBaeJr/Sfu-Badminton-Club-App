@@ -282,6 +282,40 @@ describe('sessionCreateSchema', () => {
       }).success,
     ).toBe(false);
   });
+  // The default is what keeps every pre-existing caller — none of which sends
+  // repeat_frequency — on the weekly behaviour they were written against.
+  it('defaults repeat_frequency to weekly', () => {
+    const parsed = sessionCreateSchema.safeParse({
+      name: 'Tuesday Open',
+      date: '2026-04-10',
+      location: 'Lorne Davies Complex',
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.repeat_frequency).toBe('weekly');
+  });
+  // A weekend camp: two consecutive days, made in one submit.
+  it('accepts a daily recurrence spanning a weekend', () => {
+    expect(
+      sessionCreateSchema.safeParse({
+        name: 'Spring Camp',
+        date: '2026-04-11',
+        location: 'Lorne Davies Complex',
+        repeat_until: '2026-04-12',
+        repeat_frequency: 'daily',
+      }).success,
+    ).toBe(true);
+  });
+  it('rejects a repeat_frequency it does not know', () => {
+    expect(
+      sessionCreateSchema.safeParse({
+        name: 'Spring Camp',
+        date: '2026-04-11',
+        location: 'Lorne Davies Complex',
+        repeat_until: '2026-04-12',
+        repeat_frequency: 'fortnightly',
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('tournamentCreateSchema', () => {
