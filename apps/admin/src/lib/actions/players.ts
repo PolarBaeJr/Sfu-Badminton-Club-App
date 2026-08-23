@@ -12,6 +12,8 @@ import {
   joinName,
   sendPlayerApprovedEmail,
   parsePrivilegeClaimReview,
+  parseEloReview,
+  type EloReview,
   restoreWithheldPrivileges,
   describePrivileges,
   ExpectedError,
@@ -587,7 +589,9 @@ export async function previewPlayerMerge(
       p_remove: removeId,
     });
     if (error) throw new Error(error.message);
-    // Only surface the rows that actually block; "ok" rows are noise.
+    // Only surface the rows that carry something; empty rows are noise. These
+    // stopped being blockers in 00163 — the dialog now presents them as what
+    // will be carried across, and the merge proceeds either way.
     return ((data ?? []) as MergePreviewRow[]).filter((r) => Number(r.row_count) > 0);
   });
 }
@@ -595,7 +599,7 @@ export async function previewPlayerMerge(
 export async function mergePlayers(
   keepId: string,
   removeId: string,
-): Promise<ActionResult<{ login_moved: boolean }>> {
+): Promise<ActionResult<{ login_moved: boolean; elo_review: EloReview | null }>> {
   return runAction(async () => {
     const admin = await requireCapability('players.merge.write');
     const adminClient = createAdminClient();
@@ -605,12 +609,19 @@ export async function mergePlayers(
       p_remove: removeId,
       p_actor: admin.id,
     });
-    // The function raises with a human-readable reason (history present, two
-    // logins, same id) — surface it verbatim rather than a generic failure.
+    // The function raises with a human-readable reason (two logins, a recorded
+    // deletion, same id) — surface it verbatim rather than a generic failure.
+    // History no longer raises; since 00163 it comes back in elo_review instead.
     if (error) throw new Error(error.message);
 
     revalidatePath('/players');
-    return { login_moved: Boolean((data as { login_moved?: boolean } | null)?.login_moved) };
+    const row = data as { login_moved?: boolean; elo_review?: unknown } | null;
+    return {
+      login_moved: Boolean(row?.login_moved),
+      // Parsed here rather than in the component so the dialog and the roster
+      // badge cannot disagree about what a review says.
+      elo_review: parseEloReview(row?.elo_review ?? null),
+    };
   });
 }
 

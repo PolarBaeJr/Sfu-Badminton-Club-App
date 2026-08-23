@@ -39,6 +39,22 @@ export type TournamentMatchRow = Tables['tournament_matches']['Row'] & {
    * absent before that.
    */
   ready_player_ids?: string[] | null;
+  /**
+   * The exec's own sentence about this match — a void reason, a no-show note,
+   * the words behind a walkover.
+   *
+   * NOT a column. 00118 moved free text off `tournament_matches` into
+   * `tournament_match_notes` and 00122 dropped the old column, so this arrives
+   * joined, and the page nulls it for anyone without the capability to read a
+   * private note. It belongs in this block rather than the generated types for
+   * the opposite reason to the fields above: those are columns the types have
+   * not caught up with, this one is a column that no longer exists.
+   *
+   * It went unnoticed because the generated types were stale enough to still
+   * declare the dropped column — regenerating them for 00163 is what surfaced
+   * the four read sites in ScoreEntryDialog.
+   */
+  notes?: string | null;
 };
 export type TournamentParticipantRow = Tables['tournament_participants']['Row'];
 export type TournamentPairRow = Tables['tournament_pairs']['Row'];

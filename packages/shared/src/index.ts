@@ -33,6 +33,7 @@ export * from './utils/tournament-entry-cap';
 export * from './utils/doubles-pool';
 export * from './utils/competition-category';
 export * from './utils/privilege-claim';
+export * from './utils/elo-review';
 export * from './utils/member-identity';
 export * from './utils/membership';
 export * from './utils/fee-tiers';

@@ -122,29 +122,39 @@ export function MergePlayersButton({ players }: Props) {
             <div className="flex gap-2 p-3 rounded-lg border border-[color-mix(in_oklab,var(--color-danger)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)] text-sm">
               <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--color-danger)] mt-0.5" />
               <span className="text-[var(--text-secondary)]">
-                Both accounts have a login. Delete one of the auth users first — otherwise the
-                leftover login would create a third account at next sign-in.
+                Both accounts have a login. Move the duplicate&apos;s sign-in method onto this
+                account first, then delete the emptied auth user — otherwise the leftover login
+                would create a third account at next sign-in.
               </span>
             </div>
           )}
 
           {blockers !== null && blockers.length > 0 && (
-            <div className="p-3 rounded-lg border border-[color-mix(in_oklab,var(--color-danger)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)] text-sm space-y-1">
-              <div className="flex items-center gap-2 text-[var(--color-danger)] font-medium">
-                <AlertTriangle className="w-4 h-4" /> Can&apos;t merge — the removed account has history
+            <div className="p-3 rounded-lg border border-[color-mix(in_oklab,var(--color-warning)_40%,transparent)] bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] text-sm space-y-1">
+              <div className="flex items-center gap-2 text-[var(--color-warning)] font-medium">
+                <AlertTriangle className="w-4 h-4" /> History to carry across
               </div>
               <ul className="text-[var(--text-secondary)] list-disc pl-5">
                 {blockers.map((b) => (
                   <li key={b.table_name}>{b.table_name}: {b.row_count}</li>
                 ))}
               </ul>
-              <p className="text-[var(--text-muted)]">Try merging the other direction.</p>
+              {/* Not a blocker since 00163. Rows move where they fit; where the
+                  surviving account is already in that match, session or event,
+                  its own row wins and the duplicate's is dropped. Anything worth
+                  a second look — above all a match both accounts played in — is
+                  flagged on the surviving player afterwards. */}
+              <p className="text-[var(--text-muted)]">
+                These move across where they fit. Where this player is already in the same
+                match, session or event, their existing row is kept and the duplicate&apos;s is
+                dropped — you&apos;ll get a review flag listing exactly what happened.
+              </p>
             </div>
           )}
 
           {blockers !== null && blockers.length === 0 && (
             <p className="text-sm text-[var(--color-success)]">
-              Safe to merge — the account being removed has no history.
+              Nothing to carry across — the account being removed has no history.
             </p>
           )}
 
@@ -152,13 +162,13 @@ export function MergePlayersButton({ players }: Props) {
             <Button variant="ghost" onClick={() => { setOpen(false); reset(); }} disabled={merging}>
               Cancel
             </Button>
-            {blockers === null || blockers.length > 0 ? (
+            {blockers === null ? (
               <Button onClick={handleCheck} disabled={!bothChosen || checking || bothHaveLogin}>
                 {checking ? 'Checking…' : 'Check'}
               </Button>
             ) : (
               <Button variant="danger" onClick={handleMerge} disabled={merging}>
-                {merging ? 'Merging…' : 'Merge accounts'}
+                {merging ? 'Merging…' : blockers.length > 0 ? 'Merge anyway' : 'Merge accounts'}
               </Button>
             )}
           </div>
