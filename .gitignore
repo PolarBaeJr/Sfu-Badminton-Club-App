@@ -73,6 +73,12 @@ scripts/*
 # detail, so they are safe in a public repo.
 !scripts/sql/
 
+# db-migrate.sh is toolchain for the same reason gen-db-types.mjs is: it is the
+# documented way to apply a migration and to ask whether a database is level
+# with the checkout, and it is the only thing that knows which files need
+# --single-transaction. Untracked, every operator re-derives that by hand.
+!scripts/db-migrate.sh
+
 # Internal working notes / security findings — keep out of the public repo
 docs/sensitive/
 
