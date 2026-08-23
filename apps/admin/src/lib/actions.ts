@@ -35,6 +35,7 @@ export {
   previewPlayerMerge,
   mergePlayers,
   resolvePrivilegeClaimReview,
+  resolveEloReview,
 } from './actions/players';
 export type { MergePreviewRow } from './actions/players';
 

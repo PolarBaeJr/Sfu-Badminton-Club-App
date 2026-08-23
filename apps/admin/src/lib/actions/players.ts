@@ -770,3 +770,71 @@ async function resolvePrivilegeClaimReviewImpl(playerId: string, decision: 'rest
   revalidatePath('/players');
   revalidatePath(`/players/${playerId}`);
 }
+
+/** Clear the mark merge_players left on the survivor (00163).
+ *
+ * THE HALF 00163 DESCRIBED BUT NEVER WROTE. Its COMMENT ON COLUMN promised the
+ * flag was "cleared by the console once actioned" and nothing anywhere cleared
+ * it, so an admin could void a self-play match and the badge would sit on the
+ * roster forever. A prompt an admin cannot dismiss stops being a prompt after
+ * the first time they ignore it.
+ *
+ * players.merge.write, because the merge is what creates the flag: whoever is
+ * trusted to run a merge that produces one is trusted to say they have looked
+ * at it. Nothing about the member's access or rating changes here — this writes
+ * one column to NULL and an audit row.
+ *
+ * SELF IS ALLOWED, unlike resolvePrivilegeClaimReview. That refusal exists
+ * because restoring your own withheld privileges is self-promotion; this has no
+ * such edge — and refusing it would be actively wrong here, since the club has
+ * one admin and the duplicate rows waiting to be merged are that admin's own.
+ * A rule that makes the only person who can act unable to act is the failure
+ * 00163 was written to remove. The audit row names the actor either way.
+ */
+export async function resolveEloReview(playerId: string): Promise<ActionResult<void>> {
+  return runAction(() => resolveEloReviewImpl(playerId));
+}
+
+async function resolveEloReviewImpl(playerId: string) {
+  const actor = await requireCapability('players.merge.write');
+  const adminClient = createAdminClient();
+
+  const { data: player, error: readError } = await adminClient
+    .from('players')
+    .select('id, full_name, elo_review')
+    .eq('id', playerId)
+    .single();
+  if (readError) throw new Error(readError.message);
+
+  // Read back and parsed rather than blind-written, the way the claim review
+  // does it: somebody else may have cleared this a moment ago, and the audit
+  // row has to say what was actually dismissed, not what the browser last saw.
+  const review = parseEloReview(player.elo_review);
+  if (!review) throw new ExpectedError('There is nothing left to review on this member.');
+
+  const { error } = await adminClient
+    .from('players')
+    .update({ elo_review: null })
+    .eq('id', playerId);
+  if (error) throw new Error(error.message);
+
+  // old_value carries the whole review. This is the ONLY place the self-play
+  // match ids survive being cleared — players.elo_review is about to be NULL
+  // and the merge's own audit row is however far back in the log. Dismissing
+  // the prompt must not also destroy the evidence it was pointing at.
+  await logAdminAudit(adminClient, {
+    actor_id: actor.id,
+    action_type: 'player_updated',
+    target_type: 'player',
+    target_id: playerId,
+    old_value: { elo_review: player.elo_review },
+    new_value: { elo_review: null },
+    reason:
+      review.state === 'elo'
+        ? `Reviewed a merge that left ${review.selfPlayMatches.length + review.selfPlayTournamentMatches.length} self-play match(es) against the merged-away account${review.mergedFromName ? ` (${review.mergedFromName})` : ''}.`
+        : 'Reviewed a merge that discarded rows the survivor already had.',
+  }, { playerId });
+
+  revalidatePath('/players');
+  revalidatePath(`/players/${playerId}`);
+}

@@ -18,6 +18,7 @@ import { PlayerActions } from './player-actions';
 import { AddPlayerButton } from './add-player-button';
 import { MergePlayersButton } from './merge-players-button';
 import { PrivilegeReviewActions } from './privilege-review-actions';
+import { EloReviewActions } from './elo-review-actions';
 import { RosterTable, type RosterRow } from './roster-table';
 import { RowLink } from '@/components/row-link';
 import { RosterCharts } from './roster-charts';
@@ -420,6 +421,17 @@ export default async function PlayersPage({
             // is guaranteed to refuse is worse than a sentence explaining why
             // there is no button.
             isSelf={player.id === viewer.id}
+          />
+        )}
+        {/* Beside the claim review and for the same reason: it decides a flag,
+            not a member, so it does not belong in the tab's action set. No
+            isSelf — see resolveEloReview on why clearing your own is allowed. */}
+        {eloReview && (
+          <EloReviewActions
+            playerId={player.id}
+            playerName={displayName}
+            review={eloReview}
+            canResolve={canMerge}
           />
         )}
         {rosterActionsFor(tab, player, { isAdmin })
