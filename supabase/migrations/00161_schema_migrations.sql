@@ -40,8 +40,9 @@ COMMENT ON COLUMN public.schema_migrations.checksum IS
   'edited after it was applied, which the runner reports but does not treat as fatal.';
 
 -- The table is metadata about the schema, not application data. No client should
--- ever read it through PostgREST, so it gets RLS on with no policies: service_role
--- (which the runner uses) bypasses RLS, everyone else sees nothing.
+-- ever read it through PostgREST, so it gets RLS on with no policies: nothing
+-- reaching it through the API can see a row. The runner is unaffected because it
+-- connects as the postgres superuser over docker exec, not through PostgREST.
 ALTER TABLE public.schema_migrations ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON public.schema_migrations FROM anon, authenticated;
