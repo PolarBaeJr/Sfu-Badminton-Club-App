@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useRef, useEffect, useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, Button, Dialog, Input, PlayerPicker, Select, Textarea, useConfirm, DatePicker } from '@badminton/ui';
+import { Badge, Button, Dialog, Dropdown, Input, PlayerPicker, Select, Textarea, useConfirm, DatePicker } from '@badminton/ui';
 import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark, sendSessionReminders, getOrCreateSessionCheckinToken, rotateSessionCheckinToken } from '@/lib/actions';
 import { runBulk, summarizeBulk } from '@/lib/bulk-add';
 import { useToast } from '@/components/toast-provider';
@@ -519,7 +519,6 @@ interface SessionCardMenuProps {
 }
 
 export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [name, setName] = useState(session.name || '');
   const [date, setDate] = useState(session.date.split('T')[0] ?? '');
@@ -543,23 +542,10 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
   // front of a dialog. Separate state so a half-typed archive reason cannot
   // leak into a save.
   const [editReason, setEditReason] = useState('');
-  const menuRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const confirm = useConfirm();
 
   const sessionLabel = session.name || 'this session';
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    if (menuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [menuOpen]);
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
@@ -614,13 +600,12 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
     setLoading(true);
     try {
       const res = await sendSessionReminders(session.id);
-      if (!res.ok) { toast(res.error, 'error'); setLoading(false); setMenuOpen(false); return; }
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast(res.data.notified > 0 ? `Reminder sent to ${res.data.notified} player${res.data.notified === 1 ? '' : 's'}` : 'No one has RSVP’d going yet', res.data.notified > 0 ? 'success' : 'info');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setLoading(false);
-    setMenuOpen(false);
   }
 
   function closeReason() {
@@ -652,60 +637,48 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
   // no menu button at all rather than an empty popover.
   if (!can.update && !can.reminders && !can.archive && !can.delete) return null;
 
-  const ITEM =
-    'w-full px-4 py-2.5 text-left text-sm transition-colors disabled:opacity-50 min-h-[44px]';
+  // PORTALLED, NOT `absolute`, AND THAT IS THE WHOLE POINT OF THIS COMPONENT
+  // CHOICE. This menu is rendered into the last cell of the table in
+  // session-table.tsx, and ResponsiveTable puts that table inside
+  // `overflow-x-auto` so a wide table can scroll on a laptop. CSS makes
+  // `overflow-y` compute to `auto` the moment the other axis is anything but
+  // `visible`, so that box clips VERTICALLY as well — and an `absolute` menu
+  // hanging off the last (often only) row was sliced off at the card's bottom
+  // edge, which is how this was reported. packages/ui's Dropdown renders into
+  // document.body and re-measures on scroll, so no ancestor's overflow can
+  // reach it. /matches and /tournaments already use it for exactly this row
+  // menu; this file was the one place that hand-rolled its own, which is also
+  // why it was the one place with the bug.
+  //
+  // Built as an array rather than four conditional children because Dropdown
+  // takes its items as data. An action the caller may not perform is left OUT
+  // of the array — same rule as before, where the whole button was omitted —
+  // and `disabled` is reserved for "already in flight".
+  const items: React.ComponentProps<typeof Dropdown>['items'] = [];
+  if (can.update) items.push({ label: 'Edit', onClick: () => setEditOpen(true) });
+  // Wrapped rather than passed by reference: handleSendReminders is async and
+  // Dropdown's onClick is `() => void`, so the floating promise is discarded
+  // explicitly instead of by coercion. It reports through the toast either way.
+  if (can.reminders) items.push({ label: 'Send reminder', onClick: () => { void handleSendReminders(); }, disabled: loading });
+  if (can.archive) items.push({ label: 'Archive', onClick: () => setReasonFor('archive'), disabled: loading });
+  if (can.delete) items.push({ label: 'Delete', onClick: () => setReasonFor('delete'), danger: true, disabled: loading });
 
   return (
     <>
-      <div ref={menuRef} className="relative">
-        <button
-          onClick={() => setMenuOpen((v) => !v)}
-          className="flex items-center justify-center min-h-[44px] min-w-[44px] rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
-          aria-label="Session options"
-        >
-          <MoreVertical className="w-4 h-4" />
-        </button>
-
-        {menuOpen && (
-          <div className="absolute right-0 top-11 z-20 w-40 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] shadow-lg shadow-black/10 overflow-hidden">
-            {can.update && (
-              <button
-                onClick={() => { setEditOpen(true); setMenuOpen(false); }}
-                className={`${ITEM} text-[var(--text-primary)] hover:bg-[var(--border-hover)]`}
-              >
-                Edit
-              </button>
-            )}
-            {can.reminders && (
-              <button
-                onClick={handleSendReminders}
-                disabled={loading}
-                className={`${ITEM} text-[var(--text-primary)] hover:bg-[var(--border-hover)]`}
-              >
-                Send reminder
-              </button>
-            )}
-            {can.archive && (
-              <button
-                onClick={() => { setReasonFor('archive'); setMenuOpen(false); }}
-                disabled={loading}
-                className={`${ITEM} text-[var(--text-primary)] hover:bg-[var(--border-hover)]`}
-              >
-                Archive
-              </button>
-            )}
-            {can.delete && (
-              <button
-                onClick={() => { setReasonFor('delete'); setMenuOpen(false); }}
-                disabled={loading}
-                className={`${ITEM} text-[var(--color-danger)] hover:bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)]`}
-              >
-                Delete
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+      <Dropdown
+        trigger={
+          // No onClick here: Dropdown's own wrapper owns the toggle, and a
+          // second handler on the button would fire it twice and close the menu
+          // on the same click that opened it.
+          <button
+            className="flex items-center justify-center min-h-[44px] min-w-[44px] rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
+            aria-label="Session options"
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+        }
+        items={items}
+      />
 
       <Dialog open={editOpen} onClose={closeEdit} title="Edit Session">
         <form onSubmit={handleUpdate} className="space-y-4">
