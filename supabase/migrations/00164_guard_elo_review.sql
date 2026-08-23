@@ -36,6 +36,26 @@
 
 BEGIN;
 
+-- 00163 IS A HARD PREREQUISITE, and nothing else would catch it. plpgsql
+-- compiles lazily and check_function_bodies only checks syntax, so replacing
+-- this function on a database without players.elo_review SUCCEEDS, reports
+-- nothing, and then raises `record "new" has no field "elo_review"` on the
+-- first profile edit or signup — every write to players, down, from a
+-- migration that said OK. These are applied by hand, one at a time, so the
+-- order is worth enforcing rather than documenting.
+DO $precheck$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'players'
+       AND column_name = 'elo_review'
+  ) THEN
+    RAISE EXCEPTION
+      '00164 requires 00163: public.players.elo_review does not exist. Run 00163_merge_flags_for_review.sql first.';
+  END IF;
+END
+$precheck$;
+
 CREATE OR REPLACE FUNCTION public.guard_player_privileged_columns()
 RETURNS trigger
 LANGUAGE plpgsql
