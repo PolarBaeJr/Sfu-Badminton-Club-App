@@ -9,12 +9,12 @@
 //
 // which is:
 //
-//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-db --database postgres --label production
+//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-staging-db --database postgres --label staging
 //
-// SOURCE DATABASE: production — container "supabase-db" on ssh host
+// SOURCE DATABASE: staging — container "supabase-staging-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 48 tables, 2 views and 26 enums.
+// Covers 52 tables, 2 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -477,7 +477,7 @@ export type Database = {
           paid_at?: string | null
           paid_by?: string | null
           quantity?: number | null
-          ref_no?: never
+          ref_no?: number
           reference?: string | null
           reimbursed_at?: string | null
           reimbursed_by?: string | null
@@ -495,7 +495,7 @@ export type Database = {
           paid_at?: string | null
           paid_by?: string | null
           quantity?: number | null
-          ref_no?: never
+          ref_no?: number
           reference?: string | null
           reimbursed_at?: string | null
           reimbursed_by?: string | null
@@ -902,6 +902,45 @@ export type Database = {
           },
         ]
       }
+      match_admin_notes: {
+        Row: {
+          author_id: string | null
+          created_at: string
+          match_id: string
+          note: string
+          updated_at: string
+        }
+        Insert: {
+          author_id?: string | null
+          created_at?: string
+          match_id: string
+          note: string
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string | null
+          created_at?: string
+          match_id?: string
+          note?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_admin_notes_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_admin_notes_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       match_games: {
         Row: {
           game_number: number
@@ -996,7 +1035,6 @@ export type Database = {
       }
       matches: {
         Row: {
-          admin_note: string | null
           challenge_id: string | null
           completed_flag: boolean
           confirmed_by: string | null
@@ -1025,7 +1063,6 @@ export type Database = {
           winner_side: Database["public"]["Enums"]["team_side"] | null
         }
         Insert: {
-          admin_note?: string | null
           challenge_id?: string | null
           completed_flag?: boolean
           confirmed_by?: string | null
@@ -1054,7 +1091,6 @@ export type Database = {
           winner_side?: Database["public"]["Enums"]["team_side"] | null
         }
         Update: {
-          admin_note?: string | null
           challenge_id?: string | null
           completed_flag?: boolean
           confirmed_by?: string | null
@@ -1378,7 +1414,9 @@ export type Database = {
           deletion_requested_at: string | null
           display_name: string | null
           eligibility_flag: boolean
+          elo_review: Json | null
           email: string
+          exec_bio: string | null
           exec_photo_url: string | null
           exec_title: string | null
           fee_exempt: boolean
@@ -1399,14 +1437,17 @@ export type Database = {
           membership_type: Database["public"]["Enums"]["membership_type"]
           notification_preferences: Json
           onboarding_completed: boolean
+          passkey_setup: string | null
           permission_baseline_id: string | null
           permission_grants: string[]
           permission_revokes: string[]
           permission_role: string | null
           phone: string | null
+          privilege_claim_review: Json | null
           profile_visibility: string
           role: Database["public"]["Enums"]["user_role"]
           show_activity_status: boolean
+          skill_tier: string | null
           status: Database["public"]["Enums"]["player_status"]
           updated_at: string
           user_id: string | null
@@ -1424,7 +1465,9 @@ export type Database = {
           deletion_requested_at?: string | null
           display_name?: string | null
           eligibility_flag?: boolean
+          elo_review?: Json | null
           email: string
+          exec_bio?: string | null
           exec_photo_url?: string | null
           exec_title?: string | null
           fee_exempt?: boolean
@@ -1445,14 +1488,17 @@ export type Database = {
           membership_type?: Database["public"]["Enums"]["membership_type"]
           notification_preferences?: Json
           onboarding_completed?: boolean
+          passkey_setup?: string | null
           permission_baseline_id?: string | null
           permission_grants?: string[]
           permission_revokes?: string[]
           permission_role?: string | null
           phone?: string | null
+          privilege_claim_review?: Json | null
           profile_visibility?: string
           role?: Database["public"]["Enums"]["user_role"]
           show_activity_status?: boolean
+          skill_tier?: string | null
           status?: Database["public"]["Enums"]["player_status"]
           updated_at?: string
           user_id?: string | null
@@ -1470,7 +1516,9 @@ export type Database = {
           deletion_requested_at?: string | null
           display_name?: string | null
           eligibility_flag?: boolean
+          elo_review?: Json | null
           email?: string
+          exec_bio?: string | null
           exec_photo_url?: string | null
           exec_title?: string | null
           fee_exempt?: boolean
@@ -1491,14 +1539,17 @@ export type Database = {
           membership_type?: Database["public"]["Enums"]["membership_type"]
           notification_preferences?: Json
           onboarding_completed?: boolean
+          passkey_setup?: string | null
           permission_baseline_id?: string | null
           permission_grants?: string[]
           permission_revokes?: string[]
           permission_role?: string | null
           phone?: string | null
+          privilege_claim_review?: Json | null
           profile_visibility?: string
           role?: Database["public"]["Enums"]["user_role"]
           show_activity_status?: boolean
+          skill_tier?: string | null
           status?: Database["public"]["Enums"]["player_status"]
           updated_at?: string
           user_id?: string | null
@@ -1732,6 +1783,33 @@ export type Database = {
           },
         ]
       }
+      schema_migrations: {
+        Row: {
+          applied_at: string
+          applied_by: string
+          checksum: string
+          name: string
+          verified: boolean
+          version: string
+        }
+        Insert: {
+          applied_at?: string
+          applied_by: string
+          checksum: string
+          name: string
+          verified?: boolean
+          version: string
+        }
+        Update: {
+          applied_at?: string
+          applied_by?: string
+          checksum?: string
+          name?: string
+          verified?: boolean
+          version?: string
+        }
+        Relationships: []
+      }
       season_final_ratings: {
         Row: {
           archived_at: string
@@ -1767,72 +1845,6 @@ export type Database = {
           },
           {
             foreignKeyName: "season_final_ratings_season_id_fkey"
-            columns: ["season_id"]
-            isOneToOne: false
-            referencedRelation: "seasons"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      season_snapshots: {
-        Row: {
-          captured_at: string
-          doubles_losses: number
-          doubles_matches_played: number
-          doubles_rank: number | null
-          doubles_wins: number
-          final_doubles_elo: number
-          final_singles_elo: number
-          id: string
-          player_id: string
-          season_id: string
-          singles_losses: number
-          singles_matches_played: number
-          singles_rank: number | null
-          singles_wins: number
-        }
-        Insert: {
-          captured_at?: string
-          doubles_losses?: number
-          doubles_matches_played?: number
-          doubles_rank?: number | null
-          doubles_wins?: number
-          final_doubles_elo: number
-          final_singles_elo: number
-          id?: string
-          player_id: string
-          season_id: string
-          singles_losses?: number
-          singles_matches_played?: number
-          singles_rank?: number | null
-          singles_wins?: number
-        }
-        Update: {
-          captured_at?: string
-          doubles_losses?: number
-          doubles_matches_played?: number
-          doubles_rank?: number | null
-          doubles_wins?: number
-          final_doubles_elo?: number
-          final_singles_elo?: number
-          id?: string
-          player_id?: string
-          season_id?: string
-          singles_losses?: number
-          singles_matches_played?: number
-          singles_rank?: number | null
-          singles_wins?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "season_snapshots_player_id_fkey"
-            columns: ["player_id"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "season_snapshots_season_id_fkey"
             columns: ["season_id"]
             isOneToOne: false
             referencedRelation: "seasons"
@@ -2012,25 +2024,18 @@ export type Database = {
         Row: {
           created_at: string
           date: string
-          // HAND-ADDED (00110_session_instants.sql). `npm run gen:types`
-          // introspects a live database and no reachable database has these
-          // columns yet — the migration is handed over to be applied by the
-          // owner, not run from here. Regenerating before it is applied will
-          // silently delete these two lines; regenerating after will restore
-          // them identically. They are STORED GENERATED columns, which is why
-          // they appear in Row and deliberately not in Insert or Update: the
-          // application must never write them.
-          ends_at: string | null
-          starts_at: string | null
           end_time: string | null
+          ends_at: string | null
           host_player_id: string | null
           id: string
           location: string
           name: string | null
           notes: string | null
           reminder_sent_at: string | null
+          require_scan_to_check_in: boolean
           season_id: string | null
           start_time: string | null
+          starts_at: string | null
           status: Database["public"]["Enums"]["session_status"]
           track: Database["public"]["Enums"]["session_group"]
           updated_at: string
@@ -2039,14 +2044,17 @@ export type Database = {
           created_at?: string
           date: string
           end_time?: string | null
+          ends_at?: string | null
           host_player_id?: string | null
           id?: string
           location: string
           name?: string | null
           notes?: string | null
           reminder_sent_at?: string | null
+          require_scan_to_check_in?: boolean
           season_id?: string | null
           start_time?: string | null
+          starts_at?: string | null
           status?: Database["public"]["Enums"]["session_status"]
           track?: Database["public"]["Enums"]["session_group"]
           updated_at?: string
@@ -2055,14 +2063,17 @@ export type Database = {
           created_at?: string
           date?: string
           end_time?: string | null
+          ends_at?: string | null
           host_player_id?: string | null
           id?: string
           location?: string
           name?: string | null
           notes?: string | null
           reminder_sent_at?: string | null
+          require_scan_to_check_in?: boolean
           season_id?: string | null
           start_time?: string | null
+          starts_at?: string | null
           status?: Database["public"]["Enums"]["session_status"]
           track?: Database["public"]["Enums"]["session_group"]
           updated_at?: string
@@ -2300,6 +2311,45 @@ export type Database = {
           },
         ]
       }
+      tournament_match_notes: {
+        Row: {
+          author_id: string | null
+          created_at: string
+          match_id: string
+          note: string
+          updated_at: string
+        }
+        Insert: {
+          author_id?: string | null
+          created_at?: string
+          match_id: string
+          note: string
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string | null
+          created_at?: string
+          match_id?: string
+          note?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_match_notes_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_match_notes_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "tournament_matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_matches: {
         Row: {
           bracket_position: number
@@ -2317,13 +2367,13 @@ export type Database = {
           loser_to_position: string | null
           match_format: string | null
           match_number: number | null
-          notes: string | null
           pair_a_id: string | null
           pair_b_id: string | null
           participant_a_id: string | null
           participant_b_id: string | null
           phase: string | null
           points_per_game: number | null
+          ready_player_ids: string[]
           result_entered_at: string | null
           result_entered_by: string | null
           round_name: string | null
@@ -2356,13 +2406,13 @@ export type Database = {
           loser_to_position?: string | null
           match_format?: string | null
           match_number?: number | null
-          notes?: string | null
           pair_a_id?: string | null
           pair_b_id?: string | null
           participant_a_id?: string | null
           participant_b_id?: string | null
           phase?: string | null
           points_per_game?: number | null
+          ready_player_ids?: string[]
           result_entered_at?: string | null
           result_entered_by?: string | null
           round_name?: string | null
@@ -2395,13 +2445,13 @@ export type Database = {
           loser_to_position?: string | null
           match_format?: string | null
           match_number?: number | null
-          notes?: string | null
           pair_a_id?: string | null
           pair_b_id?: string | null
           participant_a_id?: string | null
           participant_b_id?: string | null
           phase?: string | null
           points_per_game?: number | null
+          ready_player_ids?: string[]
           result_entered_at?: string | null
           result_entered_by?: string | null
           round_name?: string | null
@@ -2505,6 +2555,45 @@ export type Database = {
           },
         ]
       }
+      tournament_pair_notes: {
+        Row: {
+          author_id: string | null
+          created_at: string
+          note: string
+          pair_id: string
+          updated_at: string
+        }
+        Insert: {
+          author_id?: string | null
+          created_at?: string
+          note: string
+          pair_id: string
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string | null
+          created_at?: string
+          note?: string
+          pair_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_pair_notes_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_pair_notes_pair_id_fkey"
+            columns: ["pair_id"]
+            isOneToOne: true
+            referencedRelation: "tournament_pairs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_pairs: {
         Row: {
           added_by: string | null
@@ -2516,7 +2605,6 @@ export type Database = {
           final_position: number | null
           group_number: number | null
           id: string
-          notes: string | null
           pair_name: string | null
           player1_id: string
           player2_id: string
@@ -2534,7 +2622,6 @@ export type Database = {
           final_position?: number | null
           group_number?: number | null
           id?: string
-          notes?: string | null
           pair_name?: string | null
           player1_id: string
           player2_id: string
@@ -2552,7 +2639,6 @@ export type Database = {
           final_position?: number | null
           group_number?: number | null
           id?: string
-          notes?: string | null
           pair_name?: string | null
           player1_id?: string
           player2_id?: string
@@ -2598,6 +2684,45 @@ export type Database = {
           },
         ]
       }
+      tournament_participant_notes: {
+        Row: {
+          author_id: string | null
+          created_at: string
+          note: string
+          participant_id: string
+          updated_at: string
+        }
+        Insert: {
+          author_id?: string | null
+          created_at?: string
+          note: string
+          participant_id: string
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string | null
+          created_at?: string
+          note?: string
+          participant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_participant_notes_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_participant_notes_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: true
+            referencedRelation: "tournament_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_participants: {
         Row: {
           added_by: string | null
@@ -2611,7 +2736,6 @@ export type Database = {
           final_position: number | null
           group_number: number | null
           id: string
-          notes: string | null
           player_id: string
           points: number | null
           seed_number: number | null
@@ -2629,7 +2753,6 @@ export type Database = {
           final_position?: number | null
           group_number?: number | null
           id?: string
-          notes?: string | null
           player_id: string
           points?: number | null
           seed_number?: number | null
@@ -2647,7 +2770,6 @@ export type Database = {
           final_position?: number | null
           group_number?: number | null
           id?: string
-          notes?: string | null
           player_id?: string
           points?: number | null
           seed_number?: number | null
@@ -2836,11 +2958,49 @@ export type Database = {
           },
         ]
       }
+      walkover_admin_notes: {
+        Row: {
+          author_id: string | null
+          created_at: string
+          note: string
+          updated_at: string
+          walkover_id: string
+        }
+        Insert: {
+          author_id?: string | null
+          created_at?: string
+          note: string
+          updated_at?: string
+          walkover_id: string
+        }
+        Update: {
+          author_id?: string | null
+          created_at?: string
+          note?: string
+          updated_at?: string
+          walkover_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "walkover_admin_notes_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "walkover_admin_notes_walkover_id_fkey"
+            columns: ["walkover_id"]
+            isOneToOne: true
+            referencedRelation: "walkovers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       walkovers: {
         Row: {
           admin_confirmed_at: string | null
           admin_confirmed_by: string | null
-          admin_notes: string | null
           challenge_id: string
           created_at: string
           elo_penalty_applied: boolean
@@ -2858,7 +3018,6 @@ export type Database = {
         Insert: {
           admin_confirmed_at?: string | null
           admin_confirmed_by?: string | null
-          admin_notes?: string | null
           challenge_id: string
           created_at?: string
           elo_penalty_applied?: boolean
@@ -2876,7 +3035,6 @@ export type Database = {
         Update: {
           admin_confirmed_at?: string | null
           admin_confirmed_by?: string | null
-          admin_notes?: string | null
           challenge_id?: string
           created_at?: string
           elo_penalty_applied?: boolean
@@ -3090,6 +3248,10 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_skill_tier_seed: {
+        Args: { p_player_id: string; p_tier: string }
+        Returns: boolean
+      }
       apply_tournament_match_rating: {
         Args: { p_discipline: string; p_entries: Json; p_match_id: string }
         Returns: undefined
@@ -3123,6 +3285,14 @@ export type Database = {
         }
         Returns: boolean
       }
+      claim_privilege_attribution: {
+        Args: { p_player_id: string }
+        Returns: Json
+      }
+      club_local_instant: {
+        Args: { p_date: string; p_time: string }
+        Returns: string
+      }
       create_player_with_rating: {
         Args: {
           p_display_name?: string
@@ -3135,6 +3305,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      delete_phase_matches: {
+        Args: { p_event_id: string; p_phase: string }
+        Returns: number
       }
       derive_member_code: { Args: { p_player_id: string }; Returns: string }
       derived_format_weight: {
@@ -3163,6 +3337,7 @@ export type Database = {
         }
         Returns: number
       }
+      ensure_player_for_user: { Args: { p_user_id: string }; Returns: string }
       format_best_of: {
         Args: { p_format: Database["public"]["Enums"]["match_format"] }
         Returns: number
@@ -3228,6 +3403,10 @@ export type Database = {
         Returns: number
       }
       get_player_id: { Args: { p_user_id: string }; Returns: string }
+      get_session_attendee_counts: {
+        Args: { p_session_ids: string[] }
+        Returns: { attendees: number; session_id: string }[]
+      }
       has_passkeys: { Args: { p_user_id: string }; Returns: boolean }
       increment_challenges_issued: {
         Args: { p_player_id: string }
@@ -3235,6 +3414,10 @@ export type Database = {
       }
       is_admin: { Args: { p_user_id: string }; Returns: boolean }
       is_admin_or_coach: { Args: { p_user_id: string }; Returns: boolean }
+      is_challenge_participant: {
+        Args: { p_challenge_id: string; p_user_id: string }
+        Returns: boolean
+      }
       is_legal_game_score: {
         Args: {
           p_a: number
@@ -3245,6 +3428,13 @@ export type Database = {
       }
       is_legal_game_score_custom: {
         Args: { p_a: number; p_b: number; p_target: number }
+        Returns: boolean
+      }
+      match_counts_toward_stats: {
+        Args: {
+          p_result_status: Database["public"]["Enums"]["result_status"]
+          p_walkover_type: Database["public"]["Enums"]["walkover_type"]
+        }
         Returns: boolean
       }
       merge_players: {
@@ -3295,13 +3485,35 @@ export type Database = {
         Args: { p_default: number; p_key: string }
         Returns: number
       }
+      recompute_head_to_head_pair: {
+        Args: {
+          p_match_type: Database["public"]["Enums"]["match_type_enum"]
+          p_player_a: string
+          p_player_b: string
+        }
+        Returns: boolean
+      }
+      recompute_partnership_pair: {
+        Args: { p_player_a: string; p_player_b: string }
+        Returns: boolean
+      }
+      recompute_player_stats: { Args: { p_player: string }; Returns: number }
       reverse_match_result: { Args: { p_match_id: string }; Returns: undefined }
       reverse_tournament_match_rating: {
         Args: { p_match_id: string }
         Returns: undefined
       }
+      scrub_deleted_identity: {
+        Args: Record<PropertyKey, never>
+        Returns: { audit_rows_scrubbed: number; auth_rows_scrubbed: number }[]
+      }
       session_cap_for: { Args: { p_match_type: string }; Returns: number }
       session_checkin_open: { Args: { p_session_id: string }; Returns: boolean }
+      set_match_ready: {
+        Args: { p_match_id: string; p_player_id: string; p_ready: boolean }
+        Returns: string[]
+      }
+      strip_identity_keys: { Args: { v: Json }; Returns: Json }
       submit_match_result: {
         Args: { p_challenge_id: string; p_completed?: boolean; p_games: Json }
         Returns: string

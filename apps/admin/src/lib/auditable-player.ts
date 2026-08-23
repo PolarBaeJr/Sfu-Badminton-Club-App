@@ -68,6 +68,21 @@ export const AUDITABLE_COLUMNS = [
   'permission_baseline_id',
   'permission_grants',
   'permission_revokes',
+  // Standing, not identity: what tier the ladder seeds them at.
+  'skill_tier',
+  // Whether they have enrolled a passkey. Withholding it was the first instinct
+  // — it describes how somebody signs in — but the sibling assertion here is
+  // that WITHHELD means exactly what the purge treats as identity, and a
+  // credential's existence is not identity. It is account standing, and an
+  // admin looking at a locked-out member needs to see it.
+  'passkey_setup',
+  // The two review flags. Both exist BECAUSE an admin act left something for a
+  // human to check — a roster claim that withheld privileges (00132), a merge
+  // that discarded rows or found the account playing itself (00163) — so an
+  // audit row that omitted them would be omitting the consequence of the very
+  // action it records.
+  'privilege_claim_review',
+  'elo_review',
 ] as const;
 
 /**

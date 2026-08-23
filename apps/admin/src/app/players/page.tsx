@@ -9,6 +9,8 @@ import {
   unwrap,
   parsePrivilegeClaimReview,
   hasPrivilegeClaimReview,
+  parseEloReview,
+  eloReviewLabel,
   describePrivileges,
 } from '@badminton/shared';
 import Link from 'next/link';
@@ -16,6 +18,7 @@ import { PlayerActions } from './player-actions';
 import { AddPlayerButton } from './add-player-button';
 import { MergePlayersButton } from './merge-players-button';
 import { PrivilegeReviewActions } from './privilege-review-actions';
+import { EloReviewActions } from './elo-review-actions';
 import { RosterTable, type RosterRow } from './roster-table';
 import { RowLink } from '@/components/row-link';
 import { RosterCharts } from './roster-charts';
@@ -153,7 +156,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -308,6 +311,10 @@ export default async function PlayersPage({
     const standing = standingOf(player, waiverCurrent);
     standingCounts.set(standing.label, (standingCounts.get(standing.label) ?? 0) + 1);
     const claimReview = parsePrivilegeClaimReview(player.privilege_claim_review);
+    // The other "a human still has to look at this" flag, from 00163. Same
+    // shape of decision as the claim review beside it, so it is read the same
+    // way and rendered as a sibling badge rather than a second mechanism.
+    const eloReview = parseEloReview(player.elo_review);
     // A stub has first_name = '' and therefore full_name = '' — deliberately, in
     // 00132: we do not know their name, and inventing one from the email would
     // put something in the roster and the merge picker that reads as real. The
@@ -363,6 +370,14 @@ export default async function PlayersPage({
             )}
           </Badge>
         )}
+        {/* danger, not warning, when a rating is in question: an Elo built on a
+            person beating themselves is wrong on the ladder everyone else is
+            ranked against, and it stays wrong until somebody voids the match. */}
+        {eloReview && (
+          <Badge variant={eloReview.state === 'elo' ? 'danger' : 'warning'} className={BADGE}>
+            {eloReviewLabel(eloReview)}
+          </Badge>
+        )}
         {player.is_exec && <Badge variant="info" className={BADGE}>Exec</Badge>}
         {player.is_trainer && <Badge variant="info" className={BADGE}>Trainer</Badge>}
         {player.fee_exempt && <Badge variant="neutral" className={BADGE}>Fee exempt</Badge>}
@@ -406,6 +421,17 @@ export default async function PlayersPage({
             // is guaranteed to refuse is worse than a sentence explaining why
             // there is no button.
             isSelf={player.id === viewer.id}
+          />
+        )}
+        {/* Beside the claim review and for the same reason: it decides a flag,
+            not a member, so it does not belong in the tab's action set. No
+            isSelf — see resolveEloReview on why clearing your own is allowed. */}
+        {eloReview && (
+          <EloReviewActions
+            playerId={player.id}
+            playerName={displayName}
+            review={eloReview}
+            canResolve={canMerge}
           />
         )}
         {rosterActionsFor(tab, player, { isAdmin })
