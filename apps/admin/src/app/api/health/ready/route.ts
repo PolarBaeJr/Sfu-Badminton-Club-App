@@ -3,11 +3,31 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-// Hard ceiling on the database probe, well under the compose healthcheck's own
-// `timeout`. A slow dependency has to FAIL the check, not hang it: a probe that
-// outlives the healthcheck timeout gets killed by Docker and reported as a
-// failure anyway, but with no log line saying why.
-const PROBE_TIMEOUT_MS = 3000;
+// Hard ceiling on the database probe. A slow dependency has to FAIL the check,
+// not hang it: a probe that outlives its caller's timeout gets killed and
+// reported as a failure anyway, but with no log line saying why.
+//
+// The binding constraint is the PROXY, not the compose healthcheck. There are
+// two callers with very different patience:
+//
+//   compose healthcheck   timeout: 10s   (and it does not run on goproxy-*
+//                                         replicas at all - see docker-compose.yml)
+//   proxy.health probe    2s             (proxy-manager cmd/proxy/health.go,
+//                                         healthTimeout, 5s interval)
+//
+// At 3000ms this was INVERTED against the proxy: on a database answering in
+// 2-3s the proxy's context deadline fired first, so it recorded a transport
+// error and marked the backend down while this route was still working and
+// would have returned 200. Both player replicas share one database, so they
+// would have flapped together - and zero healthy local backends is exactly the
+// condition that triggers mesh failover to the Pi. A latency blip could have
+// bounced the whole site to a failover host.
+//
+// 1500ms keeps the whole response inside the proxy's 2s budget with room for
+// Next routing, so a slow database yields a clean, logged 503 instead of a
+// silent timeout. Healthy round-trips here are tens of milliseconds.
+// If proxy-manager's healthTimeout ever changes, re-check this number.
+const PROBE_TIMEOUT_MS = 1500;
 
 // Every refusal is this exact body — no version string, no configuration value,
 // no error text. The route is deliberately unauthenticated (the healthcheck
