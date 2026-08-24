@@ -102,18 +102,51 @@ restore them in matters:
 roles (`anon`, `authenticated`, `service_role`, `authenticator`); if those roles
 do not exist yet, every grant fails and you get a database nobody can read.
 
+Into a fresh *Supabase* container most of those roles already exist, so the
+globals file is largely belt-and-braces there — its value is the `ALTER ROLE`
+settings and the cluster-level grants, plus any role that is ours rather than
+stock. Into a bare Postgres it is load-bearing. Run it either way.
+
 ```sh
-# 1. roles and cluster grants
-docker exec -i supabase-db psql -U postgres -f - < badminton-globals-YYYYMMDDT......Z.sql
+# from the encrypted cloud — decrypt/download both first:
+rclone copy gcrypt:badminton-globals-YYYYMMDDT......Z.sql ./
+rclone copy gcrypt:badminton-YYYYMMDDT......Z.dump ./
+
+# 1. roles and cluster grants.
+#
+# READ THE NOTE BELOW FIRST: into a fresh Supabase container this WILL print
+# `role "anon" already exists` and friends, and psql will still exit 0. That is
+# expected and harmless. Anything else is not. So capture stderr and check it,
+# rather than eyeballing a wall of output:
+docker exec -i supabase-db psql -U postgres -f - \
+  < badminton-globals-YYYYMMDDT......Z.sql 2> globals-restore.err || true
+
+grep -i '^ERROR' globals-restore.err | grep -v 'already exists' \
+  && echo 'STOP — unexpected errors above' \
+  || echo 'globals OK (only already-exists errors, if any)'
 
 # 2. the database itself — note: NO --no-acl
 docker exec -i supabase-db pg_restore -U postgres -d postgres \
   --clean --if-exists --no-owner < badminton-YYYYMMDDT......Z.dump
-
-# from the encrypted cloud — decrypt/download both first:
-rclone copy gcrypt:badminton-globals-YYYYMMDDT......Z.sql ./
-rclone copy gcrypt:badminton-YYYYMMDDT......Z.dump ./
 ```
+
+### Why step 1 is noisy, and why that is fine
+
+`pg_dumpall --globals-only` emits **bare, unguarded** `CREATE ROLE` statements —
+there is no `IF NOT EXISTS` and no `DO` block wrapper (checked 2026-08-24: 16
+`CREATE ROLE`, 31 `ALTER ROLE`, 20 `GRANT`, 0 guarded). A fresh self-hosted
+Supabase container has already created `anon`, `authenticated`, `authenticator`,
+`service_role` and the rest during init, so those `CREATE ROLE` lines collide.
+
+That is why the file is applied *without* `ON_ERROR_STOP` and then checked: the
+`ALTER ROLE` and `GRANT` lines that follow are the ones actually worth having,
+and they still apply. Filtering the `CREATE ROLE` lines out instead would be
+wrong — it would silently skip any role that exists on prod but *not* in a
+stock container.
+
+**Restoring into a bare (non-Supabase) Postgres instead?** Then step 1 is doing
+the real work and should run clean, with no `already exists` at all. If you see
+them there, you are not restoring into an empty cluster — stop and find out why.
 
 `--no-owner` stays (objects end up owned by whoever runs the restore, which is
 what you want in a fresh container). `--no-acl` is **deliberately absent** on
@@ -136,6 +169,15 @@ restore replaces current data with the backup. **Test a restore into a scratch
 database at least once** before you rely on it — an untested backup is a hope,
 not a backup. Since the restore is now two steps, test *both* steps: a scratch
 restore that skips the globals file will look fine right up to the first query.
+
+> **Status of this section, stated honestly.** The problem it fixes was
+> established by inspection, not by a restore: `pg_class.relacl` shows 2-3 ACL
+> entries on every table in `public`, and `--no-acl` is documented to suppress
+> exactly those. The *dump* side is verified (the globals file was generated
+> against prod and its contents counted). The *restore* side above is reasoned
+> from those two facts and has *not* been exercised end to end — no scratch
+> restore was run. Treat it as untested until someone runs one. Inferred is not
+> observed.
 
 ---
 
