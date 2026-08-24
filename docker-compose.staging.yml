@@ -43,6 +43,7 @@ services:
       # catch-all; /admin and /supabase are longer and win longest-prefix.
       proxy.path:       "/"
       proxy.port:       "3000"
+      proxy.health:     "/api/health/ready"
       proxy.service:    "badminton-staging-player"
       proxy.unscalable: "true"
       # Safe because the image above is a *separate GHCR package*, not a second
@@ -80,6 +81,7 @@ services:
       # see the prefix on every request. Stripping it 404s the whole console.
       proxy.strip:      "false"
       proxy.port:       "3001"
+      proxy.health:     "/admin/api/health/ready"
       proxy.service:    "badminton-staging-admin"
       proxy.unscalable: "true"
       # See the player service above — safe only because this is its own package.

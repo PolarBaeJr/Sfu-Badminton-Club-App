@@ -47,6 +47,13 @@ services:
       # the player a host catch-all that pools with the admin backend.
       proxy.path:       "/"
       proxy.port:       "3000"
+      # Without this label proxy-manager does NOT fall back to a shallow GET - it
+      # falls back to a bare TCP dial (cmd/proxy/health.go: the 2xx branch only
+      # runs when HealthPath is non-empty). A wedged Next process with an open
+      # socket, or one whose database is gone, stays "healthy" forever. The
+      # proxy also never reads Docker's own health status, so the healthcheck
+      # below - which does probe the database properly - could not rescue it.
+      proxy.health:     "/api/health/ready"
       proxy.service:    "badminton-player"
       proxy.unscalable: "true"
       proxy.autoupdate:  "true"
@@ -121,6 +128,10 @@ services:
       # see the prefix on every request; stripping it 404s the whole console.
       proxy.strip:      "false"
       proxy.port:       "3001"
+      # basePath is /admin and proxy.strip is false, so the route file lands at
+      # /admin/api/health/ready and the unprefixed path 404s. A 404 is not 2xx,
+      # so getting this prefix wrong marks the backend permanently down.
+      proxy.health:     "/admin/api/health/ready"
       proxy.service:    "badminton-admin"
       proxy.unscalable: "true"
       proxy.autoupdate:  "true"
