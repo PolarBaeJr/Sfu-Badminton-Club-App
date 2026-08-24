@@ -50,9 +50,15 @@ services:
       # Without this label proxy-manager does NOT fall back to a shallow GET - it
       # falls back to a bare TCP dial (cmd/proxy/health.go: the 2xx branch only
       # runs when HealthPath is non-empty). A wedged Next process with an open
-      # socket, or one whose database is gone, stays "healthy" forever. The
-      # proxy also never reads Docker's own health status, so the healthcheck
-      # below - which does probe the database properly - could not rescue it.
+      # socket, or one whose database is gone, stays "healthy" forever.
+      #
+      # This label is the ONLY check that actually runs today. The healthcheck
+      # block below never executes in production: the live containers are
+      # goproxy-* ones created by proxy-manager, whose replica path clones
+      # labels but NOT the healthcheck - all three report `NO healthcheck` and
+      # `health=none`. And proxy-manager reads Docker's health status nowhere
+      # anyway. Unlike both of those, proxy.health is probed by the proxy
+      # itself, so it works regardless of how the container was created.
       proxy.health:     "/api/health/ready"
       proxy.service:    "badminton-player"
       proxy.unscalable: "true"
