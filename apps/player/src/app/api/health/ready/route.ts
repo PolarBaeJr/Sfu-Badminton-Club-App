@@ -25,8 +25,24 @@ export const runtime = 'nodejs';
 //
 // 1500ms keeps the whole response inside the proxy's 2s budget with room for
 // Next routing, so a slow database yields a clean, logged 503 instead of a
-// silent timeout. Healthy round-trips here are tens of milliseconds.
-// If proxy-manager's healthTimeout ever changes, re-check this number.
+// silent timeout. If proxy-manager's healthTimeout ever changes, re-check it.
+//
+// SIZING THIS NUMBER: do not assume this probe is a cheap in-cluster call.
+// It is not. NEXT_PUBLIC_SUPABASE_URL is the PUBLIC origin
+// (https://sfubadminton.com/supabase), and the app containers are only on the
+// `edge` and `default` networks - there is no internal Supabase URL and no
+// direct route to kong. So this probe leaves the container, goes out through
+// the public edge, and comes back in. Measured from inside a live player
+// container: 51-160ms, i.e. the same order as an external client, NOT the
+// single-digit ms a same-network call would cost. 1500ms is roughly 10x the
+// observed worst case, which is the headroom - the cheapness is not.
+//
+// The hairpin also makes this signal partly SELF-REFERENTIAL: if the edge or
+// the proxy itself degrades, every badminton backend fails this probe at once
+// even though the app and the database are both fine. That is the same
+// zero-healthy-backends condition described above, but mesh failover cannot
+// recover it, because the peer's probe hairpins through the same edge. Treat a
+// simultaneous all-backends-unhealthy event as "suspect the edge first".
 const PROBE_TIMEOUT_MS = 1500;
 
 // Every refusal is this exact body — no version string, no configuration value,

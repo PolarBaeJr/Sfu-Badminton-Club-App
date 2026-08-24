@@ -77,8 +77,11 @@ services:
       #                         a 200 cannot satisfy the check.
       # /api/health/ready also proves the build's Supabase config parses and the
       # database answers; see apps/player/src/app/api/health/ready/route.ts.
-      # timeout is 10s against the route's own 3s probe ceiling, so a slow
+      # timeout is 10s against the route's own 1.5s probe ceiling, so a slow
       # dependency fails the check with a log line rather than being killed.
+      # The 1.5s ceiling is set by the PROXY, not by this line: proxy-manager's
+      # healthTimeout is 2s (cmd/proxy/health.go), and a probe that outruns it
+      # is recorded as a transport error instead of the 503 the route returns.
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready',{redirect:'manual'}).then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
