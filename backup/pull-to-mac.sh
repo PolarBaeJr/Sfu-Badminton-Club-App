@@ -20,9 +20,12 @@ PI_DIR="${PI_DIR:-~/ssd/db-backups}"
 
 mkdir -p "$DEST"
 rsync -a --prune-empty-dirs \
-  --include='badminton-*.dump' --exclude='*' \
+  --include='badminton-*.dump' --include='badminton-globals-*.sql' --exclude='*' \
   -e "ssh -p $PI_PORT -i $SSH_KEY -o ConnectTimeout=15" \
   "$PI:$PI_DIR/" "$DEST/"
 
 echo "[$(date -u +%FT%TZ)] pulled dumps to $DEST"
+# Show both file kinds. A .dump without its matching globals .sql is not a
+# restorable backup — the grants in it name roles that would not exist yet.
 ls -lh "$DEST"/badminton-*.dump 2>/dev/null | tail -3 || true
+ls -lh "$DEST"/badminton-globals-*.sql 2>/dev/null | tail -3 || true

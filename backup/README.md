@@ -17,6 +17,9 @@ against the most common disaster (a bad migration or an accidental mass-delete).
 
 ## Tier 1 — nightly dump on the Pi
 
+Writes two files per night: a globals dump (roles + grants) and the database
+dump. Both must upload for the night to count as successful.
+
 `backup-db.sh` runs `docker exec supabase-db pg_dump` (custom format) into
 `~/ssd/db-backups`, keeps 14 days, and — if `rclone` is set up (tier 3) — pushes
 each dump to the encrypted remote.
@@ -87,23 +90,52 @@ Once `gcrypt:` works, `backup-db.sh` uploads to it automatically (its default
 
 ## Restoring
 
-Dumps are Postgres **custom format** (`-Fc`), restored with `pg_restore`.
+Each night writes **two** files with the same timestamp, and the order you
+restore them in matters:
+
+| File | What it holds |
+|---|---|
+| `badminton-globals-<STAMP>.sql` | the 16 roles and their cluster-wide grants |
+| `badminton-<STAMP>.dump` | the `postgres` database, custom format (`-Fc`) |
+
+**Restore globals first, then the dump.** The dump's `GRANT` statements name
+roles (`anon`, `authenticated`, `service_role`, `authenticator`); if those roles
+do not exist yet, every grant fails and you get a database nobody can read.
 
 ```sh
-# from a local (or Mac) dump:
-docker exec -i supabase-db pg_restore -U postgres -d postgres \
-  --clean --if-exists --no-owner --no-acl < badminton-YYYYMMDDT......Z.dump
+# 1. roles and cluster grants
+docker exec -i supabase-db psql -U postgres -f - < badminton-globals-YYYYMMDDT......Z.sql
 
-# from the encrypted cloud — decrypt/download first:
-rclone copy gcrypt:badminton-YYYYMMDDT......Z.dump ./
+# 2. the database itself — note: NO --no-acl
 docker exec -i supabase-db pg_restore -U postgres -d postgres \
-  --clean --if-exists --no-owner --no-acl < badminton-YYYYMMDDT......Z.dump
+  --clean --if-exists --no-owner < badminton-YYYYMMDDT......Z.dump
+
+# from the encrypted cloud — decrypt/download both first:
+rclone copy gcrypt:badminton-globals-YYYYMMDDT......Z.sql ./
+rclone copy gcrypt:badminton-YYYYMMDDT......Z.dump ./
 ```
+
+`--no-owner` stays (objects end up owned by whoever runs the restore, which is
+what you want in a fresh container). `--no-acl` is **deliberately absent** on
+both sides now: it used to be passed at dump *and* restore time, which threw
+away every table privilege. Restoring with it would silently undo the point of
+the globals file.
+
+> Why this is worth caring about: a restored database with no grants does not
+> throw. PostgREST turns a denied read into an **empty list**, so the site comes
+> back up, returns HTTP 200 everywhere, and shows no data. That is a far worse
+> outcome than a restore that fails loudly.
+
+The globals file is written with `--no-role-passwords`, so it contains no
+password hashes — deliberate, since these files go to Google Drive. Role
+passwords come from `POSTGRES_PASSWORD` and friends in the compose env, so a
+restored cluster needs those set (it does not need this file to recover them).
 
 `--clean --if-exists` drops existing objects before recreating them, so the
 restore replaces current data with the backup. **Test a restore into a scratch
 database at least once** before you rely on it — an untested backup is a hope,
-not a backup.
+not a backup. Since the restore is now two steps, test *both* steps: a scratch
+restore that skips the globals file will look fine right up to the first query.
 
 ---
 
