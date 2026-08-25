@@ -150,6 +150,15 @@ mkdir -p "$OUT_DIR"
 PUBLIC_DUMP="$OUT_DIR/public-$TS.sql.gz"
 AUTH_DUMP="$OUT_DIR/auth-$TS.sql.gz"
 ACL_SQL="$OUT_DIR/acls-$TS.sql"
+
+# Staging's OWN Discord config, captured before the drop and put back after.
+#
+# NOT kept in $OUT_DIR with the other artefacts, and not retained: it contains
+# cron_config.discord_service_secret in plaintext. 0600, and removed on every
+# exit path including failure.
+DISCORD_SQL="$(mktemp)"
+chmod 600 "$DISCORD_SQL"
+trap 'rm -f "$DISCORD_SQL"' EXIT
 PUB_SQL="$OUT_DIR/publications-$TS.sql"
 
 # Verify both containers are up
@@ -249,6 +258,89 @@ if [ -n "$dependents" ]; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# CAPTURE STAGING'S OWN DISCORD CONFIG.
+#
+# These four tables live in public, so the drop below takes them — and then
+# prod's dump puts PROD'S rows back in their place. That is the part that makes
+# this worth code rather than a warning: staging would come up holding prod's
+# guild id, prod's role ids, prod's discord_bot_url and prod's service secret,
+# i.e. the staging bot aimed at the production Discord server, with the
+# credentials to act on it.
+#
+# What saves it today is only that staging's bot is a separate Discord
+# application and is not a member of the prod guild, so its calls 403. That is
+# luck, not a safeguard, and it stops being true the moment somebody reuses a
+# token.
+#
+# So: capture staging's own rows here, and after the restore delete whatever
+# prod's dump left and put these back. Note the asymmetry that matters —
+# "staging had no config" must end as "staging has no config", NEVER as
+# "staging inherits prod's". The delete below is therefore unconditional; this
+# capture only decides what goes back afterwards.
+echo "[$(date -u +%FT%TZ)] capturing staging's own Discord config..."
+docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 > "$DISCORD_SQL" <<'SQL'
+-- Dynamic SQL, and it has to be. A plain `SELECT ... FROM public.discord_guilds
+-- WHERE to_regclass(...) IS NOT NULL` does NOT survive the table being absent:
+-- Postgres resolves every relation at parse time, long before any WHERE is
+-- evaluated, so the guard never runs and the whole script dies on a staging
+-- database that predates 00167. EXECUTE defers the parse until the IF has
+-- already decided the table is there.
+CREATE TEMP TABLE _captured (stmt text);
+
+DO $do$
+BEGIN
+  IF to_regclass('public.discord_guilds') IS NOT NULL THEN
+    EXECUTE $q$
+      INSERT INTO _captured
+      SELECT format(
+        'INSERT INTO public.discord_guilds (guild_id, label, enabled) VALUES (%L, %L, %L) '
+        'ON CONFLICT (guild_id) DO UPDATE SET label = EXCLUDED.label, enabled = EXCLUDED.enabled;',
+        guild_id, label, enabled)
+      FROM public.discord_guilds
+    $q$;
+  END IF;
+
+  IF to_regclass('public.discord_guild_roles') IS NOT NULL THEN
+    EXECUTE $q$
+      INSERT INTO _captured
+      SELECT format(
+        'INSERT INTO public.discord_guild_roles (guild_id, role_name, role_id) VALUES (%L, %L, %L) '
+        'ON CONFLICT (guild_id, role_name) DO UPDATE SET role_id = EXCLUDED.role_id;',
+        guild_id, role_name, role_id)
+      FROM public.discord_guild_roles
+    $q$;
+  END IF;
+
+  IF to_regclass('public.discord_settings') IS NOT NULL THEN
+    EXECUTE $q$
+      INSERT INTO _captured
+      SELECT format(
+        'INSERT INTO public.discord_settings (key, value) VALUES (%L, %L) '
+        'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;', key, value)
+      FROM public.discord_settings
+    $q$;
+  END IF;
+
+  IF to_regclass('public.cron_config') IS NOT NULL THEN
+    -- Named explicitly, not LIKE 'discord%': `_` is a LIKE wildcard, and this
+    -- table holds unrelated secrets that are none of this script's business.
+    EXECUTE $q$
+      INSERT INTO _captured
+      SELECT format(
+        'INSERT INTO public.cron_config (key, value) VALUES (%L, %L) '
+        'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;', key, value)
+      FROM public.cron_config
+      WHERE key IN ('discord_bot_url', 'discord_service_secret')
+    $q$;
+  END IF;
+END
+$do$;
+
+-- Ordered so the parent row is inserted before the rows that reference it.
+SELECT stmt FROM _captured ORDER BY stmt LIKE 'INSERT INTO public.discord_guild_roles%';
+SQL
+
 # CASCADE, and ours rather than pg_dump's. The NOTICEs list what dev had that
 # prod does not — normally the migrations being rehearsed on staging.
 echo "[$(date -u +%FT%TZ)] dropping dev public schema (cascade notices follow)..."
@@ -275,6 +367,47 @@ docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 
 
 echo "[$(date -u +%FT%TZ)] restoring realtime publication membership..."
 docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$PUB_SQL"
+
+# ---------------------------------------------------------------------------
+# SCRUB PROD'S DISCORD CONFIG, THEN PUT STAGING'S BACK.
+#
+# The delete is UNCONDITIONAL and runs whether or not anything was captured.
+# That is the whole safety property: if staging had no Discord config, it must
+# end with none, rather than silently adopting prod's guild, prod's bot URL and
+# prod's secret. Inheriting is the failure; having nothing is fine.
+#
+# Child table first — discord_guild_roles has a foreign key onto discord_guilds.
+echo "[$(date -u +%FT%TZ)] scrubbing prod Discord config out of staging..."
+docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $do$
+BEGIN
+  IF to_regclass('public.discord_guild_roles') IS NOT NULL THEN
+    DELETE FROM public.discord_guild_roles;
+  END IF;
+  IF to_regclass('public.discord_guilds') IS NOT NULL THEN
+    DELETE FROM public.discord_guilds;
+  END IF;
+  IF to_regclass('public.discord_settings') IS NOT NULL THEN
+    DELETE FROM public.discord_settings;
+  END IF;
+  IF to_regclass('public.cron_config') IS NOT NULL THEN
+    DELETE FROM public.cron_config
+     WHERE key IN ('discord_bot_url', 'discord_service_secret');
+  END IF;
+END
+$do$;
+SQL
+
+if [ -s "$DISCORD_SQL" ]; then
+  echo "[$(date -u +%FT%TZ)] restoring staging's own Discord config..."
+  docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$DISCORD_SQL"
+else
+  echo "[$(date -u +%FT%TZ)] staging had no Discord config to restore (left empty, not inherited)."
+fi
+
+# PostgREST caches the schema, and the app reads these tables through it. A
+# restore that does not say so leaves the bot reading a stale cache.
+docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -c "NOTIFY pgrst, 'reload schema';"
 
 # Retain 14 days of snapshots and of the privilege scripts that went with them
 find "$OUT_DIR" -maxdepth 1 -name '*.sql.gz' -mtime +14 -delete 2>/dev/null || true

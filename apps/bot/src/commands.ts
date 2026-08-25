@@ -68,7 +68,18 @@ export const COMMAND_DEFINITIONS = [
   {
     name: 'setup',
     description: 'Create and wire up the club roles in this server',
-    options: [],
+    options: [
+      {
+        type: 7, // CHANNEL
+        name: 'audit_channel',
+        description: 'Where I should log every role change I make (optional)',
+        required: false,
+        // Text channels only (0) and announcement channels (5). A voice or
+        // category channel would be accepted by Discord's picker and then fail
+        // on the first message the bot tried to post.
+        channel_types: [0, 5],
+      },
+    ],
     // MANAGE_GUILD (1 << 5). Discord enforces this server-side, so the command
     // is not even visible to anyone else.
     //
@@ -327,7 +338,10 @@ export async function handleUnlink(context: InteractionContext) {
  * Runs AFTER a deferred acknowledgement — see DEFERRED_COMMANDS — so it is free
  * to take as long as nine role creations need.
  */
-export async function handleSetup(context: InteractionContext) {
+export async function handleSetup(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+) {
   const { guildId } = context;
   // dm_permission: false means Discord should never deliver this without a
   // guild. Checked anyway: the alternative is a confusing crash if that ever
@@ -383,8 +397,12 @@ export async function handleSetup(context: InteractionContext) {
   const roles: Record<string, string> = {};
   for (const r of resolved) roles[r.role] = r.id;
 
+  // Discord sends a CHANNEL option as the channel's id.
+  const auditChannel = option(options, 'audit_channel');
+  const auditChannelId = typeof auditChannel === 'string' ? auditChannel : undefined;
+
   try {
-    await writeGuildConfig({ guildId, roles });
+    await writeGuildConfig({ guildId, roles, ...(auditChannelId ? { auditChannelId } : {}) });
   } catch (error) {
     console.error('[bot] setup could not save config:', error);
     // The roles now exist in Discord but the app does not know their ids. Say
@@ -426,6 +444,16 @@ export async function handleSetup(context: InteractionContext) {
     lines.push(`❌ Could not create **${DISPLAY_NAMES[f.role]}** — check my Manage Roles permission.`);
   }
 
+  if (auditChannelId) {
+    // Said explicitly because the two failure modes look identical from inside
+    // Discord: no audit log at all, and an audit log going somewhere the reader
+    // cannot see. Make it a private channel -- the entries mention the members
+    // whose roles changed.
+    lines.push(
+      `**Audit log:** <#${auditChannelId}> — I need **View Channel** and **Send Messages** there.`
+    );
+  }
+
   // The single most common way this bot appears to work while doing nothing:
   // every role it manages sits above it, so every assignment 403s. Said up
   // front, every time, rather than left to be discovered by a silent sweep.
@@ -458,7 +486,7 @@ export async function dispatch(
       case 'unlink':
         return await handleUnlink(context);
       case 'setup':
-        return await handleSetup(context);
+        return await handleSetup(options, context);
       default:
         return ephemeral('Unknown command.');
     }
