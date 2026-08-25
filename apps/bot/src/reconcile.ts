@@ -27,6 +27,12 @@ export interface LinkedMember {
 }
 
 export interface SweepSummary {
+  /**
+   * Tombstoned accounts this sweep genuinely finished clearing, in every guild.
+   * The app deletes exactly these; anything omitted stays queued and is retried,
+   * which is what stops a 403 quietly discarding a pending revocation.
+   */
+  cleared: string[];
   members: number;
   added: number;
   removed: number;
@@ -42,6 +48,7 @@ export async function reconcile(
   log: (line: string) => void = console.log
 ): Promise<SweepSummary> {
   const summary: SweepSummary = {
+    cleared: [],
     members: 0,
     added: 0,
     removed: 0,
@@ -83,6 +90,14 @@ export async function reconcile(
       summary.forbidden += o.forbidden;
       summary.failed += o.failed;
       summary.absent += o.absent ? 1 : 0;
+    }
+
+    // A member with no state is a tombstone: the app is waiting to hear that
+    // this account is clean. Report it ONLY if nothing was refused or failed
+    // anywhere — an absent member counts as clear, since roles they do not hold
+    // in a guild they are not in cannot be stale.
+    if (member.state === null && outcomes.every((o) => !o.forbidden && !o.failed)) {
+      summary.cleared.push(member.discordUserId);
     }
 
     // Only say something when something happened. A quiet sweep over a settled

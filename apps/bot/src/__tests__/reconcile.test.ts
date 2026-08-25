@@ -54,6 +54,59 @@ describe('reconcile', () => {
     expect(summary.added).toBe(0);
   });
 
+  // ---- THE TOMBSTONE CONTRACT ----
+  //
+  // A revocation may only be deleted once the account is genuinely clean in
+  // every guild. Deleting one early is a stale privilege that nothing will ever
+  // revisit, because the link row it came from is already gone.
+
+  it('reports a fully stripped tombstone as cleared', async () => {
+    const a = api((method) =>
+      method === 'GET' ? { status: 200, body: { roles: ['1', '2', '3'] } } : { status: 204 }
+    );
+    const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
+    expect(summary.cleared).toEqual(['u1']);
+  });
+
+  it('does NOT clear a tombstone Discord refused to strip', async () => {
+    // The case that matters: the account outranks the bot, every DELETE is a
+    // 403, and the roles are all still there. Clearing here loses the pending
+    // revocation permanently.
+    const a = api((method) =>
+      method === 'GET' ? { status: 200, body: { roles: ['1', '2', '3'] } } : { status: 403 }
+    );
+    const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
+    expect(summary.forbidden).toBe(3);
+    expect(summary.removed).toBe(0);
+    expect(summary.cleared).toEqual([]);
+  });
+
+  it('does NOT clear a tombstone when a strip failed outright', async () => {
+    const a = api((method) =>
+      method === 'GET' ? { status: 200, body: { roles: ['1', '2', '3'] } } : { status: 500 }
+    );
+    const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
+    expect(summary.cleared).toEqual([]);
+  });
+
+  it('counts an absent tombstone as cleared', async () => {
+    // Not in the guild at all: roles they do not hold cannot be stale, so the
+    // revocation is satisfied and must not be retried forever.
+    const a = api(() => ({ status: 404 }));
+    const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
+    expect(summary.absent).toBe(1);
+    expect(summary.cleared).toEqual(['u1']);
+  });
+
+  it('never clears a live member', async () => {
+    const a = api((method) =>
+      method === 'GET' ? { status: 200, body: { roles: [] } } : { status: 204 }
+    );
+    const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: state() }], () => {});
+    expect(summary.added).toBeGreaterThan(0);
+    expect(summary.cleared).toEqual([]);
+  });
+
   it('one member failing does not end the sweep for the rest', async () => {
     const a = api((method, path) => {
       if (path.includes('/members/u1')) return { status: 500 };

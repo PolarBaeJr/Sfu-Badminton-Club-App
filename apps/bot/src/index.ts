@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { fetchLinkedMembers } from './api.js';
+import { clearRevocations, fetchLinkedMembers } from './api.js';
 import { dispatch } from './commands.js';
 import { DiscordApi } from './discord-api.js';
 import { reconcile } from './reconcile.js';
@@ -47,6 +47,13 @@ function readRawBody(req: IncomingMessage): Promise<string> {
 // other's role writes and double the rate-limit pressure for no benefit, and
 // the scheduler firing again while the last one is still going is the ordinary
 // way that happens.
+//
+// PER PROCESS, and that is the whole of what it guards. This service omits
+// proxy.unscalable on purpose, so at two replicas the proxy hands the second
+// call to the other process and this flag never sees it. That is acceptable
+// because the sweep is convergent — two of them reach the same end state — but
+// it is not a lock, and it must not be described as one. A real one belongs in
+// Postgres (an advisory lock in the job that drives this) if it ever matters.
 let sweepInFlight = false;
 
 async function runSweep(res: ServerResponse) {
@@ -60,6 +67,17 @@ async function runSweep(res: ServerResponse) {
     const members = await fetchLinkedMembers();
     const api = new DiscordApi({ token });
     const summary = await reconcile(api, registry, members);
+
+    // Bookkeeping, and it runs after the roles are already gone. A failure here
+    // must not turn a successful sweep into a 500, so it is logged and dropped:
+    // the tombstone simply survives to the next sweep, which finds nothing left
+    // to strip and reports it clear again.
+    try {
+      await clearRevocations(summary.cleared);
+    } catch (error) {
+      console.error('[bot] could not clear revocations:', error);
+    }
+
     // The SUMMARY goes in the body, not just a 200. Whatever drives this is
     // likely pg_net, which follows redirects — so a 200 on its own proves
     // nothing about whether the sweep ran. The caller has to read the content.

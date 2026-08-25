@@ -34,23 +34,33 @@
 -- Verify the result with pg_class.relacl or SET ROLE. Do NOT verify it with
 -- information_schema.role_table_grants — it reports grants that do not exist.
 --
--- ---- INTERACTION WITH merge_players (00163) ----
+-- ---- WHY A DELETED LINK NEEDS A TOMBSTONE ----
 --
 -- player_discord_links.player_id is the primary key and cascades on delete, so
 -- it lands in 00163's "class 2": unique per player, and the loser's row goes
 -- away with the merge rather than moving. If BOTH accounts were linked that is
 -- correct — the survivor keeps their own link. If only the LOSER was linked,
--- the merged member ends up unlinked, the next sweep removes their Discord
--- roles, and they have to run /link again.
+-- the merged member ends up unlinked and has to run /link again.
 --
--- That is deliberate and it is left as-is: /link is thirty seconds of
--- self-service, the outcome is visible rather than silent (the roles disappear),
--- and repointing the link would mean re-issuing the whole of merge_players'
--- body to add three lines. If the club would rather it moved, the three lines
--- are the same class-2 shape as session_rsvp's and belong in a later migration.
+-- But "unlinked" is NOT the same as "stripped", and getting that backwards is
+-- how a stale @Executives survives forever. The sweep's input is this table:
+-- it iterates the rows the app returns and syncs each one. A discord_user_id
+-- whose row has been DELETED is in no list, so nothing ever visits it, and the
+-- account sits in the guild holding every role it was granted — by an account
+-- the club has just stopped recognising. The cascade destroys the only record
+-- of which Discord account to clean up, at the exact moment it is needed.
 --
--- SAFE TO APPLY AT ANY TIME. Two new tables nothing reads yet, one new
--- function, no changes to any existing object.
+-- discord_role_revocations is that record. A row trigger captures the outgoing
+-- discord_user_id BEFORE it is lost — on delete, on cascade, and on a re-link
+-- that overwrites it — and the sweep reads the tombstones alongside the live
+-- links, treating each as "no player, strip everything". The bot deletes a
+-- tombstone once it has actually cleared that account in every guild, so a
+-- forbidden or failed strip is retried on the next sweep instead of being
+-- forgotten.
+--
+-- SAFE TO APPLY AT ANY TIME. Three new tables nothing reads yet, two new
+-- functions, one trigger on a table this migration itself creates. No changes
+-- to any existing object.
 -- ============================================================
 
 BEGIN;
@@ -98,7 +108,57 @@ CREATE TABLE IF NOT EXISTS public.discord_link_tokens (
 CREATE INDEX IF NOT EXISTS idx_discord_link_tokens_expires_at
   ON public.discord_link_tokens (expires_at);
 
--- ---- 3. LOCK BOTH TABLES --------------------------------------------------
+-- ---- 3. THE TOMBSTONE -----------------------------------------------------
+
+-- "This Discord account is no longer anybody's, and still has our roles."
+--
+-- Deliberately keyed on the Discord id alone and carrying no player_id: the
+-- player it used to belong to may not exist any more, which is the whole
+-- reason the row is here.
+CREATE TABLE IF NOT EXISTS public.discord_role_revocations (
+  discord_user_id   text PRIMARY KEY,
+  queued_at         timestamptz NOT NULL DEFAULT now()
+);
+
+-- SECURITY DEFINER because the writer varies and none of them can be assumed to
+-- hold a grant here: an ordinary service_role delete, a cascade fired by a
+-- delete on players, and merge_players (itself SECURITY DEFINER) all reach this
+-- trigger. Definer rights make the tombstone land regardless of which one it is.
+CREATE OR REPLACE FUNCTION public.queue_discord_role_revocation()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+BEGIN
+  -- An account is losing its claim: on DELETE always, and on UPDATE only when
+  -- the id actually moved (a last_synced_at write must not queue a strip of the
+  -- account it just successfully synced).
+  IF TG_OP = 'DELETE'
+     OR (TG_OP = 'UPDATE' AND OLD.discord_user_id IS DISTINCT FROM NEW.discord_user_id) THEN
+    INSERT INTO discord_role_revocations (discord_user_id)
+    VALUES (OLD.discord_user_id)
+    ON CONFLICT (discord_user_id) DO NOTHING;
+  END IF;
+
+  -- ...and an account gaining one drops any tombstone it was carrying. Without
+  -- this, somebody who unlinks and links again keeps a pending "strip
+  -- everything" against the very account they just re-linked, and the sweep
+  -- would fight the link. Runs AFTER the insert above so a swap between two
+  -- accounts resolves in the right order.
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    DELETE FROM discord_role_revocations WHERE discord_user_id = NEW.discord_user_id;
+  END IF;
+
+  RETURN NULL;
+END
+$function$;
+
+CREATE OR REPLACE TRIGGER trg_queue_discord_role_revocation
+  AFTER INSERT OR UPDATE OR DELETE ON public.player_discord_links
+  FOR EACH ROW EXECUTE FUNCTION public.queue_discord_role_revocation();
+
+-- ---- 4. LOCK ALL THREE TABLES ---------------------------------------------
 
 ALTER TABLE public.player_discord_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.discord_link_tokens  ENABLE ROW LEVEL SECURITY;
@@ -111,7 +171,11 @@ REVOKE ALL ON public.discord_link_tokens FROM PUBLIC;
 REVOKE ALL ON public.discord_link_tokens FROM anon, authenticated;
 GRANT ALL  ON public.discord_link_tokens TO service_role;
 
--- ---- 4. THE EXCHANGE ------------------------------------------------------
+REVOKE ALL ON public.discord_role_revocations FROM PUBLIC;
+REVOKE ALL ON public.discord_role_revocations FROM anon, authenticated;
+GRANT ALL  ON public.discord_role_revocations TO service_role;
+
+-- ---- 5. THE EXCHANGE ------------------------------------------------------
 
 -- SECURITY DEFINER because the member is the one calling it and the member has
 -- no grant on either table — which is the point. The function is the ONLY way
@@ -132,6 +196,10 @@ CREATE FUNCTION public.consume_discord_link_token(p_token_hash text)
 -- still holding every role it was granted — an @Executives that now belongs to
 -- an account the club no longer recognises. The caller needs the displaced id
 -- to strip it, and only this function is in a position to know it.
+--
+-- The trigger below tombstones the same id, so this return value is the FAST
+-- path rather than the only one: if the immediate strip fails, the sweep still
+-- picks the account up. Both exist on purpose.
 RETURNS TABLE (linked_discord_user_id text, displaced_discord_user_id text)
 LANGUAGE plpgsql
 SECURITY DEFINER

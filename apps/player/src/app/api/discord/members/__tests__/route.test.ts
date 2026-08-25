@@ -5,9 +5,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // that a read failure never masquerades as "nobody is linked", and that the
 // state it publishes matches what the console actually gates on.
 
+// Table-aware, because the route now reads two: the live links and the
+// tombstones left behind by links that were deleted. `select` stays the
+// links mock so the tests that predate the tombstone read unchanged.
 const select = vi.fn();
+const selectRevocations = vi.fn();
+const deleteIn = vi.fn();
+
 vi.mock('@/lib/supabase-server', () => ({
-  createServiceRoleClient: () => ({ from: () => ({ select }) }),
+  createServiceRoleClient: () => ({
+    from: (table: string) =>
+      table === 'discord_role_revocations'
+        ? { select: selectRevocations, delete: () => ({ in: deleteIn }) }
+        : { select },
+  }),
 }));
 
 const AUTH = { headers: { authorization: 'Bearer test-secret' } };
@@ -38,6 +49,11 @@ function linkRow(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   process.env.DISCORD_SERVICE_SECRET = 'test-secret';
   select.mockReset();
+  selectRevocations.mockReset();
+  deleteIn.mockReset();
+  // No pending revocations unless a test says otherwise.
+  selectRevocations.mockResolvedValue({ data: [], error: null });
+  deleteIn.mockResolvedValue({ error: null });
 });
 
 describe('GET /api/discord/members', () => {
@@ -133,5 +149,92 @@ describe('GET /api/discord/members', () => {
       members: { state: { membershipType: string } }[];
     };
     expect(body.members[0]?.state.membershipType).toBe('internal');
+  });
+});
+
+describe('revocation tombstones', () => {
+  // WHY THIS EXISTS AT ALL: the sweep's input is the link table, so it only
+  // ever visits accounts that still have a row. When merge_players deletes the
+  // losing player the cascade takes the link with it — and that Discord account
+  // keeps every role it was granted, forever, because nothing will ever look at
+  // it again. The tombstone is what puts it back in front of the sweep.
+
+  it('publishes a tombstoned account as state: null', async () => {
+    select.mockResolvedValue({ data: [], error: null });
+    selectRevocations.mockResolvedValue({ data: [{ discord_user_id: 'gone' }], error: null });
+
+    const { GET } = await import('../route');
+    const body = (await (await GET(request())).json()) as {
+      members: { discordUserId: string; state: unknown }[];
+    };
+
+    // state: null is exactly what reconcile already reads as "strip
+    // everything", so the tombstone needs no new code path in the bot.
+    expect(body.members).toEqual([{ discordUserId: 'gone', state: null }]);
+  });
+
+  it('a live link wins over a stale tombstone for the same account', async () => {
+    // Only reachable as a race between the two reads — the trigger drops the
+    // tombstone on re-link. Stripping an account that currently belongs to
+    // somebody is the worse of the two mistakes, so the link wins.
+    select.mockResolvedValue({ data: [linkRow()], error: null });
+    selectRevocations.mockResolvedValue({ data: [{ discord_user_id: 'd1' }], error: null });
+
+    const { GET } = await import('../route');
+    const body = (await (await GET(request())).json()) as {
+      members: { discordUserId: string; state: unknown }[];
+    };
+
+    expect(body.members).toHaveLength(1);
+    expect(body.members[0]?.state).not.toBeNull();
+  });
+
+  it('reports a failed tombstone read as 503, not as no tombstones', async () => {
+    // Same trap as the links read: an empty list would look like "nothing to
+    // revoke" and the stale roles would survive silently.
+    select.mockResolvedValue({ data: [], error: null });
+    selectRevocations.mockResolvedValue({ data: null, error: { message: 'boom' } });
+
+    const { GET } = await import('../route');
+    expect((await GET(request())).status).toBe(503);
+  });
+});
+
+describe('DELETE /api/discord/members', () => {
+  function del(body: unknown) {
+    return new Request('http://localhost/api/discord/members', {
+      method: 'DELETE',
+      ...AUTH,
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('refuses without the service secret', async () => {
+    const { DELETE } = await import('../route');
+    const response = await DELETE(
+      new Request('http://localhost/api/discord/members', {
+        method: 'DELETE',
+        body: JSON.stringify({ discordUserIds: ['a'] }),
+      })
+    );
+    expect(response.status).toBe(401);
+    expect(deleteIn).not.toHaveBeenCalled();
+  });
+
+  it('clears the ids the sweep finished', async () => {
+    const { DELETE } = await import('../route');
+    const response = await DELETE(del({ discordUserIds: ['a', 'b'] }));
+    expect(response.status).toBe(200);
+    expect(deleteIn).toHaveBeenCalledWith('discord_user_id', ['a', 'b']);
+  });
+
+  it('rejects a body that is not a list of strings', async () => {
+    // A non-string slipping through would become an `in` filter on something
+    // PostgREST interprets, and this endpoint deletes rows.
+    const { DELETE } = await import('../route');
+    for (const bad of [{}, { discordUserIds: 'a' }, { discordUserIds: [1] }]) {
+      expect((await DELETE(del(bad))).status).toBe(400);
+    }
+    expect(deleteIn).not.toHaveBeenCalled();
   });
 });

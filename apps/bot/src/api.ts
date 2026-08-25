@@ -116,3 +116,31 @@ export async function fetchLinkedMembers(): Promise<LinkedMemberRow[]> {
   const body = (await response.json()) as { members?: LinkedMemberRow[] };
   return body.members ?? [];
 }
+
+/**
+ * Tell the app which tombstoned accounts are now actually clean.
+ *
+ * Failure here is deliberately NOT fatal to the sweep: the roles have already
+ * been removed by the time this runs, and the only cost of the tombstone
+ * surviving is that the next sweep visits an account that has nothing left to
+ * strip. Losing the sweep's result over a bookkeeping call would be the worse
+ * trade.
+ */
+export async function clearRevocations(discordUserIds: readonly string[]): Promise<void> {
+  if (discordUserIds.length === 0) return;
+
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/members', base), {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ discordUserIds }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) {
+    throw new AppApiError(`DELETE /api/discord/members -> ${response.status}`);
+  }
+}
