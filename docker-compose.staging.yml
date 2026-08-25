@@ -30,6 +30,16 @@ services:
     image: ghcr.io/polarbaejr/badminton-player-staging:${STAGING_IMAGE_TAG:-latest}
     container_name: badminton-staging-player
     env_file: .env.staging
+    environment:
+      # In-cluster, and it resolves to STAGING's bot because compose service
+      # names are scoped to the project name at the top of this file. That
+      # scoping is the whole safety story here: `bot` from production's project
+      # is a different container, and staging can never reach it.
+      #
+      # DISCORD_SERVICE_SECRET is deliberately NOT repeated here — it arrives
+      # through env_file like every other staging secret, and it must be the
+      # same value the staging bot gets.
+      DISCORD_BOT_URL: ${DISCORD_BOT_URL:-http://bot:3002}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -94,3 +104,62 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  # The Discord bot, staging copy.
+  #
+  # ---- IT NEEDS ITS OWN DISCORD APPLICATION ----
+  #
+  # An interactions endpoint URL is a property of the APPLICATION, and one
+  # application has exactly one. Pointing production's application at this host
+  # is not "testing on staging", it is moving production onto staging. Create a
+  # second application, point it here, and invite it to a private test server.
+  #
+  # The consequence worth planning for: a second application is a second bot
+  # user with its own token, so DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY,
+  # DISCORD_APPLICATION_ID and DISCORD_GUILDS in .env.staging are ALL different
+  # values from production's, not copies. DISCORD_SERVICE_SECRET is different
+  # too, but for a different reason: it is what the staging player app compares
+  # on /api/discord/*, so sharing production's would let one stack's bot drive
+  # the other's roles.
+  bot:
+    image: ghcr.io/polarbaejr/badminton-bot-staging:${STAGING_IMAGE_TAG:-latest}
+    container_name: badminton-staging-bot
+    env_file: .env.staging
+    environment:
+      # Same ${VAR:?} guard as production: compose refuses to start rather than
+      # booting a bot holding an empty key, which fails closed later and in a
+      # place that looks like a Discord problem. Interpolated from the file
+      # passed as --env-file, which for this stack is .env.staging.
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:?set DISCORD_PUBLIC_KEY in .env.staging}
+      DISCORD_BOT_TOKEN:  ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN in .env.staging}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:?set DISCORD_APPLICATION_ID in .env.staging}
+      DISCORD_GUILDS: ${DISCORD_GUILDS:?set DISCORD_GUILDS in .env.staging}
+      DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env.staging}
+      # Optional. Point it at a channel in the test server, not the real one.
+      DISCORD_AUDIT_CHANNEL_ID: ${DISCORD_AUDIT_CHANNEL_ID:-}
+      APP_API_URL: ${APP_API_URL:-http://player:3000}
+      # The public origin, because it goes into the /link button a member opens
+      # in their own browser. Staging's origin, so a staging link cannot walk
+      # somebody into production.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://badminton.polardev.org}
+    ports:
+      - "3015:3002"
+    restart: unless-stopped
+    networks: [edge, default]
+    labels:
+      proxy.enable:     "true"
+      # NEVER add proxy.auth here, on staging any more than on production.
+      # Discord POSTs interactions with no cookie and no session, and pg_net
+      # calls POST /sync the same way; a gated host refuses both. The gate is
+      # opt-in per host via this label, so omitting it IS the exclusion.
+      proxy.host:       "${DISCORD_BOT_DOMAIN_STAGING:-discord-staging.polardev.org}"
+      proxy.port:       "3002"
+      proxy.health:     "/health"
+      proxy.service:    "badminton-staging-discord-bot"
+      proxy.autoupdate: "true"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
