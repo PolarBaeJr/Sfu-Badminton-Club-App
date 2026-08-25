@@ -152,7 +152,10 @@ services:
       # Discord POSTs interactions with no cookie and no session, and pg_net
       # calls POST /sync the same way; a gated host refuses both. The gate is
       # opt-in per host via this label, so omitting it IS the exclusion.
-      proxy.host:       "${DISCORD_BOT_DOMAIN_STAGING:-discord-staging.polardev.org}"
+      # polardev.org IS the staging domain (production is sfubadminton.com),
+      # so the host needs no "staging" in it - badminton.polardev.org next door
+      # follows the same convention.
+      proxy.host:       "${DISCORD_BOT_DOMAIN_STAGING:-discord.polardev.org}"
       proxy.port:       "3002"
       proxy.health:     "/health"
       proxy.service:    "badminton-staging-discord-bot"
