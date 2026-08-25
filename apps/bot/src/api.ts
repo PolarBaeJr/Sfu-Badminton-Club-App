@@ -216,3 +216,35 @@ export async function deleteLink(discordUserId: string): Promise<boolean> {
   const body = (await response.json()) as { unlinked?: boolean };
   return body.unlinked === true;
 }
+
+/**
+ * Write a guild's role map, for /setup.
+ *
+ * Its own timeout rather than the 2.5s shared one: /setup answers Discord with
+ * a deferred reply before it gets here, so it is not racing the 3-second
+ * interaction deadline, and it may be creating nine roles first. Failing this
+ * at 2.5s would abandon a write that was about to succeed and leave the guild
+ * half-configured.
+ */
+export async function writeGuildConfig(payload: {
+  guildId: string;
+  label?: string;
+  roles: Record<string, string>;
+  auditChannelId?: string;
+}): Promise<void> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/config', base), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!response.ok) {
+    throw new AppApiError(`POST /api/discord/config -> ${response.status}`);
+  }
+}

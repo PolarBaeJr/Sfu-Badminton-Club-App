@@ -47,31 +47,10 @@ In the Discord Developer Portal:
 4. Invite it to your test server with the `bot` and `applications.commands`
    scopes and the **Manage Roles** permission.
 
-## 2. Roles in the test server
+## 2. Migrations
 
-Create the roles the sweep manages. At minimum `@Linked` and `@Session Staff`;
-add the membership and team roles you actually want synced.
-
-**Then drag the bot's own role above every role it manages.** Discord refuses,
-with a 403, any attempt to modify a member whose highest role sits above the
-bot's. The bot treats that 403 as expected and colours it amber in the audit
-log rather than red — so if you skip this step the sweep will look like it is
-working while changing nothing.
-
-## 3. Guilds and roles go in the database, not in env
-
-The guild list, the role ids, and the audit channel are **runtime config**, read
-from Postgres on every sweep with a 60-second cache. Adding a server is an
-INSERT, not a redeploy.
-
-Run `supabase/migrations/00167_discord_runtime_config.sql`, then insert your
-rows. The exact INSERT statements are at the bottom of that migration file.
-
-> An **empty** guild registry is not inert. The desired-role calculation runs
-> per guild, so zero guilds means the sweep walks every member, decides nothing
-> applies, and reports success. Confirm your rows are actually there.
-
-Also run, in order, and **only** these:
+Do these before `/setup` — it writes to tables that have to exist first. Run, in
+order, and **only** these:
 
 | Migration | What it adds |
 |---|---|
@@ -79,11 +58,63 @@ Also run, in order, and **only** these:
 | `00166_discord_nightly_sync.sql` | the pg_cron schedule, plus two `cron_config` rows |
 | `00167_discord_runtime_config.sql` | guilds, roles, settings |
 
-> **Pause the prod → staging snapshot job before running these on staging.**
-> The snapshot does `DROP SCHEMA public CASCADE` at 04:00. All three tables live
-> in `public` and will be erased. pg_cron's own schedule lives in the `cron`
-> schema and survives — so a wiped staging would keep running the sweep against
-> whatever `discord_bot_url` production's row holds.
+> ### ⚠️ Pause the prod → staging snapshot before running these on staging
+>
+> The snapshot does `DROP SCHEMA public CASCADE` at 04:00 and then restores
+> prod's `public` schema on top. All four config tables live in `public`:
+> `discord_guilds`, `discord_guild_roles`, `discord_settings`, `cron_config`.
+>
+> So the damage is not just that staging's rows are erased — **staging inherits
+> production's**. It would come up holding prod's guild id, prod's role ids,
+> prod's `discord_bot_url` and prod's secret, i.e. the staging bot pointed at
+> the production Discord server.
+>
+> What partly saves you is that staging's bot is a separate Discord application
+> and is not a member of the prod server, so its calls 403. That is luck, not a
+> safeguard. pg_cron's schedule lives in the `cron` schema and survives the drop
+> regardless, so the wiped staging keeps running the sweep on time.
+>
+> Until the snapshot script learns to preserve these tables, staging cannot both
+> refresh from prod and hold its own bot config. Pick one deliberately.
+
+## 3. Roles in the test server
+
+**Run `/setup` in the server. That is the whole step.**
+
+> `/setup` is a slash command, so it only exists after step 7
+> (`npm run register -w bot`) and after the bot is running and reachable. If you
+> are working through this in order, come back here once step 7 is done. The
+> bot needs no config to serve `/setup` — that is the point of it.
+
+It lists the guild's roles, adopts any that already match by name, creates the
+rest with **no permissions**, and writes the ids to the database itself. No
+copying snowflakes out of Discord's UI into SQL.
+
+Requires **Manage Server** to run — Discord enforces that server-side, so the
+command is not even visible to anyone else. That gate is the point: whoever runs
+it decides which Discord role the bot hands to everyone the app says qualifies,
+so it is restricted to the people who could already edit those roles by hand.
+
+It is idempotent. Matching is on the normalised name, so "Session Staff",
+"session-staff" and "session_staff" are one role, not three, and a club that
+already made its own keeps its own name. Re-run it any time — after creating a
+role by hand, after renaming one, or to pick up a role you skipped.
+
+It never deletes or renames anything, and it never guesses: two roles sharing a
+name are reported, not resolved, because picking one decides who gets what.
+
+**Then drag the bot's own role above every role it manages.** `/setup` tells you
+this every time it runs, because it is the single most common way this bot looks
+like it is working while changing nothing: Discord refuses, with a 403, any
+attempt to modify a member whose highest role sits above the bot's. The bot
+colours that 403 amber rather than red, so a nightly sweep hitting it does not
+read as an incident.
+
+> Roles `/setup` creates carry **zero permissions**. Discord's API copies
+> `@everyone`'s permissions onto a new role when the field is omitted, so on a
+> server where `@everyone` can manage messages this would otherwise mint nine
+> roles carrying that power. A created role is a label until a human grants it
+> something.
 
 ## 4. The shared secret, in both places
 
@@ -165,6 +196,7 @@ is the gate.
 
 ## 8. Check it worked
 
+- `/setup` reports the roles it created or adopted.
 - `/link` in the test server returns a button.
 - The audit channel gets an embed for the link.
 - A manual sweep posts exactly **one** embed, not one per member. (Discord rate

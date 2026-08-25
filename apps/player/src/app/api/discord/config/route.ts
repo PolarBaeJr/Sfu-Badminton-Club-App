@@ -94,3 +94,111 @@ export async function GET(request: Request) {
     auditChannelId: settings.get('audit_channel_id') ?? null,
   });
 }
+
+/** Mirrors the CHECK on discord_guild_roles.role_name (migration 00167). */
+const MANAGED_ROLE_NAMES = new Set([
+  'linked', 'session_staff', 'vp', 'executives',
+  'competitive', 'recreation', 'internal', 'alumni', 'external',
+]);
+
+/** Discord snowflakes. Same shape the migration's CHECK enforces. */
+const SNOWFLAKE = /^[0-9]{5,25}$/;
+
+// Write the guild's role map, for /setup.
+//
+// This endpoint decides WHICH Discord role the bot hands to everyone who
+// qualifies, so every field is validated here rather than trusted because it
+// came from our own bot: the bot builds this payload from names it read out of
+// somebody's guild, and "the caller is our code" is not the same claim as "the
+// data is ours".
+//
+// UPSERT ONLY — it never deletes a role mapping. /setup sends what it could
+// resolve, and a role it could not resolve this run (two roles with the same
+// name, one moved above the bot) must not erase a mapping that was working
+// yesterday. Removing one is a deliberate DELETE by a human.
+export async function POST(request: Request) {
+  if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
+
+  const ip = getClientIp(request);
+  // Far tighter than the read: this is a configuration write driven by a human
+  // running a command, not something any loop should be doing.
+  const limited = rateLimit(`discord:config:write:${ip}`, 10, 60_000);
+  if (!limited.success) {
+    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
+  }
+
+  const { guildId, label, roles, auditChannelId } = (body ?? {}) as {
+    guildId?: unknown; label?: unknown; roles?: unknown; auditChannelId?: unknown;
+  };
+
+  if (typeof guildId !== 'string' || !SNOWFLAKE.test(guildId)) {
+    return NextResponse.json({ error: 'invalid_guild_id' }, { status: 400 });
+  }
+  if (label !== undefined && typeof label !== 'string') {
+    return NextResponse.json({ error: 'invalid_label' }, { status: 400 });
+  }
+  if (auditChannelId !== undefined && (typeof auditChannelId !== 'string' || !SNOWFLAKE.test(auditChannelId))) {
+    return NextResponse.json({ error: 'invalid_audit_channel_id' }, { status: 400 });
+  }
+  if (typeof roles !== 'object' || roles === null || Array.isArray(roles)) {
+    return NextResponse.json({ error: 'invalid_roles' }, { status: 400 });
+  }
+
+  const entries = Object.entries(roles as Record<string, unknown>);
+  // An empty map would create a guild row with no roles, which the GET above
+  // filters out anyway — so it would look like /setup succeeded and changed
+  // nothing. Refused instead.
+  if (entries.length === 0) {
+    return NextResponse.json({ error: 'no_roles' }, { status: 400 });
+  }
+  for (const [name, id] of entries) {
+    if (!MANAGED_ROLE_NAMES.has(name)) {
+      return NextResponse.json({ error: 'unknown_role', detail: name }, { status: 400 });
+    }
+    if (typeof id !== 'string' || !SNOWFLAKE.test(id)) {
+      return NextResponse.json({ error: 'invalid_role_id', detail: name }, { status: 400 });
+    }
+  }
+
+  const supabase = createServiceRoleClient();
+
+  // The guild row first: discord_guild_roles has a FK onto it, so the reverse
+  // order fails outright rather than half-applying.
+  const guildWrite = await supabase
+    .from('discord_guilds')
+    .upsert({ guild_id: guildId, ...(label ? { label } : {}) }, { onConflict: 'guild_id' });
+  if (guildWrite.error) {
+    console.error('[discord] config guild write failed:', guildWrite.error.message);
+    return NextResponse.json({ error: 'write_failed', detail: guildWrite.error.message }, { status: 503 });
+  }
+
+  const roleWrite = await supabase
+    .from('discord_guild_roles')
+    .upsert(
+      entries.map(([role_name, role_id]) => ({ guild_id: guildId, role_name, role_id: role_id as string })),
+      { onConflict: 'guild_id,role_name' }
+    );
+  if (roleWrite.error) {
+    console.error('[discord] config role write failed:', roleWrite.error.message);
+    return NextResponse.json({ error: 'write_failed', detail: roleWrite.error.message }, { status: 503 });
+  }
+
+  if (auditChannelId !== undefined) {
+    const settingWrite = await supabase
+      .from('discord_settings')
+      .upsert({ key: 'audit_channel_id', value: auditChannelId }, { onConflict: 'key' });
+    if (settingWrite.error) {
+      console.error('[discord] audit channel write failed:', settingWrite.error.message);
+      return NextResponse.json({ error: 'write_failed', detail: settingWrite.error.message }, { status: 503 });
+    }
+  }
+
+  return NextResponse.json({ ok: true, guildId, roles: entries.length });
+}

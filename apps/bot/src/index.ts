@@ -2,8 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { clearRevocations, fetchLinkedMembers } from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
-import { dispatch } from './commands.js';
-import { DiscordApi } from './discord-api.js';
+import { DEFERRED_COMMANDS, dispatch } from './commands.js';
+import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { reconcile } from './reconcile.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
@@ -241,6 +241,9 @@ const server = createServer(async (req, res) => {
     member?: { user?: { id?: string } };
     user?: { id?: string };
     guild_id?: string;
+    // Only sent for real interactions, not for the PING probe.
+    application_id?: string;
+    token?: string;
   };
   try {
     interaction = JSON.parse(rawBody);
@@ -253,10 +256,61 @@ const server = createServer(async (req, res) => {
 
   // APPLICATION_COMMAND
   if (interaction.type === 2 && interaction.data) {
-    const response = await dispatch(interaction.data.name, interaction.data.options, {
+    const context = {
       discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
       guildId: interaction.guild_id ?? null,
-    });
+      applicationId: interaction.application_id ?? null,
+      interactionToken: interaction.token ?? null,
+    };
+
+    // DEFERRED PATH. Discord gives an interaction 3 seconds to be acknowledged
+    // or it tells the user the application did not respond -- and it means it,
+    // whatever the bot does afterwards. /setup creates up to nine roles and
+    // then writes to the app, so it cannot possibly answer inside that budget.
+    //
+    // So: acknowledge immediately with type 5 (a visible "thinking..."), let
+    // the socket close, and PATCH the real answer in when the work is done.
+    // The interaction token stays valid for 15 minutes, which is ample.
+    if (DEFERRED_COMMANDS.has(interaction.data.name)) {
+      const { name, options } = interaction.data;
+      const { application_id: appId, token: interactionToken } = interaction;
+
+      // flags 64 = ephemeral, and it has to be set HERE, on the deferral. A
+      // deferred reply's visibility is fixed at acknowledgement time and cannot
+      // be changed by the followup, so deferring non-ephemerally would publish
+      // the role list to the whole channel.
+      send(res, 200, { type: 5, data: { flags: 64 } });
+
+      // Deliberately not awaited: the response is already sent.
+      void (async () => {
+        try {
+          const response = await dispatch(name, options, context);
+          if (!appId || !interactionToken) {
+            // Nothing to edit. Only reachable if Discord sent a command
+            // interaction without a token, which should not happen.
+            console.error(`[bot] ${name} finished but had no interaction token`);
+            return;
+          }
+          // dispatch returns a full interaction response; the webhook edit
+          // wants only the message body.
+          const payload = (response as { data?: unknown }).data ?? response;
+          await editDeferredReply(appId, interactionToken, payload);
+        } catch (error) {
+          // dispatch catches its own errors, so reaching here means something
+          // outside it failed. The user is still looking at "thinking...", so
+          // say something rather than leaving it spinning forever.
+          console.error(`[bot] deferred ${name} failed:`, error);
+          if (appId && interactionToken) {
+            await editDeferredReply(appId, interactionToken, {
+              content: 'Something went wrong. Please try again.',
+            });
+          }
+        }
+      })();
+      return;
+    }
+
+    const response = await dispatch(interaction.data.name, interaction.data.options, context);
     return send(res, 200, response);
   }
 

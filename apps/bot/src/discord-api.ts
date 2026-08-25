@@ -22,6 +22,8 @@ export interface DiscordApiOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+import type { DiscordRole } from './setup.js';
+
 const BASE = 'https://discord.com/api/v10';
 
 // Discord answers a rate limit with retry_after in SECONDS (a float). Two
@@ -86,6 +88,63 @@ export class DiscordApi {
   }
 
   /**
+   * Every role in the guild, including @everyone and Discord-managed ones.
+   *
+   * Filtering happens in setup.ts rather than here: what counts as usable
+   * depends on the bot's own position, which this method has no business
+   * knowing about.
+   */
+  async listGuildRoles(guildId: string): Promise<DiscordRole[]> {
+    const response = await this.request('GET', `/guilds/${guildId}/roles`);
+    if (!response.ok) throw new Error(`GET roles -> ${response.status}`);
+    return (await response.json()) as DiscordRole[];
+  }
+
+  /**
+   * The bot's own highest role position in a guild.
+   *
+   * Needed because Discord refuses to let a bot create or assign a role at or
+   * above its own, and a wired-up role above the bot fails on every single
+   * sweep while looking perfectly configured.
+   *
+   * @me resolves to the bot without needing its user id, which the bot does not
+   * otherwise have to know.
+   */
+  async getOwnRolePosition(guildId: string): Promise<number> {
+    const member = await this.request('GET', `/guilds/${guildId}/members/@me`);
+    if (!member.ok) throw new Error(`GET @me -> ${member.status}`);
+    const { roles } = (await member.json()) as { roles?: string[] };
+    const all = await this.listGuildRoles(guildId);
+    const mine = new Set(roles ?? []);
+    // A bot with no roles beyond @everyone has position 0 and can assign
+    // nothing, which the caller reports rather than treating as "unlimited".
+    return all
+      .filter((r) => mine.has(r.id))
+      .reduce((highest, r) => Math.max(highest, r.position), 0);
+  }
+
+  /**
+   * Create a role, with NO permissions.
+   *
+   * `permissions: '0'` is not a tidy default, it is the whole safety property.
+   * Discord copies @everyone's permissions onto a new role when the field is
+   * omitted, so on a server where @everyone can, say, manage messages, running
+   * /setup would silently mint nine roles carrying that power. Sending "0"
+   * explicitly makes a created role purely a label until a human grants it
+   * something.
+   */
+  async createGuildRole(guildId: string, name: string): Promise<DiscordRole> {
+    const response = await this.request('POST', `/guilds/${guildId}/roles`, {
+      name,
+      permissions: '0',
+      mentionable: false,
+      hoist: false,
+    });
+    if (!response.ok) throw new Error(`POST role "${name}" -> ${response.status}`);
+    return (await response.json()) as DiscordRole;
+  }
+
+  /**
    * Post a message to a channel. Used only by the audit log.
    *
    * Returns a boolean instead of throwing, and the reason is the same one that
@@ -130,5 +189,38 @@ export class DiscordApi {
     if (response.status === 403) return 'forbidden';
     if (response.status === 404) return 'not_found';
     return 'failed';
+  }
+}
+
+/**
+ * Replace the deferred "thinking..." message with the real one.
+ *
+ * A standalone function, not a DiscordApi method, because it authenticates with
+ * the INTERACTION token rather than the bot token — the webhook route carries
+ * its own credential. Passing a bot token here would be rejected.
+ *
+ * Never throws: it runs after the work is already done and committed, and an
+ * unhandled rejection in a fire-and-forget path takes the process down with it.
+ * A lost message is bad; a bot that exits because it could not describe what it
+ * just did is worse.
+ */
+export async function editDeferredReply(
+  applicationId: string,
+  interactionToken: string,
+  payload: unknown,
+  fetchImpl: typeof fetch = fetch
+): Promise<boolean> {
+  try {
+    const response = await fetchImpl(
+      `${BASE}/webhooks/${applicationId}/${interactionToken}/messages/@original`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      }
+    );
+    return response.ok;
+  } catch {
+    return false;
   }
 }

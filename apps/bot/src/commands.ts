@@ -5,11 +5,14 @@ import {
   fetchLeaderboard,
   fetchSessions,
   mintLinkToken,
+  writeGuildConfig,
   type SessionSummary,
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
-import { loadConfig } from './config.js';
+import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
+import { type ManagedRole } from './roles.js';
+import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
 
 // SFU red, the app's single accent (--red: #c00). Keeps Discord output visually
@@ -62,7 +65,36 @@ export const COMMAND_DEFINITIONS = [
     description: 'Disconnect your Discord account and remove your club roles',
     options: [],
   },
+  {
+    name: 'setup',
+    description: 'Create and wire up the club roles in this server',
+    options: [],
+    // MANAGE_GUILD (1 << 5). Discord enforces this server-side, so the command
+    // is not even visible to anyone else.
+    //
+    // This gate is the security boundary of the whole feature, and it is worth
+    // being explicit about why it sits HERE. Whoever runs /setup decides which
+    // Discord role the bot hands to everyone the app says is an exec. Pointing
+    // `executives` at a powerful role would grant it to every exec at once.
+    // Requiring Manage Server means the people who can run it are exactly the
+    // people who could already edit those roles by hand, so it adds no power
+    // anyone did not have -- and Discord independently refuses to let a bot
+    // create or assign anything above its own position, which caps the blast
+    // radius even if this gate were somehow bypassed.
+    default_member_permissions: '32',
+    // Meaningless in a DM: there is no guild to configure.
+    dm_permission: false,
+  },
 ];
+
+/**
+ * Commands answered with a deferred reply instead of an immediate one.
+ *
+ * Discord gives an interaction 3 seconds to be acknowledged. /setup can create
+ * nine roles and then write to the app, which is comfortably longer, so it
+ * acknowledges first and edits the message when it is actually finished.
+ */
+export const DEFERRED_COMMANDS = new Set(['setup']);
 
 /**
  * Who ran the command, and where.
@@ -76,6 +108,9 @@ export const COMMAND_DEFINITIONS = [
 export interface InteractionContext {
   discordUserId: string | null;
   guildId: string | null;
+  /** Both only present for a deferred command; see DEFERRED_COMMANDS. */
+  applicationId?: string | null;
+  interactionToken?: string | null;
 }
 
 interface CommandOption {
@@ -277,6 +312,136 @@ export async function handleUnlink(context: InteractionContext) {
   );
 }
 
+/**
+ * /setup — make this server's roles exist, and tell the app their ids.
+ *
+ * The problem it solves is dull but real: wiring a guild by hand means copying
+ * nine snowflakes out of Discord's UI into SQL without transposing a digit, and
+ * a transposed digit is not a syntax error. It is a role that silently never
+ * applies.
+ *
+ * Idempotent by construction. It matches on the NORMALISED role name, so a club
+ * that already has "Session Staff" keeps it rather than gaining a second one,
+ * and running it twice is a no-op. Nothing is ever deleted or renamed.
+ *
+ * Runs AFTER a deferred acknowledgement — see DEFERRED_COMMANDS — so it is free
+ * to take as long as nine role creations need.
+ */
+export async function handleSetup(context: InteractionContext) {
+  const { guildId } = context;
+  // dm_permission: false means Discord should never deliver this without a
+  // guild. Checked anyway: the alternative is a confusing crash if that ever
+  // changes, and the whole command is meaningless without one.
+  if (!guildId) return ephemeral('Run this in the server you want to set up.');
+
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) return ephemeral('The bot is not configured with a token.');
+
+  const api = new DiscordApi({ token });
+
+  let botPosition: number;
+  let existing: DiscordRole[];
+  try {
+    [botPosition, existing] = await Promise.all([
+      api.getOwnRolePosition(guildId),
+      api.listGuildRoles(guildId),
+    ]);
+  } catch (error) {
+    console.error('[bot] setup could not read roles:', error);
+    return ephemeral(
+      'I could not read this server\'s roles. I need the **Manage Roles** permission.'
+    );
+  }
+
+  const plan = planSetup(existing, botPosition);
+
+  // Create what is missing, one at a time rather than in parallel: role
+  // creation shares a per-guild rate limit bucket, and nine concurrent POSTs
+  // just means nine 429s and a slower result.
+  const created: MatchedRole[] = [];
+  const failed: { role: ManagedRole; reason: string }[] = [];
+  for (const role of plan.toCreate) {
+    try {
+      const made = await api.createGuildRole(guildId, DISPLAY_NAMES[role]);
+      created.push({ role, id: made.id, name: made.name });
+    } catch (error) {
+      // Most likely a 403: no Manage Roles, or the bot's own role is at the
+      // very bottom. Collected rather than thrown so one refusal does not
+      // discard the eight that worked.
+      failed.push({ role, reason: String(error) });
+    }
+  }
+
+  const resolved = [...plan.matched, ...created];
+  if (resolved.length === 0) {
+    return ephemeral(
+      'I could not resolve or create any roles. Check that I have **Manage Roles**, ' +
+        'and that my own role is not at the bottom of the list.'
+    );
+  }
+
+  const roles: Record<string, string> = {};
+  for (const r of resolved) roles[r.role] = r.id;
+
+  try {
+    await writeGuildConfig({ guildId, roles });
+  } catch (error) {
+    console.error('[bot] setup could not save config:', error);
+    // The roles now exist in Discord but the app does not know their ids. Say
+    // so plainly: re-running is safe and is the fix, because the roles it just
+    // made will match by name on the next pass.
+    return ephemeral(
+      'I created the roles, but could not save them to the club app. ' +
+        'Run /setup again in a moment — it will adopt the roles it just made.'
+    );
+  }
+
+  // The bot re-reads config on a 60s cache; after a deliberate write there is
+  // no reason to serve a stale map for the next minute.
+  invalidateConfigCache();
+
+  const lines: string[] = [];
+  if (created.length) {
+    lines.push(`**Created ${created.length}:** ${created.map((c) => `<@&${c.id}>`).join(' ')}`);
+  }
+  if (plan.matched.length) {
+    lines.push(
+      `**Adopted ${plan.matched.length} existing:** ${plan.matched.map((m) => `<@&${m.id}>`).join(' ')}`
+    );
+  }
+  for (const a of plan.ambiguous) {
+    lines.push(
+      `⚠️ **${a.role}** — ${a.names.length} roles share that name (${a.names.join(', ')}). ` +
+        'Rename or delete the duplicates, then run /setup again.'
+    );
+  }
+  for (const u of plan.unusable) {
+    lines.push(
+      u.reason === 'above_bot'
+        ? `⚠️ **${u.name}** sits above my own role, so I cannot assign it. Move my role higher.`
+        : `⚠️ **${u.name}** is managed by Discord and cannot be assigned.`
+    );
+  }
+  for (const f of failed) {
+    lines.push(`❌ Could not create **${DISPLAY_NAMES[f.role]}** — check my Manage Roles permission.`);
+  }
+
+  // The single most common way this bot appears to work while doing nothing:
+  // every role it manages sits above it, so every assignment 403s. Said up
+  // front, every time, rather than left to be discovered by a silent sweep.
+  lines.push(
+    '',
+    '**Next:** drag my role in Server Settings → Roles so it sits **above** every role listed here. ' +
+      'Discord will not let me assign a role positioned above my own.'
+  );
+
+  return reply({
+    title: 'Club roles configured',
+    description: lines.join('\n'),
+    color: failed.length || plan.ambiguous.length || plan.unusable.length ? 0xf1c40f : 0x2ecc71,
+  });
+}
+
 export async function dispatch(
   name: string,
   options: CommandOption[] | undefined,
@@ -292,6 +457,8 @@ export async function dispatch(
         return await handleLink(context);
       case 'unlink':
         return await handleUnlink(context);
+      case 'setup':
+        return await handleSetup(context);
       default:
         return ephemeral('Unknown command.');
     }
