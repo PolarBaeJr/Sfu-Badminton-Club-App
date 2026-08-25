@@ -28,6 +28,11 @@
 //      those two env vars still exist.
 //   4. With none of the above, THROW. The caller turns that into a 500 and a
 //      log line; it must not become a quiet sweep over nothing.
+//
+// A fetch that SUCCEEDS but describes zero guilds is treated as a failure and
+// enters the ladder at step 2. "No guilds" is not a configuration this bot can
+// be in: with none, there is nothing for it to manage. Accepting it as valid is
+// indistinguishable, from the outside, from a sweep that worked.
 
 import { fetchBotConfig } from './api.js';
 import { MANAGED_ROLES, parseGuildRegistry, type GuildRegistry, type GuildRoleMap, type ManagedRole } from './roles.js';
@@ -108,8 +113,27 @@ export async function loadConfig(
 
   try {
     const payload = await fetchBotConfig();
+    const registry = registryFromPayload(payload.guilds);
+    // A SUCCESSFUL fetch that describes zero guilds is not a valid config, and
+    // this is the hole the ladder above did not cover: every branch of it
+    // guards a fetch that FAILED, so an empty-but-successful read went straight
+    // through, cached itself, and let the sweep run over nothing and report
+    // ok: true. That is the precise outcome the header of this file says must
+    // never happen.
+    //
+    // It is not hypothetical. The prod-to-staging snapshot drops the public
+    // schema nightly, which takes discord_guilds with it — so on staging this
+    // state arrives on its own, roughly every morning, without anyone changing
+    // a line of code.
+    //
+    // Treated as a failure rather than thrown on directly, so it inherits the
+    // ladder: a previously good registry still wins over it, which is exactly
+    // right when the tables were wiped out from under a running bot.
+    if (registry.size === 0) {
+      throw new Error('config: the app returned no usable guilds');
+    }
     const value: BotConfig = {
-      registry: registryFromPayload(payload.guilds),
+      registry,
       auditChannelId: payload.auditChannelId ?? undefined,
     };
     cached = { value, at: now() };

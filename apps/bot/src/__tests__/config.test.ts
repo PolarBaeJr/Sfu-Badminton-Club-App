@@ -103,3 +103,40 @@ describe('loadConfig', () => {
     expect((await loadConfig()).auditChannelId).toBeUndefined();
   });
 });
+
+describe('an empty registry is never accepted as valid config', () => {
+  // The gap this closes: every other guard in loadConfig protects a fetch that
+  // FAILED. A fetch that succeeds and describes no guilds used to be cached and
+  // returned, which let the sweep run over nothing and answer ok: true.
+  it('rejects a successful fetch that describes zero guilds', async () => {
+    mockFetch.mockResolvedValue({ guilds: [], auditChannelId: null });
+    await expect(loadConfig({}, () => {})).rejects.toThrow(/no usable guilds/);
+  });
+
+  it('rejects a fetch whose only guild was skipped for having no roles', async () => {
+    mockFetch.mockResolvedValue({ guilds: [{ guildId: '1', roles: {} }], auditChannelId: null });
+    await expect(loadConfig({}, () => {})).rejects.toThrow(/no usable guilds/);
+  });
+
+  // The important half: this enters the ladder rather than short-circuiting it,
+  // so a bot that was working keeps working when the tables are wiped out from
+  // under it -- which the nightly snapshot does on staging by itself.
+  it('falls back to the last good registry rather than going empty', async () => {
+    mockFetch.mockResolvedValue({ guilds: [{ guildId: '1', roles: { linked: '123456' } }], auditChannelId: null });
+    const good = await loadConfig({}, () => {});
+    expect(good.registry.size).toBe(1);
+
+    mockFetch.mockResolvedValue({ guilds: [], auditChannelId: null });
+    const after = await loadConfig({ force: true }, () => {});
+    expect(after.registry.size).toBe(1);
+    expect(after.registry.get('1')).toEqual({ linked: '123456' });
+  });
+
+  it('falls back to DISCORD_GUILDS when nothing was ever cached', async () => {
+    process.env.DISCORD_GUILDS = JSON.stringify({ '9': { linked: '654321' } });
+    mockFetch.mockResolvedValue({ guilds: [], auditChannelId: null });
+    const cfg = await loadConfig({}, () => {});
+    expect(cfg.registry.get('9')).toEqual({ linked: '654321' });
+    delete process.env.DISCORD_GUILDS;
+  });
+});
