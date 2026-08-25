@@ -264,9 +264,32 @@ Three things decided while building, all worth a second opinion:
   service omits `proxy.unscalable` so it can scale, and a `setInterval` would become
   one sweep per replica, all writing the same roles.
 
-And one gap the schema work turned up: **re-linking is sometimes a move**, and the
-Discord account being moved away from keeps every role it holds. That is why
-`consume_discord_link_token` returns the displaced account as well as the linked one.
+And two gaps the schema work turned up, both the same shape — *an account stops being
+somebody's and keeps its roles*:
+
+- **Re-linking is sometimes a move**, and the account moved away from keeps every role
+  it holds. `consume_discord_link_token` returns the displaced account as well as the
+  linked one so the caller can strip it immediately.
+- **A deleted link is worse**, because there is nothing left to return. The sweep
+  iterates `player_discord_links`; when `merge_players` deletes the losing player the
+  cascade takes the link with it, so that Discord account is in no list and nothing
+  ever visits it again. `discord_role_revocations` is a tombstone written by a row
+  trigger that captures the outgoing id *before* it is lost, and the sweep treats each
+  tombstone as "no player, strip everything". The bot deletes a tombstone only once it
+  has really cleared the account, so a 403 leaves it queued rather than discarded.
+
+**The sweep is inert until something drives it.** `POST /sync` exists and is tested,
+but there is no pg_cron job and no admin `/api/cron` leg calling it, so reconciliation
+currently never runs on its own. The obvious driver — pg_net calling
+`discord.sfubadminton.com/sync` — goes through Cloudflare and therefore hits **the same
+edge auth gate that blocks Discord's interaction POSTs**, so the gate exclusion below
+has to be settled before the driver is worth writing. Do not read "the sync engine is
+built" as "roles reconcile themselves".
+
+One thing to measure on the first real sweep: it runs entirely inside one HTTP request,
+roughly three Discord calls per member, sequential. The tests use an instant mocked
+fetch, so nothing has exercised its duration. Check it fits inside the proxy's upstream
+timeout before relying on the 200.
 
 
 - `/link` → ephemeral button → app page → existing login → token exchange → link row.
