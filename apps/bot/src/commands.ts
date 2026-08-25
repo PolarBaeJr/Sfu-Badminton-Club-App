@@ -1,0 +1,170 @@
+import {
+  AppApiError,
+  fetchLeaderboard,
+  fetchSessions,
+  type SessionSummary,
+} from './api.js';
+
+// SFU red, the app's single accent (--red: #c00). Keeps Discord output visually
+// part of the same product rather than Discord-default blurple.
+const CLUB_RED = 0xcc0000;
+
+const LADDER_LABEL: Record<string, string> = {
+  singles: 'Singles',
+  doubles: 'Doubles',
+  points: 'Tournament points',
+};
+
+export const COMMAND_DEFINITIONS = [
+  {
+    name: 'leaderboard',
+    description: 'Club ladder standings',
+    options: [
+      {
+        type: 3, // STRING
+        name: 'ladder',
+        description: 'Which ladder (defaults to doubles)',
+        required: false,
+        choices: [
+          { name: 'Doubles', value: 'doubles' },
+          { name: 'Singles', value: 'singles' },
+          { name: 'Tournament points', value: 'points' },
+        ],
+      },
+      {
+        type: 4, // INTEGER
+        name: 'page',
+        description: 'Page number',
+        required: false,
+        min_value: 1,
+      },
+    ],
+  },
+  {
+    name: 'sessions',
+    description: 'Upcoming club sessions',
+    options: [],
+  },
+];
+
+interface CommandOption {
+  name: string;
+  value?: string | number;
+}
+
+function option(options: CommandOption[] | undefined, name: string) {
+  return options?.find((o) => o.name === name)?.value;
+}
+
+function reply(embed: Record<string, unknown>) {
+  return { type: 4, data: { embeds: [embed] } };
+}
+
+// Ephemeral (flag 64) so failures and empty states don't clutter a shared
+// channel. Only the person who ran the command sees them.
+function ephemeral(content: string) {
+  return { type: 4, data: { content, flags: 64 } };
+}
+
+function formatLeaderboardRow(e: {
+  rank: number;
+  name: string;
+  handle: string | null;
+  rating: number;
+  provisional: boolean;
+  wins: number;
+  losses: number;
+}) {
+  // Podium gets a marker; everything else is a plain number so the column stays
+  // readable in Discord's proportional font.
+  const medal = e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : `\`${e.rank}.\``;
+  // The asterisk is not decoration: an unmarked provisional rating reads as
+  // settled, and a leaderboard posted in a channel outlives the message.
+  const rating = `${e.rating}${e.provisional ? '*' : ''}`;
+  return `${medal} **${e.name}** — ${rating} (${e.wins}W ${e.losses}L)`;
+}
+
+export async function handleLeaderboard(options: CommandOption[] | undefined) {
+  const ladder = String(option(options, 'ladder') ?? 'doubles');
+  const page = Number(option(options, 'page') ?? 1);
+
+  const data = await fetchLeaderboard(ladder, page);
+
+  if (data.entries.length === 0) {
+    return ephemeral(
+      data.page > data.totalPages
+        ? `That page is empty — the ${LADDER_LABEL[data.ladder]} ladder has ${data.totalPages} page(s).`
+        : 'No ranked players yet.'
+    );
+  }
+
+  const anyProvisional = data.entries.some((e) => e.provisional);
+
+  return reply({
+    title: `${LADDER_LABEL[data.ladder] ?? data.ladder} ladder`,
+    color: CLUB_RED,
+    description: data.entries.map(formatLeaderboardRow).join('\n'),
+    footer: {
+      text: [
+        `Page ${data.page} of ${data.totalPages}`,
+        `${data.totalPlayers} ranked`,
+        anyProvisional ? '* rating still provisional' : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    },
+  });
+}
+
+function formatSession(s: SessionSummary) {
+  // Discord's <t:unix:F> renders in each viewer's own timezone. Using it means
+  // the bot never has to know the club timezone, and a member travelling sees
+  // the right local time without the bot doing anything.
+  const when = s.startsAt
+    ? `<t:${Math.floor(new Date(s.startsAt).getTime() / 1000)}:F>`
+    : `${s.date}${s.startTime ? ` ${s.startTime}` : ''}`;
+
+  const parts = [when];
+  if (s.location) parts.push(s.location);
+  if (s.going !== null) parts.push(`${s.going} going`);
+
+  return `**${s.name ?? 'Session'}**\n${parts.join(' · ')}`;
+}
+
+export async function handleSessions() {
+  const { sessions } = await fetchSessions();
+
+  if (sessions.length === 0) {
+    return ephemeral('No upcoming sessions are open right now.');
+  }
+
+  return reply({
+    title: 'Upcoming sessions',
+    color: CLUB_RED,
+    description: sessions.map(formatSession).join('\n\n'),
+    footer: { text: 'RSVP on the website' },
+  });
+}
+
+export async function dispatch(name: string, options: CommandOption[] | undefined) {
+  try {
+    switch (name) {
+      case 'leaderboard':
+        return await handleLeaderboard(options);
+      case 'sessions':
+        return await handleSessions();
+      default:
+        return ephemeral('Unknown command.');
+    }
+  } catch (err) {
+    // Log the real reason, tell the user something true and non-technical. An
+    // AppApiError means the app answered badly or not at all; anything else is a
+    // bug here. Neither should put a status code or a stack in a channel.
+    console.error(`[bot] ${name} failed:`, err);
+    return ephemeral(
+      err instanceof AppApiError
+        ? "Couldn't reach the club app just now — try again in a moment."
+        : 'Something went wrong running that command.'
+    );
+  }
+}

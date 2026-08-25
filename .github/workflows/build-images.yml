@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
-        app: [player, admin]
+        app: [player, admin, bot]
         # Overlay, not a third image: adds base_path to the `admin` combination
         # only. Next bakes basePath in at build time, so the console's mount
         # point (/admin, same origin as the player app) has to be a build arg —
