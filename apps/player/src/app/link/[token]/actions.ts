@@ -63,7 +63,7 @@ export async function consumeDiscordLink(token: string): Promise<LinkResult> {
   const ids = [row.linked_discord_user_id, row.displaced_discord_user_id].filter(
     (id): id is string => typeof id === 'string'
   );
-  const synced = await syncDiscordMembers(ids);
+  const synced = await syncDiscordMembers(ids, 'linked');
 
   return {
     ok: true,
@@ -75,8 +75,17 @@ export async function consumeDiscordLink(token: string): Promise<LinkResult> {
   };
 }
 
-/** Ask the bot to sync these accounts. Never throws — the link is already made. */
-async function syncDiscordMembers(discordUserIds: string[]): Promise<boolean> {
+/**
+ * Ask the bot to sync these accounts. Never throws — the link is already made.
+ *
+ * `reason` only titles the bot's audit entry. It is passed so the log reads
+ * "Account linked" for the one moment that actually is a link, rather than
+ * filing every connection under the generic resync the sweep also uses.
+ */
+async function syncDiscordMembers(
+  discordUserIds: string[],
+  reason: 'linked' | 'resynced'
+): Promise<boolean> {
   const base = process.env.DISCORD_BOT_URL;
   const secret = process.env.DISCORD_SERVICE_SECRET;
   if (!base || !secret) {
@@ -88,7 +97,7 @@ async function syncDiscordMembers(discordUserIds: string[]): Promise<boolean> {
     const response = await fetch(new URL('/sync-member', base), {
       method: 'POST',
       headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ discordUserIds }),
+      body: JSON.stringify({ discordUserIds, reason }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {

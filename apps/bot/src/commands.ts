@@ -7,6 +7,7 @@ import {
   mintLinkToken,
   type SessionSummary,
 } from './api.js';
+import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { DiscordApi } from './discord-api.js';
 import { parseGuildRegistry } from './roles.js';
 import { syncMemberEverywhere } from './sync.js';
@@ -241,8 +242,9 @@ export async function handleUnlink(context: InteractionContext) {
   let cleared = false;
   try {
     const registry = parseGuildRegistry(process.env.DISCORD_GUILDS);
+    const api = new DiscordApi({ token });
     const outcomes = await syncMemberEverywhere(
-      new DiscordApi({ token }),
+      api,
       registry,
       context.discordUserId,
       null
@@ -252,6 +254,16 @@ export async function handleUnlink(context: InteractionContext) {
     // ordinary answer for an exec, and clearing the tombstone on one would
     // discard the revocation permanently.
     if (cleared) await clearRevocations([context.discordUserId]);
+
+    // /unlink strips roles here rather than through POST /sync-member, so it
+    // has to write its own entry — otherwise the one action a member can take
+    // to remove themselves is the one action the log never records.
+    await postAuditEntry(api, process.env.DISCORD_AUDIT_CHANNEL_ID, {
+      kind: 'member',
+      reason: 'unlinked',
+      discordUserIds: [context.discordUserId],
+      summary: summaryFromOutcomes(context.discordUserId, outcomes),
+    });
   } catch (error) {
     console.error('[bot] /unlink: immediate strip failed, left to the sweep:', error);
   }

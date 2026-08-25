@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { clearRevocations, fetchLinkedMembers } from './api.js';
+import { postAuditEntry } from './audit.js';
 import { dispatch } from './commands.js';
 import { DiscordApi } from './discord-api.js';
 import { reconcile } from './reconcile.js';
@@ -56,7 +57,7 @@ function readRawBody(req: IncomingMessage): Promise<string> {
 // Postgres (an advisory lock in the job that drives this) if it ever matters.
 let sweepInFlight = false;
 
-async function runSweep(res: ServerResponse) {
+async function runSweep(res: ServerResponse, trigger: 'scheduled' | 'manual') {
   if (sweepInFlight) return send(res, 409, { error: 'sweep_already_running' });
   sweepInFlight = true;
   try {
@@ -78,6 +79,18 @@ async function runSweep(res: ServerResponse) {
       console.error('[bot] could not clear revocations:', error);
     }
 
+    // One entry per sweep, never one per member — see rule 3 in audit.ts. It is
+    // awaited rather than fired off, so a sweep that has answered 200 has
+    // already been written down; the alternative loses the last entry whenever
+    // the container is replaced right after a sweep, which is exactly when a
+    // deploy happens.
+    await postAuditEntry(new DiscordApi({ token }), process.env.DISCORD_AUDIT_CHANNEL_ID, {
+      kind: 'sweep',
+      summary,
+      guilds: registry.size,
+      trigger,
+    });
+
     // The SUMMARY goes in the body, not just a 200. Whatever drives this is
     // likely pg_net, which follows redirects — so a 200 on its own proves
     // nothing about whether the sweep ran. The caller has to read the content.
@@ -91,9 +104,9 @@ async function runSweep(res: ServerResponse) {
 }
 
 async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
-  let body: { discordUserIds?: unknown };
+  let body: { discordUserIds?: unknown; reason?: unknown };
   try {
-    body = JSON.parse(await readRawBody(req)) as { discordUserIds?: unknown };
+    body = JSON.parse(await readRawBody(req)) as { discordUserIds?: unknown; reason?: unknown };
   } catch {
     return send(res, 400, { error: 'bad_request' });
   }
@@ -102,6 +115,11 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
   if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string') || ids.length === 0) {
     return send(res, 400, { error: 'invalid_body' });
   }
+
+  // Cosmetic — it only picks the audit entry's title. Validated anyway rather
+  // than interpolated, so a caller cannot write its own heading into the log.
+  const reason: 'linked' | 'unlinked' | 'resynced' =
+    body.reason === 'linked' || body.reason === 'unlinked' ? body.reason : 'resynced';
 
   try {
     const registry = parseGuildRegistry(process.env.DISCORD_GUILDS);
@@ -118,12 +136,21 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
       (id) => roster.find((m) => m.discordUserId === id) ?? { discordUserId: id, state: null }
     );
 
-    const summary = await reconcile(new DiscordApi({ token }), registry, members);
+    const api = new DiscordApi({ token });
+    const summary = await reconcile(api, registry, members);
     try {
       await clearRevocations(summary.cleared);
     } catch (error) {
       console.error('[bot] could not clear revocations:', error);
     }
+
+    await postAuditEntry(api, process.env.DISCORD_AUDIT_CHANNEL_ID, {
+      kind: 'member',
+      reason,
+      discordUserIds: ids as string[],
+      summary,
+    });
+
     return send(res, 200, { ok: true, ...summary });
   } catch (error) {
     console.error('[bot] member sync failed:', error);
@@ -148,7 +175,17 @@ const server = createServer(async (req, res) => {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
     }
-    return runSweep(res);
+    // The nightly pg_cron job posts {} and is the only scheduled driver, so an
+    // explicit "manual" is how a human-triggered sweep says so. Defaulting the
+    // other way would label every hand-run curl as the nightly job.
+    let trigger: 'scheduled' | 'manual' = 'scheduled';
+    try {
+      const parsed = JSON.parse(await readRawBody(req)) as { trigger?: unknown };
+      if (parsed?.trigger === 'manual') trigger = 'manual';
+    } catch {
+      // No body, or not JSON. Both mean the scheduled default.
+    }
+    return runSweep(res, trigger);
   }
 
   // ONE member, right now. The app calls this the moment a link is created or
@@ -228,6 +265,14 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[bot] listening on ${PORT}`);
+  // Said out loud on purpose. An audit log nobody configured and an audit log
+  // the bot cannot post to look identical from inside Discord — an empty
+  // channel — so the distinction has to be drawn here, once, at startup.
+  if (process.env.DISCORD_AUDIT_CHANNEL_ID) {
+    console.log(`[bot] audit log -> channel ${process.env.DISCORD_AUDIT_CHANNEL_ID}`);
+  } else {
+    console.log('[bot] DISCORD_AUDIT_CHANNEL_ID unset — no audit entries will be written');
+  }
 });
 
 // The proxy and Docker both stop containers with SIGTERM. Closing the server

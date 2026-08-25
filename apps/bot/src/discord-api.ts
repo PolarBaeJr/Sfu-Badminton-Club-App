@@ -41,7 +41,7 @@ export class DiscordApi {
     this.sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
-  private async request(method: string, path: string): Promise<Response> {
+  private async request(method: string, path: string, body?: unknown): Promise<Response> {
     let attempt = 0;
     for (;;) {
       const response = await this.fetchImpl(`${BASE}${path}`, {
@@ -50,6 +50,7 @@ export class DiscordApi {
           authorization: `Bot ${this.token}`,
           'content-type': 'application/json',
         },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
 
       if (response.status !== 429 || attempt >= MAX_RATE_LIMIT_RETRIES) return response;
@@ -82,6 +83,23 @@ export class DiscordApi {
     if (!response.ok) throw new Error(`GET member -> ${response.status}`);
     const body = (await response.json()) as { roles?: unknown };
     return Array.isArray(body.roles) ? (body.roles as string[]) : [];
+  }
+
+  /**
+   * Post a message to a channel. Used only by the audit log.
+   *
+   * Returns a boolean instead of throwing, and the reason is the same one that
+   * governs roleCall: the audit log is a RECORD of work, never a gate on it. A
+   * missing channel, a revoked permission or a 429 must not turn a completed
+   * unlink into a failed one, so the caller gets a value it is free to ignore.
+   */
+  async createMessage(channelId: string, payload: unknown): Promise<boolean> {
+    try {
+      const response = await this.request('POST', `/channels/${channelId}/messages`, payload);
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
 
   addRole(guildId: string, userId: string, roleId: string): Promise<RoleCallResult> {
