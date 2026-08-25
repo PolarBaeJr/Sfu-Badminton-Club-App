@@ -249,9 +249,23 @@ endpoint, and migration `00165_discord_links.sql` — which was applied twice to
 Postgres, with `relacl` confirming only `postgres` and `service_role` hold grants and
 all four verbs denied to `authenticated`, the unqualified UPDATE included.
 
-**Not built:** the `/link` and `/unlink` commands themselves, and the app-side page
-the link button points at. Both need the migration applied before any of it can be
-exercised, and the page is a design surface worth looking at before it is written.
+**Also built (2026-08-25):** `/link`, `/unlink`, the `/link/<token>` page, the minting
+and unlink endpoints, and `POST /sync-member` so roles apply the instant an account is
+connected instead of waiting for a sweep nothing drives yet.
+
+Two things about that flow are load-bearing and easy to undo by accident:
+
+- **The exchange is a POST.** Discord fetches URLs it is shown in order to build
+  previews, so a page that consumed the token on GET would be burned by Discord's own
+  crawler before the member tapped it. The token also rides in a link *button* rather
+  than in the message body, which is the part Discord unfurls.
+- **The token has to be threaded through six sites**, because the sign-in chain drops
+  it by default: both middleware redirects (the onboarding gate as well as the sign-in
+  one), all five call sites in `/login`, and both `/auth/callback` and
+  `/auth/post-login`. `/login` now has a single `authSuffix()` covering both token
+  types so a new call site cannot silently miss one.
+
+**Not built:** nothing else in phase 2.
 
 Three things decided while building, all worth a second opinion:
 
@@ -278,12 +292,21 @@ somebody's and keeps its roles*:
   tombstone as "no player, strip everything". The bot deletes a tombstone only once it
   has really cleared the account, so a 403 leaves it queued rather than discarded.
 
+**The gate was never a blocker — confirmed 2026-08-25.** The proxy's SSO gate is opt-in
+**per host**, via a `proxy.auth: "true"` docker label; the "auth gate enabled for
+domain(s) ..." startup line only declares which apexes have an `auth.<domain>` login
+host wired up, and does not gate their subdomains. Omitting the label *is* the
+exclusion, and the bot's compose service does not set it. (For the record, a gated host
+answers a non-HTML request with a clean 401, not a 302 — so even a misconfiguration
+would not have produced the redirect-to-a-200 failure that was feared.) Nothing is
+needed on the proxy side.
+
 **The sweep is inert until something drives it.** `POST /sync` exists and is tested,
 but there is no pg_cron job and no admin `/api/cron` leg calling it, so reconciliation
-currently never runs on its own. The obvious driver — pg_net calling
-`discord.sfubadminton.com/sync` — goes through Cloudflare and therefore hits **the same
-edge auth gate that blocks Discord's interaction POSTs**, so the gate exclusion below
-has to be settled before the driver is worth writing. Do not read "the sync engine is
+currently never runs on its own. Linking and unlinking apply roles immediately via
+`/sync-member`, so the sweep is now a repair mechanism rather than the only path — but
+a role changed in the app (a promotion, a ban, an expired membership) still will not
+reach Discord until something calls `POST /sync`. Do not read "the sync engine is
 built" as "roles reconcile themselves".
 
 One thing to measure on the first real sweep: it runs entirely inside one HTTP request,
