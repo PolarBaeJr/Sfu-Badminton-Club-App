@@ -186,7 +186,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Move :latest on both staging images
+      - name: Move :latest on all staging images
         env:
           OWNER: ${{ github.repository_owner }}
           # The tag the build job actually pushed, not a guess at how
