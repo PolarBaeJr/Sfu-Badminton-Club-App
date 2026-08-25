@@ -76,3 +76,43 @@ export function fetchLeaderboard(
 export function fetchSessions(): Promise<{ sessions: SessionSummary[] }> {
   return get<{ sessions: SessionSummary[] }>('/api/discord/sessions');
 }
+
+/**
+ * Every linked member and what the app currently believes about them.
+ *
+ * The sweep's input. `state` is null for a link the app can no longer resolve to
+ * a player — a deleted account, a merged-away duplicate — which the sync treats
+ * as "strip everything".
+ */
+export interface LinkedMemberRow {
+  discordUserId: string;
+  state: {
+    status: 'competitive' | 'recreational' | 'pending_approval' | 'suspended';
+    membershipType: 'internal' | 'alumni' | 'external';
+    isExec: boolean;
+    isBanned: boolean;
+    permissionRole: 'finance' | 'tournaments' | 'internal' | 'external' | 'custom' | null;
+    capabilities: string[];
+  } | null;
+}
+
+/**
+ * Deliberately NOT on the 2.5s interaction budget. This one is called by the
+ * reconciliation sweep, which nobody is watching a "thinking..." spinner for,
+ * and the whole roster does not arrive in the time a single slash command has.
+ */
+export async function fetchLinkedMembers(): Promise<LinkedMemberRow[]> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/members', base), {
+    headers: { authorization: `Bearer ${secret}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new AppApiError(`GET /api/discord/members -> ${response.status}`);
+
+  const body = (await response.json()) as { members?: LinkedMemberRow[] };
+  return body.members ?? [];
+}

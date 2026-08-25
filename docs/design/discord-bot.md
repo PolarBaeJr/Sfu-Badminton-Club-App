@@ -189,7 +189,7 @@ Sync to **these**, don't invent a parallel set:
 | Discord role | App source | Note |
 |---|---|---|
 | `Admin` 🔒 | *(not synced — see below)* | Managed manually in Discord |
-| `VP` | `players.portfolio IS NOT NULL` | `finance` / `tournaments` / `internal` / `external` |
+| `VP` | `is_exec` **and** `permission_role` is one of the four named jobs | `finance` / `tournaments` / `internal` / `external` — **not** `custom` |
 | `Executives` | `players.is_exec` | VP is a subset of this |
 | `Competitive Team` | `players.status = 'competitive'` | |
 | `Recreation Team` | `players.status = 'recreational'` | |
@@ -206,13 +206,25 @@ the `membership_type` enum. A separate `@Member` would be a fourth, redundant, a
 immediately-drifting source of truth. Member-only channel visibility is `Internal` **+** `Alumni`, and excludes `External`.
 This retires the `MEMBER` question entirely.
 
-### Name collision — read this before adding portfolio roles
+### `portfolio` does not exist — corrected
 
-`portfolio` and `membership_type` **both** have values called `internal` and
+An earlier draft of this table mapped `VP` to `players.portfolio IS NOT NULL`. **That
+column does not exist.** 00086 added it and 00087 dropped it again in the same sitting,
+77 migrations ago; its heir is `permission_role`, a closed set of
+`finance` / `tournaments` / `internal` / `external` / `custom`.
+
+`custom` does **not** earn the VP role. access-level.ts says why in as many words —
+"`custom` IS NOT A FIFTH VP JOB. It is the empty base" — it is the storage shape for a
+hand-picked capability set, not an office. A varsity trainer with one session capability
+is stored as `custom` and is not a VP.
+
+### Name collision — read this before adding per-job roles
+
+`permission_role` and `membership_type` **both** have values called `internal` and
 `external`, and they mean completely unrelated things. The existing `Internal` and
-`External` Discord roles are `membership_type`. If per-portfolio roles are ever added,
-they must be named `VP Internal` / `VP External` or similar. Reusing the bare names
-would silently merge a VP with every ordinary internal member.
+`External` Discord roles are `membership_type`. If per-job roles are ever added, they
+must be named `VP Internal` / `VP External` or similar. Reusing the bare names would
+silently merge a VP with every ordinary internal member.
 
 ### Multi-guild
 
@@ -251,9 +263,9 @@ maintain these roles.
 Sync is **one-directional: app → Discord.** There is no path where editing a Discord
 role writes back to `players`. If there were, Discord server admins would become app
 admins, and Discord role management is not audited the way the app's permission changes
-are. `portfolio` in particular is a privileged column, guarded by
-`guard_player_privileged_columns` and writable only by the audited, admin-only
-`setPlayerPortfolio()`; a Discord round-trip would be a way around that.
+are. `permission_role` in particular is a privileged column, guarded by
+`guard_player_privileged_columns` and writable only through the audited, admin-only
+permissions editor; a Discord round-trip would be a way around that.
 
 Triggers: on link, on permission change in the app, and on a periodic reconciliation
 sweep to repair drift (a role removed by hand in Discord, a member who lapsed while the

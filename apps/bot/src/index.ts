@@ -1,5 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { fetchLinkedMembers } from './api.js';
 import { dispatch } from './commands.js';
+import { DiscordApi } from './discord-api.js';
+import { reconcile } from './reconcile.js';
+import { parseGuildRegistry } from './roles.js';
+import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
 const PORT = Number(process.env.PORT ?? 3002);
@@ -38,6 +43,35 @@ function readRawBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+// A sweep in flight, if there is one. Overlapping sweeps would race each
+// other's role writes and double the rate-limit pressure for no benefit, and
+// the scheduler firing again while the last one is still going is the ordinary
+// way that happens.
+let sweepInFlight = false;
+
+async function runSweep(res: ServerResponse) {
+  if (sweepInFlight) return send(res, 409, { error: 'sweep_already_running' });
+  sweepInFlight = true;
+  try {
+    const registry = parseGuildRegistry(process.env.DISCORD_GUILDS);
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) return send(res, 500, { error: 'DISCORD_BOT_TOKEN is not set' });
+
+    const members = await fetchLinkedMembers();
+    const api = new DiscordApi({ token });
+    const summary = await reconcile(api, registry, members);
+    // The SUMMARY goes in the body, not just a 200. Whatever drives this is
+    // likely pg_net, which follows redirects — so a 200 on its own proves
+    // nothing about whether the sweep ran. The caller has to read the content.
+    return send(res, 200, { ok: true, ...summary });
+  } catch (error) {
+    console.error('[bot] sweep failed:', error);
+    return send(res, 500, { error: 'sweep_failed' });
+  } finally {
+    sweepInFlight = false;
+  }
+}
+
 const server = createServer(async (req, res) => {
   // Health: a real GET, not a bare TCP accept. proxy-manager falls back to a TCP
   // dial when no proxy.health label is set, and a dial cannot tell "process is
@@ -45,6 +79,17 @@ const server = createServer(async (req, res) => {
   // endpoint exists to give it something meaningful to ask.
   if (req.method === 'GET' && req.url === '/health') {
     return send(res, 200, { ok: true });
+  }
+
+  // The reconciliation sweep, driven from outside rather than by a timer in
+  // here: the compose service omits proxy.unscalable, so a setInterval would
+  // become one sweep PER REPLICA, all writing the same roles. One HTTP request
+  // reaches exactly one replica no matter how many are running.
+  if (req.method === 'POST' && req.url === '/sync') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    return runSweep(res);
   }
 
   if (req.method !== 'POST' || (req.url !== '/' && req.url !== '/interactions')) {

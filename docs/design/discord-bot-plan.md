@@ -241,7 +241,33 @@ host get excluded from the auth gate?** Not a code change — it is a proxy
 configuration question, and it is the one thing that can make a correct bot look
 completely broken.
 
-### Phase 2 — Linking and role sync
+### Phase 2 — Linking and role sync — **PARTLY BUILT**
+
+**Built and verified:** the role mapping (`apps/bot/src/roles.ts`), the sync engine
+(`discord-api.ts`, `sync.ts`, `reconcile.ts`), the app's `/api/discord/members`
+endpoint, and migration `00165_discord_links.sql` — which was applied twice to a real
+Postgres, with `relacl` confirming only `postgres` and `service_role` hold grants and
+all four verbs denied to `authenticated`, the unqualified UPDATE included.
+
+**Not built:** the `/link` and `/unlink` commands themselves, and the app-side page
+the link button points at. Both need the migration applied before any of it can be
+exercised, and the page is a design surface worth looking at before it is written.
+
+Three things decided while building, all worth a second opinion:
+
+- **A banned member keeps only `@Linked`.** A ban is the club withdrawing access;
+  leaving them holding `@Internal` keeps the member-only channels open to exactly the
+  person who was just removed from them.
+- **A `pending_approval` member gets no membership or team role**, for the same reason
+  they stay off the ladder.
+- **The sweep is driven over HTTP (`POST /sync`), never by a timer.** The compose
+  service omits `proxy.unscalable` so it can scale, and a `setInterval` would become
+  one sweep per replica, all writing the same roles.
+
+And one gap the schema work turned up: **re-linking is sometimes a move**, and the
+Discord account being moved away from keeps every role it holds. That is why
+`consume_discord_link_token` returns the displaced account as well as the linked one.
+
 
 - `/link` → ephemeral button → app page → existing login → token exchange → link row.
 - `/unlink`, which **must** also strip the Discord roles.
@@ -298,8 +324,12 @@ leaderboard**. The bot is **multi-guild**.
 
 ### Your work
 
-- Regenerate `database.gen.ts` — `players.portfolio` shipped in `00086` and is missing
-  from it.
+- Regenerate `database.gen.ts`. It is stale, and the staleness was actively
+  misleading: `players.portfolio` is absent from it not because the file is behind
+  but because **the column was dropped in `00087`**, one migration after it was
+  added. The spec's `VP = portfolio IS NOT NULL` rule was written against a column
+  that has not existed for 77 migrations; it now reads `permission_role`, and
+  `custom` is deliberately not a VP job.
 - Run the phase-0 migration when it exists (all DB writes are yours).
 - Create the Discord application, and land its token as a service secret file.
 

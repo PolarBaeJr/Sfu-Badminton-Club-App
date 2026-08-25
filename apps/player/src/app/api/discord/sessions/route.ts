@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getClientIp, rateLimit } from '@badminton/shared';
+import { CLUB_TIMEZONE, getClientIp, rateLimit } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { onVisibleTracks } from '@/lib/session-track-filter';
@@ -9,6 +9,11 @@ import {
 } from '@/lib/discord-service-auth';
 
 export const dynamic = 'force-dynamic';
+
+// YYYY-MM-DD in club time. en-CA formats as ISO, which is what `date` stores.
+function clubLocalToday(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: CLUB_TIMEZONE });
+}
 
 const MAX_SESSIONS = 10;
 
@@ -44,7 +49,14 @@ export async function GET(request: Request) {
     .from('sessions')
     .select('id, name, date, start_time, end_time, starts_at, ends_at, location, status, track')
     .eq('status', 'open')
-    .gte('ends_at', new Date().toISOString())
+    // ends_at is GENERATED and is NULL for exactly one real case (00110): a
+    // session with a start time and no end time, which closes at starts_at plus
+    // the runtime default_duration_minutes. A bare .gte('ends_at', now) drops
+    // every one of those from the schedule silently, which is the sort of
+    // absence nobody reports as a bug. Rows that HAVE an end instant are still
+    // filtered on it precisely; the rest fall back to the club-local date, the
+    // same column the app's own check-in path filters on for the same reason.
+    .or(`ends_at.gte.${new Date().toISOString()},and(ends_at.is.null,date.gte.${clubLocalToday()})`)
     .order('starts_at', { ascending: true })
     .limit(MAX_SESSIONS);
 
