@@ -23,15 +23,21 @@ the answer.
 | `/unlink` | Detach the Discord account | Yes |
 | `/profile` | Your name, handle, membership, Elo, record | Yes |
 | `/sessions` | Upcoming sessions with capacity and your status | No |
-| `/session <date>` | Detail for one session: time, courts, capacity, waitlist depth | No |
-| `/register <session>` | Register for a session | Yes |
-| `/withdraw <session>` | Withdraw from a session | Yes |
-| `/waitlist <session>` | Join the waitlist | Yes |
+| `/session <date>` | Detail for one session: time, location, going count, your RSVP | No |
+| `/register <session>` | RSVP `going` to a session | Yes |
+| `/withdraw <session>` | RSVP `declined` | Yes |
 | `/my-sessions` | Your upcoming registrations | Yes |
 | `/matches` | Your recent matches and results | Yes |
 | `/stats` | Your singles and doubles record, streaks, points | Yes |
 | `/leaderboard` | Club ladder (see §2) | No |
 | `/feedback` | Submit feedback to the exec team | No |
+
+**There is no separate waitlist command, because the RSVP list *is* the waitlist.**
+Sessions carry no capacity column; RSVP is uncapped by design and court space is
+settled in the room. `session_rsvp.created_at` is therefore the only ordering that
+exists, and it is the fair one. `/sessions` and `/session` should show the going count
+(`get_session_attendee_counts`) and, for a linked member, when they RSVP'd — that is
+the "where am I in line" answer, and it needs no new feature.
 
 ### Later
 
@@ -101,10 +107,21 @@ failure mode the core rule forbids.
 |---|---|
 | `UNLINKED` | No link row for this `discord_user_id` |
 | `LINKED_USER` | Link row exists and resolves to a `players` row |
-| `MEMBER` | **Open decision — see §9.** Do not guess a predicate. |
+| `MEMBER` | `membership_type IN ('internal', 'alumni')` — **not** `external` |
 | `SESSION_STAFF` | Holds `sessions.attendance.write` **and** `sessions.checkin.token.write` |
 | `EXEC` | `players.is_exec` |
 | `ADMIN` | `players.role = 'admin'` |
+
+`MEMBER` is settled: **alumni get member access, same as internal.** `external` means
+a player from another club or university and is *not* a member. So the tier is
+`membership_type IN ('internal', 'alumni')`.
+
+One thing not to conflate: that predicate decides the **Discord tier and channel
+visibility**. It is *not* the RSVP gate. The app's gate
+(`apps/player/src/lib/actions/_shared.ts`) tests `status`, `is_banned` and
+`active_flag` and **does not test `membership_type` at all** — so an active external
+player can RSVP today. The bot mirrors that behaviour; it must not start refusing
+externals just because they lack `@Member`.
 
 `SESSION_STAFF` is not stored anywhere. It is derived from the capability system
 introduced across migrations `00086`–`00105`: `permission_role`,
@@ -171,14 +188,14 @@ Sync to **these**, don't invent a parallel set:
 
 | Discord role | App source | Note |
 |---|---|---|
-| `Admin` 🔒 | `players.role = 'admin'` | Locked/managed — see below |
+| `Admin` 🔒 | *(not synced — see below)* | Managed manually in Discord |
 | `VP` | `players.portfolio IS NOT NULL` | `finance` / `tournaments` / `internal` / `external` |
 | `Executives` | `players.is_exec` | VP is a subset of this |
 | `Competitive Team` | `players.status = 'competitive'` | |
 | `Recreation Team` | `players.status = 'recreational'` | |
 | `Internal` | `players.membership_type = 'internal'` | |
-| `Alumni` | `players.membership_type = 'alumni'` | |
-| `External` | `players.membership_type = 'external'` | |
+| `Alumni` | `players.membership_type = 'alumni'` | Member access, same as internal |
+| `External` | `players.membership_type = 'external'` | Another club / university — not a member |
 
 Two roles in this spec do **not** exist yet and need creating: **`@Linked`** and
 **`@Session Staff`**.
@@ -186,9 +203,8 @@ Two roles in this spec do **not** exist yet and need creating: **`@Linked`** and
 **`@Member` should not be created.** The original spec called for one, but
 `Internal` / `Alumni` / `External` already partition membership exactly — they *are*
 the `membership_type` enum. A separate `@Member` would be a fourth, redundant, and
-immediately-drifting source of truth. Member-only channel visibility is expressed as
-the union of the three, or as `Internal` alone if the club means current students.
-This retires open decision #1 as a *code* question; what remains is the policy call in §9.
+immediately-drifting source of truth. Member-only channel visibility is `Internal` **+** `Alumni`, and excludes `External`.
+This retires the `MEMBER` question entirely.
 
 ### Name collision — read this before adding portfolio roles
 
@@ -198,15 +214,31 @@ This retires open decision #1 as a *code* question; what remains is the policy c
 they must be named `VP Internal` / `VP External` or similar. Reusing the bare names
 would silently merge a VP with every ordinary internal member.
 
+### Multi-guild
+
+The bot serves **more than one guild**, which changes the sync design in three ways:
+
+- **The link is global, the roles are not.** `discord_user_id` identifies a person
+  across all of Discord, so one link covers every guild. Role *IDs* are per-guild, so
+  the bot needs a guild registry mapping each guild to its own role IDs. Config, not
+  schema — but it must not be hardcoded.
+- **Sync fans out.** A permission change syncs into every registered guild where that
+  member is present. A guild missing a given role is a skip, not an error.
+- **Register commands globally**, not per-guild. Guild commands would need
+  re-registering on every join.
+
+A guild that has not been registered is inert: the bot ignores it rather than
+half-syncing. Joining a new server is a deliberate config change.
+
 ### Discord's own constraints on this
 
 - **The bot can only manage roles strictly below its own highest role.** Its role must
   be positioned above all eight, i.e. above `Admin` and `VP`. This is a Discord server
   setting, not code, and it fails silently-ish (a 403 per call) if wrong.
-- **`Admin` carries a lock icon, which means it is managed by an integration.** Managed
-  roles cannot be assigned or removed by another bot at all. So `Admin` is very likely
-  **out of scope for sync** — verify in the server settings, and if so, document it as
-  manually maintained rather than writing sync code that can only fail.
+- **`Admin` is out of scope for sync — decided, not pending.** It is managed manually in
+  Discord and the bot neither reads nor writes it. It also carries a lock icon, so a bot
+  could not assign it regardless. `players.role = 'admin'` still grants everything on
+  the app side; it simply has no Discord mirror.
 - A bot also cannot modify roles for a member whose own top role outranks the bot's.
   Execs and admins are exactly those members. Expect the top of the hierarchy to be the
   part that doesn't sync.
@@ -318,7 +350,9 @@ Discord Bot  ->  Badminton App API  ->  Authorization layer  ->  Services  ->  D
 
 The bot calls the same services the web app calls. It does not talk to the database and
 it does not reimplement rules. This is the whole point: it avoids the bot accidentally
-having different registration rules, capacity logic, fee checks, or waitlist logic.
+having different registration rules, fee checks, or waiver checks. (Capacity and
+waitlist are not among them — see §1: RSVP is uncapped and the RSVP list *is* the
+waitlist.)
 
 ### These routes are unauthenticated by shape — fix that explicitly
 
@@ -386,7 +420,7 @@ Note the differences from the other services:
 - Discord requires the interactions endpoint to **verify the Ed25519 signature** on
   every request and respond within **3 seconds**. Anything slower must acknowledge
   first and follow up, which is a hard constraint on registration calls that touch
-  capacity and waitlist logic.
+  the waiver and session-status gates.
 - Set `proxy.health` from the start. Without it the proxy does a bare TCP dial, which
   cannot tell "process is up" from "process cannot reach the app API".
 
@@ -398,28 +432,15 @@ Keep the scalable thing scalable.
 
 ## 9. Open decisions
 
-1. **What is a `MEMBER`?** Partly retired by §5 — `Internal` / `Alumni` / `External`
-   already partition membership, so no `@Member` role is needed. What is still open is
-   the *gate* used by `/register`, where guessing silently locks the wrong people out
-   of member-only sessions. The
-   candidate columns on `players` are `active_flag`, `eligibility_flag`, `status`
-   (`recreational` / `competitive` / `pending_approval` / `suspended`),
-   `membership_type` (`internal` / `alumni` / `external`), and `inactive_since`.
+1. Link table vs. column on `players` — either way the escalation guard changes.
+2. Waitlist promotion notifications — when a spot frees up, is the first waitlisted
+   player told? (See the plan; a real feature, deliberately out of v1.)
 
-   The app already has a working gate and v1 should adopt **it** rather than invent a
-   predicate: `apps/player/src/lib/actions/_shared.ts` runs four checks *in order* —
-   `status === 'pending_approval'`, then `status === 'suspended'`, then `is_banned`
-   (an independent column, not folded into `status`), then `active_flag === false`,
-   which additionally attempts `reactivateLapsedMember()` before refusing. The order is
-   load-bearing and the reactivation side effect means this is a call, not a boolean
-   expression to copy.
-
-   The genuinely open question is club policy, not code: does
-   `membership_type = 'alumni'` get `@Member`? Note that gate does not test
-   `membership_type` at all.
-2. Do `pending_approval` players appear on the public leaderboard?
-3. Link table vs. column on `players` — either way the escalation guard changes.
-4. Which Discord server(s), and whether the bot is single-guild or multi-guild.
+**Settled:** `MEMBER` is `membership_type IN ('internal','alumni')` (§3, §5).
+`Admin` is not synced (§5). There is no waitlist command — RSVP is the waitlist (§1),
+and `sessions.capacity` is nullable so the cap never refuses an RSVP. Players with
+`status = 'pending_approval'` are **excluded from the leaderboard**. The bot is
+**multi-guild**.
 
 ---
 

@@ -10,39 +10,115 @@ things, and the phasing below exists because of them.
 
 ## What the investigation changed
 
-### 1. There is no waitlist, and RSVP is uncapped
+### 1. The RSVP list *is* the waitlist — and capacity is being added
 
-The spec assumed `/register`, `/withdraw`, `/waitlist` and justified the whole API
-pattern on *"avoids the bot accidentally having different registration rules, capacity
-logic, fee checks, waitlist logic."* The app does not have that logic to inherit.
-
-What exists is **`session_rsvp`**, written by `setSessionIntent(sessionId, intent)`
-where `intent ∈ {'going', 'declined', null}` — an upsert, not a queue.
-
-- **No waitlist table, column, or function.** Nothing queues anyone.
-- **No RSVP capacity enforcement.** `session_rsvp`'s four RLS policies are plain
-  per-user checks with no cap trigger, and `setSessionIntentImpl` doesn't consult a cap
-  before upserting.
-- `check_session_caps` / `session_cap_for` sound relevant and **are not** — they cap how
-  many *rated matches* a player may play in a session, per `platform_settings`.
-  Unrelated to attendance.
-
-So the command mapping is:
+The spec assumed `/register`, `/withdraw`, `/waitlist` as three operations. They are
+two. What exists is **`session_rsvp`**, written by `setSessionIntent(sessionId, intent)`
+where `intent ∈ {'going', 'declined', null}`, and the going-list in `created_at` order
+*is* the queue. There is no waitlist table and there should not be one.
 
 | Spec command | Reality |
 |---|---|
-| `/register <session>` | `setSessionIntent(id, 'going')` — a rename |
-| `/withdraw <session>` | `setSessionIntent(id, 'declined')` — see the choice below |
-| `/waitlist <session>` | **No referent. Blocked on an app-side feature.** |
+| `/register <session>` | `setSessionIntent(id, 'going')` |
+| `/withdraw <session>` | `setSessionIntent(id, 'declined')` |
+| `/waitlist <session>` | **Removed.** Same operation as `/register`. |
 
-**`/waitlist` is not a bot task.** Building it in the bot would mean inventing club
-capacity policy inside a Discord client, which is exactly what the core rule forbids.
-It leaves v1. It returns when the app has a waitlist.
+`check_session_caps` / `session_cap_for` are a red herring — they cap how many *rated
+matches* a player may play in a session, per `platform_settings`. Nothing to do with
+attendance.
 
-**`'declined'` and `null` are different states** and `/withdraw` must pick one.
-`declined` is a recorded "no"; `null` is "no answer given". They feed attendance signal
-differently. **Decision: `/withdraw` → `'declined'`.** Clearing an RSVP to `null` is a
-separate, rarer intent and is omitted from v1 rather than conflated.
+#### New app feature: `sessions.capacity`, nullable
+
+`sessions` has no capacity column today. Adding one, **nullable**, where `NULL` means
+uncapped — exactly today's behaviour, so the change is backward compatible on every
+existing row.
+
+**A capacity must never refuse an RSVP.** Accept it and rank it. Waitlist stays a
+*derived view* — `intent = 'going'` ordered by queue time, everyone past `capacity` is
+waitlisted — not a second table with its own lifecycle to drift. `setSessionIntent`
+remains a plain upsert.
+
+#### The ordering trap — this is the part that needs a new column
+
+Ranking by `created_at` looks right and is not, because the two withdraw paths behave
+differently:
+
+- `intent = null` → the row is **DELETEd**. Re-RSVPing inserts a fresh row, so the
+  player goes to the back. Correct.
+- `intent = 'declined'` → the row is **upserted and persists**, `created_at` untouched.
+  So `going → declined → going` **keeps the original position**.
+
+With no capacity that is harmless. With a capacity it is a queue-jump: hold a spot,
+decline, reclaim it ahead of everyone who joined in between. It also means the
+`/withdraw → 'declined'` choice made earlier in this plan would be the exploitable one.
+
+**Fix: rank by `going_since`, not `created_at`.** A column set to `now()` whenever
+`intent` transitions *to* `'going'`, and left alone while it stays `'going'`. Then
+declining and rejoining goes to the back, `'declined'` keeps its useful meaning as a
+recorded "no", and `/withdraw → 'declined'` stays the right call.
+
+#### Migration to run (phase 0)
+
+```sql
+-- Nullable: NULL = uncapped, which is every existing session.
+ALTER TABLE public.sessions
+  ADD COLUMN IF NOT EXISTS capacity INTEGER;
+
+ALTER TABLE public.sessions
+  DROP CONSTRAINT IF EXISTS sessions_capacity_check;
+ALTER TABLE public.sessions
+  ADD CONSTRAINT sessions_capacity_check
+  CHECK (capacity IS NULL OR capacity > 0);
+
+COMMENT ON COLUMN public.sessions.capacity IS
+  'Attendance cap, or NULL for uncapped. Never refuses an RSVP: everyone past the cap '
+  'in going_since order is waitlisted. The waitlist is derived, not stored.';
+
+-- Queue position. Distinct from created_at, which survives a decline and would
+-- let going -> declined -> going reclaim an earlier spot.
+ALTER TABLE public.session_rsvp
+  ADD COLUMN IF NOT EXISTS going_since timestamptz;
+
+-- Backfill so nobody currently RSVP'd loses their place.
+UPDATE public.session_rsvp
+   SET going_since = created_at
+ WHERE intent = 'going' AND going_since IS NULL;
+
+CREATE OR REPLACE FUNCTION public.touch_rsvp_going_since()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.intent = 'going' THEN
+    -- Only stamp on a transition INTO going; an unchanged going row keeps its place.
+    IF TG_OP = 'INSERT' OR OLD.intent IS DISTINCT FROM 'going' THEN
+      NEW.going_since := now();
+    END IF;
+  ELSE
+    NEW.going_since := NULL;
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_rsvp_going_since ON public.session_rsvp;
+CREATE TRIGGER trg_rsvp_going_since
+  BEFORE INSERT OR UPDATE ON public.session_rsvp
+  FOR EACH ROW EXECUTE FUNCTION public.touch_rsvp_going_since();
+
+CREATE INDEX IF NOT EXISTS idx_session_rsvp_queue
+  ON public.session_rsvp (session_id, going_since)
+  WHERE intent = 'going';
+
+NOTIFY pgrst, 'reload schema';
+```
+
+**Yours to run.** Note the `NOTIFY` at the end — without it PostgREST serves the old
+shape and failed reads come back as **empty lists, not errors**.
+
+#### Open, because it is club policy not code
+
+**Promotion notifications.** When someone inside the cap declines, the first waitlisted
+player is promoted by definition — the derived view just changes. Do they get told?
+That is a real feature (a notification, and a decision about how late is too late to be
+told you're in) and it is not part of this plan unless you want it.
 
 ### 2. Two expected failures dominate the main write path
 
@@ -129,7 +205,8 @@ Ship here. Everything after this is additive.
 
 - `/link` → ephemeral button → app page → existing login → token exchange → link row.
 - `/unlink`, which **must** also strip the Discord roles.
-- Role sync + a reconciliation sweep. Sync to the roles that exist (spec §5).
+- Role sync + a reconciliation sweep, **per guild** (spec §5). Commands register
+  globally; role IDs are per-guild config.
 - Create `@Linked` and `@Session Staff`; do not create `@Member`.
 - Expect `Admin` and `VP` not to sync — see the owner decisions.
 
@@ -167,19 +244,17 @@ back to one and the site stays `200` throughout.
 
 ### Your decisions — these block work
 
-1. **Waitlist.** `/waitlist` has no app feature behind it. Drop it from v1, or scope a
-   real waitlist (queue, cap, promotion rules) as separate app work? *Blocks the final
-   v1 command list.*
-2. **RSVP capacity.** Related and larger: RSVP currently has no cap enforcement at all.
-   Is that intentional? *Not a bot question, but the bot will make it visible.*
-3. **Bot role position in Discord.** The bot's role must sit **above** all eight roles
-   or sync 403s. And `Admin` carries a lock icon — if it is integration-managed, no bot
-   can assign it. Confirm, and if so we document `Admin` as manually maintained rather
-   than shipping sync that can only fail.
-4. **Does `membership_type = 'alumni'` get member-level access?** Affects channel
-   visibility and the `/register` gate.
-5. **Do `pending_approval` players appear on the public leaderboard?**
-6. **Which Discord server, and is the bot single-guild?**
+1. **Waitlist promotion notifications** — when a spot frees up, is the first
+   waitlisted player told? Real feature, not in this plan unless you want it.
+2. **Bot role position in Discord.** The bot's role must sit **above** every role it
+   syncs or the calls 403. (`Admin` is excluded — settled.)
+*(That is the whole list.)*
+
+**Settled since the first draft:** `/waitlist` is removed — the RSVP list is the
+waitlist. `sessions.capacity` is being added, nullable. `Admin` is not synced.
+`MEMBER` is `membership_type IN ('internal','alumni')`; `external` is another club or
+university and is not a member. `pending_approval` players are **excluded from the
+leaderboard**. The bot is **multi-guild**.
 
 ### Your work
 
