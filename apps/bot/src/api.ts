@@ -77,6 +77,16 @@ export function fetchSessions(): Promise<{ sessions: SessionSummary[] }> {
   return get<{ sessions: SessionSummary[] }>('/api/discord/sessions');
 }
 
+/** Which servers to manage, their role ids, and where the audit log goes. */
+export interface BotConfigPayload {
+  guilds: { guildId: string; roles: Record<string, string> }[];
+  auditChannelId: string | null;
+}
+
+export function fetchBotConfig(): Promise<BotConfigPayload> {
+  return get<BotConfigPayload>('/api/discord/config');
+}
+
 /**
  * Every linked member and what the app currently believes about them.
  *

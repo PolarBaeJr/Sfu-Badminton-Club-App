@@ -8,8 +8,8 @@ import {
   type SessionSummary,
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
+import { loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
-import { parseGuildRegistry } from './roles.js';
 import { syncMemberEverywhere } from './sync.js';
 
 // SFU red, the app's single accent (--red: #c00). Keeps Discord output visually
@@ -241,7 +241,7 @@ export async function handleUnlink(context: InteractionContext) {
 
   let cleared = false;
   try {
-    const registry = parseGuildRegistry(process.env.DISCORD_GUILDS);
+    const { registry, auditChannelId } = await loadConfig();
     const api = new DiscordApi({ token });
     const outcomes = await syncMemberEverywhere(
       api,
@@ -258,7 +258,7 @@ export async function handleUnlink(context: InteractionContext) {
     // /unlink strips roles here rather than through POST /sync-member, so it
     // has to write its own entry — otherwise the one action a member can take
     // to remove themselves is the one action the log never records.
-    await postAuditEntry(api, process.env.DISCORD_AUDIT_CHANNEL_ID, {
+    await postAuditEntry(api, auditChannelId, {
       kind: 'member',
       reason: 'unlinked',
       discordUserIds: [context.discordUserId],

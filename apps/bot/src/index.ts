@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { clearRevocations, fetchLinkedMembers } from './api.js';
 import { postAuditEntry } from './audit.js';
+import { loadConfig } from './config.js';
 import { dispatch } from './commands.js';
 import { DiscordApi } from './discord-api.js';
 import { reconcile } from './reconcile.js';
-import { parseGuildRegistry } from './roles.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -61,7 +61,9 @@ async function runSweep(res: ServerResponse, trigger: 'scheduled' | 'manual') {
   if (sweepInFlight) return send(res, 409, { error: 'sweep_already_running' });
   sweepInFlight = true;
   try {
-    const registry = parseGuildRegistry(process.env.DISCORD_GUILDS);
+    // force: the sweep runs nightly and has no reason to act on a role map
+    // cached a minute ago. Everything else is happy with the cached copy.
+    const { registry, auditChannelId } = await loadConfig({ force: true });
     const token = process.env.DISCORD_BOT_TOKEN;
     if (!token) return send(res, 500, { error: 'DISCORD_BOT_TOKEN is not set' });
 
@@ -84,7 +86,7 @@ async function runSweep(res: ServerResponse, trigger: 'scheduled' | 'manual') {
     // already been written down; the alternative loses the last entry whenever
     // the container is replaced right after a sweep, which is exactly when a
     // deploy happens.
-    await postAuditEntry(new DiscordApi({ token }), process.env.DISCORD_AUDIT_CHANNEL_ID, {
+    await postAuditEntry(new DiscordApi({ token }), auditChannelId, {
       kind: 'sweep',
       summary,
       guilds: registry.size,
@@ -122,7 +124,7 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
     body.reason === 'linked' || body.reason === 'unlinked' ? body.reason : 'resynced';
 
   try {
-    const registry = parseGuildRegistry(process.env.DISCORD_GUILDS);
+    const { registry, auditChannelId } = await loadConfig();
     const token = process.env.DISCORD_BOT_TOKEN;
     if (!token) return send(res, 500, { error: 'DISCORD_BOT_TOKEN is not set' });
 
@@ -144,7 +146,7 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
       console.error('[bot] could not clear revocations:', error);
     }
 
-    await postAuditEntry(api, process.env.DISCORD_AUDIT_CHANNEL_ID, {
+    await postAuditEntry(api, auditChannelId, {
       kind: 'member',
       reason,
       discordUserIds: ids as string[],
@@ -265,14 +267,24 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[bot] listening on ${PORT}`);
-  // Said out loud on purpose. An audit log nobody configured and an audit log
-  // the bot cannot post to look identical from inside Discord — an empty
-  // channel — so the distinction has to be drawn here, once, at startup.
-  if (process.env.DISCORD_AUDIT_CHANNEL_ID) {
-    console.log(`[bot] audit log -> channel ${process.env.DISCORD_AUDIT_CHANNEL_ID}`);
-  } else {
-    console.log('[bot] DISCORD_AUDIT_CHANNEL_ID unset — no audit entries will be written');
-  }
+  // Where config comes from, said once. The guild map and audit channel are
+  // read from the database at runtime now, so the env vars are only the
+  // bootstrap fallback for a bot running against a database without 00167 —
+  // and "no audit entries" and "audit entries nobody can see" look identical
+  // from inside Discord, so the distinction has to be drawn here.
+  loadConfig()
+    .then(({ registry, auditChannelId }) => {
+      console.log(
+        `[bot] config: ${registry.size} guild(s), audit log ${
+          auditChannelId ? `-> channel ${auditChannelId}` : 'DISABLED (no audit_channel_id)'
+        }`
+      );
+    })
+    .catch((error) => {
+      // Not fatal. The app may simply not be up yet, and every operation
+      // re-reads config anyway; this is a startup diagnostic, not a gate.
+      console.error(`[bot] could not read config at startup: ${String(error)}`);
+    });
 });
 
 // The proxy and Docker both stop containers with SIGTERM. Closing the server
