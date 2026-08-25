@@ -184,7 +184,7 @@ place and removes the database backstop.
 - End the migration with `NOTIFY pgrst` — PostgREST's schema cache will otherwise serve
   the old shape, and failed reads come back as **empty lists, not errors**.
 
-### Phase 1 — Read-only bot, shippable alone
+### Phase 1 — Read-only bot — **BUILT** (branch `feat/discord-bot-phase1`)
 
 No link, no writes, no `requirePlayer` refactor. This is deliberately the whole
 end-to-end path with nothing that can corrupt state.
@@ -200,6 +200,46 @@ end-to-end path with nothing that can corrupt state.
   should not.
 
 Ship here. Everything after this is additive.
+
+**Status: code complete and locally verified.** `apps/bot` is a zero-dependency
+workspace (`node:http` + `node:crypto`); `/health` returns 200, a signed PING is
+answered with PONG, and a bad signature is answered 401 — the last is what Discord
+probes during endpoint setup and decides whether the endpoint is accepted at all.
+Full suite green. `/leaderboard` and `/sessions` are implemented; the `Dockerfile`
+gained a `runner-bot` stage, CI a `bot` matrix leg, and compose a `bot` service.
+
+Not yet verified against a running app — the routes need `DISCORD_SERVICE_SECRET`
+in the player's environment, which does not exist on any host yet.
+
+#### Deployment notes (confirmed with the proxy-manager session)
+
+- **Hostname: `discord.sfubadminton.com`.** The zone's Let's Encrypt cert is a
+  wildcard, so a single-level subdomain needs no new cert work. A **DNS record
+  probably still has to be created** — wildcard cert coverage is not a wildcard
+  DNS record.
+- **Scaling is per-host.** `proxy.service` groups replicas discovered by one
+  proxy's local Docker daemon; replicas cannot span the Pi and the mini as one
+  pool. "Scalable" here means several replicas on whichever host it lands on.
+- **Build it into the Mac mini stack, not the Pi.** sfu-badminton is already
+  slated to live on the mini. Also: `compose pull` updates the *image*, never the
+  compose *file* — a new service block, env var, or label has to be hand-patched
+  into the live compose file on the host or it silently no-ops. That gap kept an
+  unrelated feature dead for ten days recently.
+- Secrets use the `ref:NAME` + `SECRETS_DIR` per-service mechanism, keyed by the
+  `proxy.service` label. Three are needed: `discord_public_key`,
+  `discord_bot_token`, `discord_service_secret`.
+
+#### BLOCKER — the edge auth gate
+
+The Pi's proxy logs `auth gate enabled for domain(s) polardev.org,sfubadminton.com`.
+**Discord POSTs interactions with no session and no cookie.** If that gate applies
+domain-wide, it will intercept them before they reach the handler, Discord will see
+an auth redirect instead of a signed response, and it will disable the endpoint.
+
+This has to be answered before DNS goes live: **how does a new `sfubadminton.com`
+host get excluded from the auth gate?** Not a code change — it is a proxy
+configuration question, and it is the one thing that can make a correct bot look
+completely broken.
 
 ### Phase 2 — Linking and role sync
 
