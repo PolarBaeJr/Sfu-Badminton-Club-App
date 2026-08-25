@@ -37,7 +37,13 @@ services:
       # The SAME value the bot gets. This is what proves a request on
       # /api/discord/* really came from the bot, so a mismatch here fails every
       # Discord feature closed with a 401 and nothing else.
-      DISCORD_SERVICE_SECRET: ref:discord_service_secret
+      #
+      # Interpolated from the Pi's .env (gitignored), NOT the dashboard's
+      # ref:NAME form - that is resolved only for env sent to the dashboard
+      # API, so compose would set the literal string "ref:...". The `:?`
+      # makes compose refuse to start rather than booting with an empty
+      # secret, which would otherwise fail closed in a confusing place.
+      DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env}
       # In-cluster, and only used in one direction: the /link page asks the bot
       # to apply roles the instant an account is connected, rather than leaving
       # the member looking at a success screen with no roles.
@@ -105,14 +111,27 @@ services:
       target: runner-bot
     env_file: .env
     environment:
+      # All three come from the Pi's .env (gitignored) by interpolation. NOT
+      # the dashboard's ref:NAME form: that is resolved server-side only for
+      # env sent to the dashboard API (replace_service / stage_canary /
+      # onboarding), so compose would happily set the literal string
+      # "ref:discord_public_key" and the bot would reject every interaction
+      # with an signature error that points nowhere near the real cause.
+      # The `:?` makes compose refuse to start instead.
+      #
       # Discord POSTs signed interactions; without the public key the process
       # refuses every request rather than serving unverified ones.
-      DISCORD_PUBLIC_KEY: ref:discord_public_key
-      DISCORD_BOT_TOKEN:  ref:discord_bot_token
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:?set DISCORD_PUBLIC_KEY in .env}
+      DISCORD_BOT_TOKEN:  ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN in .env}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:?set DISCORD_APPLICATION_ID in .env}
+      # guild id -> role name -> role id, as JSON. Role names must be from
+      # MANAGED_ROLES; parseGuildRegistry rejects anything else at boot rather
+      # than silently skipping the role.
+      DISCORD_GUILDS: ${DISCORD_GUILDS:?set DISCORD_GUILDS in .env}
       # Shared with the player app, which compares it on /api/discord/*. The
       # bot asserts a Discord user id; this is what proves the assertion comes
       # from the bot. The SAME value must reach the player service.
-      DISCORD_SERVICE_SECRET: ref:discord_service_secret
+      DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env}
       # In-cluster by default: bot and player share the compose `default`
       # network, so this needs no trip out to Cloudflare and back. The readiness
       # probe's hairpin (see apps/player/.../health/ready) is NOT repeated here.
