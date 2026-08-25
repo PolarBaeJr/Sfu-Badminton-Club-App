@@ -73,7 +73,7 @@ wrong numbers in a public channel:
    the whole club and slice in the bot.
 4. **`status` is a label, not a filter, unless the club says otherwise.**
    `recreational` / `competitive` / `pending_approval` all appear in the result set.
-   Whether `pending_approval` players show on a public ladder is a club decision — see §8.
+   Whether `pending_approval` players show on a public ladder is a club decision — see §9.
 
 Leaderboard commands are read-only and need no link, so they are the natural first
 thing to build and the natural load test.
@@ -101,7 +101,7 @@ failure mode the core rule forbids.
 |---|---|
 | `UNLINKED` | No link row for this `discord_user_id` |
 | `LINKED_USER` | Link row exists and resolves to a `players` row |
-| `MEMBER` | **Open decision — see §8.** Do not guess a predicate. |
+| `MEMBER` | **Open decision — see §9.** Do not guess a predicate. |
 | `SESSION_STAFF` | Holds `sessions.attendance.write` **and** `sessions.checkin.token.write` |
 | `EXEC` | `players.is_exec` |
 | `ADMIN` | `players.role = 'admin'` |
@@ -164,12 +164,54 @@ Two implementation notes specific to this codebase:
 
 ## 5. Role sync
 
-| App state | Discord role |
-|---|---|
-| Active club member | `@Member` |
-| Exec permission | `@Exec` |
-| Session staff capability | `@Session Staff` |
-| Account linked | `@Linked` |
+### The roles that already exist
+
+The server is already set up, and its roles map onto app columns almost exactly.
+Sync to **these**, don't invent a parallel set:
+
+| Discord role | App source | Note |
+|---|---|---|
+| `Admin` 🔒 | `players.role = 'admin'` | Locked/managed — see below |
+| `VP` | `players.portfolio IS NOT NULL` | `finance` / `tournaments` / `internal` / `external` |
+| `Executives` | `players.is_exec` | VP is a subset of this |
+| `Competitive Team` | `players.status = 'competitive'` | |
+| `Recreation Team` | `players.status = 'recreational'` | |
+| `Internal` | `players.membership_type = 'internal'` | |
+| `Alumni` | `players.membership_type = 'alumni'` | |
+| `External` | `players.membership_type = 'external'` | |
+
+Two roles in this spec do **not** exist yet and need creating: **`@Linked`** and
+**`@Session Staff`**.
+
+**`@Member` should not be created.** The original spec called for one, but
+`Internal` / `Alumni` / `External` already partition membership exactly — they *are*
+the `membership_type` enum. A separate `@Member` would be a fourth, redundant, and
+immediately-drifting source of truth. Member-only channel visibility is expressed as
+the union of the three, or as `Internal` alone if the club means current students.
+This retires open decision #1 as a *code* question; what remains is the policy call in §9.
+
+### Name collision — read this before adding portfolio roles
+
+`portfolio` and `membership_type` **both** have values called `internal` and
+`external`, and they mean completely unrelated things. The existing `Internal` and
+`External` Discord roles are `membership_type`. If per-portfolio roles are ever added,
+they must be named `VP Internal` / `VP External` or similar. Reusing the bare names
+would silently merge a VP with every ordinary internal member.
+
+### Discord's own constraints on this
+
+- **The bot can only manage roles strictly below its own highest role.** Its role must
+  be positioned above all eight, i.e. above `Admin` and `VP`. This is a Discord server
+  setting, not code, and it fails silently-ish (a 403 per call) if wrong.
+- **`Admin` carries a lock icon, which means it is managed by an integration.** Managed
+  roles cannot be assigned or removed by another bot at all. So `Admin` is very likely
+  **out of scope for sync** — verify in the server settings, and if so, document it as
+  manually maintained rather than writing sync code that can only fail.
+- A bot also cannot modify roles for a member whose own top role outranks the bot's.
+  Execs and admins are exactly those members. Expect the top of the hierarchy to be the
+  part that doesn't sync.
+
+### Rules
 
 **Remove the role when the underlying app permission disappears.** Don't manually
 maintain these roles.
@@ -177,7 +219,9 @@ maintain these roles.
 Sync is **one-directional: app → Discord.** There is no path where editing a Discord
 role writes back to `players`. If there were, Discord server admins would become app
 admins, and Discord role management is not audited the way the app's permission changes
-are.
+are. `portfolio` in particular is a privileged column, guarded by
+`guard_player_privileged_columns` and writable only by the audited, admin-only
+`setPlayerPortfolio()`; a Discord round-trip would be a way around that.
 
 Triggers: on link, on permission change in the app, and on a periodic reconciliation
 sweep to repair drift (a role removed by hand in Discord, a member who lapsed while the
@@ -185,7 +229,79 @@ bot was down). Reconciliation is the authority; event-driven sync is the fast pa
 
 ---
 
-## 6. API pattern
+## 6. `/profile` renders an image card
+
+`/profile` returns a **generated PNG**, not an embed — one card carrying identity,
+rank, and the stat grid.
+
+### Visual language
+
+It reads as part of the badminton site, not as a game card. The app's tokens define
+that, and they are unusually specific:
+
+| Token | Value | Consequence for the card |
+|---|---|---|
+| `--red` | `#c00` | The single accent. SFU red, used sparingly |
+| `--bg` | `#fafafa` | Near-white ground, not a saturated panel |
+| `--ink` | `#111` | Text |
+| `--line` | `rgba(0,0,0,0.08)` | Hairline rules separate the stat grid — no boxes |
+| `--gold` `--silver` `--bronze` | `#ca8a04` `#9FA0A3` `#A6683A` | Podium positions only |
+| `--win` / `--loss` | `#16a34a` / `#c00` | Streak and record colouring |
+| `--shadow-sm/md/lg` | **`none`** | The design is flat. No drop shadows on the card |
+
+**Square corners are deliberate** in this app — do not round the card, the avatar, or
+the stat cells. Pull the live values rather than trusting this table if the site has
+moved on.
+
+### Content, mapped to real columns
+
+- **Identity:** `display_name` (fall back to `full_name`), `handle`, `avatar_url`,
+  `member_code`
+- **Badge line:** `exec_title` if set, else `portfolio`, else `status`, else
+  `skill_tier`
+- **The grid — two ladders side by side**, because that is the shape of the data:
+
+  | | Singles | Doubles |
+  |---|---|---|
+  | Elo | `singles_elo` | `doubles_elo` |
+  | Record | `singles_wins`–`singles_losses` | `doubles_wins`–`doubles_losses` |
+  | Streak | `current_singles_streak` | `current_doubles_streak` |
+
+  plus `tournament_points` and club-level counters (sessions attended, matches played).
+- **Provisional ratings must be marked on the card too** (§2 rule 1). An unmarked
+  number on a shareable image outlives the message it was posted in.
+
+### Privacy is not optional here
+
+`players` has **`profile_visibility`** and **`hide_from_leaderboard`**, and both are
+load-bearing for a bot that renders cards into public channels:
+
+- `hide_from_leaderboard` must exclude the player from `/leaderboard` output **and**
+  from rank numbers on anyone else's card.
+- `profile_visibility` gates `/player @user` (§1, later). Rendering a card for
+  another member is a *read of their profile* and must run the same visibility check
+  the website runs.
+- Do not put `email`, `phone`, or `bio` on the card.
+
+### Rendering constraints
+
+- **Defer the interaction immediately.** Discord's 3-second deadline cannot survive a
+  fetch + render + upload. Acknowledge with a deferred response, then follow up with
+  the attachment; that buys 15 minutes.
+- **This is the CPU-bound part of the system.** Everything else is I/O. Rasterising
+  cards is the one workload that will actually contend for cores, which is a concrete
+  reason the bot is its own container (§8) and the concrete reason replicas may be
+  needed.
+- **Bake the fonts into the image.** The container ships the font files; no system
+  font fallback, or cards render differently between hosts.
+- `avatar_url` is an external fetch. Give it a short timeout and a generated
+  initials-block fallback. A card must never fail because a CDN was slow.
+- **Cache by `(player_id, stats_updated_at)`.** Cards are re-requested far more often
+  than stats change.
+
+---
+
+## 7. API pattern
 
 ```
 Discord Bot  ->  Badminton App API  ->  Authorization layer  ->  Services  ->  Database
@@ -226,7 +342,7 @@ The core rule — "Discord authenticates the person through the link" — is abo
 
 ---
 
-## 7. Deployment: one container, scalable
+## 8. Deployment: one container, scalable
 
 The bot runs as **its own compose service** — separate image, separate lifecycle,
 separate crash domain from the player and admin apps. Built by CI and pulled, like
@@ -280,10 +396,12 @@ Keep the scalable thing scalable.
 
 ---
 
-## 8. Open decisions
+## 9. Open decisions
 
-1. **What is a `MEMBER`?** This is the one tier that cannot be written down yet, and
-   guessing it silently gates the wrong people out of member-only sessions. The
+1. **What is a `MEMBER`?** Partly retired by §5 — `Internal` / `Alumni` / `External`
+   already partition membership, so no `@Member` role is needed. What is still open is
+   the *gate* used by `/register`, where guessing silently locks the wrong people out
+   of member-only sessions. The
    candidate columns on `players` are `active_flag`, `eligibility_flag`, `status`
    (`recreational` / `competitive` / `pending_approval` / `suspended`),
    `membership_type` (`internal` / `alumni` / `external`), and `inactive_since`.
@@ -305,7 +423,7 @@ Keep the scalable thing scalable.
 
 ---
 
-## 9. What to build first
+## 10. What to build first
 
 Read-only, no link required, no writes: `/leaderboard`, `/sessions`, `/session <date>`.
 They exercise the whole path — Discord signature verification, service auth to the app
