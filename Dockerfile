@@ -122,6 +122,10 @@ ENV PORT=3002
 RUN addgroup --system --gid 1001 bot && \
     adduser --system --uid 1001 bot
 
+# dist is ESM. Node's syntax detection would infer that on its own, but it is a
+# heuristic; carrying the package.json states "type": "module" outright so the
+# module system does not depend on how the emitted code happens to look.
+COPY --from=builder --chown=bot:bot /app/apps/bot/package.json ./package.json
 COPY --from=builder --chown=bot:bot /app/apps/bot/dist ./dist
 
 USER bot
