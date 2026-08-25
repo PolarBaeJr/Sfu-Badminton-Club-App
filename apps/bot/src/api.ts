@@ -144,3 +144,65 @@ export async function clearRevocations(discordUserIds: readonly string[]): Promi
     throw new AppApiError(`DELETE /api/discord/members -> ${response.status}`);
   }
 }
+
+/**
+ * Mint a one-time link token and get back the URL the member should open.
+ *
+ * ON THE INTERACTION BUDGET, unlike fetchLinkedMembers: Discord gives roughly
+ * three seconds for a first response, so this uses a short timeout and would
+ * rather fail fast into a "try again" than hold the interaction open until
+ * Discord gives up on it and shows the member "the application did not respond".
+ */
+export async function mintLinkToken(
+  discordUserId: string,
+  guildId: string | null
+): Promise<{ url: string; expiresAt: string }> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  const publicBase = process.env.APP_PUBLIC_URL;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+  // The member's browser has to reach this, so it cannot be the in-cluster
+  // http://player:3000 that APP_API_URL is. Separate variable on purpose.
+  if (!publicBase) throw new AppApiError('APP_PUBLIC_URL is not set');
+
+  const response = await fetch(new URL('/api/discord/link-tokens', base), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ discordUserId, guildId }),
+    signal: AbortSignal.timeout(2_000),
+  });
+  if (!response.ok) {
+    throw new AppApiError(`POST /api/discord/link-tokens -> ${response.status}`);
+  }
+
+  const body = (await response.json()) as { token?: string; expiresAt?: string };
+  if (!body.token || !body.expiresAt) throw new AppApiError('mint returned no token');
+
+  // Path segment rather than ?token=. Query strings are the part of a URL that
+  // leaks most readily — into referrers, into analytics, into server logs that
+  // record the query and not the path.
+  return {
+    url: new URL(`/link/${body.token}`, publicBase).toString(),
+    expiresAt: body.expiresAt,
+  };
+}
+
+/** Remove the caller's link. Returns false when they were not linked at all. */
+export async function deleteLink(discordUserId: string): Promise<boolean> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/link', base), {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ discordUserId }),
+    signal: AbortSignal.timeout(2_000),
+  });
+  if (!response.ok) throw new AppApiError(`DELETE /api/discord/link -> ${response.status}`);
+
+  const body = (await response.json()) as { unlinked?: boolean };
+  return body.unlinked === true;
+}

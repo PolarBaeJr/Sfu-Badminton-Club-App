@@ -90,6 +90,47 @@ async function runSweep(res: ServerResponse) {
   }
 }
 
+async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
+  let body: { discordUserIds?: unknown };
+  try {
+    body = JSON.parse(await readRawBody(req)) as { discordUserIds?: unknown };
+  } catch {
+    return send(res, 400, { error: 'bad_request' });
+  }
+
+  const ids = body.discordUserIds;
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string') || ids.length === 0) {
+    return send(res, 400, { error: 'invalid_body' });
+  }
+
+  try {
+    const registry = parseGuildRegistry(process.env.DISCORD_GUILDS);
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) return send(res, 500, { error: 'DISCORD_BOT_TOKEN is not set' });
+
+    // The whole roster, then filtered. Wasteful by one request and correct by
+    // construction: the app remains the only thing that decides what a member
+    // is, and an id that is NOT in the list is a tombstone the app wants
+    // stripped — which this handles for free, because reconcile already reads
+    // a missing state as "strip everything".
+    const roster = await fetchLinkedMembers();
+    const members = (ids as string[]).map(
+      (id) => roster.find((m) => m.discordUserId === id) ?? { discordUserId: id, state: null }
+    );
+
+    const summary = await reconcile(new DiscordApi({ token }), registry, members);
+    try {
+      await clearRevocations(summary.cleared);
+    } catch (error) {
+      console.error('[bot] could not clear revocations:', error);
+    }
+    return send(res, 200, { ok: true, ...summary });
+  } catch (error) {
+    console.error('[bot] member sync failed:', error);
+    return send(res, 500, { error: 'sync_failed' });
+  }
+}
+
 const server = createServer(async (req, res) => {
   // Health: a real GET, not a bare TCP accept. proxy-manager falls back to a TCP
   // dial when no proxy.health label is set, and a dial cannot tell "process is
@@ -108,6 +149,17 @@ const server = createServer(async (req, res) => {
       return send(res, 401, { error: 'unauthorized' });
     }
     return runSweep(res);
+  }
+
+  // ONE member, right now. The app calls this the moment a link is created or
+  // moved, because the alternative is telling somebody their account is
+  // connected and then showing them no roles until the next sweep — which,
+  // until something drives POST /sync, may be never.
+  if (req.method === 'POST' && req.url === '/sync-member') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    return runMemberSync(req, res);
   }
 
   if (req.method !== 'POST' || (req.url !== '/' && req.url !== '/interactions')) {
@@ -144,6 +196,12 @@ const server = createServer(async (req, res) => {
   let interaction: {
     type: number;
     data?: { name: string; options?: { name: string; value?: string | number }[] };
+    // Guild context populates member.user; a DM populates user and omits
+    // member entirely. /link and /unlink are precisely the commands somebody
+    // runs in a DM, so both have to be read.
+    member?: { user?: { id?: string } };
+    user?: { id?: string };
+    guild_id?: string;
   };
   try {
     interaction = JSON.parse(rawBody);
@@ -156,7 +214,10 @@ const server = createServer(async (req, res) => {
 
   // APPLICATION_COMMAND
   if (interaction.type === 2 && interaction.data) {
-    const response = await dispatch(interaction.data.name, interaction.data.options);
+    const response = await dispatch(interaction.data.name, interaction.data.options, {
+      discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+      guildId: interaction.guild_id ?? null,
+    });
     return send(res, 200, response);
   }
 

@@ -1,9 +1,15 @@
 import {
   AppApiError,
+  clearRevocations,
+  deleteLink,
   fetchLeaderboard,
   fetchSessions,
+  mintLinkToken,
   type SessionSummary,
 } from './api.js';
+import { DiscordApi } from './discord-api.js';
+import { parseGuildRegistry } from './roles.js';
+import { syncMemberEverywhere } from './sync.js';
 
 // SFU red, the app's single accent (--red: #c00). Keeps Discord output visually
 // part of the same product rather than Discord-default blurple.
@@ -45,7 +51,31 @@ export const COMMAND_DEFINITIONS = [
     description: 'Upcoming club sessions',
     options: [],
   },
+  {
+    name: 'link',
+    description: 'Connect your Discord account to your club account',
+    options: [],
+  },
+  {
+    name: 'unlink',
+    description: 'Disconnect your Discord account and remove your club roles',
+    options: [],
+  },
 ];
+
+/**
+ * Who ran the command, and where.
+ *
+ * discordUserId comes from TWO different places depending on context: a guild
+ * interaction populates `member.user`, a DM populates `user` and leaves
+ * `member` undefined entirely. /link and /unlink are exactly the commands
+ * people run in a DM, so reading only one of them breaks the flow for the
+ * quietest half of the users.
+ */
+export interface InteractionContext {
+  discordUserId: string | null;
+  guildId: string | null;
+}
 
 interface CommandOption {
   name: string;
@@ -146,13 +176,110 @@ export async function handleSessions() {
   });
 }
 
-export async function dispatch(name: string, options: CommandOption[] | undefined) {
+export async function handleLink(context: InteractionContext) {
+  if (!context.discordUserId) {
+    // Should be unreachable — Discord always identifies the caller — but the
+    // alternative to checking is minting a token bound to "null".
+    return ephemeral("Couldn't work out who you are on Discord. Try again.");
+  }
+
+  const { url, expiresAt } = await mintLinkToken(context.discordUserId, context.guildId);
+  const minutes = Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 60_000));
+
+  return {
+    type: 4,
+    data: {
+      // EPHEMERAL IS LOAD-BEARING, not politeness. This message contains a
+      // single-use credential: anyone who could read it could click it first
+      // and attach their own club account to this Discord account.
+      flags: 64,
+      embeds: [
+        {
+          title: 'Connect your club account',
+          color: CLUB_RED,
+          description:
+            'Open the link below and sign in the way you normally do on the club website. ' +
+            'Your roles here are set from your club account once the two are connected.\n\n' +
+            `The link works once, and expires in ${minutes} minutes.`,
+        },
+      ],
+      components: [
+        {
+          type: 1,
+          components: [
+            // A link button, not a URL in the body: Discord does not unfurl
+            // button targets, so the token is not handed to the preview
+            // crawler. That matters because an unfurl is a GET from Discord's
+            // servers, and the /link page is built so a GET consumes nothing.
+            { type: 2, style: 5, label: 'Connect my account', url },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+export async function handleUnlink(context: InteractionContext) {
+  if (!context.discordUserId) {
+    return ephemeral("Couldn't work out who you are on Discord. Try again.");
+  }
+
+  const unlinked = await deleteLink(context.discordUserId);
+  if (!unlinked) {
+    return ephemeral('Your Discord account is not connected to a club account.');
+  }
+
+  // The delete already tombstoned this account (00165's trigger), so the roles
+  // WILL come off even if everything below fails. This is the fast path so the
+  // member sees it happen now rather than at the next sweep.
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.error('[bot] /unlink: DISCORD_BOT_TOKEN is not set — roles left to the sweep');
+    return ephemeral('Disconnected. Your roles will update shortly.');
+  }
+
+  let cleared = false;
+  try {
+    const registry = parseGuildRegistry(process.env.DISCORD_GUILDS);
+    const outcomes = await syncMemberEverywhere(
+      new DiscordApi({ token }),
+      registry,
+      context.discordUserId,
+      null
+    );
+    cleared = outcomes.every((o) => !o.forbidden && !o.failed);
+    // Only when the strip actually succeeded everywhere. A 403 here is the
+    // ordinary answer for an exec, and clearing the tombstone on one would
+    // discard the revocation permanently.
+    if (cleared) await clearRevocations([context.discordUserId]);
+  } catch (error) {
+    console.error('[bot] /unlink: immediate strip failed, left to the sweep:', error);
+  }
+
+  return ephemeral(
+    cleared
+      ? 'Disconnected, and your club roles have been removed.'
+      : // Deliberately not "some roles could not be removed": the tombstone
+        // means it is a matter of when, not whether.
+        'Disconnected. Your roles will update shortly.'
+  );
+}
+
+export async function dispatch(
+  name: string,
+  options: CommandOption[] | undefined,
+  context: InteractionContext = { discordUserId: null, guildId: null }
+) {
   try {
     switch (name) {
       case 'leaderboard':
         return await handleLeaderboard(options);
       case 'sessions':
         return await handleSessions();
+      case 'link':
+        return await handleLink(context);
+      case 'unlink':
+        return await handleUnlink(context);
       default:
         return ephemeral('Unknown command.');
     }

@@ -5,6 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 // request — grew it from 208 kB to 371 kB. constants.ts has no dependencies.
 import {
   CHECKIN_TOKEN_REGEX,
+  DISCORD_LINK_TOKEN_REGEX,
   AUTH_COOKIE_OPTIONS,
   hostOnlyAuthCookieClears,
   duplicateAuthCookieClears,
@@ -103,10 +104,24 @@ export async function middleware(request: NextRequest) {
   const checkinSuffix =
     checkinToken && CHECKIN_TOKEN_REGEX.test(checkinToken) ? `?checkin=${checkinToken}` : '';
 
+  // Exactly the same problem for /link/<token> from the Discord bot, and the
+  // same fix. A member who taps the button while signed out would otherwise
+  // land on /login with the token stripped, and the only way back is to run
+  // /link again — which looks like the bot is broken.
+  const discordToken = pathname.match(/^\/link\/([^/]+)$/)?.[1];
+  const discordSuffix =
+    discordToken && DISCORD_LINK_TOKEN_REGEX.test(discordToken) ? `?discord=${discordToken}` : '';
+
+  // Only one can ever be set — they come from different paths. Both redirects
+  // below use this: the onboarding gate drops the token just as thoroughly as
+  // the sign-in one, and a member linking before they have finished setup is
+  // an ordinary case, not an edge case.
+  const authSuffix = checkinSuffix || discordSuffix;
+
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
-    url.search = checkinSuffix;
+    url.search = authSuffix;
     return finish(NextResponse.redirect(url));
   }
 
@@ -136,7 +151,7 @@ export async function middleware(request: NextRequest) {
       url.pathname = '/onboarding';
       // Same reasoning as the sign-in redirect above: a member who scans the QR
       // before finishing setup should still end up checked in, not stranded.
-      url.search = checkinSuffix;
+      url.search = authSuffix;
       return finish(NextResponse.redirect(url));
     }
   }

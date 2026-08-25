@@ -108,6 +108,23 @@ export const SESSION_CHECKIN_OPENS_MINUTES_BEFORE: number | null = 30;
 // than being inlined twice. Mirrors the calendar feed route's /^[0-9a-f]{48}$/.
 export const CHECKIN_TOKEN_REGEX = /^[0-9a-f]{48}$/;
 
+// Shape of a Discord link token: randomBytes(32).toString('hex'). Same reason
+// as the check-in token above — the minting route and the /link page must agree
+// on what a well-formed token looks like, and the value rides through the
+// sign-in chain (middleware, /login, /auth/callback, /auth/post-login) which
+// re-validates it at every hop so it can never become an open redirect.
+export const DISCORD_LINK_TOKEN_REGEX = /^[0-9a-f]{64}$/;
+
+// How long a /link token stays good for.
+//
+// Measured against the SLOWEST sign-in path, not the fastest. A signed-out
+// member taps the button, lands on /login, asks for an emailed code, switches
+// to their mail app, waits for delivery and comes back — routinely several
+// minutes, and longer if the mail is slow. A short TTL would work perfectly for
+// anyone already signed in (which includes everyone testing it) and fail in the
+// field for exactly the people the flow exists to serve.
+export const DISCORD_LINK_TOKEN_TTL_MINUTES = 30;
+
 // Name of the Supabase auth cookie, pinned rather than derived.
 //
 // supabase-js builds it as `sb-<first hostname label>-auth-token` from

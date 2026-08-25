@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { CHECKIN_TOKEN_REGEX } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, DISCORD_LINK_TOKEN_REGEX } from '@badminton/shared';
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { reactivateLapsedMember } from '@/lib/reactivate';
 import { ensurePlayerRowForUser } from '@/lib/first-signin';
@@ -13,9 +13,9 @@ export const dynamic = 'force-dynamic';
 export default async function PostLoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ checkin?: string }>;
+  searchParams: Promise<{ checkin?: string; discord?: string }>;
 }) {
-  const { checkin } = await searchParams;
+  const { checkin, discord } = await searchParams;
   // First sign-in by OTP code or passkey lands here, and this is where the row
   // gets made (00132). Unlike /auth/callback the session cookie is already set
   // client-side by the time this route runs, so the user comes off next/headers
@@ -41,6 +41,11 @@ export default async function PostLoginPage({
   // route, so there's no arbitrary redirect target to abuse.
   if (checkin && CHECKIN_TOKEN_REGEX.test(checkin)) {
     redirect(`/checkin/${checkin}`);
+  }
+  // The last hop of the Discord /link chain. Same single-purpose reasoning as
+  // the check-in token above: it can only ever name a /link route.
+  if (discord && DISCORD_LINK_TOKEN_REGEX.test(discord)) {
+    redirect(`/link/${discord}`);
   }
   redirect('/feed');
 }

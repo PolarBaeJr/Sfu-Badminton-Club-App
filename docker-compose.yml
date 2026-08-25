@@ -33,6 +33,15 @@ services:
         - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
         - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
     env_file: .env
+    environment:
+      # The SAME value the bot gets. This is what proves a request on
+      # /api/discord/* really came from the bot, so a mismatch here fails every
+      # Discord feature closed with a 401 and nothing else.
+      DISCORD_SERVICE_SECRET: ref:discord_service_secret
+      # In-cluster, and only used in one direction: the /link page asks the bot
+      # to apply roles the instant an account is connected, rather than leaving
+      # the member looking at a success screen with no roles.
+      DISCORD_BOT_URL: ${DISCORD_BOT_URL:-http://bot:3002}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -109,13 +118,23 @@ services:
       # probe's hairpin (see apps/player/.../health/ready) is NOT repeated here.
       # Override only if the bot is ever split onto another host.
       APP_API_URL: ${APP_API_URL:-http://player:3000}
+      # The PUBLIC origin, and it must not be the in-cluster URL above: this one
+      # goes into the /link button that a member opens in their own browser, so
+      # http://player:3000 would be a dead link on their phone.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://sfubadminton.com}
     restart: unless-stopped
     networks: [edge, default]
     labels:
       proxy.enable:     "true"
-      # Discord requires a public HTTPS URL it can POST to with NO auth in
-      # front. If an edge auth gate covers sfubadminton.com, this host must be
-      # excluded from it or Discord disables the endpoint.
+      # NEVER add proxy.auth here. Discord POSTs interactions with no cookie
+      # and no session, and pg_net will later call POST /sync the same way; a
+      # gated host would refuse both. The proxy's SSO gate is opt-in PER HOST
+      # via proxy.auth: "true" (router.go checks the label), so omitting it is
+      # the exclusion — the "auth gate enabled for domain(s) ..." startup line
+      # only declares which apexes have an auth.<domain> login host wired up,
+      # it does not gate their subdomains. Confirmed against proxy-manager
+      # 2026-08-25. Auth for this host is the Ed25519 signature the bot
+      # verifies itself, plus the shared secret on /sync.
       proxy.host:       "${DISCORD_BOT_DOMAIN:-discord.sfubadminton.com}"
       proxy.port:       "3002"
       # A bare TCP dial would call a bot that cannot reach the app API healthy.

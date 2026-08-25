@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
-import { CHECKIN_TOKEN_REGEX, friendlyAuthError } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, DISCORD_LINK_TOKEN_REGEX, friendlyAuthError } from '@badminton/shared';
 import { Mail, CheckCircle2, ChevronRight, Loader2, KeyRound } from 'lucide-react';
 import { ShuttleMark } from '@/components/shuttle-mark';
 import {
@@ -22,9 +22,23 @@ import {
 // Read from window.location instead of useSearchParams(): in the Next 14 App
 // Router the hook fails the production build unless the whole page is wrapped
 // in <Suspense>.
-function checkinSuffix(): string {
-  const token = new URLSearchParams(window.location.search).get('checkin') ?? '';
-  return CHECKIN_TOKEN_REGEX.test(token) ? `?checkin=${token}` : '';
+//
+// The Discord bot's /link button is the second case with exactly this shape,
+// so ONE function returns whichever suffix applies. Five call sites below hand
+// off to two different destinations (/auth/callback for Google and emailed
+// codes, /auth/post-login for everything else) and missing any one of them
+// would break exactly one sign-in method — silently, and only for members who
+// happen to use that method.
+function authSuffix(): string {
+  const params = new URLSearchParams(window.location.search);
+
+  const checkin = params.get('checkin') ?? '';
+  if (CHECKIN_TOKEN_REGEX.test(checkin)) return `?checkin=${checkin}`;
+
+  const discord = params.get('discord') ?? '';
+  if (DISCORD_LINK_TOKEN_REGEX.test(discord)) return `?discord=${discord}`;
+
+  return '';
 }
 
 export default function LoginPage() {
@@ -63,7 +77,7 @@ export default function LoginPage() {
     if (sent || mode !== 'signin') return;
     let live = true;
     void beginConditionalPasskeySignIn().then((signedIn) => {
-      if (signedIn && live) window.location.href = `/auth/post-login${checkinSuffix()}`;
+      if (signedIn && live) window.location.href = `/auth/post-login${authSuffix()}`;
     });
     return () => {
       live = false;
@@ -76,7 +90,7 @@ export default function LoginPage() {
     setError('');
     const result = await signInWithPasskey();
     if (result.ok) {
-      window.location.href = `/auth/post-login${checkinSuffix()}`;
+      window.location.href = `/auth/post-login${authSuffix()}`;
       return;
     }
     // An empty message means the user dismissed the system prompt — that is a
@@ -105,7 +119,7 @@ export default function LoginPage() {
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback${checkinSuffix()}` },
+      options: { redirectTo: `${window.location.origin}/auth/callback${authSuffix()}` },
     });
     if (authError) {
       setError(friendlyAuthError(authError.message));
@@ -121,7 +135,7 @@ export default function LoginPage() {
     const send = () =>
       supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback${checkinSuffix()}` },
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback${authSuffix()}` },
       });
     // The auth gateway can 503 on the first request after an idle period; a
     // single silent retry makes that invisible to the user instead of showing
@@ -164,7 +178,7 @@ export default function LoginPage() {
     for (const type of typeOrder) {
       const { error } = await supabase.auth.verifyOtp({ email, token, type });
       if (!error) {
-        window.location.href = `/auth/post-login${checkinSuffix()}`;
+        window.location.href = `/auth/post-login${authSuffix()}`;
         return;
       }
       authError = error;
