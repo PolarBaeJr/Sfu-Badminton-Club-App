@@ -145,7 +145,19 @@ services:
       # network, so this needs no trip out to Cloudflare and back. The readiness
       # probe's hairpin (see apps/player/.../health/ready) is NOT repeated here.
       # Override only if the bot is ever split onto another host.
-      APP_API_URL: ${APP_API_URL:-http://player:3000}
+      # NO DEFAULT ON PURPOSE. This used to be `${APP_API_URL:-http://player:3000}`,
+      # which assumed the player app is a compose service on this project's
+      # network. It is not, in either environment: player and admin are
+      # onboarded through the proxy dashboard and run under generated names
+      # (goproxy-onb-...-1000 on staging, goproxy-badminton-player-NN on prod).
+      # There is no container or alias called `player`, so the default resolved
+      # to NXDOMAIN and every app call died as `TypeError: fetch failed` -- a
+      # message that points at the network, not at the config that caused it.
+      #
+      # A wrong value here disables the bot completely and says nothing useful,
+      # so it fails at `compose config` time instead. Set it in .env; see
+      # .env.example for the two values that actually work.
+      APP_API_URL: ${APP_API_URL:?set APP_API_URL in .env -- see .env.example}
       # The PUBLIC origin, and it must not be the in-cluster URL above: this one
       # goes into the /link button that a member opens in their own browser, so
       # http://player:3000 would be a dead link on their phone.

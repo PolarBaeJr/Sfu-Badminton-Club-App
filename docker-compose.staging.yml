@@ -143,7 +143,19 @@ services:
       DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env.staging}
       # Optional. Point it at a channel in the test server, not the real one.
       DISCORD_AUDIT_CHANNEL_ID: ${DISCORD_AUDIT_CHANNEL_ID:-}
-      APP_API_URL: ${APP_API_URL:-http://player:3000}
+      # NO DEFAULT ON PURPOSE. This used to be `${APP_API_URL:-http://player:3000}`,
+      # which assumed the player app is a compose service on this project's
+      # network. It is not, in either environment: player and admin are
+      # onboarded through the proxy dashboard and run under generated names
+      # (goproxy-onb-...-1000 on staging, goproxy-badminton-player-NN on prod).
+      # There is no container or alias called `player`, so the default resolved
+      # to NXDOMAIN and every app call died as `TypeError: fetch failed` -- a
+      # message that points at the network, not at the config that caused it.
+      #
+      # A wrong value here disables the bot completely and says nothing useful,
+      # so it fails at `compose config` time instead. Set it in .env; see
+      # .env.example for the two values that actually work.
+      APP_API_URL: ${APP_API_URL:?set APP_API_URL in .env -- see .env.example}
       # The public origin, because it goes into the /link button a member opens
       # in their own browser. Staging's origin, so a staging link cannot walk
       # somebody into production.

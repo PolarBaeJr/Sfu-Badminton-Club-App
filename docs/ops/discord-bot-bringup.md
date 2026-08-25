@@ -121,6 +121,21 @@ it — anything compose creates (including the bot) reads `${VAR}` from
 `.env.staging` instead. Putting `ref:` in a compose file yields the literal
 string `ref:NAME` as the value, silently.
 
+## 4b. Tell the bot where the app is
+
+`APP_API_URL` has **no default**, deliberately. Set it in `.env`.
+
+The obvious value — `http://player:3000` — does not work and used to be the
+default. Player and admin are onboarded through the proxy dashboard rather than
+started by compose, so they run under generated names and nothing resolves
+`player`. The symptom is `TypeError: fetch failed` on every app call, which
+reads as a network fault rather than a config mistake.
+
+Use the in-cluster container name on staging (stable for a single replica, and
+fastest), or the public origin on prod (survives the replica renumbering that
+scaling causes). `.env.example` spells out the trade-off. `APP_PUBLIC_URL` must
+be the public origin either way — it builds the link a member taps on a phone.
+
 ## 5. DNS
 
 Point `<bot-subdomain>` at the server. Do this in the Cloudflare UI; the
