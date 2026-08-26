@@ -194,6 +194,12 @@ services:
       # rides an in-memory nonce between two independently routed interactions.
       proxy.unscalable: "true"
       proxy.autoupdate: "true"
+      # See the production compose for why only the bot carries this: the
+      # bucket is keyed per service, so the same label on the player app
+      # (proxy.path "/") would meter the whole site against one bucket per
+      # client IP -- and all of campus wifi shares one.
+      proxy.ratelimit:     "true"
+      proxy.ratelimit.rpm: "300"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s

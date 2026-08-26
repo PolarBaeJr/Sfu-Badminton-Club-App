@@ -52,9 +52,22 @@ export function FeedbackForm({
       <div style={{ fontFamily: 'var(--display)', fontSize: 18, fontWeight: 700 }}>
         {already ? 'Your feedback' : 'How was this event?'}
       </div>
+      {/* "MAY ALSO", NOT "AND", AND THAT IS DELIBERATE. The Discord relay is off
+          until somebody sets event_feedback_channel_id, and that key is unset on
+          production, so stating the forward as a fact would describe something
+          that does not happen. The copy cannot read the setting to find out
+          either: discord_settings is service-role only (00167), so a member-facing
+          page gets an empty list back and would always render the wrong branch —
+          silently, because a refused PostgREST read is not an error.
+
+          What has to survive either wording is the disclosure: a member must never
+          be surprised to find their words in Discord. "May also" carries that and
+          stays true whether the relay is configured or not. The audience claim in
+          the first clause is the promise, and it holds in both cases — both
+          channels are exec-only by the rule written into 00173. */}
       <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-        Only the exec team sees this — here and in their private Discord channel, never
-        anywhere other members can read it. You can update it any time.
+        Only the exec team sees this — never anywhere other members can read it. The execs
+        may also get a copy in their own private Discord channel. You can update it any time.
       </p>
 
       <div className="row" style={{ gap: 4, marginTop: 14 }} role="radiogroup" aria-label="Rating">

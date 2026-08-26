@@ -222,6 +222,30 @@ services:
       # in the bot holds cross-request state.
       proxy.unscalable: "true"
       proxy.autoupdate: "true"
+      # RATE LIMITED, AND THIS IS THE ONLY SERVICE IN THIS FILE WHERE THE LABEL
+      # FITS. The proxy keys its bucket on `proxy.host + "|" + proxy.path`
+      # (router.go), so a rate limit is per SERVICE, not per route -- there is
+      # no way to spell "throttle the login endpoint" with labels. On the
+      # player app, whose proxy.path is "/", the label would therefore meter
+      # the entire site against a single bucket per client IP, and the bucket
+      # key for IPv4 is the whole address (maskRLKey). Everyone on SFU campus
+      # wifi leaves through the same egress address, so one bucket would be
+      # the whole club during a signup rush. That is an outage, not a control.
+      #
+      # The bot has no such problem: its callers are Discord's edge and the
+      # Pi's own pg_net cron, neither of which shares an IP with a member.
+      #
+      # 300/min is deliberately far above anything legitimate. This exists to
+      # stop a flood from reaching the ed25519 verify on every request, not to
+      # shape real traffic -- a 429 here shows up in Discord as "interaction
+      # failed", so the limit has to be somewhere real usage can never reach.
+      #
+      # capacity == rpm and refill == rpm/60, so this is 300 instantly then
+      # 5/sec; there is no separate burst knob. A non-numeric or <= 0 rpm is
+      # logged and IGNORED -- the service still serves, just unthrottled --
+      # so confirm from the proxy log, never by assuming the label took.
+      proxy.ratelimit:     "true"
+      proxy.ratelimit.rpm: "300"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s
