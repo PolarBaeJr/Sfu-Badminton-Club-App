@@ -14,6 +14,7 @@ import {
 } from './templates';
 import { buildUnsubscribeUrl } from './unsubscribe';
 import { isEmailCategoryEnabled, type NotificationCategory } from '../utils/notifications';
+import { getServerSupabaseUrl } from '../utils/supabase-url';
 
 let resend: Resend | null = null;
 
@@ -43,7 +44,7 @@ let admin: SupabaseClient | null = null;
 
 function getAdmin(): SupabaseClient | null {
   if (admin) return admin;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = getServerSupabaseUrl();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   admin = createClient(url, key);

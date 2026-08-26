@@ -6,6 +6,7 @@ import type { AuthenticationResponseJSON, AuthenticatorTransportFuture } from '@
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
 import { rateLimit, getClientIp, parseOrThrow, AUTH_COOKIE_NAME } from '@badminton/shared';
+import { getServerSupabaseUrl } from '@badminton/shared';
 import { createAdminClient } from '@/lib/supabase-server';
 import { accessLevelFor } from '@/lib/permissions';
 import { logAdminAudit } from '@/lib/audit';
@@ -192,7 +193,7 @@ export async function POST(request: Request) {
   clearChallengeCookie(response);
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    getServerSupabaseUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookieOptions: { name: AUTH_COOKIE_NAME },

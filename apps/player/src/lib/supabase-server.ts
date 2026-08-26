@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
+import { getServerSupabaseUrl } from '@badminton/shared';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied to the clients here — typed clients flip many `select('*, foo(*)')`
@@ -11,7 +12,7 @@ import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
 // Service role client — bypasses RLS, use only for trusted server-side operations
 export function createServiceRoleClient() {
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    getServerSupabaseUrl(),
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 }
@@ -20,7 +21,7 @@ export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
 
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    getServerSupabaseUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookieOptions: AUTH_COOKIE_OPTIONS,

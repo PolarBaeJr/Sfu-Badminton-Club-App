@@ -19,6 +19,7 @@ export * from './utils/stale-build';
 export * from './utils/theme';
 export * from './utils/rate-limit';
 export * from './utils/supabase-helpers';
+export * from './utils/supabase-url';
 export * from './utils/query-chunks';
 export * from './utils/roster-restore';
 export * from './utils/concurrency';
