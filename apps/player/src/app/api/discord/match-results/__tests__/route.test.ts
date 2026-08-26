@@ -46,6 +46,10 @@ let mappings: Record<string, unknown>[] = [];
 let settings: { key: string; value: string }[] = [];
 let matchesError: { message: string } | null = null;
 let mappingError: { message: string } | null = null;
+/** Every table the route touched, in order. */
+const reads: string[] = [];
+/** Every `.in(...)` the mapping read spelled out. */
+const mappingInArgs: [string, unknown[]][] = [];
 
 const upserts: Record<string, unknown>[] = [];
 const deletes: [string, unknown][][] = [];
@@ -105,7 +109,16 @@ function matchesBuilder() {
   let rows = matches;
   const builder: Record<string, unknown> = {};
   builder.select = () => builder;
-  builder.order = () => builder;
+  // REAL, and it has to be: .limit() truncates whatever .order() left, so a
+  // no-op sort here makes the ordering test pass no matter which column the
+  // route sorts on — the exact bug it exists to catch.
+  builder.order = (column: string, opts?: { ascending?: boolean }) => {
+    const dir = opts?.ascending === false ? -1 : 1;
+    rows = [...rows].sort(
+      (a, b) => dir * String(a[column as keyof MatchSeed]).localeCompare(String(b[column as keyof MatchSeed])),
+    );
+    return builder;
+  };
   builder.not = (column: string, op: string) => {
     if (op === "is") rows = rows.filter((r) => r[column as keyof MatchSeed] !== null);
     return builder;
@@ -138,6 +151,15 @@ function mappingBuilder() {
     rows = rows.slice(0, n);
     return builder;
   };
+  // REAL, deliberately. The route aims this read at the ids the window
+  // returned; a no-op .in() would hand it every mapping and make the targeting
+  // untested — which is precisely the bug where retraction reach and window
+  // reach drift apart.
+  builder.in = (column: string, values: unknown[]) => {
+    mappingInArgs.push([column, values]);
+    rows = rows.filter((r) => values.includes(r[column]));
+    return builder;
+  };
   builder.upsert = (row: Record<string, unknown>) => {
     upserts.push(row);
     return Promise.resolve({ error: null });
@@ -163,6 +185,7 @@ function mappingBuilder() {
 vi.mock("@/lib/supabase-server", () => ({
   createServiceRoleClient: () => ({
     from: (table: string) => {
+      reads.push(table);
       if (table === "discord_settings")
         return {
           select: () => Promise.resolve({ data: settings, error: null }),
@@ -173,6 +196,9 @@ vi.mock("@/lib/supabase-server", () => ({
     },
   }),
 }));
+
+/** Mirrors MAX_WINDOW in the route; the cap test above asserts they agree. */
+const MAX_WINDOW_IN_TEST = 150;
 
 let bucket = 0;
 function req(path = "?guildId=g1") {
@@ -224,6 +250,8 @@ beforeEach(() => {
   mappingError = null;
   upserts.length = 0;
   deletes.length = 0;
+  reads.length = 0;
+  mappingInArgs.length = 0;
 });
 
 describe("GET /api/discord/match-results", () => {
@@ -421,12 +449,16 @@ describe("GET /api/discord/match-results", () => {
     ["disputed", { result_status: "disputed" }],
     // convertMatchToCasual rewrites BOTH, and either alone must be enough.
     ["converted to casual", { event_type: "casual", result_status: "pending_confirmation" }],
-    ["hidden after the fact", {}],
+    // NOT "hidden after the fact" — flipping hide_from_leaderboard does not
+    // bump matches.updated_at, so an already-posted match cannot re-enter the
+    // window that way. What this case pins is that a hidden participant is
+    // grounds for retraction WHEN some other edit brings the match back.
+    ["hidden, on a match updated for another reason", {}],
   ])("retracts a mapped match once it is %s", async (label, over) => {
     mappings = [mapping()];
     matches = [
       match(
-        label === "hidden after the fact"
+        label.startsWith("hidden")
           ? {
               match_participants: [
                 { team_side: "a", win_flag: true, player: player({ hide_from_leaderboard: true }) },
@@ -453,22 +485,12 @@ describe("GET /api/discord/match-results", () => {
     expect(only((await run()).body.actions).kind).toBe("retract");
   });
 
-  it("does no work at all with no channel and nothing already posted", async () => {
-    // The relay is simply off. Short-circuits before reading matches, so there
-    // is nothing to skip — the read is what would have produced the reasons.
+  it("still reads matches with no channel set, so retraction keeps working", async () => {
+    // The relay being off must not disarm takedowns: a club that clears the
+    // setting to stop posting would otherwise strand every message it already
+    // sent. Nothing new goes out, and the reason is legible — "we played and
+    // nothing appeared" needs an answer that is not a shrug.
     settings = [];
-    const { body } = await run();
-
-    expect(body.actions).toEqual([]);
-    expect(body.skipped).toEqual([]);
-  });
-
-  it("skips loudly when the read happens but there is nowhere to post", async () => {
-    // A mapping exists, so the read runs (retraction still has to work). A
-    // postable match then has nowhere to go, and that has to be legible: "we
-    // played and nothing appeared" needs an answer that is not a shrug.
-    settings = [];
-    mappings = [mapping({ match_id: "m-other" })];
     const { body } = await run();
 
     expect(body.actions).toEqual([]);
@@ -525,7 +547,54 @@ describe("GET /api/discord/match-results", () => {
     matches = Array.from({ length: 260 }, (_, i) => match({ id: `m${i}` }));
     const { body } = await run();
 
-    expect(body.actions).toHaveLength(200);
-    expect(body.windowCapReached).toBe(200);
+    expect(body.actions).toHaveLength(150);
+    expect(body.windowCapReached).toBe(150);
+  });
+
+  it("truncates the window by updated_at, not by played_at", async () => {
+    // THE ORDERING PROPERTY. A match played in April and voided this morning
+    // belongs at the FRONT of the window: it is the one with something due. Sort
+    // by played_at and it lands at the back, falls off the cap on any busy
+    // night, reads as "absent, therefore unchanged", and its message stays up
+    // forever — the retraction this whole route exists to deliver.
+    mappings = [mapping({ match_id: "stale" })];
+    matches = [
+      // Old game, touched moments ago: voided, so it is due for retraction.
+      match({ id: "stale", played_at: iso(-2000), updated_at: iso(-0.1), result_status: "voided" }),
+      // A full cap's worth of results played more recently but touched earlier.
+      ...Array.from({ length: MAX_WINDOW_IN_TEST }, (_, i) =>
+        match({ id: `recent${i}`, played_at: iso(-1), updated_at: iso(-1) }),
+      ),
+    ];
+
+    const { body } = await run();
+    expect(body.actions?.some((a) => a.matchId === "stale" && a.kind === "retract")).toBe(true);
+  });
+
+  it("does not read mappings at all when the window is empty", async () => {
+    // The cheap half of the no-liveness-guard property: no window rows means
+    // nothing can be due, so there is nothing to compare mappings against.
+    matches = [];
+    await run();
+
+    expect(reads).not.toContain("discord_match_posts");
+  });
+
+  it("reads only the mappings for matches in the window", async () => {
+    // Retraction reach IS window reach. A blanket mapping read with its own
+    // limit would let the two drift, and a match posted long ago and voided
+    // today would come back unmapped — classified a skip, message left up.
+    mappings = [mapping({ match_id: "m1" }), mapping({ match_id: "not-in-window" })];
+    matches = [match({ id: "m1", result_status: "voided" })];
+
+    const { body } = await run();
+    expect(body.actions).toHaveLength(1);
+    expect(only(body.actions).matchId).toBe("m1");
+
+    // The read is TARGETED, not merely filtered afterwards. A blanket read
+    // behaves the same until the guild has more mappings than its own limit,
+    // at which point retraction quietly stops reaching the old ones — so the
+    // targeting itself is the property, and it has to be asserted directly.
+    expect(mappingInArgs).toEqual([["match_id", ["m1"]]]);
   });
 });

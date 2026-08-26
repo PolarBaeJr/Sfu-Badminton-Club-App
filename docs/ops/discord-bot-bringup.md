@@ -393,6 +393,13 @@ not re-posted, and an edit that arrives afterwards is recorded rather than
 retried — otherwise the sync would PATCH a dead id every few minutes forever.
 Those show up in a run result as `stale`.
 
+**One tick carries 150 matches, ordered by `updated_at`.** That ordering is the
+load-bearing part: the rows with something due are the ones changed most
+recently, so truncation can only defer the matches that changed *least* recently
+— which by definition need nothing. If the bot logs `filled its 150-row window`
+on tick after tick, the club's volume has outgrown the window and it should be
+raised; a single capped tick after a busy night is normal and self-corrects.
+
 ---
 
 ## 8. Check it worked

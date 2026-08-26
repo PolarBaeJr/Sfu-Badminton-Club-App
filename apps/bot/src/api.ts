@@ -531,6 +531,11 @@ export interface MatchResultAction {
 export function fetchMatchResultActions(guildId: string): Promise<{
   actions: MatchResultAction[];
   skipped: { matchId: string; reason: string }[];
+  /** Present when the tick's read hit its cap. NOT decoration: a capped window
+   *  is the one condition under which a match that should be posted, or one
+   *  that should be taken down, is silently deferred to a later tick. If it is
+   *  set every tick, the window is too small for the club's volume. */
+  windowCapReached?: number;
 }> {
   const params = new URLSearchParams({ guildId });
   return get(`/api/discord/match-results?${params}`);

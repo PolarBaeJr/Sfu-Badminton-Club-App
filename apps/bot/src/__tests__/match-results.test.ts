@@ -233,6 +233,21 @@ describe('runMatchResults', () => {
     log.mockRestore();
   });
 
+  it('warns when the window filled, instead of looking like a complete tick', async () => {
+    // A capped tick has deferred work — possibly a retraction. Nothing else in
+    // the run distinguishes it from a quiet one.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMatchResultActions.mockResolvedValue({
+      actions: [],
+      skipped: [],
+      windowCapReached: 150,
+    });
+
+    await run();
+    expect(warn.mock.calls.flat().join(' ')).toContain('150-row window');
+    warn.mockRestore();
+  });
+
   it("one guild's failure does not abort the others", async () => {
     loadConfig.mockResolvedValue({ registry: { g1: {}, g2: {} }, auditChannelId: null });
     fetchMatchResultActions

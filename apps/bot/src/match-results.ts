@@ -81,13 +81,23 @@ export async function runMatchResults(): Promise<MatchResultRunResult> {
   for (const guildId of Object.keys(registry)) {
     let actions: MatchResultAction[];
     let skipped: { matchId: string; reason: string }[];
+    let windowCapReached: number | undefined;
     try {
-      ({ actions, skipped } = await fetchMatchResultActions(guildId));
+      ({ actions, skipped, windowCapReached } = await fetchMatchResultActions(guildId));
     } catch (error) {
       // One guild's failure must not abort the others.
       console.error(`[bot] match results: could not read actions for ${guildId}:`, error);
       result.failed += 1;
       continue;
+    }
+
+    if (windowCapReached) {
+      // The only signal that work was deferred rather than done. Silence here
+      // would make a capped tick indistinguishable from a complete one.
+      console.warn(
+        `[bot] match results: ${guildId} filled its ${windowCapReached}-row window; ` +
+          'the least recently changed matches wait for the next tick'
+      );
     }
 
     for (const s of skipped) {

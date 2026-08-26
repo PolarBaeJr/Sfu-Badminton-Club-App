@@ -46,20 +46,31 @@ export const dynamic = 'force-dynamic';
 //
 // It also settles the read cap below, which is a paging bound rather than a
 // safety property — truncating the window can only mean a match is not posted
-// or not retracted, never that a live one is torn down.
+// or not retracted, never that a live one is torn down. What the cap must NOT
+// do is truncate by the wrong key; see MAX_WINDOW.
 //
 // IF AN ADMIN "DELETE MATCH" ACTION IS EVER ADDED that can reach a confirmed
 // row, all of the above collapses and this route needs both pieces back before
 // that action ships.
 
-// Rows pulled per tick. Ordered by played_at desc, so a burst bigger than this
-// loses the OLDEST of the burst, not the newest.
-const MAX_WINDOW = 200;
-
-// Mappings considered per tick. Every one is compared in memory against the
-// window, never spelled into an `.in(...)` filter, so this is not bounded by
-// URL length the way the other two relays are — it is a plain paging cap.
-const MAX_MAPPED = 300;
+// Rows pulled per tick, and the ONLY cap in this route — the mapping read below
+// is aimed at exactly these ids, so retraction reach is the window, never a
+// separate bound that the window can outrun.
+//
+// ORDERED BY updated_at, THE SAME COLUMN THE WINDOW FILTERS ON. Ordering by
+// played_at instead looks harmless and is not: a match played in April and
+// voided this morning has a fresh updated_at (so it belongs in the window) and
+// an old played_at (so it sorts last), and a busy club night would push it past
+// the cap. It would then be absent from the window, which this route reads as
+// "unchanged", and its message would stay up forever — the exact retraction the
+// design exists to deliver. Sorting by updated_at means truncation can only
+// drop the rows that changed LEAST recently, which is the only safe thing to
+// drop.
+//
+// 150 rather than a rounder number: the mapping read spells these ids into an
+// `.in(...)`, and 150 uuids is ~5.7KB of URL, comfortably inside the ~8KB the
+// proxy will carry. The other two relays cap at 150 for the same reason.
+const MAX_WINDOW = 150;
 
 // How far back a match stays eligible. Long enough that a result confirmed on
 // Sunday night still posts if the bot was down for the weekend, short enough
@@ -184,47 +195,13 @@ export async function GET(request: Request) {
 
   const supabase = createServiceRoleClient();
 
-  const [settingsResult, mappedResult] = await Promise.all([
-    supabase.from('discord_settings').select('key, value'),
-    supabase
-      .from('discord_match_posts')
-      .select('match_id, channel_id, discord_message_id, synced_summary')
-      .eq('guild_id', guildId)
-      .order('updated_at', { ascending: false })
-      .limit(MAX_MAPPED),
-  ]);
-
-  // BOTH NAMED, never degraded to an empty list. A failed PostgREST read comes
-  // back as data:null with an error rather than throwing, and an empty mapping
-  // list means "nothing relayed yet" — which would post a SECOND copy of every
-  // result that already has one, on every tick, until the read recovered.
-  if (settingsResult.error || mappedResult.error) {
-    const detail = settingsResult.error?.message ?? mappedResult.error?.message ?? 'unknown';
-    console.error('[discord] match results config read failed:', detail);
-    return NextResponse.json({ error: 'config_unavailable', detail }, { status: 503 });
-  }
-
-  const settings = new Map(
-    ((settingsResult.data ?? []) as { key: string; value: string }[]).map((s) => [s.key, s.value])
-  );
-  const channelId = settings.get('match_results_channel_id')?.trim() || null;
-
-  const mapped = new Map(((mappedResult.data ?? []) as MappingRow[]).map((m) => [m.match_id, m]));
-
-  // NO CHANNEL, NO RELAY — but the mapped ones still have to be reachable, or a
-  // club that clears the setting to stop the relay would leave every message it
-  // had already posted stranded with no way to retract it. Retraction uses the
-  // mapping's own channel_id, so it keeps working with the setting gone.
-  if (!channelId && mapped.size === 0) {
-    return NextResponse.json({ actions: [], skipped: [] });
-  }
-
   const since = new Date(Date.now() - LOOKBACK_HOURS * 3600_000).toISOString();
 
-  // ONE READ, NOT TWO. The other relays add a second by-id read over the mapped
-  // set, because their retractable rows can sit outside the fresh window. Here
-  // they cannot: every retraction is an UPDATE that bumps updated_at, so a match
-  // that needs taking down is in this window by definition.
+  // ONE WINDOWED READ, and the mapping read after it is aimed at what this one
+  // returned. The other relays add a second by-id read over the mapped set,
+  // because their retractable rows can sit outside the fresh window. Here they
+  // cannot: every retraction is an UPDATE that bumps updated_at, so a match that
+  // needs taking down is in this window by definition.
   //
   // DELIBERATELY UNFILTERED ON result_status AND event_type. Both are filtered
   // in TypeScript below instead, and that is the whole trick: if the query
@@ -236,31 +213,86 @@ export async function GET(request: Request) {
   // forward.
   //
   // rating_delta and post_rating are NOT selected. See the header.
-  const { data, error } = await supabase
-    .from('matches')
-    .select(
-      'id, played_at, match_type, format, score_summary, winner_side, result_status, event_type, ' +
-        'match_participants(team_side, win_flag, ' +
-        'player:players(id, full_name, handle, hide_from_leaderboard))'
-    )
-    .not('played_at', 'is', null)
-    .gte('updated_at', since)
-    .order('played_at', { ascending: false })
-    .limit(MAX_WINDOW);
+  const [settingsResult, windowResult] = await Promise.all([
+    supabase.from('discord_settings').select('key, value'),
+    supabase
+      .from('matches')
+      .select(
+        'id, played_at, match_type, format, score_summary, winner_side, result_status, event_type, ' +
+          'match_participants(team_side, win_flag, ' +
+          'player:players(id, full_name, handle, hide_from_leaderboard))'
+      )
+      .not('played_at', 'is', null)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: false })
+      .limit(MAX_WINDOW),
+  ]);
 
-  if (error) {
-    console.error('[discord] match results read failed:', error.message);
+  if (settingsResult.error) {
+    console.error('[discord] match results config read failed:', settingsResult.error.message);
     return NextResponse.json(
-      { error: 'matches_unavailable', detail: error.message },
+      { error: 'config_unavailable', detail: settingsResult.error.message },
       { status: 503 }
     );
   }
+
+  if (windowResult.error) {
+    console.error('[discord] match results read failed:', windowResult.error.message);
+    return NextResponse.json(
+      { error: 'matches_unavailable', detail: windowResult.error.message },
+      { status: 503 }
+    );
+  }
+
+  const settings = new Map(
+    ((settingsResult.data ?? []) as { key: string; value: string }[]).map((s) => [s.key, s.value])
+  );
+  const channelId = settings.get('match_results_channel_id')?.trim() || null;
 
   // `as unknown` first, because the generated client cannot type a two-level
   // embed (matches -> match_participants -> players) and falls back to
   // GenericStringError[], which does not overlap MatchRow. The shape is
   // asserted by the select string directly above and by the route tests.
-  const rows = (data ?? []) as unknown as MatchRow[];
+  const rows = (windowResult.data ?? []) as unknown as MatchRow[];
+
+  // NOTHING CHANGED, SO NOTHING IS DUE — not "nothing exists". This is where a
+  // liveness guard would go and why one is not needed: an empty window, whether
+  // it is genuinely quiet or a silently failed read, means every posted message
+  // stays exactly where it is. It also spares the mapping read below.
+  if (rows.length === 0) {
+    return NextResponse.json({ actions: [], skipped: [] });
+  }
+
+  // AIMED AT THE WINDOW, not at the guild's whole history. A blanket read with
+  // its own limit would bound retraction separately from the window: once more
+  // mappings existed than that limit, a match posted last term and voided today
+  // would enter the window, find no mapping, and be classified a skip instead of
+  // a retract — message still up. Reading exactly the ids in hand makes the two
+  // reaches the same by construction, and a mapping outside the window is one
+  // whose match is unchanged, which needs nothing done to it.
+  const mappedResult = await supabase
+    .from('discord_match_posts')
+    .select('match_id, channel_id, discord_message_id, synced_summary')
+    .eq('guild_id', guildId)
+    .in(
+      'match_id',
+      rows.map((r) => r.id)
+    );
+
+  // NAMED, never degraded to an empty list. A failed PostgREST read comes back
+  // as data:null with an error rather than throwing, and an empty mapping list
+  // means "nothing relayed yet" — which would post a SECOND copy of every result
+  // that already has one, on every tick, until the read recovered.
+  if (mappedResult.error) {
+    console.error('[discord] match results mapping read failed:', mappedResult.error.message);
+    return NextResponse.json(
+      { error: 'config_unavailable', detail: mappedResult.error.message },
+      { status: 503 }
+    );
+  }
+
+  const mapped = new Map(((mappedResult.data ?? []) as MappingRow[]).map((m) => [m.match_id, m]));
+
   const actions: MatchResultAction[] = [];
   const skipped: { matchId: string; reason: string }[] = [];
 
@@ -383,7 +415,6 @@ export async function GET(request: Request) {
     // Reported rather than silent: a club night that produced more results than
     // one tick can carry should say so, not look like it relayed everything.
     ...(rows.length >= MAX_WINDOW ? { windowCapReached: MAX_WINDOW } : {}),
-    ...(mapped.size >= MAX_MAPPED ? { mappingCapReached: MAX_MAPPED } : {}),
   });
 }
 
