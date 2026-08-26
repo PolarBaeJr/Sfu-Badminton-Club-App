@@ -44,9 +44,27 @@ services:
       # makes compose refuse to start rather than booting with an empty
       # secret, which would otherwise fail closed in a confusing place.
       DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env}
-      # In-cluster, and only used in one direction: the /link page asks the bot
-      # to apply roles the instant an account is connected, rather than leaving
-      # the member looking at a success screen with no roles.
+      # Used in one direction: the /link page asks the bot to apply roles the
+      # instant an account is connected, rather than leaving the member looking
+      # at a success screen with no roles.
+      #
+      # READ THIS BEFORE TRUSTING THIS BLOCK. The player app is onboarded
+      # through the proxy dashboard, not started by this compose file, so this
+      # `environment:` block does not reach it on a deployed host. Staging hit
+      # exactly this on 2026-08-25: the value looked configured here, was
+      # absent in the container, and linking logged `cannot sync:
+      # DISCORD_BOT_URL ... unset` while still reporting success to the member.
+      #
+      # On a deployed host set it through the dashboard, re-passing the secret
+      # (a replace without it DROPS it):
+      #   replace_service(badminton-player, <image>, env={
+      #     "DISCORD_BOT_URL": "https://<the bot's public origin>",
+      #     "DISCORD_SERVICE_SECRET": "ref:DISCORD_SERVICE_SECRET",
+      #   })
+      #
+      # `http://bot:3002` assumes the player shares a compose network with the
+      # bot, which it does not. Use the public origin -- same reasoning as
+      # APP_API_URL on the bot, and see .env.example.
       DISCORD_BOT_URL: ${DISCORD_BOT_URL:-http://bot:3002}
     extra_hosts:
       - "host.docker.internal:host-gateway"

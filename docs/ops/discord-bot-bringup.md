@@ -172,6 +172,59 @@ as a network fault rather than a stale name.
 `APP_PUBLIC_URL` must be the public origin regardless — it builds the link a
 member taps on a phone.
 
+## 4c. Tell the app where the bot is
+
+The reverse direction, and it is easy to miss because **the value looks
+configured when it is not**. `DISCORD_BOT_URL` appears in the `player` service
+of both compose files, but the player app is onboarded through the dashboard,
+so that `environment:` block never reaches it. Compose is not where this gets
+set on a deployed host.
+
+Set it on the player service through the dashboard, re-passing the secret,
+because a replace without `env` **drops** it:
+
+```
+replace_service(<player-service>, <image>, env={
+  "DISCORD_BOT_URL": "https://<bot-subdomain>",
+  "DISCORD_SERVICE_SECRET": "ref:DISCORD_SERVICE_SECRET",
+})
+```
+
+Then confirm it is actually there — the container name changes on every
+replace, so resolve it first:
+
+```
+C=$(ssh <host> 'docker ps --format "{{.Names}}" | grep <player> | head -1')
+ssh <host> "docker exec $C printenv DISCORD_BOT_URL"
+```
+
+**Why this one fails quietly.** The `/link` page asks the bot to apply roles the
+moment an account connects, and treats a failed sync as non-fatal on purpose —
+the link is already made, so it says *"your roles will appear shortly"* rather
+than failing. With `DISCORD_BOT_URL` unset the sync is never attempted, that
+message is shown forever, and the only evidence is one line in the **player's**
+log, not the bot's:
+
+```
+[discord] cannot sync: DISCORD_BOT_URL or DISCORD_SERVICE_SECRET unset
+```
+
+Nothing appears in the bot's log, because the bot is never contacted. If a
+member reports "connected but no roles", read the player log first.
+
+To apply roles for members who linked while it was broken, sweep everyone
+rather than asking them to re-link. Run it from inside the bot container so the
+secret stays in its own environment:
+
+```
+ssh <host> 'docker exec <bot> node -e "
+const s=process.env.DISCORD_SERVICE_SECRET;
+fetch(\"http://127.0.0.1:3002/sync\",{method:\"POST\",
+  headers:{authorization:\`Bearer \${s}\`,\"content-type\":\"application/json\"},
+  body:JSON.stringify({trigger:\"manual\"})})
+ .then(r=>r.text().then(t=>console.log(r.status,t)))"'
+```
+
 ## 5. DNS
 
 Point `<bot-subdomain>` at the server. Do this in the Cloudflare UI; the
