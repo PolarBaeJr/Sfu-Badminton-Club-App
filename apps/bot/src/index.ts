@@ -2,9 +2,19 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { clearRevocations, fetchLinkedMembers } from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
-import { DEFERRED_COMMANDS, dispatch } from './commands.js';
+import {
+  DEFERRED_COMMANDS,
+  dispatch,
+  handleSelfRoleButton,
+  isSelfRoleButton,
+  type CommandOption,
+} from './commands.js';
 import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { reconcile } from './reconcile.js';
+import { runSessionPings } from './session-pings.js';
+import { runTournamentEvents } from './tournament-events.js';
+import { runAnnouncements } from './announcements.js';
+import { runMatchResults } from './match-results.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -194,6 +204,74 @@ const server = createServer(async (req, res) => {
   // moved, because the alternative is telling somebody their account is
   // connected and then showing them no roles until the next sweep — which,
   // until something drives POST /sync, may be never.
+  // Session pings, driven by pg_cron on the same schedule as the app's own
+  // reminder job. One HTTP request reaches exactly one replica, which is the
+  // whole reason this is not a setInterval in here.
+  if (req.method === 'POST' && req.url === '/session-pings') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runSessionPings();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] session pings failed:', error);
+      return send(res, 500, { error: 'session_pings_failed' });
+    }
+  }
+
+  // Tournament scheduled events, driven by pg_cron every 15 minutes. Polled
+  // rather than pushed when an exec hits Activate, so a bot that happens to be
+  // restarting at that moment causes a delay instead of a lost announcement
+  // nobody would notice was lost.
+  if (req.method === 'POST' && req.url === '/tournament-events') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runTournamentEvents();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] tournament events failed:', error);
+      return send(res, 500, { error: 'tournament_events_failed' });
+    }
+  }
+
+  // The announcement relay, driven by pg_cron every 5 minutes. Faster than the
+  // tournament sweep because an announcement is the thing an exec publishes and
+  // then watches for: "urgent, no session tonight" arriving a quarter of an
+  // hour late is a different message from the one that was written.
+  if (req.method === 'POST' && req.url === '/announcements') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runAnnouncements();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] announcement relay failed:', error);
+      return send(res, 500, { error: 'announcements_failed' });
+    }
+  }
+
+  // The match result relay, driven by pg_cron every 10 minutes. Slower than
+  // announcements — nobody is waiting on a result the way they wait on "no
+  // session tonight" — and faster than the tournament sweep, because results
+  // land in bursts on a club night and a half-hour lag would make the channel
+  // read as a digest rather than a feed.
+  if (req.method === 'POST' && req.url === '/match-results') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runMatchResults();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] match result relay failed:', error);
+      return send(res, 500, { error: 'match_results_failed' });
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/sync-member') {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
@@ -234,11 +312,21 @@ const server = createServer(async (req, res) => {
 
   let interaction: {
     type: number;
-    data?: { name: string; options?: { name: string; value?: string | number }[] };
+    data?: {
+      name: string;
+      // Subcommands nest their arguments one level down, so the option shape
+      // has to be recursive rather than flat.
+      options?: CommandOption[];
+      /** MESSAGE_COMPONENT only: which button was clicked. */
+      custom_id?: string;
+    };
     // Guild context populates member.user; a DM populates user and omits
     // member entirely. /link and /unlink are precisely the commands somebody
     // runs in a DM, so both have to be read.
-    member?: { user?: { id?: string } };
+    // `roles` is the caller's current role ids, sent on every guild
+    // interaction. The self-role toggle reads it instead of fetching the member
+    // again, which keeps the whole round trip inside Discord's 3-second budget.
+    member?: { user?: { id?: string }; roles?: string[] };
     user?: { id?: string };
     guild_id?: string;
     // Only sent for real interactions, not for the PING probe.
@@ -312,6 +400,45 @@ const server = createServer(async (req, res) => {
 
     const response = await dispatch(interaction.data.name, interaction.data.options, context);
     return send(res, 200, response);
+  }
+
+  // MESSAGE_COMPONENT — someone clicked a button.
+  //
+  // The picker's buttons live on a message that stays in the channel, so this
+  // arrives long after the command that posted it, from anybody who can see the
+  // channel. Everything needed to answer is on the interaction itself:
+  // `member.roles` is the caller's CURRENT role list as Discord sees it, which
+  // is what makes a toggle possible without a second API round-trip inside the
+  // 3-second budget.
+  if (interaction.type === 3 && interaction.data) {
+    const customId = interaction.data.custom_id;
+
+    if (isSelfRoleButton(customId)) {
+      const context = {
+        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+        guildId: interaction.guild_id ?? null,
+      };
+      try {
+        const response = await handleSelfRoleButton(
+          customId as string,
+          context,
+          interaction.member?.roles ?? []
+        );
+        return send(res, 200, response);
+      } catch (error) {
+        console.error('[bot] self-role button failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: { content: 'Something went wrong. Please try again.', flags: 64 },
+        });
+      }
+    }
+
+    // A component this build does not know — most likely a button from a
+    // message posted by an older version. type 6 is DEFERRED_UPDATE_MESSAGE:
+    // acknowledge and change nothing, which leaves the message intact rather
+    // than showing the clicker an error for something that is not their fault.
+    return send(res, 200, { type: 6 });
   }
 
   // Unknown interaction type — acknowledge rather than erroring, so a future

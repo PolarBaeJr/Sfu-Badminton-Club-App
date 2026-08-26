@@ -1,13 +1,22 @@
 import {
+  addSelfRole,
   AppApiError,
   clearRevocations,
   deleteLink,
   fetchLeaderboard,
+  fetchSelfRoles,
   fetchSessions,
+  fetchTournaments,
+  RateLimitedError,
+  removeSelfRole,
+  submitFeedback,
+  SweepManagedRoleError,
   AlreadyLinkedError,
   mintLinkToken,
   writeGuildConfig,
+  type FeedbackKind,
   type SessionSummary,
+  type TournamentSummary,
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
@@ -25,6 +34,61 @@ const LADDER_LABEL: Record<string, string> = {
   doubles: 'Doubles',
   points: 'Tournament points',
 };
+
+/**
+ * THE TWO GATES, and which one a command needs.
+ *
+ * They answer different questions, and a command that writes club data needs
+ * BOTH. Getting this wrong in either direction is the sort of mistake that
+ * looks fine until it does not, so it is written down here rather than decided
+ * again per command.
+ *
+ * GATE 1 -- `default_member_permissions`, enforced by DISCORD, decides who can
+ * SEE and RUN the command. It is the only thing that can hide a command from
+ * the picker, and the only gate that applies before the bot is involved at all.
+ * What it cannot do is know anything about the club: Discord has no idea who
+ * the treasurer is.
+ *
+ * GATE 2 -- the LINKED MEMBER'S APP CAPABILITY, enforced by the app, decides
+ * whether the action is actually allowed. This is the real authority. A Discord
+ * role is a claim about a person; `players.permission_role` and the capability
+ * resolver are what the club's own records say, and they are what the website
+ * enforces. Anyone who can edit roles in Discord could otherwise grant
+ * themselves whatever a Discord-only check was looking for -- which is exactly
+ * the escalation roles.ts refuses to allow in the other direction.
+ *
+ * So: leave it unset for reads anybody may do, MANAGE_GUILD for Discord
+ * plumbing, EXEC_ONLY to keep exec tooling out of everyone else's command list
+ * -- and for anything that WRITES to the club's records, EXEC_ONLY to hide it
+ * PLUS a capability check on the linked member to enforce it. The visibility
+ * gate is tidiness; the capability check is the security boundary. Never let
+ * the first stand in for the second.
+ */
+
+/**
+ * MANAGE_GUILD (1 << 5). Server administration -- creating roles, wiring the
+ * bot into the server. Whoever holds it could do the same work by hand.
+ */
+const MANAGE_GUILD = '32';
+
+/**
+ * Hidden from everyone until a server admin grants it to a role.
+ *
+ * `'0'` is Discord's documented way to say "no default access": the command is
+ * invisible in the picker for every non-administrator until somebody opens
+ * Server Settings -> Integrations -> SFU Badminton -> Command permissions and
+ * allows a role -- normally @Executives, which /setup already creates.
+ *
+ * WHY '0' RATHER THAN A PERMISSION BIT EXECS HAPPEN TO HOLD. Picking something
+ * like Manage Messages would make the audience "whoever holds that Discord
+ * permission", which drifts the moment somebody grants Manage Messages to
+ * helpers during an unrelated tidy-up. '0' makes the audience an explicit list
+ * rather than a side effect.
+ *
+ * FAILS CLOSED: if nobody ever grants it, the command is simply unavailable
+ * outside the admins. The wrong people never get it by accident.
+ */
+const EXEC_ONLY = '0';
 
 export const COMMAND_DEFINITIONS = [
   {
@@ -55,6 +119,57 @@ export const COMMAND_DEFINITIONS = [
     name: 'sessions',
     description: 'Upcoming club sessions',
     options: [],
+  },
+  {
+    name: 'tournaments',
+    description: 'Upcoming club tournaments',
+    options: [],
+  },
+  {
+    // NO default_member_permissions, deliberately. EXEC_ONLY is right there in
+    // this file and copying it here would make /bug invisible to everyone who
+    // is not an admin — which is everyone who would ever report a bug. The
+    // audience for these two is the whole club.
+    name: 'bug',
+    description: 'Report something in the app that is broken',
+    options: [
+      {
+        type: 3, // STRING
+        name: 'details',
+        description: 'What you did, what happened, and what you expected',
+        required: true,
+        // Discord enforces this before the interaction is ever sent, so an
+        // over-long report is rejected in the client with the text still in the
+        // box, rather than accepted and silently truncated by the route.
+        max_length: 1000,
+        min_length: 5,
+      },
+    ],
+  },
+  {
+    name: 'feedback',
+    description: 'Tell the club what you think',
+    options: [
+      {
+        type: 3, // STRING
+        name: 'details',
+        description: 'What is on your mind',
+        required: true,
+        max_length: 1000,
+        min_length: 5,
+      },
+      {
+        type: 3, // STRING
+        name: 'about',
+        description: 'What it is about (defaults to general feedback)',
+        required: false,
+        choices: [
+          { name: 'The club or the app in general', value: 'feedback' },
+          { name: 'A tournament', value: 'tournament_feedback' },
+          { name: 'Something else', value: 'other' },
+        ],
+      },
+    ],
   },
   {
     name: 'link',
@@ -93,8 +208,92 @@ export const COMMAND_DEFINITIONS = [
     // anyone did not have -- and Discord independently refuses to let a bot
     // create or assign anything above its own position, which caps the blast
     // radius even if this gate were somehow bypassed.
-    default_member_permissions: '32',
+    // Stays MANAGE_GUILD rather than EXEC_ONLY: this one really is server
+    // administration, it runs once, and it is what CREATES the @Executives role
+    // that EXEC_ONLY commands are later granted to. Gating the bootstrap on the
+    // thing it bootstraps would leave a fresh server with no way in.
+    default_member_permissions: MANAGE_GUILD,
     // Meaningless in a DM: there is no guild to configure.
+    dm_permission: false,
+  },
+  {
+    name: 'rolepicker',
+    description: 'Manage the self-serve ping roles members can pick',
+    options: [
+      {
+        type: 1, // SUB_COMMAND
+        name: 'add',
+        description: 'Offer a role for members to give themselves',
+        options: [
+          { type: 8, name: 'role', description: 'The role to offer', required: true },
+          {
+            type: 3,
+            name: 'label',
+            description: 'What the button should say',
+            required: true,
+          },
+          {
+            type: 3,
+            name: 'emoji',
+            description: 'An emoji for the button (optional)',
+            required: false,
+          },
+          {
+            type: 4,
+            name: 'order',
+            description: 'Sort position, lowest first (optional)',
+            required: false,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'remove',
+        description: 'Stop offering a role. Members who have it keep it.',
+        options: [
+          { type: 8, name: 'role', description: 'The role to stop offering', required: true },
+        ],
+      },
+      {
+        type: 1,
+        name: 'post',
+        description: 'Post the picker message in this channel',
+        options: [],
+      },
+      {
+        type: 1,
+        name: 'list',
+        description: 'Show which roles are currently on offer',
+        options: [],
+      },
+    ],
+    // MANAGE_GUILD, same gate and same reasoning as /setup: whoever runs this
+    // decides which roles the bot will hand out on request. Requiring Manage
+    // Server means they could already edit those roles by hand, so it grants no
+    // power anyone lacked -- and Discord still refuses to let the bot assign
+    // anything above its own position, which caps it regardless.
+    //
+    // EXEC_ONLY rather than MANAGE_GUILD -- which LOOSENS who can run it and
+    // TIGHTENS who sees it by default, at the same time.
+    //
+    // Posting a ping picker is session-running work, and the execs who run
+    // sessions are usually not the one or two people holding Manage Server, so
+    // gating on that bit puts a routine job behind the person least likely to
+    // be around. '0' means an admin grants @Executives once, in Integrations,
+    // and the right people have it from then on -- while it stays out of every
+    // ordinary member's command list.
+    //
+    // Safe to widen because of what the command can actually do: it only
+    // nominates roles for a picker, 00168 refuses any role the nightly sweep
+    // controls, and Discord independently refuses to let the bot assign
+    // anything above its own position. There is no path from here to a role
+    // somebody could not already have been given by hand.
+    //
+    // A DISCORD gate, not an app-permission one, and deliberately so: what is
+    // configured here is Discord role plumbing, not club data. The commands
+    // that write to the club's records check the LINKED member's capability,
+    // because that is where the authority actually lives.
+    default_member_permissions: EXEC_ONLY,
     dm_permission: false,
   },
 ];
@@ -125,9 +324,25 @@ export interface InteractionContext {
   interactionToken?: string | null;
 }
 
-interface CommandOption {
+export interface CommandOption {
   name: string;
   value?: string | number;
+  /**
+   * Subcommands nest. Discord sends `/rolepicker add role:@X` as a single
+   * top-level option named "add" (type 1) whose own `options` carry the real
+   * arguments — the arguments are NOT flattened onto the command. Reading
+   * `option(options, 'role')` on the outer list therefore finds nothing and
+   * looks like the user left a required field blank, which Discord would never
+   * have allowed. subcommand() below unwraps one level.
+   */
+  options?: CommandOption[];
+  type?: number;
+}
+
+/** The chosen subcommand and its arguments, for a command that has any. */
+function subcommand(options: CommandOption[] | undefined) {
+  const chosen = options?.find((o) => o.type === 1);
+  return { name: chosen?.name ?? null, options: chosen?.options };
 }
 
 function option(options: CommandOption[] | undefined, name: string) {
@@ -136,6 +351,19 @@ function option(options: CommandOption[] | undefined, name: string) {
 
 function reply(embed: Record<string, unknown>) {
   return { type: 4, data: { embeds: [embed] } };
+}
+
+/**
+ * An embed only the caller sees.
+ *
+ * Separate from reply() rather than a boolean argument to it, because the
+ * decision is per-command and permanent: /leaderboard is public on purpose,
+ * /sessions must not be. A flag at the call site is easy to drop in a refactor
+ * and the resulting bug is invisible to the person who caused it — they see
+ * their own message either way.
+ */
+function ephemeralEmbed(embed: Record<string, unknown>) {
+  return { type: 4, data: { embeds: [embed], flags: 64 } };
 }
 
 // Ephemeral (flag 64) so failures and empty states don't clutter a shared
@@ -209,18 +437,104 @@ function formatSession(s: SessionSummary) {
   return `**${s.name ?? 'Session'}**\n${parts.join(' · ')}`;
 }
 
-export async function handleSessions() {
-  const { sessions } = await fetchSessions();
+/**
+ * EPHEMERAL, and that is a correctness property rather than tidiness.
+ *
+ * The app now returns a schedule filtered to the CALLER — a recreational member
+ * is not shown competitive nights, matching the website. A public reply would
+ * undo that completely: one competitive member runs /sessions and the bot posts
+ * their filtered-for-them schedule into a channel every rec member reads. The
+ * filter and the flag only work as a pair.
+ *
+ * It also means one person's /sessions no longer buries a busy channel in ten
+ * embeds, which is a nice consequence and not the reason.
+ */
+export async function handleSessions(context: InteractionContext) {
+  const { sessions, linked } = await fetchSessions(context.discordUserId);
+
+  // Said the same way in both branches: an unlinked caller is seeing club-wide
+  // nights only, and should know the list is narrowed rather than empty.
+  const footer = linked
+    ? 'RSVP on the website'
+    : 'Club-wide nights only — run /link to see the sessions for your track.';
 
   if (sessions.length === 0) {
-    return ephemeral('No upcoming sessions are open right now.');
+    return ephemeral(
+      linked
+        ? 'No upcoming sessions are open right now.'
+        : 'No club-wide sessions are open right now.\n\n' +
+            'Run **/link** to connect your club account and see the sessions for your track.'
+    );
   }
 
-  return reply({
+  return ephemeralEmbed({
     title: 'Upcoming sessions',
     color: CLUB_RED,
     description: sessions.map(formatSession).join('\n\n'),
-    footer: { text: 'RSVP on the website' },
+    footer: { text: footer },
+  });
+}
+
+/**
+ * A tournament's dates, as a date and not an instant.
+ *
+ * <t:unix:F> is right for a session, which starts at a specific minute. A
+ * tournament runs a day or a weekend, and rendering it as "Saturday 9:00 AM" in
+ * each reader's timezone would state a start time the club has not actually
+ * committed to — the schema stores DATE, with no time of day at all. <t:unix:D>
+ * shows the date alone, which is the whole of what is known.
+ */
+function formatTournamentDates(t: TournamentSummary): string {
+  // Noon UTC, not midnight: midnight on the club's date is the previous day in
+  // every timezone west of it, so a reader in Vancouver would see a tournament
+  // starting the day before the website says.
+  const stamp = (date: string) => Math.floor(Date.parse(`${date}T12:00:00Z`) / 1000);
+  const start = `<t:${stamp(t.startDate)}:D>`;
+  if (!t.endDate || t.endDate === t.startDate) return start;
+  return `${start} – <t:${stamp(t.endDate)}:D>`;
+}
+
+function formatTournament(t: TournamentSummary): string {
+  const parts = [formatTournamentDates(t)];
+  if (t.events.length > 0) parts.push(`${t.events.length} event${t.events.length === 1 ? '' : 's'}`);
+  if (t.registrationOpen) parts.push('entries open');
+
+  // WHY INELIGIBILITY IS A NOTE AND NOT A FILTER. allowed_memberships is an
+  // ENTRY rule — the registration path reads it and refuses — not a visibility
+  // one, and the website shows every tournament to every member. Hiding rows
+  // here would make Discord show LESS than the site, and the member would find
+  // out they cannot enter at the click instead of now.
+  const note = t.eligible === false ? '\n_Not open to your membership type._' : '';
+
+  return `**${t.name}**\n${parts.join(' · ')}${note}`;
+}
+
+/**
+ * EPHEMERAL, for a reason that is one step removed from /sessions'.
+ *
+ * There is no leak to prevent here — the tournament list is the same for
+ * everybody, because the column that pretended to gate it was dropped in 00109
+ * and the website filters nothing. What IS per-caller is the eligibility note,
+ * and a public reply would announce to the channel which membership type the
+ * caller holds. That is nobody else's business, and it would arrive as a side
+ * effect of running a command about tournaments.
+ */
+export async function handleTournaments(context: InteractionContext) {
+  const { tournaments, linked } = await fetchTournaments(context.discordUserId);
+
+  if (tournaments.length === 0) {
+    return ephemeral('No tournaments are scheduled right now.');
+  }
+
+  return ephemeralEmbed({
+    title: 'Upcoming tournaments',
+    color: CLUB_RED,
+    description: tournaments.map(formatTournament).join('\n\n'),
+    footer: {
+      text: linked
+        ? 'Enter on the website'
+        : 'Run /link to see which of these you can enter.',
+    },
   });
 }
 
@@ -495,6 +809,286 @@ export async function handleSetup(
   });
 }
 
+
+// ---------------------------------------------------------------------------
+// SELF-SERVE PING ROLES
+//
+// Buttons rather than emoji reactions, and that is a hard constraint rather than
+// a preference. Reaction roles need MESSAGE_REACTION_ADD, which is a GATEWAY
+// event delivered over a WebSocket the bot has to hold open. This bot is
+// HTTP-interactions only -- Discord POSTs to it and it answers -- so it never
+// sees a reaction at all. Buttons arrive through the same interaction endpoint
+// as slash commands, which is why they work here and reactions could not.
+//
+// The custom_id carries the role id, and the toggle handler REVALIDATES it
+// against the app rather than trusting it. See the note on the app route: a
+// picker message posted in September still has September's buttons in January.
+// ---------------------------------------------------------------------------
+
+/** Prefix on every picker button's custom_id. `selfrole:<roleId>`. */
+const SELF_ROLE_PREFIX = 'selfrole:';
+
+/** Discord: 5 buttons per action row, 5 rows per message. */
+const BUTTONS_PER_ROW = 5;
+
+function pickerComponents(roles: { roleId: string; label: string; emoji: string | null }[]) {
+  const rows = [];
+  for (let i = 0; i < roles.length; i += BUTTONS_PER_ROW) {
+    rows.push({
+      type: 1, // ACTION_ROW
+      components: roles.slice(i, i + BUTTONS_PER_ROW).map((r) => ({
+        type: 2, // BUTTON
+        style: 2, // SECONDARY -- a ping role is not a destructive or primary act
+        label: r.label,
+        custom_id: `${SELF_ROLE_PREFIX}${r.roleId}`,
+        // Discord wants a custom emoji as {id}, a unicode one as {name}. Sent
+        // the wrong way round it rejects the whole message, so the shape is
+        // decided by whether the string looks like `name:id`.
+        ...(r.emoji ? { emoji: parseEmoji(r.emoji) } : {}),
+      })),
+    });
+  }
+  return rows;
+}
+
+function parseEmoji(emoji: string) {
+  const custom = /^<?a?:?([\w~]+):(\d+)>?$/.exec(emoji);
+  if (custom) return { name: custom[1], id: custom[2], animated: emoji.startsWith('<a:') };
+  return { name: emoji };
+}
+
+async function handleRolePicker(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+) {
+  if (!context.guildId) {
+    return ephemeral('Run this in a server, not a DM.');
+  }
+  const { name: sub, options: args } = subcommand(options);
+
+  if (sub === 'add') {
+    const roleId = String(option(args, 'role') ?? '');
+    const label = String(option(args, 'label') ?? '').trim();
+    const emojiRaw = option(args, 'emoji');
+    const order = option(args, 'order');
+    if (!roleId || !label) return ephemeral('I need both a role and a label.');
+
+    try {
+      await addSelfRole({
+        guildId: context.guildId,
+        roleId,
+        label,
+        emoji: emojiRaw ? String(emojiRaw) : null,
+        sortOrder: typeof order === 'number' ? order : 0,
+      });
+    } catch (error) {
+      // The one failure worth explaining properly. Everything else falls
+      // through to dispatch's generic handler.
+      if (!(error instanceof SweepManagedRoleError)) throw error;
+      return ephemeral(
+        `<@&${roleId}> is one of the club roles I assign automatically from the ` +
+          'website, so members must not be able to pick it themselves — I would ' +
+          'take it straight back off them on the next nightly sync.\n\n' +
+          'Make a separate role for pings and offer that one instead.'
+      );
+    }
+
+    return ephemeral(
+      `Added <@&${roleId}> as **${label}**.\n\n` +
+        'Run **/rolepicker post** to put the picker in a channel (or post it again ' +
+        'to refresh an existing one — the old message keeps its old buttons).'
+    );
+  }
+
+  if (sub === 'remove') {
+    const roleId = String(option(args, 'role') ?? '');
+    if (!roleId) return ephemeral('I need a role.');
+    await removeSelfRole(context.guildId, roleId);
+    return ephemeral(
+      `Stopped offering <@&${roleId}>.\n\n` +
+        'Members who already have it keep it — I do not take roles away that ' +
+        'people chose. Run **/rolepicker post** again to refresh the buttons.'
+    );
+  }
+
+  if (sub === 'list' || sub === 'post') {
+    const { roles, truncated } = await fetchSelfRoles(context.guildId);
+
+    if (roles.length === 0) {
+      return ephemeral(
+        'No ping roles are on offer yet. Add one with **/rolepicker add**.'
+      );
+    }
+
+    if (sub === 'list') {
+      return ephemeralEmbed({
+        title: 'Ping roles on offer',
+        color: CLUB_RED,
+        description: roles
+          .map((r) => `${r.emoji ? `${r.emoji} ` : ''}**${r.label}** — <@&${r.roleId}>`)
+          .join('\n'),
+        ...(truncated
+          ? { footer: { text: `Only the first 25 can be shown on one message.` } }
+          : {}),
+      });
+    }
+
+    // PUBLIC on purpose, and the only public reply in this command. The whole
+    // point is a message everyone in the channel can click.
+    return {
+      type: 4,
+      data: {
+        embeds: [
+          {
+            title: 'Get pinged for the sessions you care about',
+            color: CLUB_RED,
+            description:
+              'Pick the nights you want a heads-up for. Click again to turn one off.\n\n' +
+              'These are just notification roles — they do not change what you can ' +
+              'sign up for.',
+          },
+        ],
+        components: pickerComponents(roles),
+      },
+    };
+  }
+
+  return ephemeral('Unknown subcommand.');
+}
+
+/**
+ * A member clicked a picker button.
+ *
+ * Returns an UPDATE-free ephemeral reply (type 4 + flags 64) rather than
+ * editing the picker message: the message is shared, and editing it to say
+ * "you now have Competitive nights" would show that to everyone who looks.
+ */
+export async function handleSelfRoleButton(
+  customId: string,
+  context: InteractionContext,
+  currentRoleIds: readonly string[]
+) {
+  const roleId = customId.slice(SELF_ROLE_PREFIX.length);
+  if (!context.guildId || !context.discordUserId || !roleId) {
+    return ephemeral("Couldn't work out who you are. Try again.");
+  }
+
+  // REVALIDATED, not trusted. The button came from a message that may be older
+  // than the configuration behind it.
+  const { roles } = await fetchSelfRoles(context.guildId);
+  const offered = roles.find((r) => r.roleId === roleId);
+  if (!offered) {
+    return ephemeral(
+      'That role is not on offer any more. Ask an exec to post a fresh picker.'
+    );
+  }
+
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.error('[bot] self-role toggle: DISCORD_BOT_TOKEN is not set');
+    return ephemeral('I am not configured to change roles right now.');
+  }
+
+  const api = new DiscordApi({ token });
+  const holds = currentRoleIds.includes(roleId);
+
+  // roleCall RESOLVES with an outcome rather than throwing -- a try/catch here
+  // would report every failure as a success. The outcomes are distinguished
+  // because they have different fixes and only one of them is the club's to
+  // make: 'forbidden' is the role sitting above the bot's own, which is the
+  // single most common way this bot appears to work while doing nothing.
+  const outcome = holds
+    ? await api.removeRole(context.guildId, context.discordUserId, roleId)
+    : await api.addRole(context.guildId, context.discordUserId, roleId);
+
+  if (outcome === 'forbidden') {
+    return ephemeral(
+      `I am not allowed to give out **${offered.label}**. It sits above my own ` +
+        'role in Server Settings → Roles — an exec needs to drag my role above it.'
+    );
+  }
+  if (outcome !== 'ok') {
+    console.error(`[bot] self-role toggle ${outcome}: role ${roleId} in ${context.guildId}`);
+    return ephemeral(`Couldn't change **${offered.label}** just now. Try again in a moment.`);
+  }
+
+  return ephemeral(
+    holds
+      ? `Removed **${offered.label}** — you won't be pinged for those any more.`
+      : `Added **${offered.label}** — you'll be pinged for those.`
+  );
+}
+
+/**
+ * /bug and /feedback. One handler, because they differ by which kind is filed.
+ *
+ * `fixedKind` is 'bug' for /bug and null for /feedback, where the reporter
+ * picks from the `about` choices and 'feedback' is the default. Splitting them
+ * into two commands rather than one /feedback with a 'bug' choice is a UX call:
+ * somebody whose page just broke types "/bug", not "/feedback about:bug".
+ *
+ * THE REPLY IS EPHEMERAL AND THE REPORT IS NOT RELAYED ANYWHERE. Filing a
+ * complaint is not the same as publishing it, and a member reporting that a
+ * feature is broken has not asked the channel to hear about it. It goes to the
+ * table; the execs read it there.
+ */
+async function handleReport(
+  fixedKind: FeedbackKind | null,
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+) {
+  const details = String(option(options, 'details') ?? '').trim();
+  if (!details) {
+    // Discord's own min_length should make this unreachable. Checked anyway
+    // because an empty row is worse than a refusal: it looks like a report the
+    // club ignored.
+    return ephemeral('Add a few words about what happened and try again.');
+  }
+
+  const chosen = String(option(options, 'about') ?? '');
+  const kind: FeedbackKind =
+    fixedKind ??
+    (chosen === 'tournament_feedback' || chosen === 'other' ? chosen : 'feedback');
+
+  let linked: boolean;
+  try {
+    ({ linked } = await submitFeedback({
+      kind,
+      body: details,
+      discordUserId: context.discordUserId,
+      guildId: context.guildId,
+    }));
+  } catch (err) {
+    if (err instanceof RateLimitedError) {
+      // Named, so nobody retries a limiter that is working. Every retry pushes
+      // their next allowed attempt further out.
+      return ephemeral(
+        "You've filed a few reports in a short space of time — give it an hour, " +
+          'or add the rest to one message next time.'
+      );
+    }
+    throw err;
+  }
+
+  const thanks =
+    kind === 'bug'
+      ? "Thanks — that's filed. The execs read these; if it's something we can " +
+        'reproduce it goes on the list.'
+      : "Thanks — that's filed and the execs will see it.";
+
+  // ONLY WHEN UNLINKED, and phrased as a limitation of the reply rather than a
+  // problem with the report. The report is stored either way; what is missing
+  // is a way to get back to them.
+  return ephemeral(
+    linked ? thanks : `${thanks}\n\nYou haven't run \`/link\` yet, so we may not be able to reply.`
+  );
+}
+
+/** True for a component interaction this module owns. */
+export function isSelfRoleButton(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SELF_ROLE_PREFIX);
+}
+
 export async function dispatch(
   name: string,
   options: CommandOption[] | undefined,
@@ -505,7 +1099,15 @@ export async function dispatch(
       case 'leaderboard':
         return await handleLeaderboard(options);
       case 'sessions':
-        return await handleSessions();
+        return await handleSessions(context);
+      case 'tournaments':
+        return await handleTournaments(context);
+      case 'rolepicker':
+        return await handleRolePicker(options, context);
+      case 'bug':
+        return await handleReport('bug', options, context);
+      case 'feedback':
+        return await handleReport(null, options, context);
       case 'link':
         return await handleLink(context);
       case 'unlink':

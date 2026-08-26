@@ -14,6 +14,15 @@
 
 export type RoleCallResult = 'ok' | 'forbidden' | 'not_found' | 'failed';
 
+/**
+ * The outcome of writing to something that may no longer be there.
+ *
+ * 'gone' is a distinct answer from 'failed' on purpose: a retry fixes a
+ * failure and can never fix a deletion, so a caller that cannot tell them
+ * apart retries the deletion forever.
+ */
+export type MessageWriteResult = 'ok' | 'gone' | 'failed';
+
 export interface DiscordApiOptions {
   token: string;
   /** Injectable for tests; defaults to global fetch. */
@@ -31,6 +40,24 @@ const BASE = 'https://discord.com/api/v10';
 // latency-sensitive and would rather leave a member for the next pass than
 // stall behind one bucket.
 const MAX_RATE_LIMIT_RETRIES = 2;
+
+/**
+ * MANAGE_EVENTS, bit 33. BigInt because Discord's permission mask is a 64-bit
+ * value sent as a decimal STRING, and the bits above 52 do not survive Number.
+ */
+const MANAGE_EVENTS = 1n << 33n;
+
+/** ADMINISTRATOR, bit 3. Implies every other permission. */
+const ADMINISTRATOR = 1n << 3n;
+
+export interface ScheduledEventInput {
+  name: string;
+  description: string;
+  /** ISO 8601. Discord refuses a start time in the past. */
+  startsAt: string;
+  endsAt: string;
+  location: string;
+}
 
 export class DiscordApi {
   private readonly token: string;
@@ -164,7 +191,7 @@ export class DiscordApi {
   }
 
   /**
-   * Post a message to a channel. Used only by the audit log.
+   * Post a message to a channel. Used by the audit log and the session pings.
    *
    * Returns a boolean instead of throwing, and the reason is the same one that
    * governs roleCall: the audit log is a RECORD of work, never a gate on it. A
@@ -175,6 +202,232 @@ export class DiscordApi {
     try {
       const response = await this.request('POST', `/channels/${channelId}/messages`, payload);
       return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Post and hand back the message id, for anything that has to find the
+   * message again later. The session pings do not — a ping is a moment, and
+   * nothing edits or withdraws one — which is why createMessage above answers a
+   * bare boolean and this exists alongside it rather than replacing it.
+   */
+  async postMessage(channelId: string, payload: unknown): Promise<string | null> {
+    try {
+      const response = await this.request('POST', `/channels/${channelId}/messages`, payload);
+      if (!response.ok) {
+        console.error(`[bot] post message to ${channelId} -> ${response.status}`);
+        return null;
+      }
+      const { id } = (await response.json()) as { id?: string };
+      return id ?? null;
+    } catch (error) {
+      console.error(`[bot] post message to ${channelId} threw:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Edit a message the bot itself sent. Needs no permission beyond being its
+   * author — Discord refuses an edit of anybody else's message outright, with
+   * no permission that grants it.
+   *
+   * THREE ANSWERS, NOT TWO, and 'gone' is the one that matters.
+   *
+   * A message somebody deleted by hand answers 404 to every subsequent PATCH.
+   * Folded into 'failed' that becomes an unbounded retry loop: nothing is
+   * recorded, the next tick computes the identical diff, and the relay hammers
+   * a dead message id every five minutes for as long as the announcement
+   * exists. The sequence that gets there is the natural one — the Discord copy
+   * looked wrong, somebody removed it, then the author corrected the source.
+   *
+   * Distinguishing it lets the caller settle the diff instead. Same reason
+   * deleteMessage below counts 404 as success.
+   */
+  async editMessage(
+    channelId: string,
+    messageId: string,
+    payload: unknown
+  ): Promise<MessageWriteResult> {
+    try {
+      const response = await this.request(
+        'PATCH',
+        `/channels/${channelId}/messages/${messageId}`,
+        payload
+      );
+      if (response.ok) return 'ok';
+      if (response.status === 404) return 'gone';
+      console.error(`[bot] edit message ${messageId} in ${channelId} -> ${response.status}`);
+      return 'failed';
+    } catch {
+      return 'failed';
+    }
+  }
+
+  /**
+   * Delete a message the bot sent.
+   *
+   * MANAGE_MESSAGES is required only to delete SOMEBODY ELSE'S message, so this
+   * needs nothing granted — which is why the relay ships without the preflight
+   * that the scheduled events needed.
+   *
+   * 404 counts as success, same as a deleted scheduled event: whoever removed
+   * it by hand already achieved what this call was for, and calling that a
+   * failure would retry it every tick forever.
+   */
+  async deleteMessage(channelId: string, messageId: string): Promise<boolean> {
+    try {
+      const response = await this.request(
+        'DELETE',
+        `/channels/${channelId}/messages/${messageId}`
+      );
+      return response.ok || response.status === 204 || response.status === 404;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Does the bot hold MANAGE_EVENTS in this guild?
+   *
+   * CHECKED BEFORE TRYING, and this is the one method here that exists purely
+   * so a failure is legible. The bot is invited with Manage Roles (see the
+   * bringup doc) and nothing else, so on any server set up before this feature
+   * existed the answer is NO — every scheduled-event call answers a bare 403,
+   * and 403 from Discord says nothing about which permission was missing. The
+   * getOwnRolePosition comment records what that costs: a 400 that surfaced as
+   * "I need Manage Roles" sent people to fix a permission that was never the
+   * problem. One read here turns the same class of mistake into a log line that
+   * names the fix.
+   *
+   * Permissions are the OR of every role the bot holds, @everyone included —
+   * that role is the one whose id equals the guild id. Administrator is checked
+   * separately because it implies everything and is how many small servers
+   * actually run their bots.
+   */
+  async hasManageEvents(guildId: string): Promise<boolean> {
+    const userId = await this.getOwnUserId();
+    const member = await this.request('GET', `/guilds/${guildId}/members/${userId}`);
+    if (!member.ok) throw new Error(`GET member -> ${member.status}`);
+    const { roles } = (await member.json()) as { roles?: string[] };
+
+    // @everyone applies whether or not it is listed on the member.
+    const mine = new Set([...(roles ?? []), guildId]);
+    const all = await this.listGuildRoles(guildId);
+
+    const held = all
+      .filter((r) => mine.has(r.id))
+      // The field is a STRING of a 64-bit mask. Number() would lose the high
+      // bits — MANAGE_EVENTS is bit 33, which survives, but bits above 52 do
+      // not, and a silently-truncated mask is the kind of bug that answers
+      // correctly right up until Discord adds a permission.
+      .reduce((acc, r) => acc | BigInt(r.permissions ?? '0'), 0n);
+
+    return (held & ADMINISTRATOR) === ADMINISTRATOR || (held & MANAGE_EVENTS) === MANAGE_EVENTS;
+  }
+
+  /**
+   * Create an EXTERNAL scheduled event — the kind that shows in the Events tab
+   * with a location rather than a voice channel.
+   *
+   * Returns the new event's id, or null. Never throws for a Discord-side
+   * refusal: one tournament Discord will not accept must not stop the rest of
+   * the run, exactly as one unpostable ping does not stop the others.
+   */
+  async createScheduledEvent(guildId: string, event: ScheduledEventInput): Promise<string | null> {
+    try {
+      const response = await this.request('POST', `/guilds/${guildId}/scheduled-events`, {
+        name: event.name,
+        description: event.description,
+        scheduled_start_time: event.startsAt,
+        scheduled_end_time: event.endsAt,
+        // 3 = EXTERNAL. The other types (1 STAGE, 2 VOICE) require a channel_id
+        // and would tie a club tournament to a voice room nobody uses.
+        entity_type: 3,
+        // REQUIRED for EXTERNAL, and Discord rejects the whole call without it
+        // rather than defaulting. An unset location setting becomes the club
+        // name rather than an empty string for that reason.
+        entity_metadata: { location: event.location },
+        privacy_level: 2, // GUILD_ONLY, the only value Discord accepts.
+      });
+      if (!response.ok) {
+        console.error(
+          `[bot] create scheduled event "${event.name}" -> ${response.status}` +
+            (response.status === 403 ? ' (missing MANAGE_EVENTS?)' : '')
+        );
+        return null;
+      }
+      const { id } = (await response.json()) as { id?: string };
+      return id ?? null;
+    } catch (error) {
+      console.error(`[bot] create scheduled event "${event.name}" threw:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Push changed details onto an existing event.
+   *
+   * `patchTimes` false omits the schedule entirely, because Discord refuses to
+   * retime an event that has already started. Sending it anyway would make
+   * every rename of a running tournament fail, and the caller would retry the
+   * same refused call on every tick.
+   *
+   * 'gone' is separated from 'failed' for the reason editMessage spells out: an
+   * event an exec deleted from the Events tab by hand answers 404 to every
+   * PATCH after it, and a caller that reads that as "retry me" does exactly
+   * that until the tournament finishes.
+   */
+  async modifyScheduledEvent(
+    guildId: string,
+    eventId: string,
+    event: ScheduledEventInput,
+    patchTimes = true
+  ): Promise<MessageWriteResult> {
+    try {
+      const response = await this.request(
+        'PATCH',
+        `/guilds/${guildId}/scheduled-events/${eventId}`,
+        {
+          name: event.name,
+          description: event.description,
+          ...(patchTimes
+            ? {
+                scheduled_start_time: event.startsAt,
+                scheduled_end_time: event.endsAt,
+                // entity_type travels with the schedule: Discord validates
+                // entity_metadata against it, and an EXTERNAL event needs both
+                // present or neither.
+                entity_type: 3,
+                entity_metadata: { location: event.location },
+              }
+            : {}),
+        }
+      );
+      if (response.ok) return 'ok';
+      if (response.status === 404) return 'gone';
+      console.error(`[bot] modify scheduled event ${eventId} -> ${response.status}`);
+      return 'failed';
+    } catch {
+      return 'failed';
+    }
+  }
+
+  /**
+   * Cancel an event by deleting it.
+   *
+   * 404 counts as success: somebody removing it in Discord by hand has already
+   * achieved what this call was for, and treating that as a failure would retry
+   * it every tick forever.
+   */
+  async deleteScheduledEvent(guildId: string, eventId: string): Promise<boolean> {
+    try {
+      const response = await this.request(
+        'DELETE',
+        `/guilds/${guildId}/scheduled-events/${eventId}`
+      );
+      return response.ok || response.status === 204 || response.status === 404;
     } catch {
       return false;
     }

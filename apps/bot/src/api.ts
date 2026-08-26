@@ -47,20 +47,44 @@ export class AppApiError extends Error {}
  */
 export class AlreadyLinkedError extends Error {}
 
+/**
+ * The role named is one the nightly sweep controls, so it cannot be self-serve.
+ *
+ * Separate from AppApiError for the same reason AlreadyLinkedError is: the app
+ * answered clearly and the answer was a specific, fixable "no". Rendering it as
+ * "couldn't reach the club app" would send an exec looking for a network fault.
+ */
+export class SweepManagedRoleError extends Error {}
+
+/**
+ * The app answered 429: the caller has filed too much, too fast.
+ *
+ * Separate for the same reason as the two above. "Couldn't reach the club app"
+ * would send a member retrying a request that is working exactly as designed,
+ * and each retry pushes their next allowed attempt further out.
+ */
+export class RateLimitedError extends Error {}
+
 // Deliberately short. Discord's interaction deadline is 3 seconds end to end, so
 // a request that has not answered in 2.5s cannot be rendered in time anyway — and
 // failing fast leaves room to reply with something useful instead of timing out
 // silently, which Discord surfaces as "the application did not respond".
 const TIMEOUT_MS = 2500;
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, callerId?: string | null): Promise<T> {
   const base = process.env.APP_API_URL;
   const secret = process.env.DISCORD_SERVICE_SECRET;
   if (!base) throw new AppApiError('APP_API_URL is not set');
   if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
 
   const response = await fetch(new URL(path, base), {
-    headers: { authorization: `Bearer ${secret}` },
+    headers: {
+      authorization: `Bearer ${secret}`,
+      // A HEADER, never a query param: ids in a URL end up in the access log.
+      // Omitted entirely when there is no caller, so the app sees an absent
+      // header rather than the string "null" or "undefined".
+      ...(callerId ? { 'x-discord-user-id': callerId } : {}),
+    },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
@@ -74,6 +98,171 @@ async function get<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function send<T>(
+  method: 'POST' | 'DELETE',
+  path: string,
+  body?: unknown
+): Promise<T> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL(path, base), {
+    method,
+    headers: {
+      authorization: `Bearer ${secret}`,
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    // 409 is the app telling us the role is one the nightly sweep controls.
+    // Distinguished here so the command can explain the actual problem rather
+    // than reporting a generic failure for a mistake with an obvious fix.
+    if (response.status === 409) throw new SweepManagedRoleError('sweep-managed');
+    if (response.status === 429) throw new RateLimitedError('rate-limited');
+    throw new AppApiError(`${method} ${path} -> ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+export interface SelfRole {
+  roleId: string;
+  label: string;
+  emoji: string | null;
+  sortOrder: number;
+}
+
+/** The ping roles members may assign themselves in this guild. */
+export function fetchSelfRoles(
+  guildId: string
+): Promise<{ roles: SelfRole[]; truncated: boolean }> {
+  const params = new URLSearchParams({ guildId });
+  return get<{ roles: SelfRole[]; truncated: boolean }>(
+    `/api/discord/self-roles?${params}`
+  );
+}
+
+export function addSelfRole(input: {
+  guildId: string;
+  roleId: string;
+  label: string;
+  emoji?: string | null;
+  sortOrder?: number;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/self-roles', input);
+}
+
+export function removeSelfRole(guildId: string, roleId: string): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ guildId, roleId });
+  return send<{ ok: true }>('DELETE', `/api/discord/self-roles?${params}`);
+}
+
+export interface DuePing {
+  sessionId: string;
+  channelId: string;
+  // Every role to mention in this ONE message. The app groups by channel so
+  // that a club-wide session matching several ping roles does not produce the
+  // same announcement twice in the same place.
+  roleIds: string[];
+  name: string | null;
+  startsAt: string;
+  location: string | null;
+}
+
+/** Sessions due a ping, decided entirely by the app. */
+export function fetchDuePings(guildId: string): Promise<{ pings: DuePing[] }> {
+  const params = new URLSearchParams({ guildId });
+  return get<{ pings: DuePing[] }>(`/api/discord/session-pings?${params}`);
+}
+
+/** Record a ping that has ALREADY been posted. Never call this beforehand. */
+export function recordPing(sessionId: string, roleIds: string[]): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/session-pings', { sessionId, roleIds });
+}
+
+export interface TournamentEventAction {
+  kind: 'create' | 'update' | 'cancel';
+  tournamentId: string;
+  /** null only for a create. */
+  discordEventId: string | null;
+  name: string;
+  /** What to SEND Discord — possibly clamped forward past a start already gone. */
+  startsAt: string;
+  endsAt: string;
+  /** What the tournament ITSELF says. Recorded, so the change detector stays stable. */
+  syncedStartsAt: string;
+  syncedEndsAt: string;
+  /**
+   * False once Discord has started the event. Discord will not retime an event
+   * in progress, so the PATCH carries name and description only — see the
+   * app-side route, which is where the decision is made.
+   */
+  patchTimes: boolean;
+  location: string | null;
+  description: string;
+}
+
+/** Tournaments that owe Discord a scheduled event, or a change to one. */
+export function fetchTournamentActions(guildId: string): Promise<{
+  actions: TournamentEventAction[];
+  skipped: { tournamentId: string; reason: string }[];
+}> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/tournament-events?${params}`);
+}
+
+/** Record an event Discord has ALREADY accepted. Never call this beforehand. */
+export function recordTournamentEvent(input: {
+  tournamentId: string;
+  guildId: string;
+  discordEventId: string;
+  name: string;
+  syncedStartsAt: string;
+  syncedEndsAt: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/tournament-events', input);
+}
+
+/** Forget a mapping, after the Discord event is gone. */
+export function clearTournamentEvent(
+  tournamentId: string,
+  guildId: string
+): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ tournamentId, guildId });
+  return send<{ ok: true }>('DELETE', `/api/discord/tournament-events?${params}`);
+}
+
+export interface TournamentSummary {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string | null;
+  events: string[];
+  registrationOpen: boolean;
+  /** null for an unlinked caller: "we do not know", not "no". */
+  eligible: boolean | null;
+}
+
+/**
+ * Upcoming tournaments, annotated for THIS caller.
+ *
+ * The id is required rather than optional for the same reason fetchSessions's
+ * is: a new call site that omitted it would silently get the anonymous view.
+ */
+export function fetchTournaments(
+  discordUserId: string | null
+): Promise<{ tournaments: TournamentSummary[]; linked: boolean }> {
+  return get<{ tournaments: TournamentSummary[]; linked: boolean }>(
+    '/api/discord/tournaments',
+    discordUserId
+  );
+}
+
 export function fetchLeaderboard(
   ladder: string,
   page: number
@@ -82,8 +271,20 @@ export function fetchLeaderboard(
   return get<LeaderboardPage>(`/api/discord/leaderboard?${params}`);
 }
 
-export function fetchSessions(): Promise<{ sessions: SessionSummary[] }> {
-  return get<{ sessions: SessionSummary[] }>('/api/discord/sessions');
+/**
+ * The schedule as THIS caller should see it.
+ *
+ * The id is required rather than optional so a new call site cannot quietly
+ * omit it and get the unlinked view for everybody — the compiler asks. Pass
+ * null only where there genuinely is no caller.
+ */
+export function fetchSessions(
+  discordUserId: string | null
+): Promise<{ sessions: SessionSummary[]; linked: boolean }> {
+  return get<{ sessions: SessionSummary[]; linked: boolean }>(
+    '/api/discord/sessions',
+    discordUserId
+  );
 }
 
 /** Which servers to manage, their role ids, and where the audit log goes. */
@@ -262,4 +463,128 @@ export async function writeGuildConfig(payload: {
   if (!response.ok) {
     throw new AppApiError(`POST /api/discord/config -> ${response.status}`);
   }
+}
+
+// ---- ANNOUNCEMENT RELAY ----------------------------------------------------
+
+export interface AnnouncementAction {
+  kind: 'post' | 'edit' | 'retract';
+  announcementId: string;
+  /** For an edit or retract this is the channel the message IS in, which is not
+   *  necessarily the configured one — a club that repoints the setting has not
+   *  moved the messages it already posted. */
+  channelId: string;
+  /** null only for a post. */
+  discordMessageId: string | null;
+  title: string;
+  body: string;
+  /** announcement_type: info | warning | urgent | event. Picks the colour. */
+  type: string;
+  url: string | null;
+}
+
+/** Announcements that owe Discord a message, or a change to one. */
+export function fetchAnnouncementActions(guildId: string): Promise<{
+  actions: AnnouncementAction[];
+  skipped: { announcementId: string; reason: string }[];
+}> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/announcements?${params}`);
+}
+
+/** Record a message Discord has ALREADY accepted. Never call this beforehand. */
+export function recordAnnouncementPost(input: {
+  announcementId: string;
+  guildId: string;
+  channelId: string;
+  discordMessageId: string;
+  title: string;
+  body: string;
+  type: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/announcements', input);
+}
+
+/** Forget a mapping, after the Discord message is gone. */
+export function clearAnnouncementPost(
+  announcementId: string,
+  guildId: string
+): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ announcementId, guildId });
+  return send<{ ok: true }>('DELETE', `/api/discord/announcements?${params}`);
+}
+
+// ---- MATCH RESULT RELAY ----------------------------------------------------
+
+export interface MatchResultAction {
+  kind: 'post' | 'edit' | 'retract';
+  matchId: string;
+  /** For an edit or retract this is the channel the message IS in, which is not
+   *  necessarily the configured one — a club that repoints the setting has not
+   *  moved the messages it already posted. */
+  channelId: string;
+  /** null only for a post. */
+  discordMessageId: string | null;
+  /** Rendered line, and the mapping's change-detection key. */
+  summary: string;
+  teamA: string;
+  teamB: string;
+  score: string;
+  /** Which side won. null only on a retract, where there is nothing to render. */
+  winner: 'a' | 'b' | null;
+  /** singles | doubles. */
+  matchType: string;
+  playedAt: string | null;
+}
+
+/** Confirmed results that owe Discord a message, or a change to one. */
+export function fetchMatchResultActions(guildId: string): Promise<{
+  actions: MatchResultAction[];
+  skipped: { matchId: string; reason: string }[];
+  /** Present when the tick's read hit its cap. NOT decoration: a capped window
+   *  is the one condition under which a match that should be posted, or one
+   *  that should be taken down, is silently deferred to a later tick. If it is
+   *  set every tick, the window is too small for the club's volume. */
+  windowCapReached?: number;
+}> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/match-results?${params}`);
+}
+
+/** Record a message Discord has ALREADY accepted. Never call this beforehand. */
+export function recordMatchPost(input: {
+  matchId: string;
+  guildId: string;
+  channelId: string;
+  discordMessageId: string;
+  summary: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/match-results', input);
+}
+
+/** Forget a mapping, after the Discord message is gone. */
+export function clearMatchPost(matchId: string, guildId: string): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ matchId, guildId });
+  return send<{ ok: true }>('DELETE', `/api/discord/match-results?${params}`);
+}
+
+// ---- FEEDBACK AND BUG REPORTS ----------------------------------------------
+
+export type FeedbackKind = 'bug' | 'feedback' | 'tournament_feedback' | 'other';
+
+/**
+ * File one report. See 00172.
+ *
+ * `linked` comes back so the caller can warn a reporter whose Discord account
+ * is not connected to a club account that a reply may not reach them. The row
+ * is stored either way — an unlinked member is the one most likely to have hit
+ * an onboarding bug, and turning them away would silence exactly that report.
+ */
+export function submitFeedback(input: {
+  kind: FeedbackKind;
+  body: string;
+  discordUserId: string | null;
+  guildId: string | null;
+}): Promise<{ ok: true; linked: boolean }> {
+  return send<{ ok: true; linked: boolean }>('POST', '/api/discord/feedback', input);
 }

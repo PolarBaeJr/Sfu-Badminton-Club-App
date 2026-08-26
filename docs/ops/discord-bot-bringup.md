@@ -45,7 +45,15 @@ In the Discord Developer Portal:
 3. **General Information** → copy **Application ID** (`DISCORD_APPLICATION_ID`)
    and **Public Key** (`DISCORD_PUBLIC_KEY`).
 4. Invite it to your test server with the `bot` and `applications.commands`
-   scopes and the **Manage Roles** permission.
+   scopes and the **Manage Roles** and **Manage Events** permissions.
+
+   Manage Events is what lets the bot create the scheduled event a tournament
+   produces when it goes active (00169). It is easy to leave off, and the
+   symptom is not an error anybody sees -- the Events tab simply stays empty --
+   so the bot checks for the bit before it tries and logs
+   `missing MANAGE_EVENTS` with the fix. A server invited before that migration
+   can be repaired without re-inviting: **Server Settings -> Roles -> (the bot's
+   role) -> Manage Events**.
 
 ## 2. Migrations
 
@@ -57,12 +65,31 @@ order, and **only** these:
 | `00165_discord_links.sql` | the link table and its tombstones |
 | `00166_discord_nightly_sync.sql` | the pg_cron schedule, plus two `cron_config` rows |
 | `00167_discord_runtime_config.sql` | guilds, roles, settings |
+| `00168_discord_self_roles.sql` | the self-serve ping roles and the session-ping schedule |
+| `00169_discord_tournament_events.sql` | the tournament -> Discord scheduled event mapping, and its schedule |
+| `00170_discord_announcement_posts.sql` | the announcement -> Discord message mapping, and its schedule |
 
 > ### ⚠️ Pause the prod → staging snapshot before running these on staging
 >
 > The snapshot does `DROP SCHEMA public CASCADE` at 04:00 and then restores
-> prod's `public` schema on top. All four config tables live in `public`:
-> `discord_guilds`, `discord_guild_roles`, `discord_settings`, `cron_config`.
+> prod's `public` schema on top. Every table this bot keeps state in lives in
+> `public`: `discord_guilds`, `discord_guild_roles`, `discord_settings`,
+> `cron_config`, and — since 00168, 00169 and 00170 — `discord_self_roles`,
+> `discord_session_pings`, `discord_tournament_events` and
+> `discord_announcement_posts`.
+>
+> The last three make the consequence more than "lose the config". They are
+> IDEMPOTENCY records: `discord_session_pings` is the only thing stopping a
+> session being pinged again, `discord_tournament_events` is the only thing
+> stopping a second Discord event being created for a tournament that already
+> has one, and `discord_announcement_posts` is the only thing stopping a club
+> announcement being posted into the channel twice. Inheriting prod's copies of
+> those means staging believes prod's work was its own.
+>
+> The announcement relay has a second guard of its own — it relays nothing
+> published more than 72 hours ago — so a staging database that comes up with
+> its mapping table wiped does not replay a week of prod's notices into the test
+> server. That guard is a floor, not a substitute for pausing the snapshot.
 >
 > So the damage is not just that staging's rows are erased — **staging inherits
 > production's**. It would come up holding prod's guild id, prod's role ids,
@@ -268,6 +295,164 @@ is the gate.
    refuses to save unless it gets a valid response — so the bot must already be
    running, with the matching `DISCORD_PUBLIC_KEY`.
 2. `npm run register -w bot`
+
+## 7b. The channels the club has to name
+
+Four features post into a channel, and none of them guesses one — a relay that
+picked a channel by itself would be a relay putting club business somewhere
+nobody chose. Each is a `discord_settings` row, so each is off until it is set:
+
+| Key | What it drives | Set in |
+|---|---|---|
+| `audit_channel_id` | link/unlink and sweep embeds | `/setup audit_channel:` |
+| `session_ping_channel_id` | the before-each-session ping | SQL (00168) |
+| `announcement_channel_id` | the announcement relay (00170) | SQL |
+| `match_results_channel_id` | the match result relay (00171) | SQL |
+
+`/bug` and `/feedback` (00172) are deliberately absent from that list: they
+reply ephemerally and write to a table, so there is no channel to name.
+
+```sql
+INSERT INTO discord_settings (key, value)
+VALUES ('announcement_channel_id', '<channel id>')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+```
+
+Right-click the channel -> **Copy Channel ID** (Developer Mode on). The bot
+needs View Channel and Send Messages there. It edits and deletes only its own
+messages, which needs no further permission — so unlike the scheduled events
+there is nothing to grant.
+
+**Only announcements addressed to everyone are relayed.** A competitive-only or
+eligible-only notice is skipped and logged as `narrow_audience`, because that
+rule is matched against a value on the reading member and no Discord channel
+carries one. That is the design, not a gap; see 00170's header.
+
+**Deleting an announcement in the console takes its Discord copy down too**, and
+that is why neither mapping table has a foreign key to the row it maps. The
+console's delete is a hard `DELETE`; an `ON DELETE CASCADE` would remove the
+mapping first, and the mapping is the only thing that knows which Discord
+message or event belongs to the row — the copy would stay up with nothing left
+to find it by. So the mapping outlives the record on purpose, and the next tick
+sees an id that no longer resolves and retracts it. Same for a deleted
+tournament and its scheduled event.
+
+**A sync that answers 503 `announcements_unverified` or `tournaments_unverified`
+is refusing to retract, not failing.** It means every mapped row looked deleted
+*and* the underlying table read back empty — and in this stack a broken read
+returns an empty list rather than an error, so "they were all deleted" and "I
+cannot see the table" are the same answer. Since the second one would empty the
+channel or the Events tab in a single tick, the route declines to guess. When
+you see it, check the service role's `SELECT` grant (read `pg_class.relacl`, not
+`information_schema`) and reload the PostgREST cache with
+`NOTIFY pgrst, 'reload schema'`. It clears itself as soon as one row is
+readable.
+
+### Match results (00171)
+
+**What goes out: who played, the score, who won. No Elo.** Not an oversight —
+the score is a fact about a game other members watched happen, while a rating
+delta is a judgment about a person, and the club already ships an opt-out that
+exists precisely so that judgment is not on display. The route does not select
+`rating_delta` or `post_rating` at all, so there is no column for a later edit
+to leak. Members read their own numbers from `/my-stats`, which answers
+ephemerally, to the person they are about.
+
+**Only `rated_challenge` and `admin_entered` results are relayed.** Casual
+matches are excluded on purpose: a club night of doubles rotations would turn
+the channel into a firehose. Tournament results are not relayed either, and not
+because of a setting — tournament results live in `tournament_matches` and never
+become `matches` rows, so there is nothing to relay. Pending, disputed, voided
+and walkover results never go out; a walkover in particular names who forfeited.
+
+**A match with any participant who has `hide_from_leaderboard` set is held back
+whole**, not posted with that name removed — in a two-player match, redacting
+one name identifies the opt-out by elimination.
+
+**That check runs once, when the match is first considered. It is a filter, not
+a takedown.** The flag lives on `players`, so setting it does not touch
+`matches.updated_at` and cannot pull an already-posted result back for
+reconsideration. A member who opts out today does *not* have last month's posts
+removed. The remedy is to delete those messages in Discord by hand, which is
+permanent here — the relay only ever posts a match that has no mapping row.
+
+**To take the whole relay down**, delete the messages in Discord first and then
+`DELETE FROM discord_match_posts;` — in that order. Clearing
+`match_results_channel_id` alone stops new posts but leaves the old ones up,
+because retraction needs a channel to delete from.
+
+**Unlike the other two relays, this one has no refuse-to-act guard**, and that
+is deliberate: it reads a 72-hour window keyed on `updated_at`, every retraction
+(void, dispute, convert-to-casual) is an `UPDATE` that bumps that column, and no
+confirmed match is ever hard-deleted. So absence from the window means
+"unchanged", never "deleted", and a silently failed read makes the route do
+*nothing* rather than wipe the channel. The failure direction is already safe.
+The cost is that a broken read here is **silent** — if the channel goes quiet,
+check the `SELECT` grant via `pg_class.relacl`, reload the PostgREST cache, and
+read the bot log, which names every skipped match and why.
+
+**Deleting the bot's message or event in Discord by hand is respected.** It is
+not re-posted, and an edit that arrives afterwards is recorded rather than
+retried — otherwise the sync would PATCH a dead id every few minutes forever.
+Those show up in a run result as `stale`.
+
+**One tick carries 150 matches, ordered by `updated_at`.** That ordering is the
+load-bearing part: the rows with something due are the ones changed most
+recently, so truncation can only defer the matches that changed *least* recently
+— which by definition need nothing. If the bot logs `filled its 150-row window`
+on tick after tick, the club's volume has outgrown the window and it should be
+raised; a single capped tick after a busy night is normal and self-corrects.
+
+### Bug reports and feedback (00172)
+
+**`/bug` and `/feedback` need no channel and no setting.** They write straight
+to `feedback_reports` and reply ephemerally — the report is not relayed into any
+channel, on purpose. Filing a complaint is not the same as publishing it, and
+somebody reporting that a feature is broken has not asked the server to hear
+about it.
+
+**`/feedback about:` picks the kind**: general feedback (the default), a
+tournament, or something else. `/bug` always files `bug`. Four kinds, one table.
+
+**This is not `event_feedback`.** That table (00001) is the post-tournament
+survey — tied to a tournament by FK, 1-5 rating, one per player per event, read
+by two pages and rewritten by the player-merge routine. It is untouched. The
+`tournament_feedback` kind here is the free-text remark someone types the
+evening of an event, with no rating and no event attached, which is why there is
+no `tournament_id` column: a slash command gives the reporter no way to name one.
+
+**NOTHING READS THESE YET.** There is no admin page — that is the obvious next
+step and it is not built. Until it is, triage is a psql session:
+
+```sql
+SELECT created_at, kind, body, player_id, discord_user_id
+  FROM feedback_reports
+ WHERE status = 'open'
+ ORDER BY created_at DESC;
+```
+
+and to close one out:
+
+```sql
+UPDATE feedback_reports SET status = 'resolved', updated_at = now() WHERE id = '<id>';
+```
+
+`status` is one of `open`, `triaged`, `resolved`, `wont_fix`. If nobody runs the
+first query, this is a black hole, and the first person to notice will be a
+member asking why their bug report went nowhere.
+
+**An unlinked member can still file.** `player_id` is null and the reply says so
+— they are the people most likely to have hit an onboarding bug, and turning
+them away would silence exactly that report. `discord_user_id` is kept either
+way, so a report can be attributed or replied to by hand.
+
+**The rate limit is eight reports per hour per Discord user**, not per IP: every
+request to that route arrives from the one bot process, so an IP key would put
+the whole club in a single bucket. It is in-memory and per-process, so two
+player replicas means an effective sixteen. That is fine — it is anti-spam, not
+an auth gate.
+
+---
 
 ## 8. Check it worked
 

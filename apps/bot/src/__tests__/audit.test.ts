@@ -160,6 +160,39 @@ describe('postAuditEntry', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('can post in that channel'));
   });
 
+  it('colours a clean unlink club red, not success green', async () => {
+    // Green in this channel means "all good", and a disconnection reported in
+    // the colour of success reads wrong to anybody scanning the log.
+    const embed = buildAuditEmbed(
+      { kind: 'member', reason: 'unlinked', discordUserIds: ['7'], summary: summary({ removed: 4 }) },
+      NOW
+    );
+    expect(embed.color).toBe(0xcc0000);
+  });
+
+  it('still colours a BROKEN unlink by severity', async () => {
+    // The point of the ladder is that something which actually went wrong
+    // outranks the event type. Club red must not mask a failure.
+    const embed = buildAuditEmbed(
+      {
+        kind: 'member',
+        reason: 'unlinked',
+        discordUserIds: ['7'],
+        summary: summary({ removed: 2, failed: 1 }),
+      },
+      NOW
+    );
+    expect(embed.color).not.toBe(0xcc0000);
+  });
+
+  it('leaves a LINK green', async () => {
+    const embed = buildAuditEmbed(
+      { kind: 'member', reason: 'linked', discordUserIds: ['7'], summary: summary({ added: 3 }) },
+      NOW
+    );
+    expect(embed.color).toBe(0x2ecc71);
+  });
+
   it('sends the embed under an embeds array', async () => {
     const api = { createMessage: vi.fn().mockResolvedValue(true) };
     await postAuditEntry(
