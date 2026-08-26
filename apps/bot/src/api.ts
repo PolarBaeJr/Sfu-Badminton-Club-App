@@ -47,6 +47,15 @@ export class AppApiError extends Error {}
  */
 export class AlreadyLinkedError extends Error {}
 
+/**
+ * The role named is one the nightly sweep controls, so it cannot be self-serve.
+ *
+ * Separate from AppApiError for the same reason AlreadyLinkedError is: the app
+ * answered clearly and the answer was a specific, fixable "no". Rendering it as
+ * "couldn't reach the club app" would send an exec looking for a network fault.
+ */
+export class SweepManagedRoleError extends Error {}
+
 // Deliberately short. Discord's interaction deadline is 3 seconds end to end, so
 // a request that has not answered in 2.5s cannot be rendered in time anyway — and
 // failing fast leaves room to reply with something useful instead of timing out
@@ -78,6 +87,69 @@ async function get<T>(path: string, callerId?: string | null): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+async function send<T>(
+  method: 'POST' | 'DELETE',
+  path: string,
+  body?: unknown
+): Promise<T> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL(path, base), {
+    method,
+    headers: {
+      authorization: `Bearer ${secret}`,
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    // 409 is the app telling us the role is one the nightly sweep controls.
+    // Distinguished here so the command can explain the actual problem rather
+    // than reporting a generic failure for a mistake with an obvious fix.
+    if (response.status === 409) throw new SweepManagedRoleError('sweep-managed');
+    throw new AppApiError(`${method} ${path} -> ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+export interface SelfRole {
+  roleId: string;
+  label: string;
+  emoji: string | null;
+  sortOrder: number;
+}
+
+/** The ping roles members may assign themselves in this guild. */
+export function fetchSelfRoles(
+  guildId: string
+): Promise<{ roles: SelfRole[]; truncated: boolean }> {
+  const params = new URLSearchParams({ guildId });
+  return get<{ roles: SelfRole[]; truncated: boolean }>(
+    `/api/discord/self-roles?${params}`
+  );
+}
+
+export function addSelfRole(input: {
+  guildId: string;
+  roleId: string;
+  label: string;
+  emoji?: string | null;
+  sortOrder?: number;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/self-roles', input);
+}
+
+export function removeSelfRole(guildId: string, roleId: string): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ guildId, roleId });
+  return send<{ ok: true }>('DELETE', `/api/discord/self-roles?${params}`);
 }
 
 export function fetchLeaderboard(

@@ -2,7 +2,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { clearRevocations, fetchLinkedMembers } from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
-import { DEFERRED_COMMANDS, dispatch } from './commands.js';
+import {
+  DEFERRED_COMMANDS,
+  dispatch,
+  handleSelfRoleButton,
+  isSelfRoleButton,
+  type CommandOption,
+} from './commands.js';
 import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { reconcile } from './reconcile.js';
 import { isAuthorizedService } from './service-auth.js';
@@ -234,11 +240,21 @@ const server = createServer(async (req, res) => {
 
   let interaction: {
     type: number;
-    data?: { name: string; options?: { name: string; value?: string | number }[] };
+    data?: {
+      name: string;
+      // Subcommands nest their arguments one level down, so the option shape
+      // has to be recursive rather than flat.
+      options?: CommandOption[];
+      /** MESSAGE_COMPONENT only: which button was clicked. */
+      custom_id?: string;
+    };
     // Guild context populates member.user; a DM populates user and omits
     // member entirely. /link and /unlink are precisely the commands somebody
     // runs in a DM, so both have to be read.
-    member?: { user?: { id?: string } };
+    // `roles` is the caller's current role ids, sent on every guild
+    // interaction. The self-role toggle reads it instead of fetching the member
+    // again, which keeps the whole round trip inside Discord's 3-second budget.
+    member?: { user?: { id?: string }; roles?: string[] };
     user?: { id?: string };
     guild_id?: string;
     // Only sent for real interactions, not for the PING probe.
@@ -312,6 +328,45 @@ const server = createServer(async (req, res) => {
 
     const response = await dispatch(interaction.data.name, interaction.data.options, context);
     return send(res, 200, response);
+  }
+
+  // MESSAGE_COMPONENT — someone clicked a button.
+  //
+  // The picker's buttons live on a message that stays in the channel, so this
+  // arrives long after the command that posted it, from anybody who can see the
+  // channel. Everything needed to answer is on the interaction itself:
+  // `member.roles` is the caller's CURRENT role list as Discord sees it, which
+  // is what makes a toggle possible without a second API round-trip inside the
+  // 3-second budget.
+  if (interaction.type === 3 && interaction.data) {
+    const customId = interaction.data.custom_id;
+
+    if (isSelfRoleButton(customId)) {
+      const context = {
+        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+        guildId: interaction.guild_id ?? null,
+      };
+      try {
+        const response = await handleSelfRoleButton(
+          customId as string,
+          context,
+          interaction.member?.roles ?? []
+        );
+        return send(res, 200, response);
+      } catch (error) {
+        console.error('[bot] self-role button failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: { content: 'Something went wrong. Please try again.', flags: 64 },
+        });
+      }
+    }
+
+    // A component this build does not know — most likely a button from a
+    // message posted by an older version. type 6 is DEFERRED_UPDATE_MESSAGE:
+    // acknowledge and change nothing, which leaves the message intact rather
+    // than showing the clicker an error for something that is not their fault.
+    return send(res, 200, { type: 6 });
   }
 
   // Unknown interaction type — acknowledge rather than erroring, so a future
