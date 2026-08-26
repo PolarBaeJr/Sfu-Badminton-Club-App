@@ -269,14 +269,10 @@ export class DiscordApi {
         attachments: [{ id: 0, filename: file.filename }],
       })
     );
-    // Copied into a fresh ArrayBuffer: a Uint8Array that is a VIEW onto a
-    // larger buffer (which is what Buffer.concat slices give you) would
-    // otherwise upload the whole underlying buffer.
-    form.append(
-      'files[0]',
-      new Blob([file.bytes.slice().buffer as ArrayBuffer], { type: file.contentType }),
-      file.filename
-    );
+    // The Uint8Array itself, not its .buffer: a view onto a larger buffer
+    // (which is what a Buffer slice gives you) would otherwise upload
+    // everything behind it. Blob copies the view's own range.
+    form.append('files[0]', new Blob([file.bytes], { type: file.contentType }), file.filename);
 
     try {
       const response = await this.request('POST', `/channels/${channelId}/messages`, form);
