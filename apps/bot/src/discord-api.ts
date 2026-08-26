@@ -276,11 +276,19 @@ export class DiscordApi {
     }
   }
 
-  /** Push changed details onto an existing event. Returns whether it landed. */
+  /**
+   * Push changed details onto an existing event. Returns whether it landed.
+   *
+   * `patchTimes` false omits the schedule entirely, because Discord refuses to
+   * retime an event that has already started. Sending it anyway would make
+   * every rename of a running tournament fail, and the caller would retry the
+   * same refused call on every tick.
+   */
   async modifyScheduledEvent(
     guildId: string,
     eventId: string,
-    event: ScheduledEventInput
+    event: ScheduledEventInput,
+    patchTimes = true
   ): Promise<boolean> {
     try {
       const response = await this.request(
@@ -289,10 +297,17 @@ export class DiscordApi {
         {
           name: event.name,
           description: event.description,
-          scheduled_start_time: event.startsAt,
-          scheduled_end_time: event.endsAt,
-          entity_type: 3,
-          entity_metadata: { location: event.location },
+          ...(patchTimes
+            ? {
+                scheduled_start_time: event.startsAt,
+                scheduled_end_time: event.endsAt,
+                // entity_type travels with the schedule: Discord validates
+                // entity_metadata against it, and an EXTERNAL event needs both
+                // present or neither.
+                entity_type: 3,
+                entity_metadata: { location: event.location },
+              }
+            : {}),
         }
       );
       return response.ok;

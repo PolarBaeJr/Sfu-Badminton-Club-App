@@ -49,6 +49,7 @@ const CREATE = {
   endsAt: '2026-09-02T01:00:00.000Z',
   syncedStartsAt: '2026-08-30T16:00:00.000Z',
   syncedEndsAt: '2026-09-02T01:00:00.000Z',
+  patchTimes: true,
   location: 'SFU Burnaby',
   description: 'Events: Men’s Singles',
 };
@@ -226,7 +227,22 @@ describe('tournament events', () => {
     const result = await runTournamentEvents();
 
     expect(createScheduledEvent).not.toHaveBeenCalled();
-    expect(modifyScheduledEvent).toHaveBeenCalledWith('g1', 'evt-1', expect.anything());
+    expect(modifyScheduledEvent).toHaveBeenCalledWith('g1', 'evt-1', expect.anything(), true);
     expect(result.updated).toBe(1);
+  });
+
+  it('carries patchTimes through to the API call', async () => {
+    // The flag is the whole defence against retrying a refused retime forever,
+    // and a run that dropped it on the floor would look identical from here
+    // until a tournament was renamed mid-run.
+    fetchTournamentActions.mockResolvedValue({
+      actions: [{ ...CREATE, kind: 'update', discordEventId: 'evt-1', patchTimes: false }],
+      skipped: [],
+    });
+
+    const { runTournamentEvents } = await import('../tournament-events.js');
+    await runTournamentEvents();
+
+    expect(modifyScheduledEvent).toHaveBeenCalledWith('g1', 'evt-1', expect.anything(), false);
   });
 });

@@ -137,7 +137,18 @@ NOTIFY pgrst, 'reload schema';
 -- without the rows is not a crash — but an event with no location reads as
 -- unfinished, so set them.
 --
--- ---- 3. IF SOMEBODY DELETES AN EVENT IN DISCORD ----------------------------
+-- ---- 3. RE-REGISTER THE SLASH COMMANDS -------------------------------------
+--
+-- `/tournaments` ships with this migration and DOES NOT EXIST in Discord until
+-- the commands are pushed:
+--
+--   npm run register -w bot
+--
+-- Global registration takes up to an hour to propagate, so "unknown command"
+-- straight after a deploy is the expected state, not a broken one. Register
+-- guild-scoped if you want it in the test server immediately.
+--
+-- ---- 4. IF SOMEBODY DELETES AN EVENT IN DISCORD ----------------------------
 --
 -- The mapping row still says it exists, and the cron will never recreate it.
 -- That is deliberate, and the same call as "removing a self-role does not strip

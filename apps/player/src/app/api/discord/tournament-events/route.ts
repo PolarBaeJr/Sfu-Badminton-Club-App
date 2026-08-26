@@ -195,6 +195,8 @@ export async function GET(request: Request) {
     /** What the tournament actually says. Recorded, so the diff stays stable. */
     syncedStartsAt: string;
     syncedEndsAt: string;
+    /** False once Discord has started the event and will no longer retime it. */
+    patchTimes: boolean;
     location: string | null;
     description: string;
   }[] = [];
@@ -227,6 +229,7 @@ export async function GET(request: Request) {
           endsAt: existing.synced_ends_at,
           syncedStartsAt: existing.synced_starts_at,
           syncedEndsAt: existing.synced_ends_at,
+          patchTimes: false,
           location,
           description: '',
         });
@@ -275,31 +278,64 @@ export async function GET(request: Request) {
         endsAt: ends.toISOString(),
         syncedStartsAt: starts.toISOString(),
         syncedEndsAt: ends.toISOString(),
+        patchTimes: true,
         location,
         description: describe(t, appUrl),
       });
       continue;
     }
 
-    const changed =
-      existing.synced_name !== t.name ||
+    const renamed = existing.synced_name !== t.name;
+    const retimed =
       Date.parse(existing.synced_starts_at) !== starts.getTime() ||
       Date.parse(existing.synced_ends_at) !== ends.getTime();
 
-    if (changed) {
-      actions.push({
-        kind: 'update',
-        tournamentId: t.id,
-        discordEventId: existing.discord_event_id,
-        name: t.name,
-        startsAt: sendStart.toISOString(),
-        endsAt: ends.toISOString(),
-        syncedStartsAt: starts.toISOString(),
-        syncedEndsAt: ends.toISOString(),
-        location,
-        description: describe(t, appUrl),
-      });
+    if (!renamed && !retimed) continue;
+
+    // ONCE DISCORD HAS STARTED THE EVENT, ITS TIMES ARE FROZEN — and pretending
+    // otherwise is how this route would have burned a call every fifteen
+    // minutes for the length of a tournament.
+    //
+    // Discord refuses to retime an event already in progress. Nothing here
+    // needs to go wrong for that to bite: a tournament is mid-run, an exec
+    // edits tournament_event_start_time (which flips the comparison above for
+    // EVERY mapped tournament at once), the PATCH is refused, nothing is
+    // recorded, and the next tick computes the identical diff and tries again.
+    // The session pings carry MAX_LATENESS_MINUTES for exactly this shape.
+    //
+    // So: a started event gets a name-and-description PATCH or nothing at all.
+    // A rename still lands — that is the change members would actually notice —
+    // and recording the tournament's current times alongside it settles the
+    // comparison, leaving Discord holding the times it was created with. Those
+    // times describe an event that is already underway, so nobody can act on
+    // them anyway.
+    //
+    // Started is read from the RECORDED start as well as the computed one,
+    // because the recorded value is the one Discord was given.
+    const started =
+      starts.getTime() <= now || Date.parse(existing.synced_starts_at) <= now;
+
+    if (started && !renamed) {
+      // A time change nobody can push. Reported rather than dropped in silence,
+      // because "the Discord event says the wrong day" is otherwise unanswerable
+      // — but emphatically not retried, which is the whole point.
+      skipped.push({ tournamentId: t.id, reason: 'started_cannot_retime' });
+      continue;
     }
+
+    actions.push({
+      kind: 'update',
+      tournamentId: t.id,
+      discordEventId: existing.discord_event_id,
+      name: t.name,
+      startsAt: sendStart.toISOString(),
+      endsAt: ends.toISOString(),
+      syncedStartsAt: starts.toISOString(),
+      syncedEndsAt: ends.toISOString(),
+      patchTimes: !started,
+      location,
+      description: describe(t, appUrl),
+    });
   }
 
   return NextResponse.json({ actions, skipped });

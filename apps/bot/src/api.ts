@@ -187,6 +187,12 @@ export interface TournamentEventAction {
   /** What the tournament ITSELF says. Recorded, so the change detector stays stable. */
   syncedStartsAt: string;
   syncedEndsAt: string;
+  /**
+   * False once Discord has started the event. Discord will not retime an event
+   * in progress, so the PATCH carries name and description only — see the
+   * app-side route, which is where the decision is made.
+   */
+  patchTimes: boolean;
   location: string | null;
   description: string;
 }

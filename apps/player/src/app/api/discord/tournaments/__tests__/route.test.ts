@@ -18,9 +18,16 @@ let link: { players: { membership_type: string } } | null = null;
 let linkError: { message: string } | null = null;
 let readError: { message: string } | null = null;
 
+// The date filter is deliberately NOT stubbed, because the route no longer asks
+// the database to do it. Expressing "coalesce(end_date, start_date) >= today" in
+// PostgREST needs a nested or(...and(...)), and a filter PostgREST cannot parse
+// comes back as an empty list with NO error — so a stub that no-ops .or(), like
+// this one, would pass either way while /tournaments answered "nothing
+// scheduled" forever in production. The coalesce lives in TypeScript now, and
+// these tests reach it.
 function thenable(data: unknown, error: unknown = null) {
   const builder: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "is", "or", "order", "limit"]) builder[m] = () => builder;
+  for (const m of ["select", "eq", "is", "or", "gte", "order", "limit"]) builder[m] = () => builder;
   builder.maybeSingle = () => Promise.resolve({ data, error });
   builder.then = (resolve: (v: unknown) => unknown) =>
     Promise.resolve({ data, error }).then(resolve);
@@ -70,6 +77,12 @@ function only(rows: Summary[] | undefined): Summary {
   return (rows as Summary[])[0] as Summary;
 }
 
+function clubDay(offsetDays: number): string {
+  return new Date(Date.now() + offsetDays * 86400000).toLocaleDateString("en-CA", {
+    timeZone: "America/Vancouver",
+  });
+}
+
 beforeEach(() => {
   process.env.DISCORD_SERVICE_SECRET = "test-secret";
   link = null;
@@ -79,8 +92,8 @@ beforeEach(() => {
     {
       id: "t1",
       name: "Internal Open",
-      start_date: "2026-09-12",
-      end_date: "2026-09-13",
+      start_date: clubDay(18),
+      end_date: clubDay(19),
       allowed_memberships: ["internal"],
       tournament_events: [
         { event_type: "mens_singles", status: "registration" },
@@ -149,6 +162,34 @@ describe("GET /api/discord/tournaments", () => {
     // the list would look correct while being less useful than it should be.
     linkError = { message: "relation does not exist" };
     expect((await list("d1")).status).toBe(503);
+  });
+
+  it("keeps a multi-day tournament that is already under way", async () => {
+    // What matters is the LAST day, not the first — a member mid-tournament
+    // still wants it in the list.
+    tournaments = [
+      { ...(tournaments[0] as object), start_date: clubDay(-1), end_date: clubDay(1) },
+    ];
+    expect(only((await list()).body.tournaments).id).toBe("t1");
+  });
+
+  it("drops one that finished yesterday", async () => {
+    tournaments = [
+      { ...(tournaments[0] as object), start_date: clubDay(-3), end_date: clubDay(-1) },
+    ];
+    expect((await list()).body.tournaments).toEqual([]);
+  });
+
+  it("treats a null end_date as a single-day tournament", async () => {
+    // Both halves of the coalesce, because getting it backwards would either
+    // hide every one-day tournament or keep them forever.
+    tournaments = [
+      { ...(tournaments[0] as object), id: "today", start_date: clubDay(0), end_date: null },
+      { ...(tournaments[0] as object), id: "gone", start_date: clubDay(-1), end_date: null },
+    ];
+
+    const rows = (await list()).body.tournaments as Summary[];
+    expect(rows.map((r) => r.id)).toEqual(["today"]);
   });
 
   it("names a failed tournament read rather than reporting an empty schedule", async () => {

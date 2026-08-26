@@ -163,7 +163,12 @@ export async function runTournamentEvents(): Promise<TournamentRunResult> {
           result.failed += 1;
           continue;
         }
-        const ok = await api.modifyScheduledEvent(guildId, action.discordEventId, payload);
+        const ok = await api.modifyScheduledEvent(
+          guildId,
+          action.discordEventId,
+          payload,
+          action.patchTimes
+        );
         if (!ok) {
           result.failed += 1;
           continue;

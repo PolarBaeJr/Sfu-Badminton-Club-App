@@ -36,6 +36,14 @@ export const dynamic = 'force-dynamic';
 
 const MAX_TOURNAMENTS = 10;
 
+// How far back to look for something still running. Comfortably longer than any
+// tournament the club has ever run, and the point is only to keep the query off
+// four years of history.
+const LOOKBACK_DAYS = 60;
+
+// Rows fetched before the still-running filter narrows them to MAX_TOURNAMENTS.
+const FETCH_CAP = 40;
+
 interface Row {
   id: string;
   name: string;
@@ -91,11 +99,24 @@ export async function GET(request: Request) {
   }
 
   // Anything not finished yet: a multi-day tournament running right now is
-  // still upcoming as far as a member is concerned, so the filter is on the
-  // LAST day rather than the first. end_date is nullable, and a null one means
-  // a single-day event, which coalesce handles at the database rather than by
-  // pulling the whole table back to sort it out here.
+  // still upcoming as far as a member is concerned, so what matters is the LAST
+  // day, not the first.
+  //
+  // THE LAST DAY IS COMPUTED HERE RATHER THAN IN THE QUERY, and that is a
+  // deliberate retreat from cleverness. end_date is nullable — a null one means
+  // a single-day tournament — so expressing "coalesce(end_date, start_date) >=
+  // today" in PostgREST needs a nested or(...and(...)) filter, and a filter
+  // PostgREST cannot parse does not raise: the read comes back as an EMPTY LIST
+  // with no error. The failure mode is /tournaments answering "nothing
+  // scheduled" forever while the error branch below never fires, which is
+  // exactly the class of bug this codebase has been bitten by three times. A
+  // date floor the database CAN express, and the coalesce in plain TypeScript,
+  // cannot fail that way.
   const today = clubLocalToday();
+  const floor = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toLocaleDateString('en-CA', {
+    timeZone: CLUB_TIMEZONE,
+  });
+
   const { data, error } = await supabase
     .from('tournaments')
     .select(
@@ -103,16 +124,25 @@ export async function GET(request: Request) {
     )
     .eq('status', 'active')
     .is('suspended_at', null)
-    .or(`end_date.gte.${today},and(end_date.is.null,start_date.gte.${today})`)
+    .gte('start_date', floor)
     .order('start_date', { ascending: true })
-    .limit(MAX_TOURNAMENTS);
+    // Read wider than the list, because the coalesce below still has rows to
+    // drop. Capping at MAX_TOURNAMENTS here would let finished tournaments eat
+    // the slots that upcoming ones should have had.
+    .limit(FETCH_CAP);
 
   if (error) {
     console.error('[discord] tournaments read failed:', error.message);
     return NextResponse.json({ error: 'tournaments_unavailable' }, { status: 503 });
   }
 
-  const tournaments = ((data ?? []) as Row[]).map((t) => {
+  // Still running or still to come. A null end_date is a single-day tournament,
+  // so its own start date is its last day.
+  const upcoming = ((data ?? []) as Row[])
+    .filter((t) => (t.end_date ?? t.start_date) >= today)
+    .slice(0, MAX_TOURNAMENTS);
+
+  const tournaments = upcoming.map((t) => {
     const allowed = t.allowed_memberships ?? [];
     return {
       id: t.id,

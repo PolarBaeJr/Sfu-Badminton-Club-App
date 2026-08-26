@@ -96,6 +96,7 @@ interface Action {
   endsAt: string;
   syncedStartsAt: string;
   syncedEndsAt: string;
+  patchTimes: boolean;
   location: string | null;
   description: string;
 }
@@ -245,6 +246,56 @@ describe("GET /api/discord/tournament-events", () => {
     expect(action.kind).toBe("update");
     expect(action.discordEventId).toBe("evt-1");
     expect(action.name).toBe("Fall Open");
+    // Not started, so the schedule goes with it.
+    expect(action.patchTimes).toBe(true);
+  });
+
+  it("does NOT retime an event Discord has already started", async () => {
+    // The loop this prevents needs nothing to go wrong: a tournament is
+    // mid-run, an exec edits tournament_event_start_time — which moves the
+    // computed start for EVERY mapped tournament at once — Discord refuses to
+    // retime an event in progress, nothing is recorded, and the next tick
+    // computes the identical diff. Every fifteen minutes, for days.
+    tournaments = [tournament({ start_date: clubDay(-1), end_date: clubDay(2) })];
+    mapped = [
+      {
+        tournament_id: "t1",
+        discord_event_id: "evt-1",
+        synced_name: "Fall Open",
+        // A start on the hour, so the club-time computation cannot match it.
+        synced_starts_at: "2020-01-01T00:00:00.000Z",
+        synced_ends_at: "2020-01-02T00:00:00.000Z",
+      },
+    ];
+
+    const { actions, skipped } = await run();
+    expect(actions).toEqual([]);
+    expect(skipped).toEqual([{ tournamentId: "t1", reason: "started_cannot_retime" }]);
+  });
+
+  it("still pushes a RENAME onto a started event, with the times left alone", async () => {
+    // A rename is the change members actually notice, so it lands — and
+    // recording the tournament's current times alongside it settles the
+    // comparison, which is what stops the retry loop rather than merely
+    // narrowing it.
+    tournaments = [tournament({ name: "Autumn Open", start_date: clubDay(-1), end_date: clubDay(2) })];
+    mapped = [
+      {
+        tournament_id: "t1",
+        discord_event_id: "evt-1",
+        synced_name: "Fall Open",
+        synced_starts_at: "2020-01-01T00:00:00.000Z",
+        synced_ends_at: "2020-01-02T00:00:00.000Z",
+      },
+    ];
+
+    const action = only((await run()).actions);
+    expect(action.kind).toBe("update");
+    expect(action.name).toBe("Autumn Open");
+    expect(action.patchTimes).toBe(false);
+    // Recorded anyway. Discord keeps the times it was created with; they
+    // describe an event already under way, which nobody can act on.
+    expect(Date.parse(action.syncedStartsAt)).toBeLessThan(Date.now());
   });
 
   it("cancels the Discord event when the tournament is suspended", async () => {
