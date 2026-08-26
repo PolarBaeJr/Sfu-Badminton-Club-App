@@ -24,10 +24,10 @@
 //               the code in front of the lens, so an automatic remount would
 //               decode it, fail, and remount again about once a second for
 //               ever. When the failure came from the server that loop is an
-//               unthrottled stream of server-action calls: the 20/IP/min limit
-//               lives on the /checkin/[token] PAGE, and neither in-app scanner
-//               ever touches it. A failure stops the camera and waits for a
-//               deliberate tap.
+//               unthrottled stream of server-action calls: the rate limit
+//               covering check-in lives at the EDGE on the /checkin path, and
+//               neither in-app scanner ever touches it. A failure stops the
+//               camera and waits for a deliberate tap.
 
 export interface ScanRetryState {
   /** The `key` on QrScanner. A new value is a new camera. */

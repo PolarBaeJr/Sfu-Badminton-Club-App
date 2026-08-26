@@ -1,6 +1,5 @@
-import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { CHECKIN_TOKEN_REGEX, getClientIp, rateLimit, getAccountStanding } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, getAccountStanding } from '@badminton/shared';
 import { getCurrentPlayer } from '@/lib/supabase-server';
 import { CheckinClient } from './checkin-client';
 
@@ -14,23 +13,6 @@ export const dynamic = 'force-dynamic';
 // the camera needs to see whether it worked.
 export default async function CheckinPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  // Rate limit: 20 scans per IP per minute. A gym full of players on one wifi
-  // NAT shares a bucket, so the limit is generous — it only throttles someone
-  // walking the token space.
-  const rl = rateLimit(
-    `checkin:${getClientIp(new Request('http://localhost', { headers: await headers() }))}`,
-    20,
-    60_000
-  );
-  if (!rl.success) {
-    return (
-      <div className="max-w-md mx-auto py-16 px-4 text-center">
-        <h1 style={{ fontFamily: 'var(--display)', fontSize: 28, fontWeight: 700 }}>Too many attempts</h1>
-        <p className="page-sub" style={{ marginTop: 8 }}>Wait a minute and scan the code again.</p>
-      </div>
-    );
-  }
-
   const player = await getCurrentPlayer();
   if (!player) {
     // Carry the token through sign-in — /login has no generic `next=` support.

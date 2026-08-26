@@ -1,11 +1,5 @@
 import { NextResponse } from 'next/server';
-import {
-  accessLevelFor,
-  effectiveCapabilities,
-  getClientIp,
-  rateLimit,
-  resolvePermissions,
-} from '@badminton/shared';
+import { accessLevelFor, effectiveCapabilities, resolvePermissions } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -28,12 +22,6 @@ export const dynamic = 'force-dynamic';
 // fails closed when that secret is unset.
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:members:${ip}`, 12, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const supabase = createServiceRoleClient();
 
@@ -142,12 +130,6 @@ export async function GET(request: Request) {
 // outright. Anything it could not clear stays queued and is retried next sweep.
 export async function DELETE(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:revocations:${ip}`, 12, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   let body: unknown;
   try {

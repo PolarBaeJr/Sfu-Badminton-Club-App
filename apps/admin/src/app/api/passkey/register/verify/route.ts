@@ -4,7 +4,7 @@ import { verifyRegistrationResponse } from '@simplewebauthn/server';
 import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
-import { rateLimit, getClientIp, parseOrThrow } from '@badminton/shared';
+import { parseOrThrow } from '@badminton/shared';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { logAdminAudit } from '@/lib/audit';
 import { signPayload, verifyPayload } from '@/lib/passkey/cookie';
@@ -27,12 +27,6 @@ function clearChallengeCookie(response: NextResponse) {
 }
 
 export async function POST(request: Request) {
-  const ip = getClientIp(request);
-  const rl = rateLimit(`passkey-reg-verify:${ip}`, 10, 60_000);
-  if (!rl.success) {
-    return new NextResponse('Too many requests', { status: 429 });
-  }
-
   let player;
   try {
     player = await getAuthenticatedConsoleUser({ skipPasskey: true });

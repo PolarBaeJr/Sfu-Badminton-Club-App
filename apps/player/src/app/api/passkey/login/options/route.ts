@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
-import { rateLimit, getClientIp } from '@badminton/shared';
+import { getClientIp } from '@badminton/shared';
 import { signPayload } from '@/lib/passkey/cookie';
 import {
   getRpId,
@@ -16,30 +16,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
 
-  // 60/min, raised from 10. This route stopped being something a member opts
-  // into: /login now starts a conditional (autofill) request on every view, so
-  // one visit costs one challenge whether or not a passkey is ever used.
+  // NOT RATE LIMITED HERE. The throttle for this route lives at the edge, on
+  // the /api/passkey prefix (240/min per client IP, routes.json on the proxy),
+  // and there is deliberately no second one in-process: the old in-app limiter
+  // was a per-process Map, so with two player replicas it enforced double
+  // whatever it claimed. See docs/ops/rate-limits.md.
   //
-  // How much traffic 10 was actually rationing depends on what getClientIp can
-  // resolve, and the pessimistic case is the one to size for. It prefers
-  // `cf-connecting-ip` (the true client, when Cloudflare's header reaches the
-  // container) and otherwise takes the RIGHTMOST x-forwarded-for hop — which is
-  // whatever address our own edge saw, i.e. one value shared by everyone behind
-  // it, degrading to 'unknown' if no header arrives at all. So the bucket is
-  // per-member at best and effectively per-deployment at worst, and at worst 10
-  // /min is ten page views for the entire club. A 429 here does not merely skip
-  // the speculative offer either: it also breaks the "Sign in with a passkey"
-  // BUTTON, which mints its challenge from this same route. Throttling the
-  // default way in is the failure this limiter exists to avoid, not to cause.
+  // Whatever the number is, it has to stay generous, because this route is not
+  // something a member opts into: /login starts a conditional (autofill)
+  // request on every view, so one visit costs one challenge whether or not a
+  // passkey is ever used, and a 429 does not merely skip the speculative offer
+  // — it also breaks the "Sign in with a passkey" BUTTON, which mints its
+  // challenge from this same route. Throttling the default way in is the
+  // failure the limit exists to avoid, not to cause.
   //
-  // Safe to loosen because the response is not a secret: allowCredentials is
-  // empty by design (see below), so an unauthenticated caller learns nothing
-  // about who has an account no matter how many challenges they collect. The
-  // limiter that actually guards sign-in is on /login/verify.
-  const ip = getClientIp(request);
-  const rl = rateLimit(`pk-login-options:${ip}`, 60, 60_000);
-  if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
-
+  // Being generous is safe because the response is not a secret: allowCredentials
+  // is empty by design (see below), so an unauthenticated caller learns nothing
+  // about who has an account no matter how many challenges they collect. What
+  // actually guards sign-in is the signature check on /login/verify.
   // allowCredentials is deliberately EMPTY. The alternative — asking for an
   // email first and returning that account's credential ids — would answer
   // "does this address have an account here", an enumeration oracle on a

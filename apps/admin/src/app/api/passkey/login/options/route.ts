@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
-import { rateLimit, getClientIp } from '@badminton/shared';
 import { signPayload } from '@/lib/passkey/cookie';
 import {
   getRpId,
@@ -18,23 +17,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
 
-  // 60/min, RAISED FROM 10 and for exactly the reason the player route was.
-  // The console login page auto-starts a conditional (autofill) ceremony on
-  // every view (login/page.tsx), so one page view costs one challenge whether
-  // or not a passkey is used — 10/min was ten console page views per minute for
-  // the whole exec. A 429 here does not merely skip the speculative offer: it
-  // also breaks the explicit "Sign in with a passkey" BUTTON, which mints from
-  // this same route. Throttling the default way in is the failure this limiter
-  // exists to avoid, not to cause.
+  // NOT RATE LIMITED HERE, for the same reasons as the player route. The
+  // throttle is at the edge on the /admin/api/passkey prefix (60/min per client
+  // IP, routes.json on the proxy); the in-app limiter that used to sit here was
+  // a per-process Map and so enforced double its stated number across two
+  // replicas. See docs/ops/rate-limits.md.
   //
-  // Safe to loosen because the response is not a secret: allowCredentials is
-  // empty by design (see below), so an unauthenticated caller learns nothing
+  // It has to stay generous either way: the console login page auto-starts a
+  // conditional (autofill) ceremony on every view (login/page.tsx), so one page
+  // view costs one challenge whether or not a passkey is used, and a 429 also
+  // breaks the explicit "Sign in with a passkey" BUTTON, which mints from this
+  // same route. Throttling the default way in is the failure the limit exists
+  // to avoid, not to cause.
+  //
+  // Being generous is safe because the response is not a secret: allowCredentials
+  // is empty by design (see below), so an unauthenticated caller learns nothing
   // about who has console access no matter how many challenges they collect.
-  // The limiter that actually guards sign-in is on /login/verify.
-  const ip = getClientIp(request);
-  const rl = rateLimit(`admin-pk-login-options:${ip}`, 60, 60_000);
-  if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
-
+  // What actually guards sign-in is the signature check on /login/verify.
   // allowCredentials is deliberately EMPTY, unlike the step-up route which knows
   // who you are and can list your credentials. The alternative here — asking for
   // an email first and returning that account's credential ids — would answer

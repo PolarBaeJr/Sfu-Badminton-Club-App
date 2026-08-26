@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CLUB_TIMEZONE, getClientIp, rateLimit, wallClockToUtc } from '@badminton/shared';
+import { CLUB_TIMEZONE, wallClockToUtc } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
@@ -49,12 +49,6 @@ function clubDate(d: Date): string {
 
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:session-pings:${ip}`, 30, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const guildId = new URL(request.url).searchParams.get('guildId');
   if (!guildId) return NextResponse.json({ error: 'guild_id_required' }, { status: 400 });
@@ -211,12 +205,6 @@ export async function GET(request: Request) {
 // Record that a ping went out. Called by the bot AFTER a successful post.
 export async function POST(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:session-pings:write:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   let body: { sessionId?: unknown; roleIds?: unknown };
   try {

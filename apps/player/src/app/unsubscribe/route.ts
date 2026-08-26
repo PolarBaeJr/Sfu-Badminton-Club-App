@@ -1,12 +1,5 @@
 import { NextResponse } from 'next/server';
-import {
-  verifyUnsubscribeToken,
-  allEmailCategoriesOff,
-  emailCategoryPatch,
-  NOTIFICATION_CATEGORIES,
-  rateLimit,
-  getClientIp,
-} from '@badminton/shared';
+import { verifyUnsubscribeToken, allEmailCategoriesOff, emailCategoryPatch, NOTIFICATION_CATEGORIES } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 
 // Unsubscribing must work with NO session. A recipient who cannot log in — or
@@ -127,11 +120,6 @@ ${ok ? '<p style="color:#666;font-size:.9rem">You will still receive sign-in cod
 }
 
 export async function GET(request: Request) {
-  // Someone spraying guessed tokens would just be failing signature checks, but
-  // there is no reason to let them do it quickly.
-  const rl = rateLimit(`unsub:${getClientIp(request)}`, 30, 60_000);
-  if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
-
   const token = new URL(request.url).searchParams.get('token');
   const result = await apply(token);
   return page(result.message, result.ok);
@@ -141,9 +129,6 @@ export async function GET(request: Request) {
 // It must succeed without a confirmation step — that is the entire point of the
 // List-Unsubscribe-Post header.
 export async function POST(request: Request) {
-  const rl = rateLimit(`unsub:${getClientIp(request)}`, 30, 60_000);
-  if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
-
   const url = new URL(request.url);
   let token = url.searchParams.get('token');
   if (!token) {

@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { getClientIp, rateLimit } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -42,13 +41,6 @@ const MAX_SELF_ROLES = 25;
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
 
-  const ip = getClientIp(request);
-  // Read on every button press, so budgeted like /config rather than /members.
-  const limited = rateLimit(`discord:self-roles:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
-
   const guildId = new URL(request.url).searchParams.get('guildId');
   if (!guildId) {
     return NextResponse.json({ error: 'guild_id_required' }, { status: 400 });
@@ -90,12 +82,6 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:self-roles:write:${ip}`, 20, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   let body: {
     guildId?: unknown;
@@ -154,12 +140,6 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:self-roles:write:${ip}`, 20, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const params = new URL(request.url).searchParams;
   const guildId = params.get('guildId');

@@ -1,10 +1,5 @@
 import { NextResponse } from 'next/server';
-import {
-  DISCORD_LINK_TOKEN_TTL_MINUTES,
-  getClientIp,
-  hashDiscordLinkToken,
-  rateLimit,
-} from '@badminton/shared';
+import { DISCORD_LINK_TOKEN_TTL_MINUTES, hashDiscordLinkToken } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -22,14 +17,6 @@ export const dynamic = 'force-dynamic';
 // one the member is about to click.
 export async function POST(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  // Tighter than the members read: this one writes a row per call, and the
-  // caller is a single bot process rather than a crowd.
-  const limited = rateLimit(`discord:link-tokens:${ip}`, 30, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   let body: unknown;
   try {
