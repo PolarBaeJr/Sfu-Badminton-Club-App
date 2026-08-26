@@ -503,3 +503,52 @@ export function clearAnnouncementPost(
   const params = new URLSearchParams({ announcementId, guildId });
   return send<{ ok: true }>('DELETE', `/api/discord/announcements?${params}`);
 }
+
+// ---- MATCH RESULT RELAY ----------------------------------------------------
+
+export interface MatchResultAction {
+  kind: 'post' | 'edit' | 'retract';
+  matchId: string;
+  /** For an edit or retract this is the channel the message IS in, which is not
+   *  necessarily the configured one — a club that repoints the setting has not
+   *  moved the messages it already posted. */
+  channelId: string;
+  /** null only for a post. */
+  discordMessageId: string | null;
+  /** Rendered line, and the mapping's change-detection key. */
+  summary: string;
+  teamA: string;
+  teamB: string;
+  score: string;
+  /** Which side won. null only on a retract, where there is nothing to render. */
+  winner: 'a' | 'b' | null;
+  /** singles | doubles. */
+  matchType: string;
+  playedAt: string | null;
+}
+
+/** Confirmed results that owe Discord a message, or a change to one. */
+export function fetchMatchResultActions(guildId: string): Promise<{
+  actions: MatchResultAction[];
+  skipped: { matchId: string; reason: string }[];
+}> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/match-results?${params}`);
+}
+
+/** Record a message Discord has ALREADY accepted. Never call this beforehand. */
+export function recordMatchPost(input: {
+  matchId: string;
+  guildId: string;
+  channelId: string;
+  discordMessageId: string;
+  summary: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/match-results', input);
+}
+
+/** Forget a mapping, after the Discord message is gone. */
+export function clearMatchPost(matchId: string, guildId: string): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ matchId, guildId });
+  return send<{ ok: true }>('DELETE', `/api/discord/match-results?${params}`);
+}

@@ -14,6 +14,7 @@ import { reconcile } from './reconcile.js';
 import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
 import { runAnnouncements } from './announcements.js';
+import { runMatchResults } from './match-results.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -250,6 +251,24 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       console.error('[bot] announcement relay failed:', error);
       return send(res, 500, { error: 'announcements_failed' });
+    }
+  }
+
+  // The match result relay, driven by pg_cron every 10 minutes. Slower than
+  // announcements — nobody is waiting on a result the way they wait on "no
+  // session tonight" — and faster than the tournament sweep, because results
+  // land in bursts on a club night and a half-hour lag would make the channel
+  // read as a digest rather than a feed.
+  if (req.method === 'POST' && req.url === '/match-results') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runMatchResults();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] match result relay failed:', error);
+      return send(res, 500, { error: 'match_results_failed' });
     }
   }
 

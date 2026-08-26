@@ -298,7 +298,7 @@ is the gate.
 
 ## 7b. The channels the club has to name
 
-Three features post into a channel, and none of them guesses one — a relay that
+Four features post into a channel, and none of them guesses one — a relay that
 picked a channel by itself would be a relay putting club business somewhere
 nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 
@@ -307,6 +307,7 @@ nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 | `audit_channel_id` | link/unlink and sweep embeds | `/setup audit_channel:` |
 | `session_ping_channel_id` | the before-each-session ping | SQL (00168) |
 | `announcement_channel_id` | the announcement relay (00170) | SQL |
+| `match_results_channel_id` | the match result relay (00171) | SQL |
 
 ```sql
 INSERT INTO discord_settings (key, value)
@@ -343,6 +344,49 @@ you see it, check the service role's `SELECT` grant (read `pg_class.relacl`, not
 `information_schema`) and reload the PostgREST cache with
 `NOTIFY pgrst, 'reload schema'`. It clears itself as soon as one row is
 readable.
+
+### Match results (00171)
+
+**What goes out: who played, the score, who won. No Elo.** Not an oversight —
+the score is a fact about a game other members watched happen, while a rating
+delta is a judgment about a person, and the club already ships an opt-out that
+exists precisely so that judgment is not on display. The route does not select
+`rating_delta` or `post_rating` at all, so there is no column for a later edit
+to leak. Members read their own numbers from `/my-stats`, which answers
+ephemerally, to the person they are about.
+
+**Only `rated_challenge` and `admin_entered` results are relayed.** Casual
+matches are excluded on purpose: a club night of doubles rotations would turn
+the channel into a firehose. Tournament results are not relayed either, and not
+because of a setting — tournament results live in `tournament_matches` and never
+become `matches` rows, so there is nothing to relay. Pending, disputed, voided
+and walkover results never go out; a walkover in particular names who forfeited.
+
+**A match with any participant who has `hide_from_leaderboard` set is held back
+whole**, not posted with that name removed — in a two-player match, redacting
+one name identifies the opt-out by elimination.
+
+**That check runs once, when the match is first considered. It is a filter, not
+a takedown.** The flag lives on `players`, so setting it does not touch
+`matches.updated_at` and cannot pull an already-posted result back for
+reconsideration. A member who opts out today does *not* have last month's posts
+removed. The remedy is to delete those messages in Discord by hand, which is
+permanent here — the relay only ever posts a match that has no mapping row.
+
+**To take the whole relay down**, delete the messages in Discord first and then
+`DELETE FROM discord_match_posts;` — in that order. Clearing
+`match_results_channel_id` alone stops new posts but leaves the old ones up,
+because retraction needs a channel to delete from.
+
+**Unlike the other two relays, this one has no refuse-to-act guard**, and that
+is deliberate: it reads a 72-hour window keyed on `updated_at`, every retraction
+(void, dispute, convert-to-casual) is an `UPDATE` that bumps that column, and no
+confirmed match is ever hard-deleted. So absence from the window means
+"unchanged", never "deleted", and a silently failed read makes the route do
+*nothing* rather than wipe the channel. The failure direction is already safe.
+The cost is that a broken read here is **silent** — if the channel goes quiet,
+check the `SELECT` grant via `pg_class.relacl`, reload the PostgREST cache, and
+read the bot log, which names every skipped match and why.
 
 **Deleting the bot's message or event in Discord by hand is respected.** It is
 not re-posted, and an edit that arrives afterwards is recorded rather than
