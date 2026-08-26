@@ -213,7 +213,7 @@ in the player's environment, which does not exist on any host yet.
 
 #### Deployment notes (confirmed with the proxy-manager session)
 
-- **Hostname: `discord.sfubadminton.com`.** The zone's Let's Encrypt cert is a
+- **Hostname: `bot.sfubadminton.com`.** The zone's Let's Encrypt cert is a
   wildcard, so a single-level subdomain needs no new cert work. A **DNS record
   probably still has to be created** — wildcard cert coverage is not a wildcard
   DNS record.

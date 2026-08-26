@@ -227,6 +227,23 @@ fetch(\"http://127.0.0.1:3002/sync\",{method:\"POST\",
 
 ## 5. DNS
 
+**The prod bot is `bot.sfubadminton.com`, not `discord.`.** The `discord.`
+subdomain is a redirect to the server invite, and pointing the bot's own
+hostname at it would be far worse than a 404 in one specific place: `pg_net`
+follows redirects. The nightly `POST /sync` would land on Discord's invite
+page, receive a **200**, and look healthy forever while never syncing a member.
+
+Two consequences when setting prod up:
+
+- `cron_config.discord_bot_url` must be `https://bot.sfubadminton.com`. **The
+  OWNER STEP comment in `00166_discord_nightly_sync.sql` still says
+  `discord.sfubadminton.com`** -- it is not edited because that migration is
+  already applied and `db-migrate.sh` checksums files, so changing it would
+  report DRIFTED. Take the hostname from here, not from that comment.
+- Verify the sync by reading `net._http_response.content`, never the status.
+  A 200 from a redirect target proves nothing.
+
+
 Point `<bot-subdomain>` at the server. Do this in the Cloudflare UI; the
 dashboard's DNS token is currently returning 403 (code 9109).
 

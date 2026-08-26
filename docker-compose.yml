@@ -193,7 +193,12 @@ services:
       # it does not gate their subdomains. Confirmed against proxy-manager
       # 2026-08-25. Auth for this host is the Ed25519 signature the bot
       # verifies itself, plus the shared secret on /sync.
-      proxy.host:       "${DISCORD_BOT_DOMAIN:-discord.sfubadminton.com}"
+      # bot., NOT discord. -- discord.sfubadminton.com is a redirect to the
+      # server invite. Pointing anything here at that host is worse than a
+      # plain 404: pg_net follows redirects, so the nightly /sync would land
+      # on Discord's invite page, get a 200, and look healthy forever while
+      # never syncing a single member.
+      proxy.host:       "${DISCORD_BOT_DOMAIN:-bot.sfubadminton.com}"
       proxy.port:       "3002"
       # A bare TCP dial would call a bot that cannot reach the app API healthy.
       proxy.health:     "/health"
