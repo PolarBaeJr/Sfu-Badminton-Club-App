@@ -12,6 +12,7 @@ import {
   AUTH_COOKIE_OPTIONS,
   hostOnlyAuthCookieClears,
 } from '@badminton/shared';
+import { getServerSupabaseUrl } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { verifyPayload } from '@/lib/passkey/cookie';
 import {
@@ -154,7 +155,7 @@ export async function POST(request: Request) {
   clearChallengeCookie(response);
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    getServerSupabaseUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookieOptions: AUTH_COOKIE_OPTIONS,

@@ -14,6 +14,7 @@ import {
   hostOnlyAuthCookieClears,
   duplicateAuthCookieClears,
 } from '@badminton/shared/src/utils/constants';
+import { getServerSupabaseUrl } from '@badminton/shared/src/utils/supabase-url';
 
 export async function middleware(request: NextRequest) {
   // Container health probes come first, for the same second reason spelled out
@@ -74,7 +75,7 @@ export async function middleware(request: NextRequest) {
   };
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    getServerSupabaseUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookieOptions: AUTH_COOKIE_OPTIONS,

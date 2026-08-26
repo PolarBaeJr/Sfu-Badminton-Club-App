@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { CHECKIN_TOKEN_REGEX, DISCORD_LINK_TOKEN_REGEX, rateLimit, getClientIp } from '@badminton/shared';
 import { AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
+import { getServerSupabaseUrl } from '@badminton/shared';
 import { reactivateLapsedMemberByUserId } from '@/lib/reactivate';
 import { ensurePlayerRowForUser } from '@/lib/first-signin';
 
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
   const response = NextResponse.redirect(destination);
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    getServerSupabaseUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookieOptions: AUTH_COOKIE_OPTIONS,

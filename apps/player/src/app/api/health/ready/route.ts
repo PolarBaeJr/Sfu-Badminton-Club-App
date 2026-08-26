@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getServerSupabaseUrl } from '@badminton/shared';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -27,22 +28,29 @@ export const runtime = 'nodejs';
 // Next routing, so a slow database yields a clean, logged 503 instead of a
 // silent timeout. If proxy-manager's healthTimeout ever changes, re-check it.
 //
-// SIZING THIS NUMBER: do not assume this probe is a cheap in-cluster call.
-// It is not. NEXT_PUBLIC_SUPABASE_URL is the PUBLIC origin
-// (https://sfubadminton.com/supabase), and the app containers are only on the
-// `edge` and `default` networks - there is no internal Supabase URL and no
-// direct route to kong. So this probe leaves the container, goes out through
-// the public edge, and comes back in. Measured from inside a live player
-// container: 51-160ms, i.e. the same order as an external client, NOT the
-// single-digit ms a same-network call would cost. 1500ms is roughly 10x the
-// observed worst case, which is the headroom - the cheapness is not.
+// SIZING THIS NUMBER: how expensive this probe is now depends on one variable.
 //
-// The hairpin also makes this signal partly SELF-REFERENTIAL: if the edge or
-// the proxy itself degrades, every badminton backend fails this probe at once
-// even though the app and the database are both fine. That is the same
-// zero-healthy-backends condition described above, but mesh failover cannot
-// recover it, because the peer's probe hairpins through the same edge. Treat a
-// simultaneous all-backends-unhealthy event as "suspect the edge first".
+// With SUPABASE_INTERNAL_URL set it is a direct call to kong over the tailnet,
+// measured at a 4ms median from inside a live container. With it unset the old
+// behaviour stands: NEXT_PUBLIC_SUPABASE_URL is the PUBLIC origin
+// (https://sfubadminton.com/supabase), the containers sit only on the `edge`
+// and `default` networks with no direct route to kong, so the probe leaves the
+// container, goes out through the public edge and comes back in - measured at
+// 51-160ms, the same order as an external client. 1500ms covers the slow path
+// with roughly 10x headroom, so it is safe for both.
+//
+// WHY THE INTERNAL URL MATTERS MORE HERE THAN THE LATENCY DOES. The hairpin
+// made this signal SELF-REFERENTIAL: if the edge or the proxy degraded, every
+// badminton backend failed this probe at once even though the app and the
+// database were both fine, and mesh failover could not recover it because the
+// peer's probe hairpinned through the same edge. That stopped being theoretical
+// when the public entrance moved to the Mac mini - a five-second blip there was
+// enough to fail the probe on the Pi. Calling kong directly makes this ask what
+// a readiness probe is supposed to ask, "can THIS container reach the database",
+// rather than "is the edge healthy", and takes Docker's health status (which
+// floors the proxy's own healthy() check) out of the blast radius of an edge
+// wobble. Until the variable is set, keep treating a simultaneous
+// all-backends-unhealthy event as "suspect the edge first".
 const PROBE_TIMEOUT_MS = 1500;
 
 // Every refusal is this exact body — no version string, no configuration value,
@@ -59,12 +67,17 @@ function notReady(reason: string) {
 // the configuration it was built with parses, and the database answers.
 //
 // NEXT_PUBLIC_* values are inlined by Next at BUILD time, in server code too,
-// so this reads the literal that was baked into the image rather than anything
-// the runtime .env supplies. That is the point: an image built without a
-// Supabase URL cannot be repaired by an env file, and this is where that shows
+// so the fallback reads the literal that was baked into the image rather than
+// anything the runtime .env supplies. That is the point: an image built without
+// a Supabase URL cannot be repaired by an env file, and this is where that shows
 // up — at deploy, in the healthcheck, instead of in a member's browser.
+//
+// getServerSupabaseUrl() preserves that property exactly. SUPABASE_INTERNAL_URL
+// is a runtime read and overrides when present; when it is absent or unusable
+// the baked-in public literal is still what gets probed, so a bad build fails
+// here as loudly as it always did.
 export async function GET() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseUrl = getServerSupabaseUrl();
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !anonKey) return notReady('supabase url or anon key missing from the build');
 
@@ -87,8 +100,9 @@ export async function GET() {
     const response = await fetch(`${origin}/rest/v1/rpc/get_active_season`, {
       method: 'POST',
       // redirect: 'manual' on the probe's OWN request, not just on the
-      // healthcheck. NEXT_PUBLIC_SUPABASE_URL points back through the public
-      // proxy, so a proxy misconfiguration can answer /supabase with a 3xx to
+      // healthcheck. This still matters with an internal URL, and matters most
+      // without one: the public origin points back through the proxy, so a
+      // proxy misconfiguration can answer /supabase with a 3xx to
       // an HTML page; fetch would follow it and hand back a cheerful 200. Same
       // trap pg_net fell into with /api/cron and SNS fell into with the SES
       // webhook — a followed redirect is why both reported success for months.
