@@ -32,9 +32,20 @@ function thenable(rows: Record<string, unknown>[], error: unknown = null) {
   const filters: [string, unknown][] = [];
   const builder: Record<string, unknown> = {};
   let cap: number | null = null;
-  for (const m of ["select", "is", "not", "gte", "lte", "in", "or", "order"]) {
+  for (const m of ["select", "is", "not", "gte", "lte", "or", "order"]) {
     builder[m] = () => builder;
   }
+  // ALSO APPLIED FOR REAL, and for a sharper reason than .eq(). The route's
+  // liveness check is distinguished from its two working reads by having NO
+  // filters at all — it asks "does any announcement exist" precisely so an
+  // empty resolve read can be told apart from a broken one. A stub that
+  // no-opped .in() would hand the by-id read every row in the table, so byId
+  // would never be empty, the liveness path would never be reached, and the
+  // test that says the route refuses to wipe the channel would be vacuous.
+  builder.in = (column: string, values: unknown[]) => {
+    filters.push([column, values]);
+    return builder;
+  };
   // APPLIED FOR REAL, unlike the rest. The mapping read's .limit() is a safety
   // bound rather than a tidy-up — it is what keeps the second read below
   // PGRST_DB_MAX_ROWS, and therefore what stops a truncated read looking like
@@ -49,7 +60,11 @@ function thenable(rows: Record<string, unknown>[], error: unknown = null) {
     return builder;
   };
   builder.then = (resolve: (v: unknown) => unknown) => {
-    const matched = rows.filter((r) => filters.every(([c, v]) => r[c] === v || c === "guild_id"));
+    const matched = rows.filter((r) =>
+      filters.every(([c, v]) =>
+        c === "guild_id" ? true : Array.isArray(v) ? v.includes(r[c]) : r[c] === v,
+      ),
+    );
     const data = error ? null : cap === null ? matched : matched.slice(0, cap);
     return Promise.resolve({ data, error }).then(resolve);
   };
@@ -217,7 +232,11 @@ describe("GET /api/discord/announcements — the audience gate", () => {
     // Reachable at all only because 00170 leaves announcement_id un-referenced:
     // an ON DELETE CASCADE would take the mapping with the announcement, and the
     // message id would be gone with it.
-    announcements = [];
+    // The draft is not decoration. The sweep is only allowed to run on positive
+    // evidence that `announcements` is readable, and this row is that evidence:
+    // it matches neither of the route's two working reads (wrong status, wrong
+    // id), so it reaches the route only through the unfiltered liveness check.
+    announcements = [announcement({ id: "a-unrelated", status: "draft" })];
     mapped = [mapping()];
 
     const action = only((await run()).actions);
@@ -245,13 +264,36 @@ describe("GET /api/discord/announcements — the audience gate", () => {
     mapped = Array.from({ length: 600 }, (_, i) =>
       mapping({ announcement_id: `a${i}`, discord_message_id: `m${i}` }),
     );
-    announcements = [];
+    announcements = [announcement({ id: "a-unrelated", status: "draft" })];
 
     const { actions, skipped } = await run();
 
-    // 500, not 600: the read was capped before the ids were resolved.
-    expect(actions).toHaveLength(500);
+    // 150, not 600: the read was capped before the ids were resolved.
+    expect(actions).toHaveLength(150);
     expect(skipped).toContainEqual({ announcementId: "*", reason: "mapping_cap_reached" });
+  });
+
+  it("REFUSES to wipe the channel when the announcements read comes back empty", async () => {
+    // The failure this codebase has actually had, three times: a read that
+    // returns an EMPTY LIST with no error — a missing SELECT grant, or a
+    // schema cache that has not seen the table. Both of the route's reads hit
+    // `announcements`, so when that breaks every mapping looks deleted and the
+    // sweep retracts the entire channel in one tick, with no error anywhere to
+    // explain it. MAX_MAPPED does not help: nothing was truncated.
+    //
+    // Zero rows is not evidence of deletion, so the route must refuse.
+    announcements = [];
+    mapped = [
+      mapping(),
+      mapping({ announcement_id: "a2", discord_message_id: "m2" }),
+      mapping({ announcement_id: "a3", discord_message_id: "m3" }),
+    ];
+
+    const { GET } = await import("../route");
+    const res = await GET(req());
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).actions).toBeUndefined();
   });
 
   it("never relays a DRAFT", async () => {

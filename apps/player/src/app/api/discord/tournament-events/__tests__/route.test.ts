@@ -28,9 +28,18 @@ function thenable(rows: Record<string, unknown>[], error: unknown = null) {
   const filters: [string, unknown][] = [];
   const builder: Record<string, unknown> = {};
   let cap: number | null = null;
-  for (const method of ["select", "is", "not", "gte", "lte", "in", "or", "order"]) {
+  for (const method of ["select", "is", "not", "gte", "lte", "or", "order"]) {
     builder[method] = () => builder;
   }
+  // ALSO APPLIED FOR REAL. The route tells a broken read apart from a genuinely
+  // empty one with a liveness query that has NO filters on it. If .in() were a
+  // no-op the by-id read would return every row in the table, byId would never
+  // be empty, and the test that says the route refuses to cancel everything
+  // would pass against a route that had no such check.
+  builder.in = (column: string, values: unknown[]) => {
+    filters.push([column, values]);
+    return builder;
+  };
   // APPLIED FOR REAL. The mapping read's .limit() is a safety bound, not a
   // paging detail: it is what keeps the id list below PGRST_DB_MAX_ROWS, and
   // therefore what stops a truncated read from looking like "every tournament
@@ -44,7 +53,11 @@ function thenable(rows: Record<string, unknown>[], error: unknown = null) {
     return builder;
   };
   builder.then = (resolve: (v: unknown) => unknown) => {
-    const matched = rows.filter((r) => filters.every(([c, v]) => r[c] === v || c === "guild_id"));
+    const matched = rows.filter((r) =>
+      filters.every(([c, v]) =>
+        c === "guild_id" ? true : Array.isArray(v) ? v.includes(r[c]) : r[c] === v,
+      ),
+    );
     const data = error ? null : cap === null ? matched : matched.slice(0, cap);
     return Promise.resolve({ data, error }).then(resolve);
   };
@@ -348,7 +361,11 @@ describe("GET /api/discord/tournament-events", () => {
     //
     // Reachable only because 00169 leaves tournament_id un-referenced: an
     // ON DELETE CASCADE would take the mapping and the event id with it.
-    tournaments = [];
+    // The archived row is load-bearing: the sweep only runs on positive
+    // evidence that `tournaments` is readable, and this row matches neither of
+    // the route's working reads (wrong status, wrong id), so it reaches the
+    // route only through the unfiltered liveness check.
+    tournaments = [tournament({ id: "t-unrelated", status: "archived" })];
     mapped = [
       {
         tournament_id: "t1",
@@ -369,7 +386,7 @@ describe("GET /api/discord/tournament-events", () => {
     // What makes the sweep above safe. If the mapping read could hand back more
     // ids than the read that resolves them, everything past the ceiling would
     // come back missing and be cancelled in one tick.
-    tournaments = [];
+    tournaments = [tournament({ id: "t-unrelated", status: "archived" })];
     mapped = Array.from({ length: 600 }, (_, i) => ({
       tournament_id: `t${i}`,
       discord_event_id: `evt-${i}`,
@@ -380,8 +397,30 @@ describe("GET /api/discord/tournament-events", () => {
 
     const { actions, skipped } = await run();
 
-    expect(actions).toHaveLength(500);
+    expect(actions).toHaveLength(150);
     expect(skipped).toContainEqual({ tournamentId: "*", reason: "mapping_cap_reached" });
+  });
+
+  it("REFUSES to cancel everything when the tournaments read comes back empty", async () => {
+    // A read that returns an EMPTY LIST with no error — missing grant, stale
+    // schema cache — has bitten this codebase three times. Both of the route's
+    // reads hit `tournaments`, so when that happens every mapping looks deleted
+    // and the sweep wipes the server's Events tab in one tick, with nothing
+    // anywhere reporting a failure. MAX_MAPPED cannot help: nothing truncated.
+    tournaments = [];
+    mapped = [1, 2, 3].map((n) => ({
+      tournament_id: `t${n}`,
+      discord_event_id: `evt-${n}`,
+      synced_name: "Fall Open",
+      synced_starts_at: new Date().toISOString(),
+      synced_ends_at: new Date().toISOString(),
+    }));
+
+    const { GET } = await import("../route");
+    const res = await GET(req());
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).actions).toBeUndefined();
   });
 
   it("FAILS CLOSED when the mapping read errors", async () => {

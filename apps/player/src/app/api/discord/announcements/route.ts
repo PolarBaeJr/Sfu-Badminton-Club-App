@@ -82,10 +82,18 @@ const MAX_BODY = 4000;
 // read well under the ceiling makes the second read unable to truncate, because
 // it can never be asked for more ids than this.
 //
+// The SAME number is also a URL-length bound. That second read spells its ids
+// out in the query string, at ~37 bytes each, and nginx in front of PostgREST
+// stops reading a request line long before an unbounded list would end. The
+// failure there is a 414 the client reports as an error, so it 503s rather than
+// retracting anything — but it 503s on EVERY tick from then on, which is the
+// relay simply not working. 150 ids is ~5.5KB, inside any default buffer, and
+// still an order of magnitude more announcements than the club has ever had.
+//
 // Newest first, so the cap starves the settled end rather than the live one: an
 // announcement relayed months ago is the one least likely to still be changing.
 // Hitting it is reported, not swallowed.
-const MAX_MAPPED = 500;
+const MAX_MAPPED = 150;
 
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
@@ -201,6 +209,49 @@ export async function GET(request: Request) {
     skipped.push({ announcementId: '*', reason: 'mapping_cap_reached' });
   }
 
+  // THE SWEEP FIRES ONLY ON POSITIVE EVIDENCE THAT `announcements` IS READABLE.
+  // Zero rows is not that evidence.
+  //
+  // MAX_MAPPED defends the sweep against a TRUNCATED read. It does nothing
+  // against the way reads have actually failed in this codebase three separate
+  // times: coming back as an EMPTY LIST with no error at all — a missing SELECT
+  // grant, or a PostgREST schema cache that has not seen the table yet. 00170
+  // is a brand new table whose first NOTIFY pgrst is still ahead of it.
+  //
+  // Both reads above hit `announcements`. If that is the read that is broken,
+  // byId is empty, mapped is full, and this loop retracts every message the
+  // relay has ever posted, in one tick, with the error branch above never
+  // firing because there is no error. That is the worst thing this feature can
+  // do, and it is reachable without anything appearing to go wrong.
+  //
+  // A NON-EMPTY byId settles it: the table answered, so an id absent from it is
+  // absent because the row is gone. When byId is empty the question is open, and
+  // one unfiltered read closes it — if any announcement at all exists, reads
+  // work and the absences are real. If none does, an emptied table and a broken
+  // one look identical from here and the honest answer is to refuse. Refusing
+  // costs a tick of syncing and clears itself the moment one row exists.
+  let sweepable = byId.size > 0;
+
+  if (!sweepable && mapped.size > 0) {
+    const { data: anyRow, error: livenessError } = await supabase
+      .from('announcements')
+      .select('id')
+      .limit(1);
+
+    sweepable = !livenessError && ((anyRow ?? []) as { id: string }[]).length > 0;
+
+    if (!sweepable) {
+      console.error(
+        `[discord] announcements: all ${mapped.size} mapped announcement(s) look deleted ` +
+          'and public.announcements reads as empty — refusing to retract on evidence ' +
+          'this weak. Check the SELECT grant (read pg_class.relacl, not ' +
+          'information_schema) and whether the PostgREST schema cache has been ' +
+          `reloaded. ${livenessError?.message ?? ''}`
+      );
+      return NextResponse.json({ error: 'announcements_unverified' }, { status: 503 });
+    }
+  }
+
   // DELETED FROM THE WEBSITE ALTOGETHER, which is the one retraction the rest of
   // this loop cannot see.
   //
@@ -212,9 +263,10 @@ export async function GET(request: Request) {
   // retraction available would leave it standing.
   //
   // 00170 leaves announcement_id un-referenced precisely so the mapping outlives
-  // the announcement and this is reachable. Safe against a truncated read only
-  // because of MAX_MAPPED above — otherwise "not in byId" would mean "past row
-  // 1000" and this would empty the channel.
+  // the announcement and this is reachable. "Absent from byId" is only allowed
+  // to mean "deleted" because of the two guards above: MAX_MAPPED, so it cannot
+  // mean "past PGRST_DB_MAX_ROWS", and the liveness check, so it cannot mean
+  // "the read came back empty and said nothing about it".
   for (const [announcementId, existing] of mapped) {
     if (byId.has(announcementId)) continue;
     actions.push({

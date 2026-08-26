@@ -182,14 +182,32 @@ NOTIFY pgrst, 'reload schema';
 -- announcement that stays published, addressed to everyone and unexpired keeps
 -- its row indefinitely — which is correct, since its message is still up.
 --
--- The route reads at most 500 of them per tick (MAX_MAPPED), because the
--- follow-up read resolves those ids through PostgREST and production caps a
--- read at PGRST_DB_MAX_ROWS = 1000. Staying under the ceiling is what stops a
--- truncated read looking like "every announcement was deleted" to the sweep
--- that retracts orphans. At roughly a hundred announcements a year the cap is
+-- The route reads at most 150 of them per tick (MAX_MAPPED). Two ceilings sit
+-- above that number and it has to clear both: the follow-up read resolves those
+-- ids through PostgREST, and production caps a read at PGRST_DB_MAX_ROWS = 1000,
+-- so staying well under it is what stops a truncated read looking like "every
+-- announcement was deleted" to the sweep that retracts orphans; and that same
+-- read spells the ids out in the query string at ~37 bytes each, so an
+-- unbounded list would eventually exceed nginx's request-line buffer and come
+-- back 414 on every tick. At roughly a hundred announcements a year the cap is
 -- years away; if it is ever reached the route logs it and reports
 -- `mapping_cap_reached`, and the fix is to expire or delete old announcements
 -- rather than to raise the number.
+--
+-- ---- 4c. WHY THE SWEEP CAN REFUSE TO RUN -----------------------------------
+--
+-- If the route ever answers 503 `announcements_unverified`, it means every
+-- mapped announcement looked deleted AND public.announcements read back empty.
+-- The route will not retract anything on that evidence, because a read that
+-- fails in this stack does not raise — it returns an empty list, silently, on a
+-- missing SELECT grant or a schema cache that has not seen the table. Treating
+-- that as "they were all deleted" would clear the channel in one tick.
+--
+-- If you see it, the announcements table is unreadable to the service role or
+-- PostgREST has a stale cache. Check the grant by reading pg_class.relacl (NOT
+-- information_schema.role_table_grants, which reports grants that do not exist)
+-- and reload the cache with NOTIFY pgrst, 'reload schema'. It clears itself the
+-- moment one announcement row is readable.
 --
 -- ---- 5. REGISTERING COMMANDS -----------------------------------------------
 --

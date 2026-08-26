@@ -333,6 +333,17 @@ to find it by. So the mapping outlives the record on purpose, and the next tick
 sees an id that no longer resolves and retracts it. Same for a deleted
 tournament and its scheduled event.
 
+**A sync that answers 503 `announcements_unverified` or `tournaments_unverified`
+is refusing to retract, not failing.** It means every mapped row looked deleted
+*and* the underlying table read back empty — and in this stack a broken read
+returns an empty list rather than an error, so "they were all deleted" and "I
+cannot see the table" are the same answer. Since the second one would empty the
+channel or the Events tab in a single tick, the route declines to guess. When
+you see it, check the service role's `SELECT` grant (read `pg_class.relacl`, not
+`information_schema`) and reload the PostgREST cache with
+`NOTIFY pgrst, 'reload schema'`. It clears itself as soon as one row is
+readable.
+
 **Deleting the bot's message or event in Discord by hand is respected.** It is
 not re-posted, and an edit that arrives afterwards is recorded rather than
 retried — otherwise the sync would PATCH a dead id every few minutes forever.

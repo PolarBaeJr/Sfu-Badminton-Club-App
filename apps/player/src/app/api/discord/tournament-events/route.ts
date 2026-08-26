@@ -72,7 +72,13 @@ const CLAMP_SLACK_MS = 2 * 60_000;
 // where the second read cannot truncate. The club has never had a fraction of
 // this many tournaments; the bound exists so the sweep is safe by construction
 // rather than by assuming it.
-const MAX_MAPPED = 500;
+//
+// It doubles as a URL-length bound, which is the hazard the merge comment below
+// already names: the ids go out in the query string at ~37 bytes each, and a
+// request line past nginx's buffer comes back 414. That direction is safe (an
+// error, so a 503, so no cancellations) but it is permanent, and a relay that
+// 503s every tick is a relay that does not work. 150 ids is ~5.5KB.
+const MAX_MAPPED = 150;
 
 function parseClubTime(value: string | undefined, fallback: string): [number, number] {
   const match = /^(\d{1,2}):(\d{2})$/.exec((value ?? '').trim());
@@ -222,6 +228,41 @@ export async function GET(request: Request) {
     skipped.push({ tournamentId: '*', reason: 'mapping_cap_reached' });
   }
 
+  // THE SWEEP FIRES ONLY ON POSITIVE EVIDENCE THAT `tournaments` IS READABLE.
+  // Zero rows is not that evidence.
+  //
+  // MAX_MAPPED defends against a TRUNCATED read; this defends against the one
+  // that has actually bitten this codebase, three times: an EMPTY LIST with no
+  // error — a missing grant, or a schema cache that has not seen the table.
+  // Both reads above hit `tournaments`, so if that read is broken byId is empty,
+  // mapped is full, and the loop below cancels every Discord event the club has,
+  // while the error branch never fires because there is no error.
+  //
+  // A non-empty byId proves the table answered. When it is empty, one unfiltered
+  // read decides: any tournament at all means reads work and the absences are
+  // real; none means an emptied table and a broken one are indistinguishable
+  // from here, and guessing costs more than waiting a tick.
+  let sweepable = byId.size > 0;
+
+  if (!sweepable && mapped.size > 0) {
+    const { data: anyRow, error: livenessError } = await supabase
+      .from('tournaments')
+      .select('id')
+      .limit(1);
+
+    sweepable = !livenessError && ((anyRow ?? []) as { id: string }[]).length > 0;
+
+    if (!sweepable) {
+      console.error(
+        `[discord] tournament-events: all ${mapped.size} mapped tournament(s) look ` +
+          'deleted and public.tournaments reads as empty — refusing to cancel on ' +
+          'evidence this weak. Check the SELECT grant and the PostgREST schema ' +
+          `cache. ${livenessError?.message ?? ''}`
+      );
+      return NextResponse.json({ error: 'tournaments_unverified' }, { status: 503 });
+    }
+  }
+
   // DELETED OUTRIGHT, which the loop below cannot see because there is no row
   // left to iterate.
   //
@@ -231,8 +272,10 @@ export async function GET(request: Request) {
   // the one that leaves its Discord event up forever — archiving, suspending and
   // completing all take it down.
   //
-  // Safe only because of MAX_MAPPED: otherwise "absent from byId" could mean
-  // "truncated at PGRST_DB_MAX_ROWS" and this would cancel everything.
+  // "Absent from byId" is only allowed to mean "deleted" because of the two
+  // guards above: MAX_MAPPED, so it cannot mean "truncated at
+  // PGRST_DB_MAX_ROWS", and the liveness check, so it cannot mean "the read
+  // returned nothing and did not say why".
   for (const [tournamentId, existing] of mapped) {
     if (byId.has(tournamentId)) continue;
     actions.push({
