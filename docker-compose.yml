@@ -203,10 +203,24 @@ services:
       # A bare TCP dial would call a bot that cannot reach the app API healthy.
       proxy.health:     "/health"
       proxy.service:    "badminton-discord-bot"
-      # DELIBERATELY NO proxy.unscalable. This is an HTTP interactions endpoint,
-      # not a gateway bot, so it holds no connection and replicas are safe. Note
-      # any compose recreate silently drops a scaled service back to one replica
-      # while the site keeps returning 200 - count containers after deploying.
+      # UNSCALABLE, and this reversed a previous decision. The old comment here
+      # read "no connection held, so replicas are safe", which was true until
+      # /bug grew a screenshot. That flow is TWO interactions -- the command
+      # opens a modal, the submit arrives as a separate HTTP request -- bridged
+      # by a nonce in an in-memory Map (apps/bot/src/commands.ts). Discord
+      # load-balances the two requests independently, so with N replicas the
+      # submit lands on the process holding the picture only 1 time in N and
+      # the screenshot is silently dropped the rest of the time.
+      #
+      # Not hypothetical: two racing dashboard toggles briefly scaled the
+      # staging bot to ~9 containers on 2026-08-26. At 2 replicas half the
+      # screenshots vanish; at 9, eight in nine.
+      #
+      # The report itself is never at risk -- only the picture -- and the
+      # member is told when one is dropped. To lift this, make the bridge
+      # durable (a table keyed by nonce) and remove this label; nothing else
+      # in the bot holds cross-request state.
+      proxy.unscalable: "true"
       proxy.autoupdate: "true"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
