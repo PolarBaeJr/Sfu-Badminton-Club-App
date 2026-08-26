@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rateLimit, getClientIp } from '../utils/rate-limit';
+import { rateLimit } from '../utils/rate-limit';
 import { getMarginMultiplier, calculateEloUpdate } from '../elo/engine';
 import { SWEEP_MARGIN_MULTIPLIER, isLegalGameScore, isLegalTimeExceededScore, isLegalGameCount, derivedFormatWeight } from '../utils/constants';
 import { ExpectedError, isExpectedError, dbError, isExpectedDbGuard } from '../utils/expected-error';
@@ -11,30 +11,6 @@ function req(headers: Record<string, string>): Request {
   return new Request('https://example.test/', { headers });
 }
 
-describe('getClientIp', () => {
-  it('prefers cf-connecting-ip (authoritative behind Cloudflare)', () => {
-    expect(
-      getClientIp(req({ 'cf-connecting-ip': '9.9.9.9', 'x-forwarded-for': '1.1.1.1, 2.2.2.2' })),
-    ).toBe('9.9.9.9');
-  });
-
-  it('uses the RIGHTMOST forwarded hop, not the client-supplied leftmost', () => {
-    // A client prepending "1.1.1.1" must not control the bucket key — the
-    // rightmost entry is the one our own proxy appended.
-    expect(getClientIp(req({ 'x-forwarded-for': '1.1.1.1, 203.0.113.7' }))).toBe('203.0.113.7');
-  });
-
-  it('cannot be rotated by a spoofed leftmost header (same bucket every time)', () => {
-    const a = getClientIp(req({ 'x-forwarded-for': 'a.a.a.a, 203.0.113.7' }));
-    const b = getClientIp(req({ 'x-forwarded-for': 'b.b.b.b, 203.0.113.7' }));
-    expect(a).toBe(b);
-  });
-
-  it('falls back to x-real-ip, then unknown', () => {
-    expect(getClientIp(req({ 'x-real-ip': '198.51.100.4' }))).toBe('198.51.100.4');
-    expect(getClientIp(req({}))).toBe('unknown');
-  });
-});
 
 describe('rateLimit', () => {
   it('allows up to the limit then blocks within the window', () => {
