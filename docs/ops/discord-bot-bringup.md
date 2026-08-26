@@ -45,7 +45,15 @@ In the Discord Developer Portal:
 3. **General Information** → copy **Application ID** (`DISCORD_APPLICATION_ID`)
    and **Public Key** (`DISCORD_PUBLIC_KEY`).
 4. Invite it to your test server with the `bot` and `applications.commands`
-   scopes and the **Manage Roles** permission.
+   scopes and the **Manage Roles** and **Manage Events** permissions.
+
+   Manage Events is what lets the bot create the scheduled event a tournament
+   produces when it goes active (00169). It is easy to leave off, and the
+   symptom is not an error anybody sees -- the Events tab simply stays empty --
+   so the bot checks for the bit before it tries and logs
+   `missing MANAGE_EVENTS` with the fix. A server invited before that migration
+   can be repaired without re-inviting: **Server Settings -> Roles -> (the bot's
+   role) -> Manage Events**.
 
 ## 2. Migrations
 
@@ -57,12 +65,23 @@ order, and **only** these:
 | `00165_discord_links.sql` | the link table and its tombstones |
 | `00166_discord_nightly_sync.sql` | the pg_cron schedule, plus two `cron_config` rows |
 | `00167_discord_runtime_config.sql` | guilds, roles, settings |
+| `00168_discord_self_roles.sql` | the self-serve ping roles and the session-ping schedule |
+| `00169_discord_tournament_events.sql` | the tournament -> Discord scheduled event mapping, and its schedule |
 
 > ### ⚠️ Pause the prod → staging snapshot before running these on staging
 >
 > The snapshot does `DROP SCHEMA public CASCADE` at 04:00 and then restores
-> prod's `public` schema on top. All four config tables live in `public`:
-> `discord_guilds`, `discord_guild_roles`, `discord_settings`, `cron_config`.
+> prod's `public` schema on top. Every table this bot keeps state in lives in
+> `public`: `discord_guilds`, `discord_guild_roles`, `discord_settings`,
+> `cron_config`, and — since 00168 and 00169 — `discord_self_roles`,
+> `discord_session_pings` and `discord_tournament_events`.
+>
+> The last two make the consequence more than "lose the config". They are
+> IDEMPOTENCY records: `discord_session_pings` is the only thing stopping a
+> session being pinged again, and `discord_tournament_events` is the only thing
+> stopping a second Discord event being created for a tournament that already
+> has one. Inheriting prod's copies of those means staging believes prod's work
+> was its own.
 >
 > So the damage is not just that staging's rows are erased — **staging inherits
 > production's**. It would come up holding prod's guild id, prod's role ids,

@@ -43,6 +43,18 @@ const COLOR_PARTIAL = 0xf1c40f;
 const COLOR_FAILED = 0xe74c3c;
 const COLOR_NEUTRAL = 0x95a5a6;
 
+/**
+ * SFU red, the app's accent — used for an UNLINK, which is the one member event
+ * whose colour should not come from whether it worked.
+ *
+ * Green on "Account unlinked" is technically accurate and reads wrong: green in
+ * this channel means "all good", and somebody scanning the log sees a
+ * disconnection reported in the colour of success. The severity ladder still
+ * wins over it, so a failed or partly refused unlink is amber or error-red as
+ * before — this only replaces the all-clear.
+ */
+const COLOR_CLUB_RED = 0xcc0000;
+
 export interface Embed {
   title: string;
   description?: string;
@@ -162,10 +174,16 @@ export function buildAuditEmbed(event: AuditEvent, now: Date): Embed {
   // never having been called at all.
   const asked = event.discordUserIds.map(mention).join(', ');
   const changed = memberLines(event.summary.changes);
+  // An unlink is a removal, so it is club red rather than green even when it
+  // went perfectly. Everything that actually went WRONG still outranks that.
+  const clean = !event.summary.failed && !event.summary.forbidden;
   return {
     title: MEMBER_TITLES[event.reason],
     description: changed ? `${asked}\n\n${changed}` : `${asked}\n\nNo role changes were needed.`,
-    color: colorFor(event.summary, didWork),
+    color:
+      event.reason === 'unlinked' && clean
+        ? COLOR_CLUB_RED
+        : colorFor(event.summary, didWork),
     fields: countFields(event.summary).filter((f) => f.name !== 'Members swept'),
     timestamp,
   };

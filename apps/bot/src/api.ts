@@ -175,6 +175,78 @@ export function recordPing(sessionId: string, roleIds: string[]): Promise<{ ok: 
   return send<{ ok: true }>('POST', '/api/discord/session-pings', { sessionId, roleIds });
 }
 
+export interface TournamentEventAction {
+  kind: 'create' | 'update' | 'cancel';
+  tournamentId: string;
+  /** null only for a create. */
+  discordEventId: string | null;
+  name: string;
+  /** What to SEND Discord — possibly clamped forward past a start already gone. */
+  startsAt: string;
+  endsAt: string;
+  /** What the tournament ITSELF says. Recorded, so the change detector stays stable. */
+  syncedStartsAt: string;
+  syncedEndsAt: string;
+  location: string | null;
+  description: string;
+}
+
+/** Tournaments that owe Discord a scheduled event, or a change to one. */
+export function fetchTournamentActions(guildId: string): Promise<{
+  actions: TournamentEventAction[];
+  skipped: { tournamentId: string; reason: string }[];
+}> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/tournament-events?${params}`);
+}
+
+/** Record an event Discord has ALREADY accepted. Never call this beforehand. */
+export function recordTournamentEvent(input: {
+  tournamentId: string;
+  guildId: string;
+  discordEventId: string;
+  name: string;
+  syncedStartsAt: string;
+  syncedEndsAt: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/tournament-events', input);
+}
+
+/** Forget a mapping, after the Discord event is gone. */
+export function clearTournamentEvent(
+  tournamentId: string,
+  guildId: string
+): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ tournamentId, guildId });
+  return send<{ ok: true }>('DELETE', `/api/discord/tournament-events?${params}`);
+}
+
+export interface TournamentSummary {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string | null;
+  events: string[];
+  registrationOpen: boolean;
+  /** null for an unlinked caller: "we do not know", not "no". */
+  eligible: boolean | null;
+}
+
+/**
+ * Upcoming tournaments, annotated for THIS caller.
+ *
+ * The id is required rather than optional for the same reason fetchSessions's
+ * is: a new call site that omitted it would silently get the anonymous view.
+ */
+export function fetchTournaments(
+  discordUserId: string | null
+): Promise<{ tournaments: TournamentSummary[]; linked: boolean }> {
+  return get<{ tournaments: TournamentSummary[]; linked: boolean }>(
+    '/api/discord/tournaments',
+    discordUserId
+  );
+}
+
 export function fetchLeaderboard(
   ladder: string,
   page: number

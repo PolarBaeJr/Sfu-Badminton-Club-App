@@ -12,6 +12,7 @@ import {
 import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { reconcile } from './reconcile.js';
 import { runSessionPings } from './session-pings.js';
+import { runTournamentEvents } from './tournament-events.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -214,6 +215,23 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       console.error('[bot] session pings failed:', error);
       return send(res, 500, { error: 'session_pings_failed' });
+    }
+  }
+
+  // Tournament scheduled events, driven by pg_cron every 15 minutes. Polled
+  // rather than pushed when an exec hits Activate, so a bot that happens to be
+  // restarting at that moment causes a delay instead of a lost announcement
+  // nobody would notice was lost.
+  if (req.method === 'POST' && req.url === '/tournament-events') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runTournamentEvents();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] tournament events failed:', error);
+      return send(res, 500, { error: 'tournament_events_failed' });
     }
   }
 

@@ -19,6 +19,12 @@ export interface DiscordRole {
    * Nitro booster role. Nobody can assign these, including us.
    */
   managed?: boolean;
+  /**
+   * The role's permission mask, as a DECIMAL STRING — Discord sends it that way
+   * because it is 64 bits wide and JSON numbers are not. Read by
+   * hasManageEvents; parse it with BigInt, never Number.
+   */
+  permissions?: string;
 }
 
 /**

@@ -6,12 +6,14 @@ import {
   fetchLeaderboard,
   fetchSelfRoles,
   fetchSessions,
+  fetchTournaments,
   removeSelfRole,
   SweepManagedRoleError,
   AlreadyLinkedError,
   mintLinkToken,
   writeGuildConfig,
   type SessionSummary,
+  type TournamentSummary,
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
@@ -113,6 +115,11 @@ export const COMMAND_DEFINITIONS = [
   {
     name: 'sessions',
     description: 'Upcoming club sessions',
+    options: [],
+  },
+  {
+    name: 'tournaments',
+    description: 'Upcoming club tournaments',
     options: [],
   },
   {
@@ -416,6 +423,69 @@ export async function handleSessions(context: InteractionContext) {
     color: CLUB_RED,
     description: sessions.map(formatSession).join('\n\n'),
     footer: { text: footer },
+  });
+}
+
+/**
+ * A tournament's dates, as a date and not an instant.
+ *
+ * <t:unix:F> is right for a session, which starts at a specific minute. A
+ * tournament runs a day or a weekend, and rendering it as "Saturday 9:00 AM" in
+ * each reader's timezone would state a start time the club has not actually
+ * committed to — the schema stores DATE, with no time of day at all. <t:unix:D>
+ * shows the date alone, which is the whole of what is known.
+ */
+function formatTournamentDates(t: TournamentSummary): string {
+  // Noon UTC, not midnight: midnight on the club's date is the previous day in
+  // every timezone west of it, so a reader in Vancouver would see a tournament
+  // starting the day before the website says.
+  const stamp = (date: string) => Math.floor(Date.parse(`${date}T12:00:00Z`) / 1000);
+  const start = `<t:${stamp(t.startDate)}:D>`;
+  if (!t.endDate || t.endDate === t.startDate) return start;
+  return `${start} – <t:${stamp(t.endDate)}:D>`;
+}
+
+function formatTournament(t: TournamentSummary): string {
+  const parts = [formatTournamentDates(t)];
+  if (t.events.length > 0) parts.push(`${t.events.length} event${t.events.length === 1 ? '' : 's'}`);
+  if (t.registrationOpen) parts.push('entries open');
+
+  // WHY INELIGIBILITY IS A NOTE AND NOT A FILTER. allowed_memberships is an
+  // ENTRY rule — the registration path reads it and refuses — not a visibility
+  // one, and the website shows every tournament to every member. Hiding rows
+  // here would make Discord show LESS than the site, and the member would find
+  // out they cannot enter at the click instead of now.
+  const note = t.eligible === false ? '\n_Not open to your membership type._' : '';
+
+  return `**${t.name}**\n${parts.join(' · ')}${note}`;
+}
+
+/**
+ * EPHEMERAL, for a reason that is one step removed from /sessions'.
+ *
+ * There is no leak to prevent here — the tournament list is the same for
+ * everybody, because the column that pretended to gate it was dropped in 00109
+ * and the website filters nothing. What IS per-caller is the eligibility note,
+ * and a public reply would announce to the channel which membership type the
+ * caller holds. That is nobody else's business, and it would arrive as a side
+ * effect of running a command about tournaments.
+ */
+export async function handleTournaments(context: InteractionContext) {
+  const { tournaments, linked } = await fetchTournaments(context.discordUserId);
+
+  if (tournaments.length === 0) {
+    return ephemeral('No tournaments are scheduled right now.');
+  }
+
+  return ephemeralEmbed({
+    title: 'Upcoming tournaments',
+    color: CLUB_RED,
+    description: tournaments.map(formatTournament).join('\n\n'),
+    footer: {
+      text: linked
+        ? 'Enter on the website'
+        : 'Run /link to see which of these you can enter.',
+    },
   });
 }
 
@@ -916,6 +986,8 @@ export async function dispatch(
         return await handleLeaderboard(options);
       case 'sessions':
         return await handleSessions(context);
+      case 'tournaments':
+        return await handleTournaments(context);
       case 'rolepicker':
         return await handleRolePicker(options, context);
       case 'link':
