@@ -4,6 +4,7 @@ import {
   deleteLink,
   fetchLeaderboard,
   fetchSessions,
+  AlreadyLinkedError,
   mintLinkToken,
   writeGuildConfig,
   type SessionSummary,
@@ -230,7 +231,23 @@ export async function handleLink(context: InteractionContext) {
     return ephemeral("Couldn't work out who you are on Discord. Try again.");
   }
 
-  const { url, expiresAt } = await mintLinkToken(context.discordUserId, context.guildId);
+  let url: string;
+  let expiresAt: string;
+  try {
+    ({ url, expiresAt } = await mintLinkToken(context.discordUserId, context.guildId));
+  } catch (error) {
+    // Caught HERE rather than in dispatch, which turns everything into
+    // "couldn't reach the club app" -- true for a timeout, false for a
+    // deliberate 409. Re-thrown otherwise so real faults keep their handling.
+    if (!(error instanceof AlreadyLinkedError)) throw error;
+    return ephemeral(
+      'Your Discord account is already connected to a club account.\n\n' +
+        'Use **/unlink** first if you want to connect a different one. ' +
+        'To move your club account to a different Discord account, run **/link** ' +
+        'from that account instead.'
+    );
+  }
+
   const minutes = Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 60_000));
 
   return {

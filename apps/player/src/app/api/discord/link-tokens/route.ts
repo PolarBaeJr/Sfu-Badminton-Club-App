@@ -52,6 +52,43 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'invalid_body' }, { status: 400 });
   }
 
+  // ALREADY CONNECTED? Refuse before minting.
+  //
+  // Checked against the database, not against the Discord role: the role is
+  // derived from this table by the sweep and can drift (somebody removes it by
+  // hand, a sweep fails), so the role answers "what does Discord show" while
+  // this answers "is this account connected", which is the actual question.
+  //
+  // Keyed on the CALLING Discord account, which is what keeps the documented
+  // account-move working. 00165 allows re-linking to replace the row, and the
+  // way somebody moves to a new Discord account is to run /link from the NEW
+  // one -- that account has no row here, so it is not blocked. Only re-running
+  // /link on an account that is already connected is, and for that the honest
+  // answer is /unlink first.
+  //
+  // Not a security control. consume_discord_link_token re-checks ownership and
+  // raises if the account belongs to a different member; this exists so the
+  // member is told plainly instead of being handed a token that cannot work.
+  const existing = await createServiceRoleClient()
+    .from('player_discord_links')
+    .select('discord_user_id')
+    .eq('discord_user_id', discordUserId)
+    .maybeSingle();
+
+  if (existing.error) {
+    // Named for the same reason the mint failure is: a silent failure here
+    // would fall through and hand out a token on a table read that did not work.
+    console.error('[discord] link precheck failed:', existing.error.message);
+    return NextResponse.json(
+      { error: 'precheck_failed', detail: existing.error.message },
+      { status: 503 }
+    );
+  }
+
+  if (existing.data) {
+    return NextResponse.json({ error: 'already_linked' }, { status: 409 });
+  }
+
   // 32 bytes, matching DISCORD_LINK_TOKEN_REGEX. crypto.getRandomValues rather
   // than Math.random for the obvious reason: this string is the entire proof
   // that the person on the website is the person who ran the command.

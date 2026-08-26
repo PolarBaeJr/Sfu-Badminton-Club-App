@@ -38,6 +38,15 @@ export interface SessionSummary {
 
 export class AppApiError extends Error {}
 
+/**
+ * The caller's Discord account is already connected to a club account.
+ *
+ * NOT an AppApiError. dispatch() renders every AppApiError as "couldn't reach
+ * the club app", which would be a lie here -- the app answered, clearly, and
+ * the answer was "no". Kept separate so handleLink can say what is true.
+ */
+export class AlreadyLinkedError extends Error {}
+
 // Deliberately short. Discord's interaction deadline is 3 seconds end to end, so
 // a request that has not answered in 2.5s cannot be rendered in time anyway — and
 // failing fast leaves room to reply with something useful instead of timing out
@@ -182,6 +191,12 @@ export async function mintLinkToken(
     body: JSON.stringify({ discordUserId, guildId }),
     signal: AbortSignal.timeout(2_000),
   });
+  // 409 is the app declining on purpose, not a fault: this Discord account
+  // already has a link row. Distinguished from every other non-ok status so
+  // the member is told to /unlink rather than told the app is down.
+  if (response.status === 409) {
+    throw new AlreadyLinkedError('already linked');
+  }
   if (!response.ok) {
     throw new AppApiError(`POST /api/discord/link-tokens -> ${response.status}`);
   }

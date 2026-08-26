@@ -128,3 +128,45 @@ describe('/unlink', () => {
     expect(clearRevocations).not.toHaveBeenCalled();
   });
 });
+
+describe('/link when the caller is already connected', () => {
+  it('says so, and offers no button', async () => {
+    const { AlreadyLinkedError } = await import('../api.js');
+    mintLinkToken.mockRejectedValue(new AlreadyLinkedError('already linked'));
+
+    const { handleLink } = await import('../commands.js');
+    const reply = await handleLink({ discordUserId: '42', guildId: 'g1' });
+
+    const content = JSON.stringify(reply);
+    expect(content).toMatch(/already connected/i);
+    expect(content).toMatch(/unlink/i);
+    // A button here would hand out a link that cannot be redeemed.
+    expect(reply.data.components).toBeUndefined();
+    // Ephemeral, like every other reply naming the caller's own account.
+    expect(reply.data.flags).toBe(64);
+  });
+
+  it('explains how to move to a different Discord account', async () => {
+    // The guard is keyed on the calling account, so running /link from the new
+    // account still works. If the message did not say that, the only advice on
+    // screen would be /unlink, which is the wrong move for a member who wants
+    // to keep their club account and change Discord accounts.
+    const { AlreadyLinkedError } = await import('../api.js');
+    mintLinkToken.mockRejectedValue(new AlreadyLinkedError('already linked'));
+
+    const { handleLink } = await import('../commands.js');
+    const reply = await handleLink({ discordUserId: '42', guildId: 'g1' });
+
+    expect(JSON.stringify(reply)).toMatch(/from that account/i);
+  });
+
+  it('does not swallow a real failure as "already connected"', async () => {
+    const { AppApiError } = await import('../api.js');
+    mintLinkToken.mockRejectedValue(new AppApiError('POST /api/discord/link-tokens -> 503'));
+
+    const { handleLink } = await import('../commands.js');
+
+    await expect(handleLink({ discordUserId: '42', guildId: 'g1' })).rejects.toThrow(/503/);
+  });
+});
+
