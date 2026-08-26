@@ -53,7 +53,7 @@ beforeEach(() => {
   loadConfig.mockResolvedValue({ registry: { g1: {} }, auditChannelId: null });
   fetchAnnouncementActions.mockResolvedValue({ actions: [POST_ACTION], skipped: [] });
   postMessage.mockResolvedValue('m1');
-  editMessage.mockResolvedValue(true);
+  editMessage.mockResolvedValue('ok');
   deleteMessage.mockResolvedValue(true);
   recordAnnouncementPost.mockResolvedValue({ ok: true });
   clearAnnouncementPost.mockResolvedValue({ ok: true });
@@ -136,6 +136,49 @@ describe('runAnnouncements', () => {
     expect(result.edited).toBe(1);
   });
 
+  it('RECORDS an edit whose message is gone, rather than retrying it forever', async () => {
+    // The loop this prevents: somebody deletes the relayed message by hand, the
+    // author then corrects the announcement on the website, and every tick after
+    // that PATCHes a dead id. Unlike a post — which falls out of the 72-hour
+    // lookback and stops being due — the mapping read has no time bound, so for
+    // an announcement with no expiry the retry never ends.
+    //
+    // Recording the new values settles the diff. Nothing is reposted, which is
+    // the documented policy for a hand-deleted relay.
+    editMessage.mockResolvedValue('gone');
+    fetchAnnouncementActions.mockResolvedValue({
+      actions: [{ ...POST_ACTION, kind: 'edit', discordMessageId: 'm1' }],
+      skipped: [],
+    });
+
+    const { runAnnouncements } = await import('../announcements.js');
+    const result = await runAnnouncements();
+
+    expect(recordAnnouncementPost).toHaveBeenCalledWith(
+      expect.objectContaining({ announcementId: 'a1', discordMessageId: 'm1' })
+    );
+    expect(postMessage).not.toHaveBeenCalled();
+    // Counted apart from a real edit: nobody saw this one change.
+    expect(result).toMatchObject({ stale: 1, edited: 0, failed: 0 });
+  });
+
+  it('does NOT record an edit Discord merely refused', async () => {
+    // The other half of the pair above. A 403 or a 500 is worth retrying and a
+    // 404 is not, so recording both would abandon changes that would have
+    // landed on the next tick.
+    editMessage.mockResolvedValue('failed');
+    fetchAnnouncementActions.mockResolvedValue({
+      actions: [{ ...POST_ACTION, kind: 'edit', discordMessageId: 'm1' }],
+      skipped: [],
+    });
+
+    const { runAnnouncements } = await import('../announcements.js');
+    const result = await runAnnouncements();
+
+    expect(recordAnnouncementPost).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ failed: 1, stale: 0, edited: 0 });
+  });
+
   it('DELETES BEFORE IT CLEARS, on a retract', async () => {
     const order: string[] = [];
     deleteMessage.mockImplementation(async () => {
@@ -194,6 +237,6 @@ describe('runAnnouncements', () => {
     const result = await runAnnouncements();
 
     expect(postMessage).not.toHaveBeenCalled();
-    expect(result).toEqual({ posted: 0, edited: 0, retracted: 0, failed: 0, skipped: 0 });
+    expect(result).toEqual({ posted: 0, edited: 0, retracted: 0, stale: 0, failed: 0, skipped: 0 });
   });
 });

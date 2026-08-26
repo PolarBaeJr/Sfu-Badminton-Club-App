@@ -31,7 +31,26 @@
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.discord_announcement_posts (
-  announcement_id    uuid NOT NULL REFERENCES public.announcements(id) ON DELETE CASCADE,
+  -- WHY THERE IS NO FOREIGN KEY ON announcement_id.
+  --
+  -- The obvious `REFERENCES public.announcements(id) ON DELETE CASCADE` is
+  -- WRONG here, and quietly so. deleteAnnouncement
+  -- (apps/admin/src/lib/actions/announcements.ts)
+  -- hard-deletes the row, so the cascade would take this mapping with it — and
+  -- the mapping is the ONLY thing that knows which message in Discord
+  -- belongs to it. The message would stay up permanently, with nothing
+  -- left to find it by.
+  --
+  -- That inverts the intent exactly. Unpublishing, expiry and narrowing the
+  -- audience all take the Discord copy down; an outright delete is the most emphatic retraction the
+  -- console offers, and it is the one case that would leave the copy standing.
+  --
+  -- So this row OUTLIVES its announcements row on purpose. The reader
+  -- (apps/player/src/app/api/discord/announcements/route.ts)
+  -- treats a mapping whose announcement_id no longer resolves as a retract,
+  -- deletes it in Discord, and clears the row afterwards — the same path as
+  -- every other retraction.
+  announcement_id    uuid NOT NULL,
   guild_id           text NOT NULL,
   channel_id         text NOT NULL,
   discord_message_id text NOT NULL,
@@ -150,6 +169,27 @@ NOTIFY pgrst, 'reload schema';
 -- not drift. To make the relay post it again, forget the mapping:
 --
 --   DELETE FROM discord_announcement_posts WHERE announcement_id = '<id>';
+--
+-- An EDIT aimed at that deleted message answers 404, and the bot records the
+-- edit anyway rather than retrying it — otherwise a corrected announcement
+-- would PATCH a dead id every five minutes for as long as it existed. It shows
+-- up in the run result as `stale` and in the log as one warning.
+--
+-- ---- 4b. THE ROWS THAT NEVER CLEAR -----------------------------------------
+--
+-- A row is removed when its message is taken down: unpublished, expired,
+-- narrowed to one division, or the announcement deleted outright. An
+-- announcement that stays published, addressed to everyone and unexpired keeps
+-- its row indefinitely — which is correct, since its message is still up.
+--
+-- The route reads at most 500 of them per tick (MAX_MAPPED), because the
+-- follow-up read resolves those ids through PostgREST and production caps a
+-- read at PGRST_DB_MAX_ROWS = 1000. Staying under the ceiling is what stops a
+-- truncated read looking like "every announcement was deleted" to the sweep
+-- that retracts orphans. At roughly a hundred announcements a year the cap is
+-- years away; if it is ever reached the route logs it and reports
+-- `mapping_cap_reached`, and the fix is to expire or delete old announcements
+-- rather than to raise the number.
 --
 -- ---- 5. REGISTERING COMMANDS -----------------------------------------------
 --

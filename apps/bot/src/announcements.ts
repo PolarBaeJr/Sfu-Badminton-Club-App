@@ -32,6 +32,8 @@ export interface AnnouncementRunResult {
   posted: number;
   edited: number;
   retracted: number;
+  /** Edits aimed at a message somebody had already deleted by hand. */
+  stale: number;
   failed: number;
   skipped: number;
 }
@@ -74,6 +76,7 @@ export async function runAnnouncements(): Promise<AnnouncementRunResult> {
     posted: 0,
     edited: 0,
     retracted: 0,
+    stale: 0,
     failed: 0,
     skipped: 0,
   };
@@ -142,6 +145,7 @@ export async function runAnnouncements(): Promise<AnnouncementRunResult> {
 
       const payload = embedFor(action);
       let discordMessageId: string | null = null;
+      let stale = false;
 
       if (action.kind === 'post') {
         discordMessageId = await api.postMessage(action.channelId, payload);
@@ -157,10 +161,33 @@ export async function runAnnouncements(): Promise<AnnouncementRunResult> {
           result.failed += 1;
           continue;
         }
-        const ok = await api.editMessage(action.channelId, action.discordMessageId, payload);
-        if (!ok) {
+        const outcome = await api.editMessage(action.channelId, action.discordMessageId, payload);
+        if (outcome === 'failed') {
           result.failed += 1;
           continue;
+        }
+        // GONE IS RECORDED, NOT RETRIED, and it is the difference between a
+        // dead id and an infinite loop.
+        //
+        // A retry cannot resurrect a message somebody deleted by hand, and the
+        // announcement's mapping row is read on EVERY tick with no time bound
+        // on it — unlike a post, which falls out of the lookback window and
+        // stops being due. So an unrecorded 404 here means a PATCH at a dead id
+        // every five minutes for as long as the announcement lives, which for
+        // one with no expiry is forever. The sequence that gets there is the
+        // ordinary one: the relayed copy looked wrong, somebody removed it,
+        // then the author fixed the source.
+        //
+        // Writing the new synced_* values settles the diff. The mapping keeps
+        // pointing at a message that no longer exists, which is exactly the
+        // documented policy — a hand-deleted relay is not reposted.
+        if (outcome === 'gone') {
+          stale = true;
+          console.warn(
+            `[bot] announcements: message ${action.discordMessageId} for ` +
+              `${action.announcementId} is gone (deleted by hand?) — recording the edit ` +
+              'so it is not retried. It will not be reposted.'
+          );
         }
         discordMessageId = action.discordMessageId;
       }
@@ -189,6 +216,7 @@ export async function runAnnouncements(): Promise<AnnouncementRunResult> {
       }
 
       if (action.kind === 'post') result.posted += 1;
+      else if (stale) result.stale += 1;
       else result.edited += 1;
     }
   }

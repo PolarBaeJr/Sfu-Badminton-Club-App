@@ -26,6 +26,8 @@ export interface TournamentRunResult {
   created: number;
   updated: number;
   cancelled: number;
+  /** Updates aimed at an event somebody had already deleted by hand. */
+  stale: number;
   failed: number;
   skipped: number;
 }
@@ -40,6 +42,7 @@ export async function runTournamentEvents(): Promise<TournamentRunResult> {
     created: 0,
     updated: 0,
     cancelled: 0,
+    stale: 0,
     failed: 0,
     skipped: 0,
   };
@@ -149,6 +152,7 @@ export async function runTournamentEvents(): Promise<TournamentRunResult> {
       };
 
       let discordEventId: string | null = null;
+      let stale = false;
 
       if (action.kind === 'create') {
         discordEventId = await api.createScheduledEvent(guildId, payload);
@@ -163,15 +167,29 @@ export async function runTournamentEvents(): Promise<TournamentRunResult> {
           result.failed += 1;
           continue;
         }
-        const ok = await api.modifyScheduledEvent(
+        const outcome = await api.modifyScheduledEvent(
           guildId,
           action.discordEventId,
           payload,
           action.patchTimes
         );
-        if (!ok) {
+        if (outcome === 'failed') {
           result.failed += 1;
           continue;
+        }
+        // Deleted from the Events tab by hand. Recorded rather than retried,
+        // same argument as the announcement relay: a PATCH cannot bring it
+        // back, and leaving it unrecorded means re-sending the identical diff
+        // every fifteen minutes until the tournament completes. The mapping
+        // keeps its dead id, and the cancel path clears it when the tournament
+        // ends — a 404 delete already counts as done.
+        if (outcome === 'gone') {
+          stale = true;
+          console.warn(
+            `[bot] tournament events: event ${action.discordEventId} for ` +
+              `${action.tournamentId} is gone (deleted by hand?) — recording the update ` +
+              'so it is not retried. It will not be re-created.'
+          );
         }
         discordEventId = action.discordEventId;
       }
@@ -202,6 +220,7 @@ export async function runTournamentEvents(): Promise<TournamentRunResult> {
       }
 
       if (action.kind === 'create') result.created += 1;
+      else if (stale) result.stale += 1;
       else result.updated += 1;
     }
   }

@@ -71,6 +71,22 @@ const LOOKBACK_HOURS = 72;
 // message outright past it. Built to fit rather than sent hopefully.
 const MAX_BODY = 4000;
 
+// How many mapped messages one tick will look at, and it is a SAFETY BOUND
+// rather than a performance one.
+//
+// Production sets PGRST_DB_MAX_ROWS=1000 (see 00152). The orphan sweep below
+// reads the mapped announcements back with .in('id', ...) and treats anything
+// that does not come back as deleted-from-the-website — so if that read were
+// ever truncated at the ceiling, every mapping past row 1000 would look like a
+// deletion and the tick would retract the whole channel. Keeping the mapping
+// read well under the ceiling makes the second read unable to truncate, because
+// it can never be asked for more ids than this.
+//
+// Newest first, so the cap starves the settled end rather than the live one: an
+// announcement relayed months ago is the one least likely to still be changing.
+// Hitting it is reported, not swallowed.
+const MAX_MAPPED = 500;
+
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
 
@@ -93,7 +109,9 @@ export async function GET(request: Request) {
       .select(
         'announcement_id, channel_id, discord_message_id, synced_title, synced_body, synced_type'
       )
-      .eq('guild_id', guildId),
+      .eq('guild_id', guildId)
+      .order('updated_at', { ascending: false })
+      .limit(MAX_MAPPED),
   ]);
 
   // BOTH NAMED, never degraded to an empty list. A failed PostgREST read comes
@@ -171,6 +189,45 @@ export async function GET(request: Request) {
     url: string | null;
   }[] = [];
   const skipped: { announcementId: string; reason: string }[] = [];
+
+  if (mapped.size === MAX_MAPPED) {
+    // The cap above is doing something, which means the oldest mappings are not
+    // being synced this tick. Never silent: "the relay stopped noticing edits"
+    // is otherwise a bug with no evidence anywhere.
+    console.warn(
+      `[discord] announcements: ${MAX_MAPPED} mapped messages in ${guildId} — ` +
+        'at the per-tick cap, older ones are not being synced this run.'
+    );
+    skipped.push({ announcementId: '*', reason: 'mapping_cap_reached' });
+  }
+
+  // DELETED FROM THE WEBSITE ALTOGETHER, which is the one retraction the rest of
+  // this loop cannot see.
+  //
+  // The console's delete is a hard DELETE (deleteAnnouncement), and it is what
+  // an exec reaches for when the club is taking back what it said — it demands a
+  // typed reason and audits it. There is no row left to iterate, so without this
+  // the Discord copy would be the single case that survives: unpublishing,
+  // expiry and narrowing the audience all take it down, and the most emphatic
+  // retraction available would leave it standing.
+  //
+  // 00170 leaves announcement_id un-referenced precisely so the mapping outlives
+  // the announcement and this is reachable. Safe against a truncated read only
+  // because of MAX_MAPPED above — otherwise "not in byId" would mean "past row
+  // 1000" and this would empty the channel.
+  for (const [announcementId, existing] of mapped) {
+    if (byId.has(announcementId)) continue;
+    actions.push({
+      kind: 'retract',
+      announcementId,
+      channelId: existing.channel_id,
+      discordMessageId: existing.discord_message_id,
+      title: existing.synced_title,
+      body: '',
+      type: existing.synced_type,
+      url: null,
+    });
+  }
 
   for (const a of byId.values()) {
     const existing = mapped.get(a.id) ?? null;

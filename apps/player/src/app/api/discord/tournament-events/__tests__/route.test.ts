@@ -27,17 +27,25 @@ const deleted = vi.fn();
 function thenable(rows: Record<string, unknown>[], error: unknown = null) {
   const filters: [string, unknown][] = [];
   const builder: Record<string, unknown> = {};
-  for (const method of ["select", "is", "not", "gte", "lte", "in", "or", "order", "limit"]) {
+  let cap: number | null = null;
+  for (const method of ["select", "is", "not", "gte", "lte", "in", "or", "order"]) {
     builder[method] = () => builder;
   }
+  // APPLIED FOR REAL. The mapping read's .limit() is a safety bound, not a
+  // paging detail: it is what keeps the id list below PGRST_DB_MAX_ROWS, and
+  // therefore what stops a truncated read from looking like "every tournament
+  // was deleted" to the orphan sweep.
+  builder.limit = (n: number) => {
+    cap = n;
+    return builder;
+  };
   builder.eq = (column: string, value: unknown) => {
     filters.push([column, value]);
     return builder;
   };
   builder.then = (resolve: (v: unknown) => unknown) => {
-    const data = error
-      ? null
-      : rows.filter((r) => filters.every(([c, v]) => r[c] === v || c === "guild_id"));
+    const matched = rows.filter((r) => filters.every(([c, v]) => r[c] === v || c === "guild_id"));
+    const data = error ? null : cap === null ? matched : matched.slice(0, cap);
     return Promise.resolve({ data, error }).then(resolve);
   };
   return builder;
@@ -330,6 +338,50 @@ describe("GET /api/discord/tournament-events", () => {
     ];
 
     expect(only((await run()).actions).kind).toBe("cancel");
+  });
+
+  it("CANCELS an event whose tournament was DELETED outright", async () => {
+    // deleteTournament is a hard DELETE, so there is no row left for the loop
+    // to reach — and without this sweep it would be the one way of removing a
+    // tournament that left its Discord event standing forever, while archiving,
+    // suspending and completing all took it down.
+    //
+    // Reachable only because 00169 leaves tournament_id un-referenced: an
+    // ON DELETE CASCADE would take the mapping and the event id with it.
+    tournaments = [];
+    mapped = [
+      {
+        tournament_id: "t1",
+        discord_event_id: "evt-1",
+        synced_name: "Fall Open",
+        synced_starts_at: new Date().toISOString(),
+        synced_ends_at: new Date().toISOString(),
+      },
+    ];
+
+    const action = only((await run()).actions);
+    expect(action.kind).toBe("cancel");
+    expect(action.tournamentId).toBe("t1");
+    expect(action.discordEventId).toBe("evt-1");
+  });
+
+  it("CAPS the mapping read, and says when the cap bites", async () => {
+    // What makes the sweep above safe. If the mapping read could hand back more
+    // ids than the read that resolves them, everything past the ceiling would
+    // come back missing and be cancelled in one tick.
+    tournaments = [];
+    mapped = Array.from({ length: 600 }, (_, i) => ({
+      tournament_id: `t${i}`,
+      discord_event_id: `evt-${i}`,
+      synced_name: "Fall Open",
+      synced_starts_at: new Date().toISOString(),
+      synced_ends_at: new Date().toISOString(),
+    }));
+
+    const { actions, skipped } = await run();
+
+    expect(actions).toHaveLength(500);
+    expect(skipped).toContainEqual({ tournamentId: "*", reason: "mapping_cap_reached" });
   });
 
   it("FAILS CLOSED when the mapping read errors", async () => {

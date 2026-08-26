@@ -324,6 +324,20 @@ eligible-only notice is skipped and logged as `narrow_audience`, because that
 rule is matched against a value on the reading member and no Discord channel
 carries one. That is the design, not a gap; see 00170's header.
 
+**Deleting an announcement in the console takes its Discord copy down too**, and
+that is why neither mapping table has a foreign key to the row it maps. The
+console's delete is a hard `DELETE`; an `ON DELETE CASCADE` would remove the
+mapping first, and the mapping is the only thing that knows which Discord
+message or event belongs to the row — the copy would stay up with nothing left
+to find it by. So the mapping outlives the record on purpose, and the next tick
+sees an id that no longer resolves and retracts it. Same for a deleted
+tournament and its scheduled event.
+
+**Deleting the bot's message or event in Discord by hand is respected.** It is
+not re-posted, and an edit that arrives afterwards is recorded rather than
+retried — otherwise the sync would PATCH a dead id every few minutes forever.
+Those show up in a run result as `stale`.
+
 ---
 
 ## 8. Check it worked

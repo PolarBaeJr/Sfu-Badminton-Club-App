@@ -26,7 +26,26 @@
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.discord_tournament_events (
-  tournament_id    uuid NOT NULL REFERENCES public.tournaments(id) ON DELETE CASCADE,
+  -- WHY THERE IS NO FOREIGN KEY ON tournament_id.
+  --
+  -- The obvious `REFERENCES public.tournaments(id) ON DELETE CASCADE` is
+  -- WRONG here, and quietly so. deleteTournament
+  -- (apps/admin/src/lib/actions/tournaments.ts)
+  -- hard-deletes the row, so the cascade would take this mapping with it — and
+  -- the mapping is the ONLY thing that knows which scheduled event in Discord
+  -- belongs to it. The scheduled event would stay up permanently, with nothing
+  -- left to find it by.
+  --
+  -- That inverts the intent exactly. Archiving, suspending and completing all
+  -- take the Discord copy down; an outright delete is the most emphatic retraction the
+  -- console offers, and it is the one case that would leave the copy standing.
+  --
+  -- So this row OUTLIVES its tournaments row on purpose. The reader
+  -- (apps/player/src/app/api/discord/tournament-events/route.ts)
+  -- treats a mapping whose tournament_id no longer resolves as a cancel,
+  -- deletes it in Discord, and clears the row afterwards — the same path as
+  -- every other retraction.
+  tournament_id    uuid NOT NULL,
   guild_id         text NOT NULL,
   discord_event_id text NOT NULL,
 

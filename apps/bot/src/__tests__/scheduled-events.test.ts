@@ -55,3 +55,27 @@ describe('modifyScheduledEvent', () => {
     expect(body).not.toHaveProperty('entity_metadata');
   });
 });
+
+describe('modifyScheduledEvent outcomes', () => {
+  function apiForStatus(status: number) {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(new Response('{}', { status }))
+    ) as unknown as typeof fetch;
+    return apiWith(fetchImpl);
+  }
+
+  it('answers ok when the PATCH lands', async () => {
+    expect(await apiForStatus(200).modifyScheduledEvent('g1', 'evt-1', EVENT)).toBe('ok');
+  });
+
+  it("answers 'gone' for an event somebody deleted by hand", async () => {
+    // Same argument as editMessage: a 404 cannot be fixed by trying again, and
+    // a caller that cannot see the difference re-sends the identical diff every
+    // fifteen minutes until the tournament finishes.
+    expect(await apiForStatus(404).modifyScheduledEvent('g1', 'evt-1', EVENT)).toBe('gone');
+  });
+
+  it("answers 'failed' for a refusal that a later tick might not get", async () => {
+    expect(await apiForStatus(403).modifyScheduledEvent('g1', 'evt-1', EVENT)).toBe('failed');
+  });
+});

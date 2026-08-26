@@ -31,17 +31,26 @@ const deleted = vi.fn();
 function thenable(rows: Record<string, unknown>[], error: unknown = null) {
   const filters: [string, unknown][] = [];
   const builder: Record<string, unknown> = {};
-  for (const m of ["select", "is", "not", "gte", "lte", "in", "or", "order", "limit"]) {
+  let cap: number | null = null;
+  for (const m of ["select", "is", "not", "gte", "lte", "in", "or", "order"]) {
     builder[m] = () => builder;
   }
+  // APPLIED FOR REAL, unlike the rest. The mapping read's .limit() is a safety
+  // bound rather than a tidy-up — it is what keeps the second read below
+  // PGRST_DB_MAX_ROWS, and therefore what stops a truncated read looking like
+  // "every announcement was deleted". A stub that ignored it could not tell a
+  // route that had dropped the cap from one that still had it.
+  builder.limit = (n: number) => {
+    cap = n;
+    return builder;
+  };
   builder.eq = (column: string, value: unknown) => {
     filters.push([column, value]);
     return builder;
   };
   builder.then = (resolve: (v: unknown) => unknown) => {
-    const data = error
-      ? null
-      : rows.filter((r) => filters.every(([c, v]) => r[c] === v || c === "guild_id"));
+    const matched = rows.filter((r) => filters.every(([c, v]) => r[c] === v || c === "guild_id"));
+    const data = error ? null : cap === null ? matched : matched.slice(0, cap);
     return Promise.resolve({ data, error }).then(resolve);
   };
   return builder;
@@ -195,6 +204,54 @@ describe("GET /api/discord/announcements — the audience gate", () => {
     const action = only((await run()).actions);
     expect(action.kind).toBe("retract");
     expect(action.discordMessageId).toBe("m1");
+  });
+
+  it("RETRACTS a message whose announcement was DELETED outright", async () => {
+    // The one retraction nothing else in the route can see. deleteAnnouncement
+    // is a hard DELETE that demands a typed reason and audits it — the club
+    // taking back what it said — and it leaves no row to iterate. Without this
+    // sweep the most emphatic retraction the console offers would be the ONLY
+    // one that left the Discord copy standing, while unpublishing, expiry and
+    // narrowing the audience all took it down.
+    //
+    // Reachable at all only because 00170 leaves announcement_id un-referenced:
+    // an ON DELETE CASCADE would take the mapping with the announcement, and the
+    // message id would be gone with it.
+    announcements = [];
+    mapped = [mapping()];
+
+    const action = only((await run()).actions);
+    expect(action.kind).toBe("retract");
+    expect(action.announcementId).toBe("a1");
+    expect(action.discordMessageId).toBe("m1");
+    expect(action.channelId).toBe("c1");
+  });
+
+  it("does not retract an announcement that is merely unchanged", async () => {
+    // The other side of the sweep above. "Not in the fresh window" must not be
+    // read as "deleted" — an announcement published last month is still up.
+    mapped = [mapping()];
+
+    expect((await run()).actions).toEqual([]);
+  });
+
+  it("CAPS the mapping read, and says when the cap bites", async () => {
+    // The cap is what makes the orphan sweep safe. Production runs
+    // PGRST_DB_MAX_ROWS=1000; if the mapping read could return more ids than
+    // the read that resolves them, every id past the ceiling would come back
+    // missing and be retracted — the whole channel emptied in one tick. Keeping
+    // the mapping read well under the ceiling makes that arithmetically
+    // impossible, so the cap is a security property and not a paging detail.
+    mapped = Array.from({ length: 600 }, (_, i) =>
+      mapping({ announcement_id: `a${i}`, discord_message_id: `m${i}` }),
+    );
+    announcements = [];
+
+    const { actions, skipped } = await run();
+
+    // 500, not 600: the read was capped before the ids were resolved.
+    expect(actions).toHaveLength(500);
+    expect(skipped).toContainEqual({ announcementId: "*", reason: "mapping_cap_reached" });
   });
 
   it("never relays a DRAFT", async () => {

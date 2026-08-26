@@ -61,7 +61,7 @@ beforeEach(() => {
   fetchTournamentActions.mockResolvedValue({ actions: [CREATE], skipped: [] });
   hasManageEvents.mockResolvedValue(true);
   createScheduledEvent.mockResolvedValue('evt-1');
-  modifyScheduledEvent.mockResolvedValue(true);
+  modifyScheduledEvent.mockResolvedValue('ok');
   deleteScheduledEvent.mockResolvedValue(true);
   recordTournamentEvent.mockResolvedValue({ ok: true });
   clearTournamentEvent.mockResolvedValue({ ok: true });
@@ -244,5 +244,41 @@ describe('tournament events', () => {
     await runTournamentEvents();
 
     expect(modifyScheduledEvent).toHaveBeenCalledWith('g1', 'evt-1', expect.anything(), false);
+  });
+
+  it('RECORDS an update whose event is gone, rather than retrying it forever', async () => {
+    // An exec deleting the event from the Events tab by hand leaves a mapping
+    // pointing at a 404. A PATCH cannot bring it back, so re-sending the same
+    // diff every fifteen minutes until the tournament completes achieves
+    // nothing. Recording settles it; the cancel path clears the row later,
+    // where a 404 delete already counts as done.
+    modifyScheduledEvent.mockResolvedValue('gone');
+    fetchTournamentActions.mockResolvedValue({
+      actions: [{ ...CREATE, kind: 'update', discordEventId: 'evt-1' }],
+      skipped: [],
+    });
+
+    const { runTournamentEvents } = await import('../tournament-events.js');
+    const result = await runTournamentEvents();
+
+    expect(recordTournamentEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ tournamentId: 't1', discordEventId: 'evt-1' })
+    );
+    expect(createScheduledEvent).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ stale: 1, updated: 0, failed: 0 });
+  });
+
+  it('does NOT record an update Discord merely refused', async () => {
+    modifyScheduledEvent.mockResolvedValue('failed');
+    fetchTournamentActions.mockResolvedValue({
+      actions: [{ ...CREATE, kind: 'update', discordEventId: 'evt-1' }],
+      skipped: [],
+    });
+
+    const { runTournamentEvents } = await import('../tournament-events.js');
+    const result = await runTournamentEvents();
+
+    expect(recordTournamentEvent).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ failed: 1, stale: 0, updated: 0 });
   });
 });

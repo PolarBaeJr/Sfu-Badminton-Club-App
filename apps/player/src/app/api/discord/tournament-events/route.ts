@@ -64,6 +64,16 @@ const MAX_DESCRIPTION = 1000;
 // round trip and any drift without pushing the event visibly late.
 const CLAMP_SLACK_MS = 2 * 60_000;
 
+// How many mapped events one tick will look at. A SAFETY BOUND, not a
+// performance one: production sets PGRST_DB_MAX_ROWS=1000 (00152), and the
+// orphan sweep below reads the mapped tournaments back with .in('id', ...) and
+// treats anything missing as deleted. A truncated read would make every mapping
+// past the ceiling look deleted and cancel the lot, so the mapping read is kept
+// where the second read cannot truncate. The club has never had a fraction of
+// this many tournaments; the bound exists so the sweep is safe by construction
+// rather than by assuming it.
+const MAX_MAPPED = 500;
+
 function parseClubTime(value: string | undefined, fallback: string): [number, number] {
   const match = /^(\d{1,2}):(\d{2})$/.exec((value ?? '').trim());
   const source = match ? value!.trim() : fallback;
@@ -126,7 +136,9 @@ export async function GET(request: Request) {
     supabase
       .from('discord_tournament_events')
       .select('tournament_id, discord_event_id, synced_name, synced_starts_at, synced_ends_at')
-      .eq('guild_id', guildId),
+      .eq('guild_id', guildId)
+      .order('updated_at', { ascending: false })
+      .limit(MAX_MAPPED),
   ]);
 
   // BOTH NAMED, never degraded to an empty list. A failed PostgREST read
@@ -201,6 +213,42 @@ export async function GET(request: Request) {
     description: string;
   }[] = [];
   const skipped: { tournamentId: string; reason: string }[] = [];
+
+  if (mapped.size === MAX_MAPPED) {
+    console.warn(
+      `[discord] tournament-events: ${MAX_MAPPED} mapped events in ${guildId} — ` +
+        'at the per-tick cap, older ones are not being synced this run.'
+    );
+    skipped.push({ tournamentId: '*', reason: 'mapping_cap_reached' });
+  }
+
+  // DELETED OUTRIGHT, which the loop below cannot see because there is no row
+  // left to iterate.
+  //
+  // deleteTournament is a hard DELETE, and 00169 deliberately does not reference
+  // tournaments(id) so this mapping survives it. Without the sweep, the one way
+  // of removing a tournament that leaves nothing behind on the website would be
+  // the one that leaves its Discord event up forever — archiving, suspending and
+  // completing all take it down.
+  //
+  // Safe only because of MAX_MAPPED: otherwise "absent from byId" could mean
+  // "truncated at PGRST_DB_MAX_ROWS" and this would cancel everything.
+  for (const [tournamentId, existing] of mapped) {
+    if (byId.has(tournamentId)) continue;
+    actions.push({
+      kind: 'cancel',
+      tournamentId,
+      discordEventId: existing.discord_event_id,
+      name: existing.synced_name,
+      startsAt: existing.synced_starts_at,
+      endsAt: existing.synced_ends_at,
+      syncedStartsAt: existing.synced_starts_at,
+      syncedEndsAt: existing.synced_ends_at,
+      patchTimes: false,
+      location,
+      description: '',
+    });
+  }
 
   for (const t of byId.values()) {
     const existing = mapped.get(t.id) ?? null;

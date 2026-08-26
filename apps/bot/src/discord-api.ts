@@ -14,6 +14,15 @@
 
 export type RoleCallResult = 'ok' | 'forbidden' | 'not_found' | 'failed';
 
+/**
+ * The outcome of writing to something that may no longer be there.
+ *
+ * 'gone' is a distinct answer from 'failed' on purpose: a retry fixes a
+ * failure and can never fix a deletion, so a caller that cannot tell them
+ * apart retries the deletion forever.
+ */
+export type MessageWriteResult = 'ok' | 'gone' | 'failed';
+
 export interface DiscordApiOptions {
   token: string;
   /** Injectable for tests; defaults to global fetch. */
@@ -223,17 +232,36 @@ export class DiscordApi {
    * Edit a message the bot itself sent. Needs no permission beyond being its
    * author — Discord refuses an edit of anybody else's message outright, with
    * no permission that grants it.
+   *
+   * THREE ANSWERS, NOT TWO, and 'gone' is the one that matters.
+   *
+   * A message somebody deleted by hand answers 404 to every subsequent PATCH.
+   * Folded into 'failed' that becomes an unbounded retry loop: nothing is
+   * recorded, the next tick computes the identical diff, and the relay hammers
+   * a dead message id every five minutes for as long as the announcement
+   * exists. The sequence that gets there is the natural one — the Discord copy
+   * looked wrong, somebody removed it, then the author corrected the source.
+   *
+   * Distinguishing it lets the caller settle the diff instead. Same reason
+   * deleteMessage below counts 404 as success.
    */
-  async editMessage(channelId: string, messageId: string, payload: unknown): Promise<boolean> {
+  async editMessage(
+    channelId: string,
+    messageId: string,
+    payload: unknown
+  ): Promise<MessageWriteResult> {
     try {
       const response = await this.request(
         'PATCH',
         `/channels/${channelId}/messages/${messageId}`,
         payload
       );
-      return response.ok;
+      if (response.ok) return 'ok';
+      if (response.status === 404) return 'gone';
+      console.error(`[bot] edit message ${messageId} in ${channelId} -> ${response.status}`);
+      return 'failed';
     } catch {
-      return false;
+      return 'failed';
     }
   }
 
@@ -339,19 +367,24 @@ export class DiscordApi {
   }
 
   /**
-   * Push changed details onto an existing event. Returns whether it landed.
+   * Push changed details onto an existing event.
    *
    * `patchTimes` false omits the schedule entirely, because Discord refuses to
    * retime an event that has already started. Sending it anyway would make
    * every rename of a running tournament fail, and the caller would retry the
    * same refused call on every tick.
+   *
+   * 'gone' is separated from 'failed' for the reason editMessage spells out: an
+   * event an exec deleted from the Events tab by hand answers 404 to every
+   * PATCH after it, and a caller that reads that as "retry me" does exactly
+   * that until the tournament finishes.
    */
   async modifyScheduledEvent(
     guildId: string,
     eventId: string,
     event: ScheduledEventInput,
     patchTimes = true
-  ): Promise<boolean> {
+  ): Promise<MessageWriteResult> {
     try {
       const response = await this.request(
         'PATCH',
@@ -372,9 +405,12 @@ export class DiscordApi {
             : {}),
         }
       );
-      return response.ok;
+      if (response.ok) return 'ok';
+      if (response.status === 404) return 'gone';
+      console.error(`[bot] modify scheduled event ${eventId} -> ${response.status}`);
+      return 'failed';
     } catch {
-      return false;
+      return 'failed';
     }
   }
 

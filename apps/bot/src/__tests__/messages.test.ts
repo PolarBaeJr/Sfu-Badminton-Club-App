@@ -23,6 +23,28 @@ describe('postMessage', () => {
   });
 });
 
+describe('editMessage', () => {
+  it('answers ok when the edit lands', async () => {
+    const { api } = apiWith(200);
+    expect(await api.editMessage('c1', 'm1', { embeds: [] })).toBe('ok');
+  });
+
+  it("SEPARATES 'gone' from 'failed', because only one of them is worth retrying", async () => {
+    // A message somebody deleted by hand answers 404 to every PATCH after it.
+    // Folded in with a real refusal, the caller retries a dead id every five
+    // minutes for as long as the announcement exists — and an announcement with
+    // no expiry exists indefinitely. The caller can only settle the diff if it
+    // can tell the two apart.
+    const { api } = apiWith(404);
+    expect(await api.editMessage('c1', 'm1', { embeds: [] })).toBe('gone');
+  });
+
+  it('reports a refusal as failed, so it is tried again', async () => {
+    const { api } = apiWith(403);
+    expect(await api.editMessage('c1', 'm1', { embeds: [] })).toBe('failed');
+  });
+});
+
 describe('deleteMessage', () => {
   it('counts 404 as success', async () => {
     // Somebody removing the message by hand has already achieved what the call
