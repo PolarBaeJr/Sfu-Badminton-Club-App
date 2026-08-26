@@ -8,11 +8,13 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-// Bug reports and feedback filed from Discord. See 00172.
+// Bug reports and feedback filed from Discord. See 00172 and 00173.
 //
 // One endpoint for /bug and /feedback alike, because they differ by a label and
-// nothing else. Write-only from the app's side: nothing reads this table yet,
-// and triage is a psql session. See the migration header.
+// nothing else. WRITE-ONLY: the row is inserted here and read back by the relay
+// (../feedback-relay), which is a separate route on a separate schedule so a
+// Discord outage cannot cost the report. Triage is that channel plus a psql
+// session; there is still no admin page.
 
 // Discord's own option cap is 6000, and the command declares max_length 1000.
 // This is the app's own bound, and 00172 has a CHECK below it again — three
@@ -20,6 +22,31 @@ export const dynamic = 'force-dynamic';
 const MAX_BODY = 2000;
 
 const KINDS = new Set(['bug', 'feedback', 'tournament_feedback', 'other']);
+
+// The modal caps the box at 100 and 00173's CHECK stops at 120. This sits
+// between them, so a title from the modal is never trimmed and a title from
+// anything else is trimmed here rather than rejected by the constraint — a
+// CHECK violation would lose the body along with the over-long title.
+const MAX_TITLE = 120;
+
+// The screenshot url, if there was one. Only ever a Discord CDN url, and the
+// relay refuses to fetch from anywhere else — but the check belongs here too,
+// because a stored url that the relay will never fetch is a column full of
+// somebody else's addresses.
+const IMAGE_HOSTS = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
+
+function cleanImageUrl(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' || !IMAGE_HOSTS.has(parsed.hostname)) return null;
+    // Signed urls are long; 1024 is well clear of a real one and well short of
+    // anything worth storing.
+    return parsed.toString().slice(0, 1024);
+  } catch {
+    return null;
+  }
+}
 
 // Per reporter, per hour. Deliberately generous: this is anti-spam, not an auth
 // gate, and somebody working through a genuinely broken page may legitimately
@@ -82,6 +109,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'empty_body' }, { status: 400 });
   }
 
+  // NO NEWLINES AT ALL, unlike the body. This becomes a Discord embed title,
+  // which renders a line break as a space anyway, and a title that wraps in the
+  // triage query makes the list unreadable.
+  const title =
+    (str('title') ?? '')
+      .replace(/\p{Cc}/gu, ' ')
+      .trim()
+      .slice(0, MAX_TITLE) || null;
+
+  const imageUrl = cleanImageUrl(str('imageUrl'));
+
   const supabase = createServiceRoleClient();
 
   // BEST EFFORT, AND A FAILURE HERE MUST NOT LOSE THE REPORT. An unlinked
@@ -105,7 +143,9 @@ export async function POST(request: Request) {
 
   const { error } = await supabase.from('feedback_reports').insert({
     kind,
+    title,
     body: text,
+    image_url: imageUrl,
     player_id: playerId,
     discord_user_id: discordUserId,
     guild_id: guildId,

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   addSelfRole,
   AppApiError,
@@ -132,31 +133,38 @@ export const COMMAND_DEFINITIONS = [
     // audience for these two is the whole club.
     name: 'bug',
     description: 'Report something in the app that is broken',
+    // THE WORDS ARE NOT HERE. A title and a body are collected in a modal (see
+    // openReportModal) because a slash-command option is a single line that
+    // truncates in the client at the width of the input — people write one
+    // sentence into it and stop. A paragraph box gets a reproduction.
+    //
+    // The screenshot has to stay a command option, and that is a Discord
+    // limitation rather than a choice: A MODAL CANNOT TAKE A FILE. Text inputs
+    // are the only component a modal accepts, so the attachment is picked here,
+    // on the interaction before the modal, and carried across.
     options: [
       {
-        type: 3, // STRING
-        name: 'details',
-        description: 'What you did, what happened, and what you expected',
-        required: true,
-        // Discord enforces this before the interaction is ever sent, so an
-        // over-long report is rejected in the client with the text still in the
-        // box, rather than accepted and silently truncated by the route.
-        max_length: 1000,
-        min_length: 5,
+        type: 11, // ATTACHMENT
+        name: 'screenshot',
+        description: 'Optional: a picture of what went wrong',
+        required: false,
       },
     ],
   },
   {
     name: 'feedback',
     description: 'Tell the club what you think',
+    // Same shape as /bug: the words come from the modal, the picture cannot.
+    // `about` stays a command option rather than moving into the modal, because
+    // a modal's only component is a text input — there is no way to offer three
+    // choices in one, and a free-text "what is this about" would be a fourth
+    // thing to type for a value the route has to validate anyway.
     options: [
       {
-        type: 3, // STRING
-        name: 'details',
-        description: 'What is on your mind',
-        required: true,
-        max_length: 1000,
-        min_length: 5,
+        type: 11, // ATTACHMENT
+        name: 'screenshot',
+        description: 'Optional: a picture, if one helps',
+        required: false,
       },
       {
         type: 3, // STRING
@@ -322,6 +330,21 @@ export interface InteractionContext {
   /** Both only present for a deferred command; see DEFERRED_COMMANDS. */
   applicationId?: string | null;
   interactionToken?: string | null;
+  /**
+   * `interaction.data.resolved.attachments`, keyed by attachment id.
+   *
+   * An attachment option's VALUE is only an id; the file itself lives in this
+   * side table. Reading the option alone gets a snowflake and no url, which
+   * looks like the picker returning nothing.
+   */
+  attachments?: Record<string, ResolvedAttachment> | null;
+}
+
+export interface ResolvedAttachment {
+  url?: string;
+  filename?: string;
+  content_type?: string;
+  size?: number;
 }
 
 export interface CommandOption {
@@ -1019,6 +1042,91 @@ export async function handleSelfRoleButton(
   );
 }
 
+// ---------------------------------------------------------------------------
+// /bug and /feedback
+// ---------------------------------------------------------------------------
+//
+// TWO INTERACTIONS, NOT ONE. The command opens a modal; the modal submit is a
+// separate interaction that arrives later and files the report. Discord gives
+// no way to do it in one — a modal is a RESPONSE to an interaction, so the
+// command cannot both show it and read what was typed into it.
+//
+// That split is the whole reason for the pending-attachment map below: the
+// screenshot is picked on the first interaction and needed on the second, and
+// Discord echoes back nothing from the first except the custom_id.
+
+const REPORT_MODAL_PREFIX = 'report:';
+
+/** Discord's own cap on a modal title and on a text input label. */
+const MODAL_TITLE_MAX = 45;
+
+// Discord's default upload ceiling for a bot is 25MB, but a screenshot that
+// large is a video somebody mislabelled. 8MB is generous for a phone
+// screenshot and keeps a single tick of the relay from buffering something
+// absurd. Enforced HERE, at pick time, so the reporter is told — the relay
+// enforces it again because it is the one doing the download.
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * A screenshot waiting for its modal to be submitted.
+ *
+ * IN MEMORY AND PER PROCESS, deliberately. Losing one costs a picture and never
+ * a report: the modal submit finds nothing under its nonce, files the words on
+ * their own, and says the screenshot did not make it. A restart mid-report, or
+ * a second replica taking the submit, both land there.
+ *
+ * A database round trip to make this durable would be storing a url that
+ * expires in a day, to survive a window of at most fifteen minutes, for a file
+ * the reporter can simply attach again.
+ */
+interface PendingImage {
+  url: string;
+  filename: string;
+  contentType: string;
+  /** Set when the file was rejected at pick time; the reason is shown once. */
+  rejected: string | null;
+  expiresAt: number;
+}
+
+const pendingImages = new Map<string, PendingImage>();
+
+// The interaction token behind the modal dies at fifteen minutes, so an entry
+// older than that can never be claimed.
+const PENDING_TTL_MS = 15 * 60_000;
+
+// A ceiling on the map itself, because an entry is only ever removed by a
+// submit that may never come: somebody who opens /bug and presses Escape leaves
+// one behind. Eviction is oldest-first and bounded work per insert.
+const MAX_PENDING = 200;
+
+function stashImage(nonce: string, image: PendingImage) {
+  const now = Date.now();
+  for (const [key, value] of pendingImages) {
+    if (value.expiresAt <= now) pendingImages.delete(key);
+  }
+  while (pendingImages.size >= MAX_PENDING) {
+    const oldest = pendingImages.keys().next();
+    if (oldest.done) break;
+    pendingImages.delete(oldest.value);
+  }
+  pendingImages.set(nonce, image);
+}
+
+function claimImage(nonce: string): PendingImage | null {
+  const found = pendingImages.get(nonce);
+  // Claimed once and then gone, whether or not it was used. A modal cannot be
+  // submitted twice, and leaving it would keep an expiring url alive for no
+  // reader.
+  if (found) pendingImages.delete(nonce);
+  if (!found || found.expiresAt <= Date.now()) return null;
+  return found;
+}
+
+/** Exported for the tests; nothing else has any business reaching in here. */
+export function __clearPendingImages() {
+  pendingImages.clear();
+}
+
 /**
  * /bug and /feedback. One handler, because they differ by which kind is filed.
  *
@@ -1027,34 +1135,165 @@ export async function handleSelfRoleButton(
  * into two commands rather than one /feedback with a 'bug' choice is a UX call:
  * somebody whose page just broke types "/bug", not "/feedback about:bug".
  *
- * THE REPLY IS EPHEMERAL AND THE REPORT IS NOT RELAYED ANYWHERE. Filing a
- * complaint is not the same as publishing it, and a member reporting that a
- * feature is broken has not asked the channel to hear about it. It goes to the
- * table; the execs read it there.
+ * The kind is carried in the custom_id because there is nowhere else to put it:
+ * the modal submit arrives as its own interaction with no memory of the command
+ * that opened it, and custom_id is the only field that survives the round trip.
  */
-async function handleReport(
+function openReportModal(
   fixedKind: FeedbackKind | null,
   options: CommandOption[] | undefined,
   context: InteractionContext
 ) {
-  const details = String(option(options, 'details') ?? '').trim();
+  const chosen = String(option(options, 'about') ?? '');
+  const kind: FeedbackKind =
+    fixedKind ?? (chosen === 'tournament_feedback' || chosen === 'other' ? chosen : 'feedback');
+
+  const nonce = randomUUID().replace(/-/g, '').slice(0, 12);
+
+  const attachmentId = option(options, 'screenshot');
+  if (attachmentId) {
+    const file = context.attachments?.[String(attachmentId)];
+    const contentType = (file?.content_type ?? '').split(';')[0]?.trim() ?? '';
+    const url = file?.url ?? '';
+
+    // NOT an image, or too big. Both are stashed as a REJECTION rather than
+    // dropped, so the confirmation can say what happened — a screenshot that
+    // silently does not appear reads as the report having failed.
+    const rejected = !url
+      ? 'the file could not be read'
+      : !contentType.startsWith('image/')
+        ? 'it is not an image'
+        : (file?.size ?? 0) > MAX_IMAGE_BYTES
+          ? 'it is over 8MB'
+          : null;
+
+    stashImage(nonce, {
+      url,
+      filename: (file?.filename ?? 'screenshot.png').slice(0, 100),
+      contentType: contentType || 'application/octet-stream',
+      rejected,
+      expiresAt: Date.now() + PENDING_TTL_MS,
+    });
+  }
+
+  const heading = kind === 'bug' ? 'Report a bug' : 'Send the club feedback';
+
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id: `${REPORT_MODAL_PREFIX}${kind}:${nonce}`,
+      title: heading.slice(0, MODAL_TITLE_MAX),
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4, // TEXT_INPUT
+              custom_id: 'title',
+              label: kind === 'bug' ? 'What is broken?' : 'In a few words',
+              style: 1, // SHORT
+              required: true,
+              min_length: 3,
+              // Under the column's own 120 so a title never arrives needing to
+              // be trimmed by the route.
+              max_length: 100,
+              placeholder:
+                kind === 'bug' ? 'Ladder page spins forever' : 'More weeknight sessions',
+            },
+          ],
+        },
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: 'details',
+              label: kind === 'bug' ? 'What happened?' : 'Tell us more',
+              style: 2, // PARAGRAPH
+              required: true,
+              min_length: 5,
+              max_length: 1000,
+              placeholder:
+                kind === 'bug'
+                  ? 'What you did, what happened, and what you expected'
+                  : 'What is on your mind',
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/** True for a modal submit this module owns. */
+export function isReportModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(REPORT_MODAL_PREFIX);
+}
+
+/**
+ * The value of one text input in a submitted modal.
+ *
+ * Modal components arrive NESTED — every input sits inside its own action row —
+ * so a flat find on the outer list matches nothing and reads as an empty box
+ * the client would never have allowed.
+ */
+function modalValue(components: ModalComponent[] | undefined, customId: string): string {
+  for (const row of components ?? []) {
+    for (const child of row.components ?? []) {
+      if (child.custom_id === customId) return String(child.value ?? '');
+    }
+    if (row.custom_id === customId) return String(row.value ?? '');
+  }
+  return '';
+}
+
+export interface ModalComponent {
+  type?: number;
+  custom_id?: string;
+  value?: string;
+  components?: ModalComponent[];
+}
+
+/**
+ * A submitted report modal: file it, and say so.
+ *
+ * THE REPLY IS EPHEMERAL. Filing a complaint is not publishing it, and a member
+ * reporting that a feature is broken has not asked their channel to hear about
+ * it. What DOES happen is that the relay puts it in the exec channel a few
+ * minutes later (00173) — a private room, not the one they typed in.
+ */
+export async function handleReportModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+) {
+  const [, rawKind = '', nonce = ''] = customId.split(':');
+  // Anything else is a caller that is not Discord — it only ever sends back a
+  // custom_id this file wrote. 'feedback' is the harmless landing spot; passing
+  // it through would fail 00172's CHECK and lose the whole report.
+  const kind: FeedbackKind =
+    rawKind === 'bug' || rawKind === 'tournament_feedback' || rawKind === 'other'
+      ? rawKind
+      : 'feedback';
+
+  const title = modalValue(components, 'title').trim();
+  const details = modalValue(components, 'details').trim();
+
   if (!details) {
-    // Discord's own min_length should make this unreachable. Checked anyway
-    // because an empty row is worse than a refusal: it looks like a report the
-    // club ignored.
+    // Discord's min_length should make this unreachable. Checked anyway,
+    // because an empty row looks like a report the club ignored.
     return ephemeral('Add a few words about what happened and try again.');
   }
 
-  const chosen = String(option(options, 'about') ?? '');
-  const kind: FeedbackKind =
-    fixedKind ??
-    (chosen === 'tournament_feedback' || chosen === 'other' ? chosen : 'feedback');
+  const image = nonce ? claimImage(nonce) : null;
 
   let linked: boolean;
   try {
     ({ linked } = await submitFeedback({
       kind,
+      title: title || null,
       body: details,
+      imageUrl: image && !image.rejected ? image.url : null,
       discordUserId: context.discordUserId,
       guildId: context.guildId,
     }));
@@ -1076,12 +1315,16 @@ async function handleReport(
         'reproduce it goes on the list.'
       : "Thanks — that's filed and the execs will see it.";
 
+  const notes: string[] = [];
   // ONLY WHEN UNLINKED, and phrased as a limitation of the reply rather than a
   // problem with the report. The report is stored either way; what is missing
   // is a way to get back to them.
-  return ephemeral(
-    linked ? thanks : `${thanks}\n\nYou haven't run \`/link\` yet, so we may not be able to reply.`
-  );
+  if (!linked) notes.push("You haven't run `/link` yet, so we may not be able to reply.");
+  if (image?.rejected) {
+    notes.push(`Your screenshot wasn't attached — ${image.rejected}. The report itself is filed.`);
+  }
+
+  return ephemeral(notes.length ? `${thanks}\n\n${notes.join('\n')}` : thanks);
 }
 
 /** True for a component interaction this module owns. */
@@ -1105,9 +1348,9 @@ export async function dispatch(
       case 'rolepicker':
         return await handleRolePicker(options, context);
       case 'bug':
-        return await handleReport('bug', options, context);
+        return openReportModal('bug', options, context);
       case 'feedback':
-        return await handleReport(null, options, context);
+        return openReportModal(null, options, context);
       case 'link':
         return await handleLink(context);
       case 'unlink':

@@ -5,9 +5,13 @@ import { loadConfig } from './config.js';
 import {
   DEFERRED_COMMANDS,
   dispatch,
+  handleReportModal,
   handleSelfRoleButton,
+  isReportModal,
   isSelfRoleButton,
   type CommandOption,
+  type ModalComponent,
+  type ResolvedAttachment,
 } from './commands.js';
 import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { reconcile } from './reconcile.js';
@@ -15,6 +19,7 @@ import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
 import { runAnnouncements } from './announcements.js';
 import { runMatchResults } from './match-results.js';
+import { runFeedback } from './feedback.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -272,6 +277,22 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  // The feedback relay, driven by pg_cron every 10 minutes. An inbox rather
+  // than a feed: nobody stands in the exec channel waiting on a bug report the
+  // way they wait on "no session tonight".
+  if (req.method === 'POST' && req.url === '/feedback') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runFeedback();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] feedback relay failed:', error);
+      return send(res, 500, { error: 'feedback_failed' });
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/sync-member') {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
@@ -317,8 +338,17 @@ const server = createServer(async (req, res) => {
       // Subcommands nest their arguments one level down, so the option shape
       // has to be recursive rather than flat.
       options?: CommandOption[];
-      /** MESSAGE_COMPONENT only: which button was clicked. */
+      /** MESSAGE_COMPONENT and MODAL_SUBMIT: which button, or which modal. */
       custom_id?: string;
+      /** MODAL_SUBMIT only: the filled-in text inputs, nested in action rows. */
+      components?: ModalComponent[];
+      /**
+       * APPLICATION_COMMAND only: the objects behind id-valued options.
+       *
+       * An attachment option's value is a snowflake and nothing else — the url,
+       * filename and size live here. /bug reads it for the screenshot.
+       */
+      resolved?: { attachments?: Record<string, ResolvedAttachment> };
     };
     // Guild context populates member.user; a DM populates user and omits
     // member entirely. /link and /unlink are precisely the commands somebody
@@ -349,6 +379,7 @@ const server = createServer(async (req, res) => {
       guildId: interaction.guild_id ?? null,
       applicationId: interaction.application_id ?? null,
       interactionToken: interaction.token ?? null,
+      attachments: interaction.data.resolved?.attachments ?? null,
     };
 
     // DEFERRED PATH. Discord gives an interaction 3 seconds to be acknowledged
@@ -400,6 +431,56 @@ const server = createServer(async (req, res) => {
 
     const response = await dispatch(interaction.data.name, interaction.data.options, context);
     return send(res, 200, response);
+  }
+
+  // MODAL_SUBMIT — someone filled in the /bug or /feedback boxes and pressed
+  // submit.
+  //
+  // A SEPARATE INTERACTION FROM THE COMMAND THAT OPENED THE MODAL, with its own
+  // 3-second budget and no memory of the first one: Discord echoes back the
+  // custom_id and the typed values, and nothing else. Whatever the command knew
+  // has to have been encoded in that id or stashed against it.
+  //
+  // Without this branch a submitted modal falls through to the catch-all below
+  // and is answered with type 1, which Discord renders to the member as "this
+  // application did not respond" — the report typed and lost.
+  if (interaction.type === 5 && interaction.data) {
+    const customId = interaction.data.custom_id;
+
+    if (isReportModal(customId)) {
+      const context = {
+        // Same two places as a command: a guild submit populates member.user, a
+        // DM submit populates user.
+        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+        guildId: interaction.guild_id ?? null,
+      };
+      try {
+        const response = await handleReportModal(
+          customId as string,
+          interaction.data.components,
+          context
+        );
+        return send(res, 200, response);
+      } catch (error) {
+        console.error('[bot] report modal failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: {
+            content:
+              "Couldn't reach the club app just now — nothing was filed. Try again in a moment.",
+            flags: 64,
+          },
+        });
+      }
+    }
+
+    // A modal this build does not know. type 4 rather than the components'
+    // type 6, because a modal has no message to leave intact and a silent
+    // acknowledgement would look like the submit vanished.
+    return send(res, 200, {
+      type: 4,
+      data: { content: 'That form is from an older version — run the command again.', flags: 64 },
+    });
   }
 
   // MESSAGE_COMPONENT — someone clicked a button.

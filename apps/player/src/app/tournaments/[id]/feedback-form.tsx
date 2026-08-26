@@ -53,7 +53,8 @@ export function FeedbackForm({
         {already ? 'Your feedback' : 'How was this event?'}
       </div>
       <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-        Only the exec team sees this — it&apos;s never shown to other members. You can update it any time.
+        Only the exec team sees this — it&apos;s never shown to other members, though it is
+        shared with them in the execs&apos; private Discord channel. You can update it any time.
       </p>
 
       <div className="row" style={{ gap: 4, marginTop: 14 }} role="radiogroup" aria-label="Rating">

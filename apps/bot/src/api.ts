@@ -582,9 +582,77 @@ export type FeedbackKind = 'bug' | 'feedback' | 'tournament_feedback' | 'other';
  */
 export function submitFeedback(input: {
   kind: FeedbackKind;
+  /** null for a report filed by anything that is not the modal. */
+  title: string | null;
   body: string;
+  /** Discord CDN url of a screenshot. SIGNED AND EXPIRING — see 00173. */
+  imageUrl: string | null;
   discordUserId: string | null;
   guildId: string | null;
 }): Promise<{ ok: true; linked: boolean }> {
   return send<{ ok: true; linked: boolean }>('POST', '/api/discord/feedback', input);
+}
+
+// ---- FEEDBACK RELAY --------------------------------------------------------
+
+export interface FeedbackAction {
+  kind: 'post' | 'edit' | 'retract';
+  /** Which table sourceId points into: a Discord-filed report, or a tournament
+   *  survey response from the website. They render differently and they go to
+   *  DIFFERENT configured channels; see 00173's header on why. */
+  source: 'report' | 'event_feedback';
+  sourceId: string;
+  /** For an edit or retract this is the channel the message IS in, which is not
+   *  necessarily the configured one — a club that repoints the setting has not
+   *  moved the messages it already posted. */
+  channelId: string;
+  /** null only for a post. */
+  discordMessageId: string | null;
+  /** Rendered body, and the mapping's change-detection key. */
+  summary: string;
+  title: string;
+  body: string;
+  /** Whose report it is, already rendered — a mention when the reporter is
+   *  linked, a plain name or a bare Discord id when they are not. */
+  author: string;
+  /** report: the kind. event_feedback: the tournament name. */
+  context: string;
+  /** 1..5, event_feedback only. */
+  rating: number | null;
+  /** Screenshot url, report only, and only while it still resolves. */
+  imageUrl: string | null;
+  createdAt: string | null;
+}
+
+/** Reports and survey comments that owe Discord a message, or a change to one. */
+export function fetchFeedbackActions(guildId: string): Promise<{
+  actions: FeedbackAction[];
+  skipped: { sourceId: string; reason: string }[];
+  /** Present when the tick's read hit its cap; see fetchMatchResultActions. */
+  windowCapReached?: number;
+}> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/feedback-relay?${params}`);
+}
+
+/** Record a message Discord has ALREADY accepted. Never call this beforehand. */
+export function recordFeedbackPost(input: {
+  source: 'report' | 'event_feedback';
+  sourceId: string;
+  guildId: string;
+  channelId: string;
+  discordMessageId: string;
+  summary: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/feedback-relay', input);
+}
+
+/** Forget a mapping, after the Discord message is gone. */
+export function clearFeedbackPost(
+  source: 'report' | 'event_feedback',
+  sourceId: string,
+  guildId: string
+): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ source, sourceId, guildId });
+  return send<{ ok: true }>('DELETE', `/api/discord/feedback-relay?${params}`);
 }
