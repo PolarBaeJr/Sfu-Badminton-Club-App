@@ -138,6 +138,19 @@ function reply(embed: Record<string, unknown>) {
   return { type: 4, data: { embeds: [embed] } };
 }
 
+/**
+ * An embed only the caller sees.
+ *
+ * Separate from reply() rather than a boolean argument to it, because the
+ * decision is per-command and permanent: /leaderboard is public on purpose,
+ * /sessions must not be. A flag at the call site is easy to drop in a refactor
+ * and the resulting bug is invisible to the person who caused it — they see
+ * their own message either way.
+ */
+function ephemeralEmbed(embed: Record<string, unknown>) {
+  return { type: 4, data: { embeds: [embed], flags: 64 } };
+}
+
 // Ephemeral (flag 64) so failures and empty states don't clutter a shared
 // channel. Only the person who ran the command sees them.
 function ephemeral(content: string) {
@@ -209,18 +222,41 @@ function formatSession(s: SessionSummary) {
   return `**${s.name ?? 'Session'}**\n${parts.join(' · ')}`;
 }
 
-export async function handleSessions() {
-  const { sessions } = await fetchSessions();
+/**
+ * EPHEMERAL, and that is a correctness property rather than tidiness.
+ *
+ * The app now returns a schedule filtered to the CALLER — a recreational member
+ * is not shown competitive nights, matching the website. A public reply would
+ * undo that completely: one competitive member runs /sessions and the bot posts
+ * their filtered-for-them schedule into a channel every rec member reads. The
+ * filter and the flag only work as a pair.
+ *
+ * It also means one person's /sessions no longer buries a busy channel in ten
+ * embeds, which is a nice consequence and not the reason.
+ */
+export async function handleSessions(context: InteractionContext) {
+  const { sessions, linked } = await fetchSessions(context.discordUserId);
+
+  // Said the same way in both branches: an unlinked caller is seeing club-wide
+  // nights only, and should know the list is narrowed rather than empty.
+  const footer = linked
+    ? 'RSVP on the website'
+    : 'Club-wide nights only — run /link to see the sessions for your track.';
 
   if (sessions.length === 0) {
-    return ephemeral('No upcoming sessions are open right now.');
+    return ephemeral(
+      linked
+        ? 'No upcoming sessions are open right now.'
+        : 'No club-wide sessions are open right now.\n\n' +
+            'Run **/link** to connect your club account and see the sessions for your track.'
+    );
   }
 
-  return reply({
+  return ephemeralEmbed({
     title: 'Upcoming sessions',
     color: CLUB_RED,
     description: sessions.map(formatSession).join('\n\n'),
-    footer: { text: 'RSVP on the website' },
+    footer: { text: footer },
   });
 }
 
@@ -505,7 +541,7 @@ export async function dispatch(
       case 'leaderboard':
         return await handleLeaderboard(options);
       case 'sessions':
-        return await handleSessions();
+        return await handleSessions(context);
       case 'link':
         return await handleLink(context);
       case 'unlink':

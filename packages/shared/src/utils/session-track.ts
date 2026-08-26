@@ -82,3 +82,31 @@ export function visibleTracksFor(status: string | null | undefined): SessionTrac
   // know. Show the whole schedule rather than a filtered-down slice of it.
   return [...SESSION_TRACKS];
 }
+
+/**
+ * What a viewer who is NOT a signed-in member may be shown: club-wide nights only.
+ *
+ * THIS IS NOT A CONTRADICTION OF THE "EVERYTHING" DEFAULT ABOVE, it is the case
+ * that default never covered.
+ *
+ * visibleTracksFor's reasoning for showing an untracked member the whole
+ * schedule rests on one specific fact, quoted from it: `sessions_select ON
+ * sessions FOR SELECT TO authenticated USING (TRUE)`. Narrowing an untracked
+ * MEMBER withholds nothing, because they can read every session row directly
+ * whenever they like. The filter is therefore about relevance and nothing else,
+ * and the honest answer to "which nights are for me?" is "all of them".
+ *
+ * That argument needs the viewer to be `authenticated`. The Discord bot's
+ * audience is not: anybody who joins the server can run /sessions without ever
+ * having an app account, and there is no RLS policy granting them anything.
+ * For that viewer the same filter IS the only thing standing between them and
+ * the schedule, so "narrowing withholds nothing" is simply false, and the
+ * frosh-week argument does not apply either — a person with no account is not
+ * waiting on an exec to press Approve.
+ *
+ * So an unlinked viewer gets the club-wide nights, which is what a prospective
+ * member is actually looking for, and the bot points them at /link for the rest.
+ * A LINKED member goes through visibleTracksFor exactly as the website does —
+ * including the untracked-sees-everything default, which stays untouched.
+ */
+export const PUBLIC_TRACKS: SessionTrack[] = ['all'];

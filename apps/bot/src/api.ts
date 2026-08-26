@@ -53,14 +53,20 @@ export class AlreadyLinkedError extends Error {}
 // silently, which Discord surfaces as "the application did not respond".
 const TIMEOUT_MS = 2500;
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, callerId?: string | null): Promise<T> {
   const base = process.env.APP_API_URL;
   const secret = process.env.DISCORD_SERVICE_SECRET;
   if (!base) throw new AppApiError('APP_API_URL is not set');
   if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
 
   const response = await fetch(new URL(path, base), {
-    headers: { authorization: `Bearer ${secret}` },
+    headers: {
+      authorization: `Bearer ${secret}`,
+      // A HEADER, never a query param: ids in a URL end up in the access log.
+      // Omitted entirely when there is no caller, so the app sees an absent
+      // header rather than the string "null" or "undefined".
+      ...(callerId ? { 'x-discord-user-id': callerId } : {}),
+    },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
@@ -82,8 +88,20 @@ export function fetchLeaderboard(
   return get<LeaderboardPage>(`/api/discord/leaderboard?${params}`);
 }
 
-export function fetchSessions(): Promise<{ sessions: SessionSummary[] }> {
-  return get<{ sessions: SessionSummary[] }>('/api/discord/sessions');
+/**
+ * The schedule as THIS caller should see it.
+ *
+ * The id is required rather than optional so a new call site cannot quietly
+ * omit it and get the unlinked view for everybody — the compiler asks. Pass
+ * null only where there genuinely is no caller.
+ */
+export function fetchSessions(
+  discordUserId: string | null
+): Promise<{ sessions: SessionSummary[]; linked: boolean }> {
+  return get<{ sessions: SessionSummary[]; linked: boolean }>(
+    '/api/discord/sessions',
+    discordUserId
+  );
 }
 
 /** Which servers to manage, their role ids, and where the audit log goes. */
