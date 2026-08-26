@@ -369,6 +369,71 @@ echo "[$(date -u +%FT%TZ)] restoring realtime publication membership..."
 docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$PUB_SQL"
 
 # ---------------------------------------------------------------------------
+# REPLAY MIGRATIONS PROD DOES NOT HAVE YET.
+#
+# The restore above put PROD's public schema on dev, so every staging-only
+# migration just vanished along with the tables it created. schema_migrations
+# came from that same dump, so it now reports prod's version and those files
+# correctly show as pending again.
+#
+# This used to be a manual morning chore. It stopped being optional when the
+# Discord tables arrived: the capture/restore below moves ROWS, and rows need
+# tables. With 00165-00167 applied to staging and absent from prod, a refresh
+# would drop the tables, restore nothing in their place, and then fail trying
+# to insert captured config into tables that no longer exist -- taking the bot
+# down every night until prod catches up.
+#
+# Applied directly rather than through db-migrate.sh, which deliberately only
+# PRINTS the psql command for a human to run. That is the right default for a
+# database somebody is touching by hand, and the wrong one for the unattended
+# job that just dropped the schema itself.
+#
+# Only ever runs against DEV_CONTAINER. Nothing here can reach prod.
+echo "[$(date -u +%FT%TZ)] replaying migrations prod does not have..."
+MIGRATIONS_DIR="$(cd "$(dirname "$0")/.." && pwd)/supabase/migrations"
+if [ ! -d "$MIGRATIONS_DIR" ]; then
+  echo "FATAL: no migrations directory at $MIGRATIONS_DIR" >&2
+  exit 1
+fi
+
+replayed=0
+for f in "$MIGRATIONS_DIR"/*.sql; do
+  [ -e "$f" ] || continue
+  base="$(basename "$f")"
+  version="${base%%_*}"
+
+  already="$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -At \
+    -c "SELECT 1 FROM public.schema_migrations WHERE version = '$version' LIMIT 1;" 2>/dev/null || true)"
+  [ "$already" = "1" ] && continue
+
+  echo "  applying $base"
+  # Same rule db-migrate.sh uses: a file that wraps itself must not be wrapped
+  # again, or the outer BEGIN collides with its own COMMIT. Decided by a
+  # top-level COMMIT, never a BEGIN.
+  if grep -qE '^COMMIT;' "$f"; then
+    single=""
+  else
+    single="--single-transaction"
+  fi
+
+  if ! docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
+        -v ON_ERROR_STOP=1 -q $single < "$f"; then
+    echo "FATAL: $base failed to apply; staging is half-migrated" >&2
+    exit 1
+  fi
+
+  # Recorded only after psql actually succeeded -- db-migrate.sh's rule that a
+  # migration nobody watched succeed is never marked applied.
+  checksum="$(shasum -a 256 "$f" | awk '{print $1}')"
+  docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -c \
+    "INSERT INTO public.schema_migrations (version, name, checksum, applied_by, verified)
+     VALUES ('$version', '$base', '$checksum', 'snapshot', true)
+     ON CONFLICT (version) DO NOTHING;"
+  replayed=$((replayed + 1))
+done
+echo "[$(date -u +%FT%TZ)] replayed $replayed migration(s)."
+
+# ---------------------------------------------------------------------------
 # SCRUB PROD'S DISCORD CONFIG, THEN PUT STAGING'S BACK.
 #
 # The delete is UNCONDITIONAL and runs whether or not anything was captured.
