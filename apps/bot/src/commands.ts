@@ -7,11 +7,14 @@ import {
   fetchSelfRoles,
   fetchSessions,
   fetchTournaments,
+  RateLimitedError,
   removeSelfRole,
+  submitFeedback,
   SweepManagedRoleError,
   AlreadyLinkedError,
   mintLinkToken,
   writeGuildConfig,
+  type FeedbackKind,
   type SessionSummary,
   type TournamentSummary,
 } from './api.js';
@@ -121,6 +124,52 @@ export const COMMAND_DEFINITIONS = [
     name: 'tournaments',
     description: 'Upcoming club tournaments',
     options: [],
+  },
+  {
+    // NO default_member_permissions, deliberately. EXEC_ONLY is right there in
+    // this file and copying it here would make /bug invisible to everyone who
+    // is not an admin — which is everyone who would ever report a bug. The
+    // audience for these two is the whole club.
+    name: 'bug',
+    description: 'Report something in the app that is broken',
+    options: [
+      {
+        type: 3, // STRING
+        name: 'details',
+        description: 'What you did, what happened, and what you expected',
+        required: true,
+        // Discord enforces this before the interaction is ever sent, so an
+        // over-long report is rejected in the client with the text still in the
+        // box, rather than accepted and silently truncated by the route.
+        max_length: 1000,
+        min_length: 5,
+      },
+    ],
+  },
+  {
+    name: 'feedback',
+    description: 'Tell the club what you think',
+    options: [
+      {
+        type: 3, // STRING
+        name: 'details',
+        description: 'What is on your mind',
+        required: true,
+        max_length: 1000,
+        min_length: 5,
+      },
+      {
+        type: 3, // STRING
+        name: 'about',
+        description: 'What it is about (defaults to general feedback)',
+        required: false,
+        choices: [
+          { name: 'The club or the app in general', value: 'feedback' },
+          { name: 'A tournament', value: 'tournament_feedback' },
+          { name: 'Something else', value: 'other' },
+        ],
+      },
+    ],
   },
   {
     name: 'link',
@@ -970,6 +1019,71 @@ export async function handleSelfRoleButton(
   );
 }
 
+/**
+ * /bug and /feedback. One handler, because they differ by which kind is filed.
+ *
+ * `fixedKind` is 'bug' for /bug and null for /feedback, where the reporter
+ * picks from the `about` choices and 'feedback' is the default. Splitting them
+ * into two commands rather than one /feedback with a 'bug' choice is a UX call:
+ * somebody whose page just broke types "/bug", not "/feedback about:bug".
+ *
+ * THE REPLY IS EPHEMERAL AND THE REPORT IS NOT RELAYED ANYWHERE. Filing a
+ * complaint is not the same as publishing it, and a member reporting that a
+ * feature is broken has not asked the channel to hear about it. It goes to the
+ * table; the execs read it there.
+ */
+async function handleReport(
+  fixedKind: FeedbackKind | null,
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+) {
+  const details = String(option(options, 'details') ?? '').trim();
+  if (!details) {
+    // Discord's own min_length should make this unreachable. Checked anyway
+    // because an empty row is worse than a refusal: it looks like a report the
+    // club ignored.
+    return ephemeral('Add a few words about what happened and try again.');
+  }
+
+  const chosen = String(option(options, 'about') ?? '');
+  const kind: FeedbackKind =
+    fixedKind ??
+    (chosen === 'tournament_feedback' || chosen === 'other' ? chosen : 'feedback');
+
+  let linked: boolean;
+  try {
+    ({ linked } = await submitFeedback({
+      kind,
+      body: details,
+      discordUserId: context.discordUserId,
+      guildId: context.guildId,
+    }));
+  } catch (err) {
+    if (err instanceof RateLimitedError) {
+      // Named, so nobody retries a limiter that is working. Every retry pushes
+      // their next allowed attempt further out.
+      return ephemeral(
+        "You've filed a few reports in a short space of time — give it an hour, " +
+          'or add the rest to one message next time.'
+      );
+    }
+    throw err;
+  }
+
+  const thanks =
+    kind === 'bug'
+      ? "Thanks — that's filed. The execs read these; if it's something we can " +
+        'reproduce it goes on the list.'
+      : "Thanks — that's filed and the execs will see it.";
+
+  // ONLY WHEN UNLINKED, and phrased as a limitation of the reply rather than a
+  // problem with the report. The report is stored either way; what is missing
+  // is a way to get back to them.
+  return ephemeral(
+    linked ? thanks : `${thanks}\n\nYou haven't run \`/link\` yet, so we may not be able to reply.`
+  );
+}
+
 /** True for a component interaction this module owns. */
 export function isSelfRoleButton(customId: string | undefined | null): boolean {
   return typeof customId === 'string' && customId.startsWith(SELF_ROLE_PREFIX);
@@ -990,6 +1104,10 @@ export async function dispatch(
         return await handleTournaments(context);
       case 'rolepicker':
         return await handleRolePicker(options, context);
+      case 'bug':
+        return await handleReport('bug', options, context);
+      case 'feedback':
+        return await handleReport(null, options, context);
       case 'link':
         return await handleLink(context);
       case 'unlink':

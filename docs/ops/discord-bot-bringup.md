@@ -309,6 +309,9 @@ nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 | `announcement_channel_id` | the announcement relay (00170) | SQL |
 | `match_results_channel_id` | the match result relay (00171) | SQL |
 
+`/bug` and `/feedback` (00172) are deliberately absent from that list: they
+reply ephemerally and write to a table, so there is no channel to name.
+
 ```sql
 INSERT INTO discord_settings (key, value)
 VALUES ('announcement_channel_id', '<channel id>')
@@ -399,6 +402,55 @@ recently, so truncation can only defer the matches that changed *least* recently
 — which by definition need nothing. If the bot logs `filled its 150-row window`
 on tick after tick, the club's volume has outgrown the window and it should be
 raised; a single capped tick after a busy night is normal and self-corrects.
+
+### Bug reports and feedback (00172)
+
+**`/bug` and `/feedback` need no channel and no setting.** They write straight
+to `feedback_reports` and reply ephemerally — the report is not relayed into any
+channel, on purpose. Filing a complaint is not the same as publishing it, and
+somebody reporting that a feature is broken has not asked the server to hear
+about it.
+
+**`/feedback about:` picks the kind**: general feedback (the default), a
+tournament, or something else. `/bug` always files `bug`. Four kinds, one table.
+
+**This is not `event_feedback`.** That table (00001) is the post-tournament
+survey — tied to a tournament by FK, 1-5 rating, one per player per event, read
+by two pages and rewritten by the player-merge routine. It is untouched. The
+`tournament_feedback` kind here is the free-text remark someone types the
+evening of an event, with no rating and no event attached, which is why there is
+no `tournament_id` column: a slash command gives the reporter no way to name one.
+
+**NOTHING READS THESE YET.** There is no admin page — that is the obvious next
+step and it is not built. Until it is, triage is a psql session:
+
+```sql
+SELECT created_at, kind, body, player_id, discord_user_id
+  FROM feedback_reports
+ WHERE status = 'open'
+ ORDER BY created_at DESC;
+```
+
+and to close one out:
+
+```sql
+UPDATE feedback_reports SET status = 'resolved', updated_at = now() WHERE id = '<id>';
+```
+
+`status` is one of `open`, `triaged`, `resolved`, `wont_fix`. If nobody runs the
+first query, this is a black hole, and the first person to notice will be a
+member asking why their bug report went nowhere.
+
+**An unlinked member can still file.** `player_id` is null and the reply says so
+— they are the people most likely to have hit an onboarding bug, and turning
+them away would silence exactly that report. `discord_user_id` is kept either
+way, so a report can be attributed or replied to by hand.
+
+**The rate limit is eight reports per hour per Discord user**, not per IP: every
+request to that route arrives from the one bot process, so an IP key would put
+the whole club in a single bucket. It is in-memory and per-process, so two
+player replicas means an effective sixteen. That is fine — it is anti-spam, not
+an auth gate.
 
 ---
 

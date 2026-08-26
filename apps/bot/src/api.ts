@@ -56,6 +56,15 @@ export class AlreadyLinkedError extends Error {}
  */
 export class SweepManagedRoleError extends Error {}
 
+/**
+ * The app answered 429: the caller has filed too much, too fast.
+ *
+ * Separate for the same reason as the two above. "Couldn't reach the club app"
+ * would send a member retrying a request that is working exactly as designed,
+ * and each retry pushes their next allowed attempt further out.
+ */
+export class RateLimitedError extends Error {}
+
 // Deliberately short. Discord's interaction deadline is 3 seconds end to end, so
 // a request that has not answered in 2.5s cannot be rendered in time anyway — and
 // failing fast leaves room to reply with something useful instead of timing out
@@ -114,6 +123,7 @@ async function send<T>(
     // Distinguished here so the command can explain the actual problem rather
     // than reporting a generic failure for a mistake with an obvious fix.
     if (response.status === 409) throw new SweepManagedRoleError('sweep-managed');
+    if (response.status === 429) throw new RateLimitedError('rate-limited');
     throw new AppApiError(`${method} ${path} -> ${response.status}`);
   }
 
@@ -556,4 +566,25 @@ export function recordMatchPost(input: {
 export function clearMatchPost(matchId: string, guildId: string): Promise<{ ok: true }> {
   const params = new URLSearchParams({ matchId, guildId });
   return send<{ ok: true }>('DELETE', `/api/discord/match-results?${params}`);
+}
+
+// ---- FEEDBACK AND BUG REPORTS ----------------------------------------------
+
+export type FeedbackKind = 'bug' | 'feedback' | 'tournament_feedback' | 'other';
+
+/**
+ * File one report. See 00172.
+ *
+ * `linked` comes back so the caller can warn a reporter whose Discord account
+ * is not connected to a club account that a reply may not reach them. The row
+ * is stored either way — an unlinked member is the one most likely to have hit
+ * an onboarding bug, and turning them away would silence exactly that report.
+ */
+export function submitFeedback(input: {
+  kind: FeedbackKind;
+  body: string;
+  discordUserId: string | null;
+  guildId: string | null;
+}): Promise<{ ok: true; linked: boolean }> {
+  return send<{ ok: true; linked: boolean }>('POST', '/api/discord/feedback', input);
 }
