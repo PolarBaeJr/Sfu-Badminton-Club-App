@@ -2,12 +2,11 @@
  * ONE remaining in-memory rate limiter. It has exactly one caller, and new
  * code should not reach for it.
  *
- * This module used to also export `getClientIp`. It was deleted along with the
- * call sites, and deliberately not kept "just in case": it read the RIGHTMOST
- * X-Forwarded-For hop, which behind Cloudflare plus the host nginx is the CF
- * edge address, not the member's -- so anything keyed on it would have bucketed
- * an entire region together. Nothing in this app should key on a client IP any
- * more; that job belongs to the edge, which sees the real peer.
+ * This module used to also export `getClientIp`. Every call site went with the
+ * limiters, which left it with zero callers, so it was deleted rather than kept
+ * "just in case". Nothing in this app needs to key on a client IP any more --
+ * that job moved to the edge, which sees the real peer address directly instead
+ * of having to reconstruct it from forwarded headers.
  *
  * WHY IT IS ALMOST GONE. The limiter is a module-scope Map, so it is per Node
  * PROCESS. Production runs two player replicas, which means every number ever
