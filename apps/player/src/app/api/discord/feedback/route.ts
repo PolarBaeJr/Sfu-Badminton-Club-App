@@ -89,8 +89,9 @@ export async function POST(request: Request) {
   // club in one bucket and let the first member to file a few reports silence
   // everyone else. The edge cannot express "per Discord user".
   //
-  // The limiter is in-memory and per-process, so with two player replicas the
-  // effective allowance is double this. That is fine for anti-spam and would
+  // The limiter is in-memory and per-process, so the effective allowance is
+  // this times the replica count — five as of 2026-08-26, not the two it was
+  // when the limiter was measured. That is fine for anti-spam and would
   // NOT be fine for an auth gate; it is the reason this route does not lean on
   // the limiter for anything but volume. See docs/ops/rate-limits.md.
   const limited = rateLimit(

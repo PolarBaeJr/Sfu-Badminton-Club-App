@@ -20,8 +20,9 @@ export async function POST(request: Request) {
   // NOT RATE LIMITED HERE. The throttle for this route lives at the edge, on
   // the /api/passkey prefix (240/min per client IP, routes.json on the proxy),
   // and there is deliberately no second one in-process: the old in-app limiter
-  // was a per-process Map, so with two player replicas it enforced double
-  // whatever it claimed. See docs/ops/rate-limits.md.
+  // was a per-process Map, so it enforced whatever it claimed times the number
+  // of replicas — a number that silently grew from two to five when the service
+  // was spread to a second host. See docs/ops/rate-limits.md.
   //
   // Whatever the number is, it has to stay generous, because this route is not
   // something a member opts into: /login starts a conditional (autofill)

@@ -60,7 +60,9 @@ numbers are set to stop only the obviously-pathological end.
 
 There used to be ~43 `rateLimit()` call sites backed by
 `packages/shared/src/utils/rate-limit.ts`. That limiter is a module-scope `Map`,
-so it is **per Node process**. Production runs two player replicas, so every
+so it is **per Node process**. Production ran two player replicas when this was
+measured and runs **five across two hosts** as of 2026-08-26 — the multiplier is
+not a constant, and nothing ties it to the numbers written in code. So every
 number written against it was enforced at roughly double. Measured, not assumed:
 an 80-request burst against a limit written as 30 returned 60 × 404 and
 20 × 429.
