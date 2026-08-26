@@ -164,7 +164,7 @@ export class DiscordApi {
   }
 
   /**
-   * Post a message to a channel. Used only by the audit log.
+   * Post a message to a channel. Used by the audit log and the session pings.
    *
    * Returns a boolean instead of throwing, and the reason is the same one that
    * governs roleCall: the audit log is a RECORD of work, never a gate on it. A

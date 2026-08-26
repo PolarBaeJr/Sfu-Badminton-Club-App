@@ -152,6 +152,27 @@ export function removeSelfRole(guildId: string, roleId: string): Promise<{ ok: t
   return send<{ ok: true }>('DELETE', `/api/discord/self-roles?${params}`);
 }
 
+export interface DuePing {
+  sessionId: string;
+  roleId: string;
+  channelId: string;
+  name: string | null;
+  startsAt: string;
+  location: string | null;
+  label: string;
+}
+
+/** Sessions due a ping, decided entirely by the app. */
+export function fetchDuePings(guildId: string): Promise<{ pings: DuePing[] }> {
+  const params = new URLSearchParams({ guildId });
+  return get<{ pings: DuePing[] }>(`/api/discord/session-pings?${params}`);
+}
+
+/** Record a ping that has ALREADY been posted. Never call this beforehand. */
+export function recordPing(sessionId: string, roleId: string): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/session-pings', { sessionId, roleId });
+}
+
 export function fetchLeaderboard(
   ladder: string,
   page: number

@@ -11,6 +11,7 @@ import {
 } from './commands.js';
 import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { reconcile } from './reconcile.js';
+import { runSessionPings } from './session-pings.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -200,6 +201,22 @@ const server = createServer(async (req, res) => {
   // moved, because the alternative is telling somebody their account is
   // connected and then showing them no roles until the next sweep — which,
   // until something drives POST /sync, may be never.
+  // Session pings, driven by pg_cron on the same schedule as the app's own
+  // reminder job. One HTTP request reaches exactly one replica, which is the
+  // whole reason this is not a setInterval in here.
+  if (req.method === 'POST' && req.url === '/session-pings') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runSessionPings();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] session pings failed:', error);
+      return send(res, 500, { error: 'session_pings_failed' });
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/sync-member') {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
