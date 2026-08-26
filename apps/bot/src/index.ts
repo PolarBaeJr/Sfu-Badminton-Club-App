@@ -13,6 +13,7 @@ import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { reconcile } from './reconcile.js';
 import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
+import { runAnnouncements } from './announcements.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -232,6 +233,23 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       console.error('[bot] tournament events failed:', error);
       return send(res, 500, { error: 'tournament_events_failed' });
+    }
+  }
+
+  // The announcement relay, driven by pg_cron every 5 minutes. Faster than the
+  // tournament sweep because an announcement is the thing an exec publishes and
+  // then watches for: "urgent, no session tonight" arriving a quarter of an
+  // hour late is a different message from the one that was written.
+  if (req.method === 'POST' && req.url === '/announcements') {
+    if (!isAuthorizedService(req.headers.authorization)) {
+      return send(res, 401, { error: 'unauthorized' });
+    }
+    try {
+      const result = await runAnnouncements();
+      return send(res, 200, result);
+    } catch (error) {
+      console.error('[bot] announcement relay failed:', error);
+      return send(res, 500, { error: 'announcements_failed' });
     }
   }
 

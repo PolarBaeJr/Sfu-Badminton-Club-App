@@ -199,6 +199,68 @@ export class DiscordApi {
   }
 
   /**
+   * Post and hand back the message id, for anything that has to find the
+   * message again later. The session pings do not — a ping is a moment, and
+   * nothing edits or withdraws one — which is why createMessage above answers a
+   * bare boolean and this exists alongside it rather than replacing it.
+   */
+  async postMessage(channelId: string, payload: unknown): Promise<string | null> {
+    try {
+      const response = await this.request('POST', `/channels/${channelId}/messages`, payload);
+      if (!response.ok) {
+        console.error(`[bot] post message to ${channelId} -> ${response.status}`);
+        return null;
+      }
+      const { id } = (await response.json()) as { id?: string };
+      return id ?? null;
+    } catch (error) {
+      console.error(`[bot] post message to ${channelId} threw:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Edit a message the bot itself sent. Needs no permission beyond being its
+   * author — Discord refuses an edit of anybody else's message outright, with
+   * no permission that grants it.
+   */
+  async editMessage(channelId: string, messageId: string, payload: unknown): Promise<boolean> {
+    try {
+      const response = await this.request(
+        'PATCH',
+        `/channels/${channelId}/messages/${messageId}`,
+        payload
+      );
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Delete a message the bot sent.
+   *
+   * MANAGE_MESSAGES is required only to delete SOMEBODY ELSE'S message, so this
+   * needs nothing granted — which is why the relay ships without the preflight
+   * that the scheduled events needed.
+   *
+   * 404 counts as success, same as a deleted scheduled event: whoever removed
+   * it by hand already achieved what this call was for, and calling that a
+   * failure would retry it every tick forever.
+   */
+  async deleteMessage(channelId: string, messageId: string): Promise<boolean> {
+    try {
+      const response = await this.request(
+        'DELETE',
+        `/channels/${channelId}/messages/${messageId}`
+      );
+      return response.ok || response.status === 204 || response.status === 404;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Does the bot hold MANAGE_EVENTS in this guild?
    *
    * CHECKED BEFORE TRYING, and this is the one method here that exists purely

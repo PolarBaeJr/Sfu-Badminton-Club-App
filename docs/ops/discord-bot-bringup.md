@@ -67,21 +67,29 @@ order, and **only** these:
 | `00167_discord_runtime_config.sql` | guilds, roles, settings |
 | `00168_discord_self_roles.sql` | the self-serve ping roles and the session-ping schedule |
 | `00169_discord_tournament_events.sql` | the tournament -> Discord scheduled event mapping, and its schedule |
+| `00170_discord_announcement_posts.sql` | the announcement -> Discord message mapping, and its schedule |
 
 > ### ⚠️ Pause the prod → staging snapshot before running these on staging
 >
 > The snapshot does `DROP SCHEMA public CASCADE` at 04:00 and then restores
 > prod's `public` schema on top. Every table this bot keeps state in lives in
 > `public`: `discord_guilds`, `discord_guild_roles`, `discord_settings`,
-> `cron_config`, and — since 00168 and 00169 — `discord_self_roles`,
-> `discord_session_pings` and `discord_tournament_events`.
+> `cron_config`, and — since 00168, 00169 and 00170 — `discord_self_roles`,
+> `discord_session_pings`, `discord_tournament_events` and
+> `discord_announcement_posts`.
 >
-> The last two make the consequence more than "lose the config". They are
+> The last three make the consequence more than "lose the config". They are
 > IDEMPOTENCY records: `discord_session_pings` is the only thing stopping a
-> session being pinged again, and `discord_tournament_events` is the only thing
+> session being pinged again, `discord_tournament_events` is the only thing
 > stopping a second Discord event being created for a tournament that already
-> has one. Inheriting prod's copies of those means staging believes prod's work
-> was its own.
+> has one, and `discord_announcement_posts` is the only thing stopping a club
+> announcement being posted into the channel twice. Inheriting prod's copies of
+> those means staging believes prod's work was its own.
+>
+> The announcement relay has a second guard of its own — it relays nothing
+> published more than 72 hours ago — so a staging database that comes up with
+> its mapping table wiped does not replay a week of prod's notices into the test
+> server. That guard is a floor, not a substitute for pausing the snapshot.
 >
 > So the damage is not just that staging's rows are erased — **staging inherits
 > production's**. It would come up holding prod's guild id, prod's role ids,
@@ -287,6 +295,36 @@ is the gate.
    refuses to save unless it gets a valid response — so the bot must already be
    running, with the matching `DISCORD_PUBLIC_KEY`.
 2. `npm run register -w bot`
+
+## 7b. The channels the club has to name
+
+Three features post into a channel, and none of them guesses one — a relay that
+picked a channel by itself would be a relay putting club business somewhere
+nobody chose. Each is a `discord_settings` row, so each is off until it is set:
+
+| Key | What it drives | Set in |
+|---|---|---|
+| `audit_channel_id` | link/unlink and sweep embeds | `/setup audit_channel:` |
+| `session_ping_channel_id` | the before-each-session ping | SQL (00168) |
+| `announcement_channel_id` | the announcement relay (00170) | SQL |
+
+```sql
+INSERT INTO discord_settings (key, value)
+VALUES ('announcement_channel_id', '<channel id>')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+```
+
+Right-click the channel -> **Copy Channel ID** (Developer Mode on). The bot
+needs View Channel and Send Messages there. It edits and deletes only its own
+messages, which needs no further permission — so unlike the scheduled events
+there is nothing to grant.
+
+**Only announcements addressed to everyone are relayed.** A competitive-only or
+eligible-only notice is skipped and logged as `narrow_audience`, because that
+rule is matched against a value on the reading member and no Discord channel
+carries one. That is the design, not a gap; see 00170's header.
+
+---
 
 ## 8. Check it worked
 

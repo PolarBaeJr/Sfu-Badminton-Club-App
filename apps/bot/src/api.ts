@@ -454,3 +454,52 @@ export async function writeGuildConfig(payload: {
     throw new AppApiError(`POST /api/discord/config -> ${response.status}`);
   }
 }
+
+// ---- ANNOUNCEMENT RELAY ----------------------------------------------------
+
+export interface AnnouncementAction {
+  kind: 'post' | 'edit' | 'retract';
+  announcementId: string;
+  /** For an edit or retract this is the channel the message IS in, which is not
+   *  necessarily the configured one — a club that repoints the setting has not
+   *  moved the messages it already posted. */
+  channelId: string;
+  /** null only for a post. */
+  discordMessageId: string | null;
+  title: string;
+  body: string;
+  /** announcement_type: info | warning | urgent | event. Picks the colour. */
+  type: string;
+  url: string | null;
+}
+
+/** Announcements that owe Discord a message, or a change to one. */
+export function fetchAnnouncementActions(guildId: string): Promise<{
+  actions: AnnouncementAction[];
+  skipped: { announcementId: string; reason: string }[];
+}> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/announcements?${params}`);
+}
+
+/** Record a message Discord has ALREADY accepted. Never call this beforehand. */
+export function recordAnnouncementPost(input: {
+  announcementId: string;
+  guildId: string;
+  channelId: string;
+  discordMessageId: string;
+  title: string;
+  body: string;
+  type: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/announcements', input);
+}
+
+/** Forget a mapping, after the Discord message is gone. */
+export function clearAnnouncementPost(
+  announcementId: string,
+  guildId: string
+): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ announcementId, guildId });
+  return send<{ ok: true }>('DELETE', `/api/discord/announcements?${params}`);
+}
