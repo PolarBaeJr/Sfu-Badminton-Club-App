@@ -262,6 +262,19 @@ SELECT cron.schedule(
 --     FROM net._http_response
 --    ORDER BY created DESC LIMIT 5;
 --
+-- DISCORD-SIDE STEP, and /rolepicker WILL LOOK BROKEN UNTIL IT IS DONE.
+--
+-- /rolepicker is registered with default_member_permissions '0', which means
+-- nobody but a server Administrator can see or run it -- not "execs by
+-- default". Discord has no concept of this club's exec role, so the grant is
+-- made once in the Discord UI:
+--
+--   Server Settings -> Integrations -> (the bot) -> /rolepicker
+--     -> Roles & Members -> add @Executives
+--
+-- Until then an exec typing /rolepicker sees nothing in the picker list, which
+-- reads as a broken command rather than a missing grant.
+--
 -- To confirm the guard works, this must FAIL:
 --
 --   INSERT INTO discord_self_roles (guild_id, role_id, label)
