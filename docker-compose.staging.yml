@@ -190,6 +190,9 @@ services:
       proxy.port:       "3002"
       proxy.health:     "/health"
       proxy.service:    "badminton-staging-discord-bot"
+      # See the production compose for why this is unscalable: /bug's screenshot
+      # rides an in-memory nonce between two independently routed interactions.
+      proxy.unscalable: "true"
       proxy.autoupdate: "true"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]

@@ -1088,6 +1088,15 @@ interface PendingImage {
   expiresAt: number;
 }
 
+// IN-MEMORY, SO THE BOT MUST RUN AS ONE PROCESS. Discord routes the command
+// and the modal submit as two independent HTTP requests, so a second replica
+// would receive submits for pictures it never stashed and drop them. The
+// compose files carry `proxy.unscalable: "true"` for exactly this reason --
+// read the comment there before removing it.
+//
+// Deliberately not durable beyond that: losing this map costs the picture and
+// never the report, which is the right way round for state that exists for at
+// most fifteen minutes.
 const pendingImages = new Map<string, PendingImage>();
 
 // The interaction token behind the modal dies at fifteen minutes, so an entry
