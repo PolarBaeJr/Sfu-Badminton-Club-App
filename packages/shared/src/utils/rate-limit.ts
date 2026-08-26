@@ -9,9 +9,12 @@
  * of having to reconstruct it from forwarded headers.
  *
  * WHY IT IS ALMOST GONE. The limiter is a module-scope Map, so it is per Node
- * PROCESS. Production runs two player replicas, which means every number ever
- * written against it was enforced at roughly 2x — measured, not assumed: an
- * 80-request burst against a limit of 30 let 60 through. That is tolerable for
+ * PROCESS, so the real allowance is the written number times the number of
+ * processes serving the route. That multiplier is not a constant and has
+ * already moved once: it was 2 when this was measured (an 80-request burst
+ * against a limit of 30 let 60 through, on two player replicas), and as of
+ * 2026-08-26 production runs FIVE player replicas across two hosts. Nobody
+ * edited a limit when that happened, because nothing connects the two. That is tolerable for
  * anti-spam and is not tolerable for an auth gate, so every IP-keyed call site
  * was deleted and replaced with a per-path limit at the edge, where the bucket
  * is shared across replicas via Redis. See docs/ops/rate-limits.md.
@@ -21,11 +24,12 @@
  * so an IP-keyed edge limit would put the entire club in one bucket and the
  * first member to file a few reports would silence everyone else. There is no
  * way to express "per Discord user" at the edge, and a per-process bucket is
- * strictly better than nothing for that one anti-spam job. The 2x is harmless
- * there: the limit is volume control on a feature that writes a row, not a
- * gate on anything privileged.
+ * strictly better than nothing for that one anti-spam job. The multiplier is
+ * harmless there: the limit is volume control on a feature that writes a row,
+ * not a gate on anything privileged. It is exactly why the same slop was not
+ * acceptable on the auth routes.
  *
- * Do not "fix" the 2x with a database-backed store. That was built, evaluated,
+ * Do not "fix" the multiplier with a database-backed store. That was built, evaluated,
  * and rejected by the owner on 2026-08-24; the per-process behaviour is the
  * accepted trade for this one call site.
  */
