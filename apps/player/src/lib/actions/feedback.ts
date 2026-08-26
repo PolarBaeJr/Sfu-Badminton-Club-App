@@ -15,6 +15,14 @@ import { requirePlayer, runAction, type ActionResult } from './_shared';
 // Submit (or revise) feedback on a tournament. Stored with the player's id so
 // the exec team can moderate and follow up — the UI tells members it's private
 // to the exec team, never shown to other players.
+//
+// IT ALSO LEAVES THE APP. Since 00173 a response with a comment is relayed into
+// the execs' Discord channel, named, and an edit here edits that message. The
+// form copy says so. THE AUDIENCE IS STILL EXEC-ONLY and has to stay that way:
+// the relay's target is event_feedback_channel_id, a setting deliberately kept
+// separate from the bug-report channel so nobody widens this one by accident.
+// If that key is ever pointed at a members-visible channel, this promise breaks
+// and the copy above becomes false.
 export async function submitEventFeedback(input: EventFeedbackInput): Promise<ActionResult> {
   return runAction(() => submitEventFeedbackImpl(input));
 }

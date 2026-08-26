@@ -196,4 +196,52 @@ describe('POST /api/discord/feedback', () => {
   it('rejects a body that is not valid json', async () => {
     expect((await post('not json')).status).toBe(400);
   });
+
+  // ---- THE TITLE AND THE SCREENSHOT (00173) -------------------------------
+
+  it('stores the title the modal collected', async () => {
+    await post(report({ title: 'Ladder spins forever' }));
+    expect(inserts[0]?.title).toBe('Ladder spins forever');
+  });
+
+  it('accepts a report with no title at all', async () => {
+    // Rows filed before the modal existed have none, and the column is
+    // nullable for exactly that reason.
+    const { status } = await post(report());
+    expect(status).toBe(200);
+    expect(inserts[0]?.title).toBeNull();
+  });
+
+  it('flattens a title onto one line', async () => {
+    // It becomes an embed title, which does not wrap, and a wrapped title makes
+    // the triage query unreadable.
+    await post(report({ title: 'Ladder\nspins\tforever' }));
+    expect(String(inserts[0]?.title)).not.toMatch(/[\n\t]/);
+  });
+
+  it('trims a long title rather than letting the CHECK reject the row', async () => {
+    // 00173 CHECKs 120. A constraint violation would lose the body too.
+    await post(report({ title: 'x'.repeat(400) }));
+    expect(String(inserts[0]?.title).length).toBeLessThanOrEqual(120);
+  });
+
+  it('stores a Discord CDN screenshot url', async () => {
+    const url = 'https://cdn.discordapp.com/attachments/1/2/shot.png?ex=1&is=2&hm=3';
+    await post(report({ imageUrl: url }));
+    expect(inserts[0]?.image_url).toBe(url);
+  });
+
+  it.each([
+    'https://evil.test/payload.png',
+    'http://cdn.discordapp.com/attachments/1/2/shot.png',
+    'https://cdn.discordapp.com.evil.test/a.png',
+    'not a url',
+  ])('refuses to store %s as a screenshot', async (url) => {
+    // The relay downloads whatever is in this column. Storing an arbitrary
+    // address here is storing an SSRF target for later.
+    await post(report({ imageUrl: url }));
+    expect(inserts[0]?.image_url).toBeNull();
+    // And the report itself still lands.
+    expect(inserts).toHaveLength(1);
+  });
 });

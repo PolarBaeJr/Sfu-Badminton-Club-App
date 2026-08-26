@@ -298,7 +298,7 @@ is the gate.
 
 ## 7b. The channels the club has to name
 
-Four features post into a channel, and none of them guesses one — a relay that
+Six features post into a channel, and none of them guesses one — a relay that
 picked a channel by itself would be a relay putting club business somewhere
 nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 
@@ -308,9 +308,16 @@ nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 | `session_ping_channel_id` | the before-each-session ping | SQL (00168) |
 | `announcement_channel_id` | the announcement relay (00170) | SQL |
 | `match_results_channel_id` | the match result relay (00171) | SQL |
+| `feedback_channel_id` | `/bug` and `/feedback` (00173) | SQL |
+| `event_feedback_channel_id` | tournament survey comments (00173) | SQL |
 
-`/bug` and `/feedback` (00172) are deliberately absent from that list: they
-reply ephemerally and write to a table, so there is no channel to name.
+**THE LAST TWO MUST BE EXEC-ONLY CHANNELS, AND THEY ARE SEPARATE ON PURPOSE.**
+A bug report names its reporter. A tournament survey comment names its author
+and was written under a promise, printed on the form, that only the exec team
+sees it. Setting one key does not set the other precisely so that promise is
+never inherited from a decision somebody made about bug reports. Pointing both
+at the same private channel is the expected configuration; check the channel's
+permissions before setting either.
 
 ```sql
 INSERT INTO discord_settings (key, value)
@@ -403,29 +410,45 @@ recently, so truncation can only defer the matches that changed *least* recently
 on tick after tick, the club's volume has outgrown the window and it should be
 raised; a single capped tick after a busy night is normal and self-corrects.
 
-### Bug reports and feedback (00172)
+### Bug reports and feedback (00172, 00173)
 
-**`/bug` and `/feedback` need no channel and no setting.** They write straight
-to `feedback_reports` and reply ephemerally — the report is not relayed into any
-channel, on purpose. Filing a complaint is not the same as publishing it, and
-somebody reporting that a feature is broken has not asked the server to hear
-about it.
+**`/bug` and `/feedback` open a form, not a text box.** The command answers with
+a Discord modal carrying two inputs — a short **title** and a paragraph
+**details** box — and the report is filed when that is submitted, not when the
+command is run. Pressing Escape files nothing.
+
+**A screenshot is picked on the command, not in the modal**, as
+`/bug screenshot:<file>`. That is a Discord limitation and not a preference: a
+modal accepts text inputs and nothing else. The two are separate interactions,
+so the bot holds the picked file in memory against a nonce in the modal's
+`custom_id` until the submit arrives. Losing that — a restart, a second replica
+— costs the picture and never the report, and the confirmation says so.
+
+**The reply is still ephemeral.** What changed in 00173 is where the report goes
+afterwards: the relay posts it into `feedback_channel_id` within ten minutes, so
+the execs read it in a private channel rather than in a psql session. The
+reporter's own channel still sees nothing.
 
 **`/feedback about:` picks the kind**: general feedback (the default), a
 tournament, or something else. `/bug` always files `bug`. Four kinds, one table.
 
-**This is not `event_feedback`.** That table (00001) is the post-tournament
-survey — tied to a tournament by FK, 1-5 rating, one per player per event, read
-by two pages and rewritten by the player-merge routine. It is untouched. The
-`tournament_feedback` kind here is the free-text remark someone types the
-evening of an event, with no rating and no event attached, which is why there is
-no `tournament_id` column: a slash command gives the reporter no way to name one.
+**Website feedback is relayed too, to a DIFFERENT channel.** The post-tournament
+survey (`event_feedback`, 00001 — the 1-5 rating and comment on a tournament
+page) goes to `event_feedback_channel_id`. Only responses **with a comment** are
+relayed; a bare rating is a number for the stats page. Because that form is
+editable, a revised comment edits its own Discord message and an emptied comment
+deletes it — that is the only retraction a member has.
 
-**NOTHING READS THESE YET.** There is no admin page — that is the obvious next
-step and it is not built. Until it is, triage is a psql session:
+**These are still two different things.** `event_feedback` is the structured
+survey, tied to a tournament by FK, one per player per event. The
+`tournament_feedback` *kind* in `feedback_reports` is the free-text remark
+somebody types the evening of an event, with no rating and no event attached.
+
+**There is still no admin page.** The Discord channel is now the primary reader;
+psql remains the fallback:
 
 ```sql
-SELECT created_at, kind, body, player_id, discord_user_id
+SELECT created_at, kind, title, body, player_id, discord_user_id
   FROM feedback_reports
  WHERE status = 'open'
  ORDER BY created_at DESC;
@@ -437,20 +460,30 @@ and to close one out:
 UPDATE feedback_reports SET status = 'resolved', updated_at = now() WHERE id = '<id>';
 ```
 
-`status` is one of `open`, `triaged`, `resolved`, `wont_fix`. If nobody runs the
-first query, this is a black hole, and the first person to notice will be a
-member asking why their bug report went nowhere.
+`status` is one of `open`, `triaged`, `resolved`, `wont_fix`. Marking one
+resolved does **not** touch the Discord message: the relay windows reports on
+`created_at`, so triage state never re-posts.
+
+**A report older than 72 hours is never relayed.** The row is in the table and
+psql finds it, but the channel will not learn about it. That is the same
+lookback the other relays use, and it is why a failed post is never recorded as
+done — an unposted report retries every tick until it ages out.
 
 **An unlinked member can still file.** `player_id` is null and the reply says so
 — they are the people most likely to have hit an onboarding bug, and turning
 them away would silence exactly that report. `discord_user_id` is kept either
-way, so a report can be attributed or replied to by hand.
+way, so the relay can render an inert `<@id>` mention and an exec can click
+through even when there is no club account behind it.
 
 **The rate limit is eight reports per hour per Discord user**, not per IP: every
 request to that route arrives from the one bot process, so an IP key would put
 the whole club in a single bucket. It is in-memory and per-process, so two
 player replicas means an effective sixteen. That is fine — it is anti-spam, not
 an auth gate.
+
+**Taking a single report down** is a manual delete in Discord. The mapping row
+survives, and the relay only ever posts what has no mapping, so it is never
+re-posted. Hand deletion is permanent here by design.
 
 ---
 
