@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
-import { rateLimit, getClientIp } from '@badminton/shared';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { signPayload } from '@/lib/passkey/cookie';
 import { recordChallenge } from '@/lib/passkey/challenge-store';
@@ -13,12 +12,6 @@ import {
 } from '@/lib/passkey/config';
 
 export async function POST(request: Request) {
-  const ip = getClientIp(request);
-  const rl = rateLimit(`passkey-auth-options:${ip}`, 10, 60_000);
-  if (!rl.success) {
-    return new NextResponse('Too many requests', { status: 429 });
-  }
-
   let player;
   try {
     player = await getAuthenticatedConsoleUser({ skipPasskey: true });

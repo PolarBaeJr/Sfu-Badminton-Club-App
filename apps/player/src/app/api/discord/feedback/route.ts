@@ -82,10 +82,17 @@ export async function POST(request: Request) {
   // conservative fallback: it can only ever be the bot failing to pass one
   // through, never a real member.
   //
+  // THE LAST IN-APP RATE LIMIT IN THE CODEBASE, and it is keyed on the REPORTER
+  // rather than on an IP. That is the whole reason it survived the removal of
+  // the other ~43: every request to this route arrives from the single bot
+  // process, so the per-path edge limit that replaced them would put the entire
+  // club in one bucket and let the first member to file a few reports silence
+  // everyone else. The edge cannot express "per Discord user".
+  //
   // The limiter is in-memory and per-process, so with two player replicas the
   // effective allowance is double this. That is fine for anti-spam and would
   // NOT be fine for an auth gate; it is the reason this route does not lean on
-  // the limiter for anything but volume.
+  // the limiter for anything but volume. See docs/ops/rate-limits.md.
   const limited = rateLimit(
     `discord:feedback:${discordUserId ?? 'anonymous'}`,
     REPORTS_PER_HOUR,

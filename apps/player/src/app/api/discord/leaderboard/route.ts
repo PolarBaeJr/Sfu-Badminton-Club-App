@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { getClientIp, rateLimit } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
@@ -41,14 +40,6 @@ const DEFAULT_LADDER: Ladder = 'doubles';
 // full roster over the wire to render ten rows.
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  // Keyed on the bot's source IP. The limiter is an in-process Map, so this is
-  // per replica by accepted design — see rate-limit.ts.
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:leaderboard:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const url = new URL(request.url);
   const requested = url.searchParams.get('ladder');

@@ -144,8 +144,10 @@ export async function checkInWithToken(
 }
 
 async function checkInWithTokenImpl(token: string) {
-  // Identity first, before the token table is touched at all. The page-level
-  // rate limit doesn't cover someone calling this action directly, and if the
+  // Identity first, before the token table is touched at all. The edge rate
+  // limit on /checkin does not cover someone calling this action directly
+  // (a server action posts to the page it was rendered from, but a scripted
+  // caller need not go near /checkin at all), and if the
   // lookup ran first a logged-out caller could tell a real token ('Not
   // authenticated') from an unknown one ('Invalid check-in code') — exactly the
   // enumeration oracle the uniform message exists to prevent.
