@@ -27,10 +27,14 @@ function describe(ping: DuePing): string {
   const when = `<t:${Math.floor(Date.parse(ping.startsAt) / 1000)}:R>`;
   const name = ping.name ?? 'Session';
   const where = ping.location ? ` at **${ping.location}**` : '';
+  // Every role for this channel in ONE mention line. A club-wide night matches
+  // both the competitive and the recreational ping role, and if they share a
+  // channel the alternative is the identical announcement posted twice.
+  const mentions = ping.roleIds.map((id) => `<@&${id}>`).join(' ');
   // Discord renders <t:...:R> in each reader's own timezone, which is worth
   // more than it looks: the club has members reading this from other time
   // zones during breaks, and a hardcoded "19:30" is wrong for all of them.
-  return `<@&${ping.roleId}> **${name}** starts ${when}${where}.`;
+  return `${mentions} **${name}** starts ${when}${where}.`;
 }
 
 export async function runSessionPings(): Promise<PingRunResult> {
@@ -64,7 +68,7 @@ export async function runSessionPings(): Promise<PingRunResult> {
           // Without this Discord renders <@&id> as plain text and the whole
           // feature silently does nothing visible — the message arrives, looks
           // right, and notifies nobody.
-          allowed_mentions: { roles: [ping.roleId] },
+          allowed_mentions: { roles: ping.roleIds },
         });
       } catch (error) {
         console.error(`[bot] session ping post threw for ${ping.sessionId}:`, error);
@@ -79,14 +83,14 @@ export async function runSessionPings(): Promise<PingRunResult> {
       }
 
       try {
-        await recordPing(ping.sessionId, ping.roleId);
+        await recordPing(ping.sessionId, ping.roleIds);
         result.posted += 1;
       } catch (error) {
         // Posted but not recorded. The ping went out, so this is a duplicate
         // risk rather than a miss — loud, because it will repeat next tick.
         console.error(
-          `[bot] session ping POSTED but not recorded (${ping.sessionId}/${ping.roleId}) — ` +
-            'it may be sent again on the next run:',
+          `[bot] session ping POSTED but not recorded (${ping.sessionId}/` +
+            `${ping.roleIds.join(',')}) — it may be sent again on the next run:`,
           error
         );
         result.posted += 1;

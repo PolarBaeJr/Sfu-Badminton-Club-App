@@ -27,12 +27,11 @@ vi.mock('../discord-api.js', async (importOriginal) => ({
 
 const PING = {
   sessionId: 's1',
-  roleId: '900',
   channelId: 'c1',
+  roleIds: ['900'],
   name: 'Competitive Practice',
   startsAt: '2026-09-15T02:30:00.000Z',
   location: 'West Gym',
-  label: 'Competitive nights',
 };
 
 beforeEach(() => {
@@ -92,6 +91,29 @@ describe('session pings', () => {
     expect(payload.content).toContain('Competitive Practice');
     // <t:unix:R> — rendered in each reader's own timezone by Discord.
     expect(payload.content).toMatch(/<t:\d+:R>/);
+  });
+
+  it('mentions EVERY role for the channel in one message, not one message each', async () => {
+    // A club-wide night matches both ping roles. If they share a channel the
+    // app hands back one entry carrying both, and the bot must post once —
+    // otherwise the same announcement lands twice in the same place and the
+    // (session, role) idempotency key cannot catch it, because both rows are
+    // genuinely distinct.
+    fetchDuePings.mockResolvedValue({ pings: [{ ...PING, roleIds: ['900', '901'] }] });
+
+    const { runSessionPings } = await import('../session-pings.js');
+    await runSessionPings();
+
+    expect(createMessage).toHaveBeenCalledTimes(1);
+    const [, payload] = createMessage.mock.calls[0] as [
+      string,
+      { content: string; allowed_mentions: { roles: string[] } },
+    ];
+    expect(payload.content).toContain('<@&900>');
+    expect(payload.content).toContain('<@&901>');
+    expect(payload.allowed_mentions.roles).toEqual(['900', '901']);
+    // And BOTH are recorded, or the unrecorded one re-pings on the next tick.
+    expect(recordPing).toHaveBeenCalledWith('s1', ['900', '901']);
   });
 
   it('counts a posted-but-unrecorded ping as posted, not lost', async () => {

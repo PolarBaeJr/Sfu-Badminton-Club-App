@@ -144,14 +144,22 @@ export async function GET(request: Request) {
     )
   );
 
+  // ONE ENTRY PER (SESSION, CHANNEL), not per (session, role).
+  //
+  // A club-wide night matches every ping role, and two ping roles pointed at
+  // the same channel would otherwise produce two messages saying the same
+  // thing in the same place — and the (session_id, role_id) idempotency key
+  // cannot catch it, because both rows are genuinely distinct. Grouping here
+  // is the only place the collision is visible: the bot posts one message per
+  // entry mentioning every role in it, and records one row per role, so the
+  // key still does its job across ticks.
   const pings: {
     sessionId: string;
-    roleId: string;
     channelId: string;
+    roleIds: string[];
     name: string | null;
     startsAt: string;
     location: string | null;
-    label: string;
   }[] = [];
 
   for (const session of rows) {
@@ -162,6 +170,10 @@ export async function GET(request: Request) {
     // Due, and not so overdue that the ping would be noise.
     if (minutesAway > leadMinutes) continue;
     if (minutesAway < -MAX_LATENESS_MINUTES) continue;
+
+    // Insertion-ordered, so the channels come out in the order their first
+    // matching role was configured rather than in hash order.
+    const byChannel = new Map<string, string[]>();
 
     for (const role of pingRoles) {
       // An 'all' session pings every configured ping role — a club-wide night is
@@ -176,14 +188,19 @@ export async function GET(request: Request) {
       // the others going out.
       if (!channelId) continue;
 
+      const roles = byChannel.get(channelId);
+      if (roles) roles.push(role.role_id);
+      else byChannel.set(channelId, [role.role_id]);
+    }
+
+    for (const [channelId, roleIds] of byChannel) {
       pings.push({
         sessionId: session.id,
-        roleId: role.role_id,
         channelId,
+        roleIds,
         name: session.name,
         startsAt: startsAt.toISOString(),
         location: session.location,
-        label: role.label,
       });
     }
   }
@@ -201,7 +218,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
   }
 
-  let body: { sessionId?: unknown; roleId?: unknown };
+  let body: { sessionId?: unknown; roleIds?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -209,9 +226,15 @@ export async function POST(request: Request) {
   }
 
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : null;
-  const roleId = typeof body.roleId === 'string' ? body.roleId : null;
-  if (!sessionId || !roleId) {
-    return NextResponse.json({ error: 'session_and_role_required' }, { status: 400 });
+  // A LIST, because one message can mention several roles. Recording them in
+  // one statement rather than one call each means a post that mentioned three
+  // roles cannot end up half-recorded and re-ping a subset next tick.
+  const roleIds = Array.isArray(body.roleIds)
+    ? body.roleIds.filter((r): r is string => typeof r === 'string' && r.length > 0)
+    : [];
+
+  if (!sessionId || roleIds.length === 0) {
+    return NextResponse.json({ error: 'session_and_roles_required' }, { status: 400 });
   }
 
   const { error } = await createServiceRoleClient()
@@ -219,7 +242,10 @@ export async function POST(request: Request) {
     // Idempotent: two replicas racing the same tick both post at most once
     // each, and the second insert is a no-op rather than a 409 the bot would
     // have to interpret.
-    .upsert({ session_id: sessionId, role_id: roleId }, { onConflict: 'session_id,role_id' });
+    .upsert(
+      roleIds.map((roleId) => ({ session_id: sessionId, role_id: roleId })),
+      { onConflict: 'session_id,role_id' }
+    );
 
   if (error) {
     // Loud, because the consequence is a repeat ping on the next tick. That is

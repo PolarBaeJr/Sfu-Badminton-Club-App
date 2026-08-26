@@ -154,12 +154,14 @@ export function removeSelfRole(guildId: string, roleId: string): Promise<{ ok: t
 
 export interface DuePing {
   sessionId: string;
-  roleId: string;
   channelId: string;
+  // Every role to mention in this ONE message. The app groups by channel so
+  // that a club-wide session matching several ping roles does not produce the
+  // same announcement twice in the same place.
+  roleIds: string[];
   name: string | null;
   startsAt: string;
   location: string | null;
-  label: string;
 }
 
 /** Sessions due a ping, decided entirely by the app. */
@@ -169,8 +171,8 @@ export function fetchDuePings(guildId: string): Promise<{ pings: DuePing[] }> {
 }
 
 /** Record a ping that has ALREADY been posted. Never call this beforehand. */
-export function recordPing(sessionId: string, roleId: string): Promise<{ ok: true }> {
-  return send<{ ok: true }>('POST', '/api/discord/session-pings', { sessionId, roleId });
+export function recordPing(sessionId: string, roleIds: string[]): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/session-pings', { sessionId, roleIds });
 }
 
 export function fetchLeaderboard(
