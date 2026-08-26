@@ -35,6 +35,12 @@ const ALLOWED = new Map<string, string>([
   ['app/leaderboard/page.tsx', 'get_leaderboard() already excludes opted-out members'],
   ['app/leaderboard/leaderboard-client.tsx', 'renders only what page.tsx passed it'],
   ['app/page.tsx', 'top-N strip, also off get_leaderboard()'],
+  // The Discord bot's ladder. Same source as the web leaderboard: it calls
+  // get_leaderboard() and slices the result for paging, adding no filter of its
+  // own precisely so the database stays the one place these rules live. A member
+  // who sets hide_from_leaderboard is absent from the RPC and therefore absent
+  // from Discord, with no second switch to remember.
+  ['app/api/discord/leaderboard/route.ts', 'get_leaderboard() already excludes opted-out members'],
   // The viewer's OWN row. The flag governs what everyone else sees.
   ['app/layout.tsx', "the signed-in member's own rating, in their own header"],
   // The profile page — gated, and asserted below.

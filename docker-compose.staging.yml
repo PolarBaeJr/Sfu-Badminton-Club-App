@@ -30,6 +30,29 @@ services:
     image: ghcr.io/polarbaejr/badminton-player-staging:${STAGING_IMAGE_TAG:-latest}
     container_name: badminton-staging-player
     env_file: .env.staging
+    environment:
+      # READ THIS BEFORE TRUSTING THIS BLOCK.
+      #
+      # The player app is NOT started by this compose file in any environment
+      # that matters -- it is onboarded through the proxy dashboard, so this
+      # `environment:` block never runs for it. The compose service is kept
+      # only for local work. Setting DISCORD_BOT_URL here and assuming staging
+      # picked it up is exactly how linking silently stopped applying roles on
+      # 2026-08-25: the app logged `cannot sync: DISCORD_BOT_URL ... unset`,
+      # treated the failed sync as non-fatal (correctly), and told members
+      # their roles would "appear shortly" -- forever.
+      #
+      # ON A DEPLOYED HOST this must be set through the dashboard instead:
+      #   replace_service(badminton-staging-player, <image>, env={
+      #     "DISCORD_BOT_URL": "https://discord.polardev.org",
+      #     "DISCORD_SERVICE_SECRET": "ref:DISCORD_SERVICE_SECRET",
+      #   })
+      # Re-pass the secret every time; a replace without it DROPS it.
+      #
+      # The old default was `http://bot:3002`, which assumed the player shares
+      # a compose network with the bot. It does not. Use the public origin --
+      # same reasoning as APP_API_URL on the bot, and see .env.example.
+      DISCORD_BOT_URL: ${DISCORD_BOT_URL:-http://bot:3002}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -43,6 +66,7 @@ services:
       # catch-all; /admin and /supabase are longer and win longest-prefix.
       proxy.path:       "/"
       proxy.port:       "3000"
+      proxy.health:     "/api/health/ready"
       proxy.service:    "badminton-staging-player"
       proxy.unscalable: "true"
       # Safe because the image above is a *separate GHCR package*, not a second
@@ -80,6 +104,7 @@ services:
       # see the prefix on every request. Stripping it 404s the whole console.
       proxy.strip:      "false"
       proxy.port:       "3001"
+      proxy.health:     "/admin/api/health/ready"
       proxy.service:    "badminton-staging-admin"
       proxy.unscalable: "true"
       # See the player service above — safe only because this is its own package.
@@ -92,3 +117,92 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  # The Discord bot, staging copy.
+  #
+  # ---- IT NEEDS ITS OWN DISCORD APPLICATION ----
+  #
+  # An interactions endpoint URL is a property of the APPLICATION, and one
+  # application has exactly one. Pointing production's application at this host
+  # is not "testing on staging", it is moving production onto staging. Create a
+  # second application, point it here, and invite it to a private test server.
+  #
+  # The consequence worth planning for: a second application is a second bot
+  # user with its own token, so DISCORD_BOT_TOKEN, DISCORD_PUBLIC_KEY,
+  # DISCORD_APPLICATION_ID and DISCORD_GUILDS in .env.staging are ALL different
+  # values from production's, not copies. DISCORD_SERVICE_SECRET is different
+  # too, but for a different reason: it is what the staging player app compares
+  # on /api/discord/*, so sharing production's would let one stack's bot drive
+  # the other's roles.
+  bot:
+    image: ghcr.io/polarbaejr/badminton-bot-staging:${STAGING_IMAGE_TAG:-latest}
+    container_name: badminton-staging-bot
+    env_file: .env.staging
+    environment:
+      # Same ${VAR:?} guard as production: compose refuses to start rather than
+      # booting a bot holding an empty key, which fails closed later and in a
+      # place that looks like a Discord problem. Interpolated from the file
+      # passed as --env-file, which for this stack is .env.staging.
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:?set DISCORD_PUBLIC_KEY in .env.staging}
+      DISCORD_BOT_TOKEN:  ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN in .env.staging}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:?set DISCORD_APPLICATION_ID in .env.staging}
+      # BOOTSTRAP FALLBACK ONLY. The live guild/role map lives in the database
+      # (00167) and is read at runtime, so adding a role or a second server
+      # needs no deploy. This value is used only until the first successful
+      # config read - which is what lets the bot come up and be useful against
+      # a database where 00167 has not been applied yet. `:-` and not `:?`
+      # because it is genuinely optional once 00167 is in.
+      DISCORD_GUILDS: ${DISCORD_GUILDS:-}
+      DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env.staging}
+      # Optional. Point it at a channel in the test server, not the real one.
+      DISCORD_AUDIT_CHANNEL_ID: ${DISCORD_AUDIT_CHANNEL_ID:-}
+      # NO DEFAULT ON PURPOSE. This used to be `${APP_API_URL:-http://player:3000}`,
+      # which assumed the player app is a compose service on this project's
+      # network. It is not, in either environment: player and admin are
+      # onboarded through the proxy dashboard and run under generated names
+      # (goproxy-onb-...-1000 on staging, goproxy-badminton-player-NN on prod).
+      # There is no container or alias called `player`, so the default resolved
+      # to NXDOMAIN and every app call died as `TypeError: fetch failed` -- a
+      # message that points at the network, not at the config that caused it.
+      #
+      # A wrong value here disables the bot completely and says nothing useful,
+      # so it fails at `compose config` time instead. Set it in .env; see
+      # .env.example for the two values that actually work.
+      APP_API_URL: ${APP_API_URL:?set APP_API_URL in .env -- see .env.example}
+      # The public origin, because it goes into the /link button a member opens
+      # in their own browser. Staging's origin, so a staging link cannot walk
+      # somebody into production.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://badminton.polardev.org}
+    ports:
+      - "3015:3002"
+    restart: unless-stopped
+    networks: [edge, default]
+    labels:
+      proxy.enable:     "true"
+      # NEVER add proxy.auth here, on staging any more than on production.
+      # Discord POSTs interactions with no cookie and no session, and pg_net
+      # calls POST /sync the same way; a gated host refuses both. The gate is
+      # opt-in per host via this label, so omitting it IS the exclusion.
+      # polardev.org IS the staging domain (production is sfubadminton.com),
+      # so the host needs no "staging" in it - badminton.polardev.org next door
+      # follows the same convention.
+      proxy.host:       "${DISCORD_BOT_DOMAIN_STAGING:-discord.polardev.org}"
+      proxy.port:       "3002"
+      proxy.health:     "/health"
+      proxy.service:    "badminton-staging-discord-bot"
+      # See the production compose for why this is unscalable: /bug's screenshot
+      # rides an in-memory nonce between two independently routed interactions.
+      proxy.unscalable: "true"
+      proxy.autoupdate: "true"
+      # See the production compose for why only the bot carries this: the
+      # bucket is keyed per service, so the same label on the player app
+      # (proxy.path "/") would meter the whole site against one bucket per
+      # client IP -- and all of campus wifi shares one.
+      proxy.ratelimit:     "true"
+      proxy.ratelimit.rpm: "300"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

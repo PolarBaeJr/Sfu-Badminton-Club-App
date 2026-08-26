@@ -8,6 +8,7 @@ WORKDIR /app
 COPY package.json package-lock.json turbo.json tsconfig.base.json .npmrc ./
 COPY apps/player/package.json apps/player/
 COPY apps/admin/package.json apps/admin/
+COPY apps/bot/package.json apps/bot/
 COPY packages/shared/package.json packages/shared/
 COPY packages/ui/package.json packages/ui/
 COPY packages/config/package.json packages/config/
@@ -56,7 +57,7 @@ ARG SENTRY_ORG
 ARG SENTRY_PROJECT
 ARG SENTRY_AUTH_TOKEN
 
-RUN npx turbo run build --filter=player --filter=admin --concurrency=1
+RUN npx turbo run build --filter=player --filter=admin --filter=bot --concurrency=1
 
 # ---- Stage 3: Player runner ----
 FROM node:24-bookworm-slim AS runner-player
@@ -102,3 +103,31 @@ COPY --from=builder --chown=nextjs:nextjs /app/apps/admin/public ./apps/admin/pu
 USER nextjs
 EXPOSE 3001
 CMD ["node", "apps/admin/server.js"]
+
+# ---- Stage 5: Discord bot runner ----
+# An HTTP interactions endpoint, not a gateway bot: Discord POSTs signed requests
+# here, so the process is stateless and replicas are safe. A gateway bot holds a
+# WebSocket and would need sharding before a second replica could exist at all.
+#
+# No node_modules is copied because the bot has NO runtime dependencies - it is
+# node:http plus node:crypto. If a dependency is ever added, this stage must start
+# copying the production tree, and forgetting to is a crash on boot rather than a
+# silent failure, which is the failure mode to prefer.
+FROM node:24-bookworm-slim AS runner-bot
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3002
+
+RUN addgroup --system --gid 1001 bot && \
+    adduser --system --uid 1001 bot
+
+# dist is ESM. Node's syntax detection would infer that on its own, but it is a
+# heuristic; carrying the package.json states "type": "module" outright so the
+# module system does not depend on how the emitted code happens to look.
+COPY --from=builder --chown=bot:bot /app/apps/bot/package.json ./package.json
+COPY --from=builder --chown=bot:bot /app/apps/bot/dist ./dist
+
+USER bot
+EXPOSE 3002
+CMD ["node", "dist/index.js"]

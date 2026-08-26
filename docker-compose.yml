@@ -33,6 +33,39 @@ services:
         - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
         - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
     env_file: .env
+    environment:
+      # The SAME value the bot gets. This is what proves a request on
+      # /api/discord/* really came from the bot, so a mismatch here fails every
+      # Discord feature closed with a 401 and nothing else.
+      #
+      # Interpolated from the Pi's .env (gitignored), NOT the dashboard's
+      # ref:NAME form - that is resolved only for env sent to the dashboard
+      # API, so compose would set the literal string "ref:...". The `:?`
+      # makes compose refuse to start rather than booting with an empty
+      # secret, which would otherwise fail closed in a confusing place.
+      DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env}
+      # Used in one direction: the /link page asks the bot to apply roles the
+      # instant an account is connected, rather than leaving the member looking
+      # at a success screen with no roles.
+      #
+      # READ THIS BEFORE TRUSTING THIS BLOCK. The player app is onboarded
+      # through the proxy dashboard, not started by this compose file, so this
+      # `environment:` block does not reach it on a deployed host. Staging hit
+      # exactly this on 2026-08-25: the value looked configured here, was
+      # absent in the container, and linking logged `cannot sync:
+      # DISCORD_BOT_URL ... unset` while still reporting success to the member.
+      #
+      # On a deployed host set it through the dashboard, re-passing the secret
+      # (a replace without it DROPS it):
+      #   replace_service(badminton-player, <image>, env={
+      #     "DISCORD_BOT_URL": "https://<the bot's public origin>",
+      #     "DISCORD_SERVICE_SECRET": "ref:DISCORD_SERVICE_SECRET",
+      #   })
+      #
+      # `http://bot:3002` assumes the player shares a compose network with the
+      # bot, which it does not. Use the public origin -- same reasoning as
+      # APP_API_URL on the bot, and see .env.example.
+      DISCORD_BOT_URL: ${DISCORD_BOT_URL:-http://bot:3002}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -47,6 +80,19 @@ services:
       # the player a host catch-all that pools with the admin backend.
       proxy.path:       "/"
       proxy.port:       "3000"
+      # Without this label proxy-manager does NOT fall back to a shallow GET - it
+      # falls back to a bare TCP dial (cmd/proxy/health.go: the 2xx branch only
+      # runs when HealthPath is non-empty). A wedged Next process with an open
+      # socket, or one whose database is gone, stays "healthy" forever.
+      #
+      # This label is the ONLY check that actually runs today. The healthcheck
+      # block below never executes in production: the live containers are
+      # goproxy-* ones created by proxy-manager, whose replica path clones
+      # labels but NOT the healthcheck - all three report `NO healthcheck` and
+      # `health=none`. And proxy-manager reads Docker's health status nowhere
+      # anyway. Unlike both of those, proxy.health is probed by the proxy
+      # itself, so it works regardless of how the container was created.
+      proxy.health:     "/api/health/ready"
       proxy.service:    "badminton-player"
       proxy.unscalable: "true"
       proxy.autoupdate:  "true"
@@ -64,13 +110,148 @@ services:
       #                         a 200 cannot satisfy the check.
       # /api/health/ready also proves the build's Supabase config parses and the
       # database answers; see apps/player/src/app/api/health/ready/route.ts.
-      # timeout is 10s against the route's own 3s probe ceiling, so a slow
+      # timeout is 10s against the route's own 1.5s probe ceiling, so a slow
       # dependency fails the check with a log line rather than being killed.
+      # The 1.5s ceiling is set by the PROXY, not by this line: proxy-manager's
+      # healthTimeout is 2s (cmd/proxy/health.go), and a probe that outruns it
+      # is recorded as a transport error instead of the 503 the route returns.
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready',{redirect:'manual'}).then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  bot:
+    image: ghcr.io/polarbaejr/badminton-bot:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner-bot
+    env_file: .env
+    environment:
+      # All three come from the Pi's .env (gitignored) by interpolation. NOT
+      # the dashboard's ref:NAME form: that is resolved server-side only for
+      # env sent to the dashboard API (replace_service / stage_canary /
+      # onboarding), so compose would happily set the literal string
+      # "ref:discord_public_key" and the bot would reject every interaction
+      # with an signature error that points nowhere near the real cause.
+      # The `:?` makes compose refuse to start instead.
+      #
+      # Discord POSTs signed interactions; without the public key the process
+      # refuses every request rather than serving unverified ones.
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:?set DISCORD_PUBLIC_KEY in .env}
+      DISCORD_BOT_TOKEN:  ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN in .env}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID:?set DISCORD_APPLICATION_ID in .env}
+      # BOOTSTRAP FALLBACK ONLY. The live guild/role map lives in the database
+      # (00167) and is read at runtime, so adding a role or a second server
+      # needs no deploy. This value is used only until the first successful
+      # config read - which is what lets the bot come up and be useful against
+      # a database where 00167 has not been applied yet. `:-` and not `:?`
+      # because it is genuinely optional once 00167 is in.
+      DISCORD_GUILDS: ${DISCORD_GUILDS:-}
+      # Shared with the player app, which compares it on /api/discord/*. The
+      # bot asserts a Discord user id; this is what proves the assertion comes
+      # from the bot. The SAME value must reach the player service.
+      DISCORD_SERVICE_SECRET: ${DISCORD_SERVICE_SECRET:?set DISCORD_SERVICE_SECRET in .env}
+      # Channel the bot writes an embed to for every action it takes. OPTIONAL
+      # and therefore `:-`, not `:?`: an unset value disables the audit log
+      # rather than stopping the bot, and the bot says which at startup. Give
+      # it a private, exec-only channel - the entries mention the members whose
+      # roles changed.
+      DISCORD_AUDIT_CHANNEL_ID: ${DISCORD_AUDIT_CHANNEL_ID:-}
+      # In-cluster by default: bot and player share the compose `default`
+      # network, so this needs no trip out to Cloudflare and back. The readiness
+      # probe's hairpin (see apps/player/.../health/ready) is NOT repeated here.
+      # Override only if the bot is ever split onto another host.
+      # NO DEFAULT ON PURPOSE. This used to be `${APP_API_URL:-http://player:3000}`,
+      # which assumed the player app is a compose service on this project's
+      # network. It is not, in either environment: player and admin are
+      # onboarded through the proxy dashboard and run under generated names
+      # (goproxy-onb-...-1000 on staging, goproxy-badminton-player-NN on prod).
+      # There is no container or alias called `player`, so the default resolved
+      # to NXDOMAIN and every app call died as `TypeError: fetch failed` -- a
+      # message that points at the network, not at the config that caused it.
+      #
+      # A wrong value here disables the bot completely and says nothing useful,
+      # so it fails at `compose config` time instead. Set it in .env; see
+      # .env.example for the two values that actually work.
+      APP_API_URL: ${APP_API_URL:?set APP_API_URL in .env -- see .env.example}
+      # The PUBLIC origin, and it must not be the in-cluster URL above: this one
+      # goes into the /link button that a member opens in their own browser, so
+      # http://player:3000 would be a dead link on their phone.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://sfubadminton.com}
+    restart: unless-stopped
+    networks: [edge, default]
+    labels:
+      proxy.enable:     "true"
+      # NEVER add proxy.auth here. Discord POSTs interactions with no cookie
+      # and no session, and pg_net will later call POST /sync the same way; a
+      # gated host would refuse both. The proxy's SSO gate is opt-in PER HOST
+      # via proxy.auth: "true" (router.go checks the label), so omitting it is
+      # the exclusion — the "auth gate enabled for domain(s) ..." startup line
+      # only declares which apexes have an auth.<domain> login host wired up,
+      # it does not gate their subdomains. Confirmed against proxy-manager
+      # 2026-08-25. Auth for this host is the Ed25519 signature the bot
+      # verifies itself, plus the shared secret on /sync.
+      # bot., NOT discord. -- discord.sfubadminton.com is a redirect to the
+      # server invite. Pointing anything here at that host is worse than a
+      # plain 404: pg_net follows redirects, so the nightly /sync would land
+      # on Discord's invite page, get a 200, and look healthy forever while
+      # never syncing a single member.
+      proxy.host:       "${DISCORD_BOT_DOMAIN:-bot.sfubadminton.com}"
+      proxy.port:       "3002"
+      # A bare TCP dial would call a bot that cannot reach the app API healthy.
+      proxy.health:     "/health"
+      proxy.service:    "badminton-discord-bot"
+      # UNSCALABLE, and this reversed a previous decision. The old comment here
+      # read "no connection held, so replicas are safe", which was true until
+      # /bug grew a screenshot. That flow is TWO interactions -- the command
+      # opens a modal, the submit arrives as a separate HTTP request -- bridged
+      # by a nonce in an in-memory Map (apps/bot/src/commands.ts). Discord
+      # load-balances the two requests independently, so with N replicas the
+      # submit lands on the process holding the picture only 1 time in N and
+      # the screenshot is silently dropped the rest of the time.
+      #
+      # Not hypothetical: two racing dashboard toggles briefly scaled the
+      # staging bot to ~9 containers on 2026-08-26. At 2 replicas half the
+      # screenshots vanish; at 9, eight in nine.
+      #
+      # The report itself is never at risk -- only the picture -- and the
+      # member is told when one is dropped. To lift this, make the bridge
+      # durable (a table keyed by nonce) and remove this label; nothing else
+      # in the bot holds cross-request state.
+      proxy.unscalable: "true"
+      proxy.autoupdate: "true"
+      # RATE LIMITED, AND THIS IS THE ONLY SERVICE IN THIS FILE WHERE THE LABEL
+      # FITS. The proxy keys its bucket on `proxy.host + "|" + proxy.path`
+      # (router.go), so a rate limit is per SERVICE, not per route -- there is
+      # no way to spell "throttle the login endpoint" with labels. On the
+      # player app, whose proxy.path is "/", the label would therefore meter
+      # the entire site against a single bucket per client IP, and the bucket
+      # key for IPv4 is the whole address (maskRLKey). Everyone on SFU campus
+      # wifi leaves through the same egress address, so one bucket would be
+      # the whole club during a signup rush. That is an outage, not a control.
+      #
+      # The bot has no such problem: its callers are Discord's edge and the
+      # Pi's own pg_net cron, neither of which shares an IP with a member.
+      #
+      # 300/min is deliberately far above anything legitimate. This exists to
+      # stop a flood from reaching the ed25519 verify on every request, not to
+      # shape real traffic -- a 429 here shows up in Discord as "interaction
+      # failed", so the limit has to be somewhere real usage can never reach.
+      #
+      # capacity == rpm and refill == rpm/60, so this is 300 instantly then
+      # 5/sec; there is no separate burst knob. A non-numeric or <= 0 rpm is
+      # logged and IGNORED -- the service still serves, just unthrottled --
+      # so confirm from the proxy log, never by assuming the label took.
+      proxy.ratelimit:     "true"
+      proxy.ratelimit.rpm: "300"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health').then(async r=>{if(r.status!==200)process.exit(1);const b=await r.json();process.exit(b&&b.ok===true?0:1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   admin:
     image: ghcr.io/polarbaejr/badminton-admin:${IMAGE_TAG:-latest}
@@ -121,6 +302,10 @@ services:
       # see the prefix on every request; stripping it 404s the whole console.
       proxy.strip:      "false"
       proxy.port:       "3001"
+      # basePath is /admin and proxy.strip is false, so the route file lands at
+      # /admin/api/health/ready and the unprefixed path 404s. A 404 is not 2xx,
+      # so getting this prefix wrong marks the backend permanently down.
+      proxy.health:     "/admin/api/health/ready"
       proxy.service:    "badminton-admin"
       proxy.unscalable: "true"
       proxy.autoupdate:  "true"

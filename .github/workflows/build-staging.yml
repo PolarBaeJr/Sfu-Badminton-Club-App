@@ -75,7 +75,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
     strategy:
       matrix:
-        app: [player, admin]
+        app: [player, admin, bot]
         include:
           - app: admin
             base_path: /admin
@@ -161,9 +161,12 @@ jobs:
 
   # THE DEPLOY. Everything above only publishes immutable sha- tags, which
   # nothing on the Pi watches; moving `latest` is what the auto-updater sees, and
-  # this job moves both of them or neither. `needs: build` covers the whole
-  # matrix, so one failed leg leaves BOTH staging deploy references where they
-  # were rather than half-advancing the pair.
+  # this job moves all THREE of them or none. `needs: build` covers the whole
+  # matrix, so one failed leg leaves EVERY staging deploy reference where it was
+  # rather than half-advancing the set — which matters more now that the bot is
+  # in it, because the bot and the player app talk to each other over a shared
+  # secret and a half-advanced pair is exactly how you get a 401 loop that looks
+  # like a misconfigured secret.
   #
   # imagetools create copies the existing manifest by digest — no rebuild, no
   # second arm64 build, and the bits behind :latest are byte-identical to the
@@ -183,7 +186,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Move :latest on both staging images
+      - name: Move :latest on all staging images
         env:
           OWNER: ${{ github.repository_owner }}
           # The tag the build job actually pushed, not a guess at how
@@ -203,7 +206,7 @@ jobs:
           # place the raw value would have leaked through as a 404 on push.
           owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
           tag="$TAG"
-          for app in player admin; do
+          for app in player admin bot; do
             image="ghcr.io/${owner}/badminton-${app}-staging"
             echo "promoting ${image}:${tag} -> ${image}:latest"
             docker buildx imagetools create -t "${image}:latest" "${image}:${tag}"

@@ -1,7 +1,12 @@
-// Bumped to v4 to drop caches written before the /admin bypass below existed —
-// an install that already cached admin responses would otherwise keep serving
+// Bumped to v5 with the icon artwork: caching is network-first, so an online
+// install picks the new icons up on its own, but a cached copy of the old
+// shuttlecock would still be handed back offline and to the push handler
+// below, which names /icon-192.png directly.
+//
+// v4 dropped caches written before the /admin bypass below existed — an
+// install that already cached admin responses would otherwise keep serving
 // them offline.
-const CACHE_NAME = 'sfu-badminton-v4';
+const CACHE_NAME = 'sfu-badminton-v5';
 
 // Network-first caching strategy (same-origin GETs only)
 self.addEventListener('fetch', (event) => {

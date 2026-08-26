@@ -1,4 +1,4 @@
-import { visibleTracksFor } from '@badminton/shared';
+import { PUBLIC_TRACKS, visibleTracksFor } from '@badminton/shared';
 
 // THE ONLY PLACE IN THIS APP THAT NAMES THE `track` COLUMN IN A FILTER.
 //
@@ -40,7 +40,30 @@ import { visibleTracksFor } from '@badminton/shared';
 // the argument really is a query builder — which is why the behaviour of this
 // function is covered by a test that stubs a builder faithfully enough to
 // REJECT an out-of-vocabulary enum value, rather than by the type system.
+//
+// STILL EXACTLY ONE `.in` ON THIS COLUMN, which is what the grep test counts.
+// onTracks is the single filter; the two functions below choose the vocabulary
+// and delegate. Adding a second `.in('track'` here — even inside this file —
+// would fail session-track-filter.test.ts, so a third audience has to come
+// through onTracks too rather than hand-rolling a filter beside it.
+function onTracks<T>(query: T, tracks: readonly string[]): T {
+  const filterable = query as { in(column: string, values: readonly string[]): T };
+  return filterable.in('track', tracks);
+}
+
+/** What a signed-in member sees: their own track plus club-wide nights. */
 export function onVisibleTracks<T>(query: T, status: string | null | undefined): T {
-  const filterable = query as { in(column: string, values: string[]): T };
-  return filterable.in('track', visibleTracksFor(status));
+  return onTracks(query, visibleTracksFor(status));
+}
+
+/**
+ * What a viewer with no app account sees: club-wide nights only.
+ *
+ * Used by the Discord bot for an unlinked caller. session-track.ts carries the
+ * reasoning on PUBLIC_TRACKS — in short, the "narrowing withholds nothing"
+ * argument behind the untracked-member default is scoped to `authenticated`,
+ * and an unlinked Discord user is not.
+ */
+export function onPublicTracks<T>(query: T): T {
+  return onTracks(query, PUBLIC_TRACKS);
 }

@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { CHECKIN_TOKEN_REGEX, rateLimit, getClientIp } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, DISCORD_LINK_TOKEN_REGEX, rateLimit, getClientIp } from '@badminton/shared';
 import { AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
 import { reactivateLapsedMemberByUserId } from '@/lib/reactivate';
 import { ensurePlayerRowForUser } from '@/lib/first-signin';
@@ -26,9 +26,15 @@ export async function GET(request: Request) {
   // Only a well-formed 48-hex token is honoured and it can only ever build the
   // /checkin/<token> path, so this can't be turned into an open redirect.
   const checkin = searchParams.get('checkin');
+  // Same for the Discord /link button. Re-validated HERE rather than trusted
+  // from the previous hop: every step of this chain checks the shape again, so
+  // no single missed check turns the chain into an open redirect.
+  const discord = searchParams.get('discord');
   const destination = checkin && CHECKIN_TOKEN_REGEX.test(checkin)
     ? `${origin}/checkin/${checkin}`
-    : `${origin}/`;
+    : discord && DISCORD_LINK_TOKEN_REGEX.test(discord)
+      ? `${origin}/link/${discord}`
+      : `${origin}/`;
 
   // Create redirect response upfront so session cookies are set on it
   const response = NextResponse.redirect(destination);

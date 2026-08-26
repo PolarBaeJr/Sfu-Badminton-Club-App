@@ -1,10 +1,12 @@
 import { createServerClient } from '@supabase/ssr';
+import { isPublicPath } from '@/lib/public-paths';
 import { NextResponse, type NextRequest } from 'next/server';
 // Deep import, not the '@badminton/shared' barrel: the barrel re-exports the
 // whole package and pulling it into the middleware bundle — which runs on every
 // request — grew it from 208 kB to 371 kB. constants.ts has no dependencies.
 import {
   CHECKIN_TOKEN_REGEX,
+  DISCORD_LINK_TOKEN_REGEX,
   AUTH_COOKIE_OPTIONS,
   hostOnlyAuthCookieClears,
   duplicateAuthCookieClears,
@@ -64,34 +66,11 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Public routes viewable without an account.
+  // Public routes viewable without an account. The predicate lives in
+  // lib/public-paths.ts so it can be tested without standing up the whole edge
+  // middleware — see the note there about what that cost us.
   const pathname = request.nextUrl.pathname;
-  const isPublic =
-    pathname === '/' ||
-    pathname.startsWith('/login') ||
-    pathname.startsWith('/auth') ||
-    pathname.startsWith('/exec') ||
-    // Legal documents (terms, privacy, waiver, conduct) are public reading.
-    pathname.startsWith('/legal') ||
-    // ICS feed for calendar clients — token-authenticated, no session cookie.
-    pathname.startsWith('/api/calendar') ||
-    // One-click unsubscribe. Authenticated by the signed token in the link, not
-    // by a session — and it MUST work without one. RFC 8058 is a machine POST
-    // from the mail client with no cookies at all, and a mail client treats any
-    // non-2xx as a failed unsubscribe, which pushes the recipient toward the
-    // spam button instead. On SES a complaint rate is what suspends sending, so
-    // gating this behind /login defeats the entire point of the feature.
-    pathname.startsWith('/unsubscribe') ||
-    // Tournament check-in QR. Someone scanning at the door may well be
-    // logged out; the page itself requires a session before it changes
-    // anything, so letting it render is safe and avoids a dead redirect.
-    pathname.startsWith('/tournaments/checkin') ||
-    // Passkey sign-in. Necessarily reachable without a session — completing it
-    // is what creates one. Only the /login pair is public; the /register pair
-    // below it still requires a session, since enrolling a passkey must be
-    // bound to an account you have already proven you own.
-    pathname.startsWith('/api/passkey/login') ||
-    pathname === '/leaderboard';
+  const isPublic = isPublicPath(pathname);
 
   // A scanned session QR points at /checkin/<token>, which is not public — so
   // this redirect is what a signed-out scanner actually hits, before the page
@@ -103,10 +82,24 @@ export async function middleware(request: NextRequest) {
   const checkinSuffix =
     checkinToken && CHECKIN_TOKEN_REGEX.test(checkinToken) ? `?checkin=${checkinToken}` : '';
 
+  // Exactly the same problem for /link/<token> from the Discord bot, and the
+  // same fix. A member who taps the button while signed out would otherwise
+  // land on /login with the token stripped, and the only way back is to run
+  // /link again — which looks like the bot is broken.
+  const discordToken = pathname.match(/^\/link\/([^/]+)$/)?.[1];
+  const discordSuffix =
+    discordToken && DISCORD_LINK_TOKEN_REGEX.test(discordToken) ? `?discord=${discordToken}` : '';
+
+  // Only one can ever be set — they come from different paths. Both redirects
+  // below use this: the onboarding gate drops the token just as thoroughly as
+  // the sign-in one, and a member linking before they have finished setup is
+  // an ordinary case, not an edge case.
+  const authSuffix = checkinSuffix || discordSuffix;
+
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
-    url.search = checkinSuffix;
+    url.search = authSuffix;
     return finish(NextResponse.redirect(url));
   }
 
@@ -136,7 +129,7 @@ export async function middleware(request: NextRequest) {
       url.pathname = '/onboarding';
       // Same reasoning as the sign-in redirect above: a member who scans the QR
       // before finishing setup should still end up checked in, not stranded.
-      url.search = checkinSuffix;
+      url.search = authSuffix;
       return finish(NextResponse.redirect(url));
     }
   }

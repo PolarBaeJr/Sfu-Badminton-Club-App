@@ -63,6 +63,13 @@ scripts/*
 # migration"), so the generator has to ship with the file it generates.
 !scripts/gen-db-types.mjs
 
+# make-icons.py renders every app icon in apps/*/public from the source mark in
+# assets/brand. It replaced generate-pwa-icons.mjs, which drew the old
+# shuttlecock procedurally and wrote straight into apps/player/public -- left
+# in the tree it would have silently reverted the rebrand for whoever ran it
+# next. A generator that owns committed files has to ship with them.
+!scripts/make-icons.py
+
 # prod-to-dev-snapshot.sh is itself tracked, and as of 2026-08-18 it refuses to
 # run without these two — it exits FATAL if either is missing. A tracked script
 # whose dependencies are gitignored is a script that is broken on every fresh
