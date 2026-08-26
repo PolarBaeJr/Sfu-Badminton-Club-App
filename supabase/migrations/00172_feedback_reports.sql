@@ -39,6 +39,23 @@
 -- Surfacing them in the admin app is the obvious next step and is not built. If
 -- nobody runs that query, this is a black hole and the first person to notice
 -- will be a member asking why their bug report went nowhere.
+--
+-- ---------------------------------------------------------------------------
+-- A MERGE DOES NOT CARRY THESE ROWS
+-- ---------------------------------------------------------------------------
+--
+-- merge_players (00079, 00163) reassigns player_id across an ENUMERATED list of
+-- tables, and feedback_reports is not on it. So when a duplicate account is
+-- merged away, its reports keep pointing at the removed row, the ON DELETE SET
+-- NULL below fires, and the body survives while the attribution does not: the
+-- report reads as anonymous even though the member is still in the club.
+--
+-- That is a graceful degradation and deliberately not fixed here — adding a
+-- table to the merge enumeration is a change to a SECURITY DEFINER function
+-- that rewrites history, and it is not worth that for prose nothing reads yet.
+-- If it ever matters, the fix is one UPDATE in merge_players alongside the
+-- others. discord_user_id is untouched by a merge either way, so a hand
+-- attribution is always still possible.
 
 CREATE TABLE IF NOT EXISTS public.feedback_reports (
   id         uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
