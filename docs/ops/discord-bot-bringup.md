@@ -162,10 +162,15 @@ started by compose, so they run under generated names and nothing resolves
 `player`. The symptom is `TypeError: fetch failed` on every app call, which
 reads as a network fault rather than a config mistake.
 
-Use the in-cluster container name on staging (stable for a single replica, and
-fastest), or the public origin on prod (survives the replica renumbering that
-scaling causes). `.env.example` spells out the trade-off. `APP_PUBLIC_URL` must
-be the public origin either way — it builds the link a member taps on a phone.
+**Use the public origin, in both environments.** The in-cluster container name
+is faster and stays off the internet, and it is a trap: the dashboard rotates
+the container name on every replace, not only when scaling — observed going
+`…-1000` → `…-1` → `…-2` across three routine replaces in one evening. Each
+rotation breaks the URL and surfaces as `TypeError: fetch failed`, which reads
+as a network fault rather than a stale name.
+
+`APP_PUBLIC_URL` must be the public origin regardless — it builds the link a
+member taps on a phone.
 
 ## 5. DNS
 
