@@ -1,9 +1,13 @@
 /**
- * Client-IP extraction, plus ONE remaining in-memory rate limiter.
+ * ONE remaining in-memory rate limiter. It has exactly one caller, and new
+ * code should not reach for it.
  *
- * `getClientIp` is the general-purpose export and has callers unrelated to
- * throttling. `rateLimit` is not general-purpose any more, and new code should
- * not reach for it.
+ * This module used to also export `getClientIp`. It was deleted along with the
+ * call sites, and deliberately not kept "just in case": it read the RIGHTMOST
+ * X-Forwarded-For hop, which behind Cloudflare plus the host nginx is the CF
+ * edge address, not the member's -- so anything keyed on it would have bucketed
+ * an entire region together. Nothing in this app should key on a client IP any
+ * more; that job belongs to the edge, which sees the real peer.
  *
  * WHY IT IS ALMOST GONE. The limiter is a module-scope Map, so it is per Node
  * PROCESS. Production runs two player replicas, which means every number ever
@@ -61,33 +65,6 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
   return { success: true, remaining: limit - existing.count, resetAt: existing.resetAt };
 }
 
-/**
- * Best-effort client IP extraction from a Request.
- *
- * Never trust the LEFTMOST X-Forwarded-For entry: anything to the left of the
- * hop our own proxy appended is attacker-supplied, so a rotating
- * `X-Forwarded-For` header would mint a fresh rate-limit bucket per request and
- * defeat throttling entirely.
- *
- * Order of trust:
- *  1. `cf-connecting-ip` — set by Cloudflare, which overwrites any
- *     client-supplied copy, so it is authoritative when we sit behind it.
- *  2. the RIGHTMOST `x-forwarded-for` entry — appended by the closest proxy;
- *     a client can prepend entries but cannot append past our edge.
- *  3. `x-real-ip`, then 'unknown'.
- */
-export function getClientIp(request: Request): string {
-  const cf = request.headers.get('cf-connecting-ip')?.trim();
-  if (cf) return cf;
-
-  const fwd = request.headers.get('x-forwarded-for');
-  if (fwd) {
-    const hops = fwd.split(',').map((h) => h.trim()).filter(Boolean);
-    const rightmost = hops[hops.length - 1];
-    if (rightmost) return rightmost;
-  }
-  return request.headers.get('x-real-ip')?.trim() || 'unknown';
-}
 
 // Periodic cleanup to prevent unbounded growth (no-op in short-lived envs).
 if (typeof setInterval !== 'undefined') {

@@ -118,3 +118,41 @@ A database-backed shared limiter was built and **rejected by the owner on
 
 - **There is no staging equivalent.** `badminton.polardev.org` has no rate-limit
   entries at all, so a burst test there proves nothing about production.
+
+## Spreading badminton-player across the mesh
+
+Every entry in the table above is a *static* routes.json entry that backfills its
+backends from a `service` label. That backfill reads `dc.listEnabledContainers`
+-- the **local** Docker socket only (`cmd/proxy/router.go`, `backendsByService`).
+It does not see another host's containers. That has three consequences the moment
+a second host starts running badminton-player, and none of them are visible from
+`list_routes` on the origin.
+
+**The limited paths do not spread.** The peer builds exactly one group from
+labels, `sfubadminton.com|/`, because `proxy.path` is the only path a label can
+express. It has no routes.json entry for `/api/passkey` or any of the others, so
+it learns those groups from this host's advertisement instead -- and a learned
+group's only backend is a peer backend pointing back here. Longest-prefix wins,
+so a request that lands on the peer for a limited path hairpins to this host even
+though the peer has healthy local replicas one group over. Login, the check-in
+QR, and the whole bot API keep running entirely on the origin.
+
+**There is no failover on those paths either.** If this host's containers die,
+the peer's learned group holds one dead peer backend and does not fall back to
+its own replicas, because those live in the `/` group, not this one. Spreading
+therefore buys redundancy for everything *except* auth.
+
+**The limits themselves are fine.** `peermerge.go` adopts `RateLimit`/`RateRPM`
+when it synthesizes a learned-only group, so the peer charges the shared bucket;
+and a request carrying `X-Pmgr-Peer-Hop` skips the limiter on the second hop, so
+nothing is charged twice.
+
+THE FIX IS CONFIG, NOT CODE: copy the same entries into the peer's routes.json,
+unchanged, and `POST /refresh` there. `service` + `backends: []` then backfills
+from *its* local containers, both hosts serve the limited paths locally, both
+advertise them, and the peer backend on each becomes real failover.
+
+Note that a static entry can never itself spread: `staticRoute` has no `spread`
+field, and peersync advertises `SpreadLocal`, which is false for these. Peer
+backends on them stay a failover tier. That is the correct shape here -- it is
+why both hosts need their own local backfill rather than one host spreading.

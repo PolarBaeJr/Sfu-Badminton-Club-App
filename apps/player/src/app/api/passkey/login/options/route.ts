@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
-import { getClientIp } from '@badminton/shared';
 import { signPayload } from '@/lib/passkey/cookie';
 import { recordChallenge } from '@/lib/passkey/challenge-store';
 import { createServiceRoleClient } from '@/lib/supabase-server';
