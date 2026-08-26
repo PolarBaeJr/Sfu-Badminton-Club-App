@@ -36,6 +36,8 @@ export class DiscordApi {
   private readonly token: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  /** Resolved once per process; a bot's own id never changes. */
+  private ownUserId: string | null = null;
 
   constructor(options: DiscordApiOptions) {
     this.token = options.token;
@@ -101,18 +103,35 @@ export class DiscordApi {
   }
 
   /**
+   * The bot's own user id, resolved from the token and then cached.
+   */
+  private async getOwnUserId(): Promise<string> {
+    if (this.ownUserId) return this.ownUserId;
+    const response = await this.request('GET', '/users/@me');
+    if (!response.ok) throw new Error(`GET /users/@me -> ${response.status}`);
+    const { id } = (await response.json()) as { id?: string };
+    if (!id) throw new Error('GET /users/@me returned no id');
+    this.ownUserId = id;
+    return id;
+  }
+
+  /**
    * The bot's own highest role position in a guild.
    *
    * Needed because Discord refuses to let a bot create or assign a role at or
    * above its own, and a wired-up role above the bot fails on every single
    * sweep while looking perfectly configured.
    *
-   * @me resolves to the bot without needing its user id, which the bot does not
-   * otherwise have to know.
+   * The user id has to be spelled out here. `@me` is only a valid stand-in on
+   * `/users/@me`; on `/guilds/{id}/members/{user_id}` Discord parses the final
+   * segment as a number and answers 400 NUMBER_TYPE_COERCE. That 400 used to
+   * surface to the user as "I need Manage Roles", which sent people to fix a
+   * permission that was never the problem.
    */
   async getOwnRolePosition(guildId: string): Promise<number> {
-    const member = await this.request('GET', `/guilds/${guildId}/members/@me`);
-    if (!member.ok) throw new Error(`GET @me -> ${member.status}`);
+    const userId = await this.getOwnUserId();
+    const member = await this.request('GET', `/guilds/${guildId}/members/${userId}`);
+    if (!member.ok) throw new Error(`GET member -> ${member.status}`);
     const { roles } = (await member.json()) as { roles?: string[] };
     const all = await this.listGuildRoles(guildId);
     const mine = new Set(roles ?? []);

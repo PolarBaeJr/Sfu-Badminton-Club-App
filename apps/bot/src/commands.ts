@@ -362,8 +362,16 @@ export async function handleSetup(
     ]);
   } catch (error) {
     console.error('[bot] setup could not read roles:', error);
+    // Do NOT assert a cause here. Two different calls run above, and reading
+    // roles needs no permission at all, so "I need Manage Roles" was wrong for
+    // every failure that was not a 403 -- it once sent an admin to re-grant a
+    // permission the bot already held, because a malformed request 400'd.
+    // /setup is admin-only and this reply is ephemeral, so the real reason is
+    // safe to show and is the only thing that makes it debuggable.
     return ephemeral(
-      'I could not read this server\'s roles. I need the **Manage Roles** permission.'
+      "I could not read this server's roles.\n" +
+        `Reason: \`${error instanceof Error ? error.message : String(error)}\`\n` +
+        'If that mentions 403, I am missing **Manage Roles**.'
     );
   }
 
