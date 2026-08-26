@@ -121,6 +121,11 @@ A database-backed shared limiter was built and **rejected by the owner on
 
 ## Spreading badminton-player across the mesh
 
+CONFIRMED LIVE 2026-08-26, not a prediction: the Mac mini is running three
+badminton-player replicas, its own routes.json has ZERO sfubadminton.com
+entries, and its proxy nonetheless reports all nine limited paths at the right
+rpm -- which is exactly the learned-only shape described below.
+
 Every entry in the table above is a *static* routes.json entry that backfills its
 backends from a `service` label. That backfill reads `dc.listEnabledContainers`
 -- the **local** Docker socket only (`cmd/proxy/router.go`, `backendsByService`).
