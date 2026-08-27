@@ -38,6 +38,31 @@ const nextConfig = {
   // src/instrumentation.ts (Sentry server/edge init) needed an experimental
   // flag on 14; it is default-on from 15, and leaving the flag set now only
   // earns an "unrecognised experimental option" warning.
+  // THE CLIENT ROUTER CACHE, which Next 15 turns off for dynamic routes.
+  //
+  // next/dist/server/config-shared.js defaults staleTimes to
+  // `{ dynamic: 0, static: 300 }`. Every page in this app is force-dynamic, so
+  // dynamic: 0 meant the in-memory router cache held a visited page for zero
+  // seconds and switching tab -> other tab -> back re-ran the FULL server render
+  // both ways, for data that had not changed. Next 14 defaulted this to 30s, so
+  // the console silently got slower to navigate at the 15 upgrade rather than at
+  // any change of ours.
+  //
+  // SAFE HERE BECAUSE MUTATIONS ALREADY INVALIDATE: 160 revalidatePath() calls
+  // across 51 files plus 98 router.refresh() calls. Those drop the client cache,
+  // so this window only ever applies to passive navigation between tabs — never
+  // to a page you just wrote to. 30s is deliberately short for that reason: it
+  // is long enough to cover flicking between sections while working, short
+  // enough that a figure changed by somebody ELSE cannot sit wrong for long.
+  //
+  // NOT accompanied by prefetch={true} on the nav links, on purpose. Prefetch on
+  // a dynamic route only warms the nearest loading.tsx (the skeleton) unless
+  // forced, and forcing it fires a full server render PER LINK. Render is
+  // single-threaded and is this app's measured bottleneck, so blanket prefetch
+  // would multiply load on exactly the constrained resource.
+  experimental: {
+    staleTimes: { dynamic: 30, static: 180 },
+  },
   transpilePackages: ['@badminton/shared', '@badminton/ui'],
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
