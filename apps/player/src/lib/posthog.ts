@@ -14,9 +14,15 @@ export function getPostHogClient() {
       // Cookieless persistence: keep analytics state in localStorage only, not a
       // cookie. Every cookie is sent on the same-origin Realtime websocket
       // handshake, and the Realtime service (Cowboy) rejects requests whose
-      // Cookie header exceeds ~4KB with a 431, causing a reconnect loop. Dropping
+      // Cookie header exceeds ~5KB with a 431, causing a reconnect loop. Dropping
       // PostHog's cookie shrinks that header (and is better for privacy).
       persistence: 'localStorage',
+      // Session Replay is enabled server-side on the PostHog project at 100%
+      // sampling, which makes every page fetch a ~170KB recorder and run rrweb
+      // on the main thread for the life of the session. We do not use the
+      // replays, so opt out here. Re-enable by deleting this line (and prefer
+      // setting a sample rate in the PostHog project rather than recording all).
+      disable_session_recording: true,
     });
     initialized = true;
   }

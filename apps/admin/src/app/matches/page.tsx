@@ -38,49 +38,53 @@ export default async function MatchesPage() {
   const canSeeNotes = canReadMatchNotes(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer));
   const supabase = createAdminClient();
 
-  const matches = unwrap(
-    await supabase
+  // TWO ROUND TRIPS, NOT FIVE. The roster is not derived from the ledger, so it
+  // has no reason to queue behind it; disputes, walkovers and notes all key off
+  // the fifty match ids and so genuinely cannot start until those are in hand.
+  // That is the only ordering this page actually requires.
+  const [matchesResult, playersResult] = await Promise.all([
+    supabase
       .from('matches')
       .select('*, match_participants(*, player:players(full_name)), match_games(*)')
       .order('created_at', { ascending: false })
-      .limit(50)
-  );
-
-  // Get all active players for the create match form
-  const allPlayers = canCreate
-    ? unwrap(
-        await supabase
+      .limit(50),
+    // Get all active players for the create match form
+    canCreate
+      ? supabase
           .from('players')
           .select('id, full_name, avatar_url')
           .eq('active_flag', true)
           .neq('status', 'pending_approval')
           .order('full_name')
-      )
-    : [];
+      : null,
+  ]);
+
+  const matches = unwrap(matchesResult);
+  const allPlayers = playersResult ? unwrap(playersResult) : [];
 
   // Fetch disputes and walkovers inline
   const matchIds = matches?.map(m => m.id) || [];
-  const disputes = unwrap(
-    await supabase
+  const [disputesResult, walkoversResult, notesByMatch] = await Promise.all([
+    supabase
       .from('disputes')
       .select('*, opener:players!disputes_opened_by_fkey(full_name)')
-      .in('match_id', matchIds.length > 0 ? matchIds : ['00000000-0000-0000-0000-000000000000'])
-  );
-
-  const walkovers = unwrap(
-    await supabase
+      .in('match_id', matchIds.length > 0 ? matchIds : ['00000000-0000-0000-0000-000000000000']),
+    supabase
       .from('walkovers')
       .select('*, forfeit:players!walkovers_forfeit_player_id_fkey(full_name)')
-      .in('challenge_id', matches?.map(m => m.challenge_id).filter(Boolean) || ['00000000-0000-0000-0000-000000000000'])
-  );
+      .in('challenge_id', matches?.map(m => m.challenge_id).filter(Boolean) || ['00000000-0000-0000-0000-000000000000']),
+    // The exec-only notes for the fifty matches on screen. Empty for a viewer
+    // without the capability, and empty for a database that has not had 00117
+    // applied yet - fetchMatchNotes swallows "no such table" and nothing else, so
+    // the ledger renders normally in both cases and a real failure still surfaces.
+    canSeeNotes
+      ? fetchMatchNotes(supabase, matches?.map((m) => m.id as string) ?? [])
+      : Promise.resolve(new Map<string, string>()),
+  ]);
 
-  // The exec-only notes for the fifty matches on screen. Empty for a viewer
-  // without the capability, and empty for a database that has not had 00117
-  // applied yet — fetchMatchNotes swallows "no such table" and nothing else, so
-  // the ledger renders normally in both cases and a real failure still surfaces.
-  const notesByMatch = canSeeNotes
-    ? await fetchMatchNotes(supabase, matches?.map((m) => m.id as string) ?? [])
-    : new Map<string, string>();
+  const disputes = unwrap(disputesResult);
+  const walkovers = unwrap(walkoversResult);
+
 
   const disputesByMatch = new Map<string, typeof disputes>();
   disputes?.forEach(d => {
