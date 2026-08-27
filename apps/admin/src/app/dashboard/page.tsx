@@ -442,13 +442,129 @@ export default async function DashboardPage({
   ]);
 
   // ---- players.read, again ------------------------------------------------
-  // The ladder's shape. Same capability as the roster counts above and the same
-  // rule: the gate is the fetch, so a viewer without players.read has no
-  // ratings in their payload at all rather than a hidden card. Kept out of the
-  // Promise.all above only because it is a helper rather than a query builder;
-  // it is one round trip either way and both branches are already awaited
-  // before the first byte of markup.
-  const ladder = canReadRoster ? await getLadderSpread(supabase) : null;
+  // ------------------------------------------------------------------------
+  // ONE ROUND OF FETCHES, NOT SEVEN
+  //
+  // Every figure below answers to the season and to the viewer's capabilities,
+  // and both of those were settled before any of it ran. None of these queries
+  // was ever waiting on another's ANSWER - each was only waiting on the `await`
+  // written above it, which is a different thing and was costing a serial round
+  // trip apiece on the one page every officer lands on first.
+  //
+  // The single ordering that is real is the check-in pair further down: it
+  // needs tonight's session id, so it stays behind in a round of its own.
+  //
+  // The gates are unchanged. Each clause still fetches only for the capability
+  // that owns the figure it feeds, and a viewer without it still gets no row in
+  // their payload rather than a hidden card.
+  // ------------------------------------------------------------------------
+  const [
+    ladder,
+    { count: privilegeReviews },
+    { data: nextSession },
+    outstandingCents,
+    finances,
+    ledgers,
+  ] = await Promise.all([
+    // The ladder's shape. Same capability as the roster counts above and the
+    // same rule: the gate is the fetch, so a viewer without players.read has no
+    // ratings in their payload at all rather than a hidden card. Being a helper
+    // rather than a query builder is no reason to serialise it - it returns a
+    // promise like everything else here.
+    canReadRoster ? getLadderSpread(supabase) : null,
+
+    // Permission reviews left by a roster claim. A COUNT QUERY OF ITS OWN, and
+    // small: the partial index players_privilege_claim_review_idx (00132) covers
+    // exactly this predicate, and the answer is 0 on almost every load.
+    //
+    // Gated on players.consoleaccess.write rather than on the roster read,
+    // matching the rule the rest of this band follows - every clause is gated on
+    // the capability that owns the figure in it, or the band leaks the counts the
+    // panels hide, one sentence at a time. Restoring a review sets a console
+    // level, so that is the capability that owns this number.
+    canSetConsoleAccess
+      ? supabase
+          .from('players')
+          .select('id', { count: 'exact', head: true })
+          .not('privilege_claim_review', 'is', null)
+      : { count: 0 },
+
+    // TONIGHT - one query, two answers.
+    //
+    // The next session on or after today. When its date IS today it is tonight's
+    // session; when it is not, there is no session tonight and this is the next
+    // one, which is the thing an officer wanted to know instead. Asking twice
+    // would be two round trips for one line of text.
+    showSessions
+      ? supabase
+          .from('sessions')
+          .select('id, name, location, date, start_time, end_time, status')
+          .gte('date', week.today)
+          .order('date', { ascending: true })
+          .order('start_time', { ascending: true, nullsFirst: false })
+          .limit(1)
+          .maybeSingle<TonightSession>()
+      : { data: null },
+
+    // Fees outstanding - an AMOUNT, and the only figure on this page assembled
+    // from two tables. The arithmetic lives in lib/fees-outstanding.ts with a
+    // test on it rather than here; see the note in that file.
+    showClubFees && season && season.competitive_fee_cents != null && season.recreational_fee_cents != null
+      ? getOutstandingClubFees(supabase, {
+          id: season.id,
+          competitive_fee_cents: season.competitive_fee_cents,
+          recreational_fee_cents: season.recreational_fee_cents,
+        })
+      : null,
+
+    // Finance snapshot for the active season: money in, money out, and the net.
+    // The net is the headline because it is the question the club owner actually
+    // asks; income alone reads like good news no matter what has been spent.
+    //
+    // Every ledger, via the shared helper. Income used to be summed inline from
+    // club_fees only, so recorded reinstatement and tournament money read as
+    // $0.00 - and it was wrong here AND on /fees because each page did its own
+    // arithmetic. Net is computed in exactly one place for the same reason.
+    showFinances && season ? getSeasonFinances(supabase, { id: season.id }) : null,
+
+    // The per-ledger charts' rows: one query per ledger this person may read AND
+    // will actually be shown, and none at all for the rest, decided inside
+    // getDashboardFinances.
+    //
+    // `&& !hasTiles` on two of the three is not a second permission check - it is
+    // WHERE THE PANEL IS DRAWN. The expense and other-income panels belong to the
+    // narrowed landing, so fetching their rows for an admin whose dashboard is
+    // full of panels would be a query nobody renders and a ledger in the payload
+    // for no reason. The dues panel is the mirror image: showClubFees is a term of
+    // hasTiles, so its panel is an ordinary-dashboard panel and its fetch is
+    // conditioned on the capability alone.
+    //
+    // The season goes in rather than being looked up again in there - it was
+    // fetched above for the header eyebrow before either branch of this page
+    // decided anything, so re-selecting it was a round trip for a row already in
+    // hand. `null` (no active term) still means no ledgers and no figures.
+    getDashboardFinances(
+      supabase,
+      season && { id: season.id, name: season.name },
+      {
+        // NOT `&& !hasTiles`. These two used to be, which wired both ledger
+        // charts to the narrowed landing only - so the people most likely to
+        // want them, the officers who can see everything, were the one group
+        // that never got them. The owner spotted it: Money out rendered for a
+        // finance-scoped exec and vanished for an admin.
+        //
+        // The capability is the whole gate. Whether the viewer also has tiles
+        // says nothing about whether they may see the club's books.
+        expenses: showExpenses,
+        clubFees: showClubFees,
+        otherIncome: showOtherIncome,
+      },
+    ),
+  ]);
+
+  const seasonIncomeCents = finances?.income.totalCents ?? 0;
+  const seasonExpenseCents = finances?.expenseCents ?? 0;
+  const seasonNetCents = finances?.netCents ?? 0;
 
   // 00132. The same predicate /players uses for its Needs Attention tab, so the
   // band and the queue it links to can never disagree about how many people are
@@ -457,47 +573,12 @@ export default async function DashboardPage({
     (p) => p.user_id === null || p.onboarding_completed === true,
   ).length;
 
-  // Permission reviews left by a roster claim. A COUNT QUERY OF ITS OWN, and
-  // small: the partial index players_privilege_claim_review_idx (00132) covers
-  // exactly this predicate, and the answer is 0 on almost every load.
-  //
-  // Gated on players.consoleaccess.write rather than on the roster read,
-  // matching the rule the rest of this band follows — every clause is gated on
-  // the capability that owns the figure in it, or the band leaks the counts the
-  // panels hide, one sentence at a time. Restoring a review sets a console
-  // level, so that is the capability that owns this number.
-  const { count: privilegeReviews } = canSetConsoleAccess
-    ? await supabase
-        .from('players')
-        .select('id', { count: 'exact', head: true })
-        .not('privilege_claim_review', 'is', null)
-    : { count: 0 };
-
-  // ------------------------------------------------------------------------
-  // TONIGHT — one query, two answers
-  //
-  // The next session on or after today. When its date IS today it is tonight's
-  // session; when it is not, there is no session tonight and this is the next
-  // one, which is the thing an officer wanted to know instead. Asking twice
-  // would be two round trips for one line of text.
-  // ------------------------------------------------------------------------
-  const { data: nextSession } = showSessions
-    ? await supabase
-        .from('sessions')
-        .select('id, name, location, date, start_time, end_time, status')
-        .gte('date', week.today)
-        .order('date', { ascending: true })
-        .order('start_time', { ascending: true, nullsFirst: false })
-        .limit(1)
-        .maybeSingle<TonightSession>()
-    : { data: null };
-
   const isTonight = Boolean(nextSession && nextSession.date === week.today);
 
   // session_checkin_open() reads these two tunables out of platform_settings on
   // every call and is the enforcement source of truth; getCheckinWindow mirrors
   // it. Fetched rather than taken from the TypeScript fallback so the DOORS
-  // line agrees with the gate the player app will actually hit — the fallback
+  // line agrees with the gate the player app will actually hit - the fallback
   // is a guess, and platform_settings is admin-editable.
   const [{ data: checkinSetting }, { count: checkedIn }] = await Promise.all([
     isTonight
@@ -518,71 +599,6 @@ export default async function DashboardPage({
     isTonight && nextSession
       ? getCheckinWindow(nextSession, parseCheckinSettings(checkinSetting?.value ?? null)).opensAt
       : null;
-
-  // ------------------------------------------------------------------------
-  // Fees outstanding — an AMOUNT, and the only figure on this page assembled
-  // from two tables. The arithmetic lives in lib/fees-outstanding.ts with a
-  // test on it rather than here; see the note in that file.
-  // ------------------------------------------------------------------------
-  const outstandingCents =
-    showClubFees && season && season.competitive_fee_cents != null && season.recreational_fee_cents != null
-      ? await getOutstandingClubFees(supabase, {
-          id: season.id,
-          competitive_fee_cents: season.competitive_fee_cents,
-          recreational_fee_cents: season.recreational_fee_cents,
-        })
-      : null;
-
-  // Finance snapshot for the active season: money in, money out, and the net.
-  // The net is the headline because it is the question the club owner actually
-  // asks; income alone reads like good news no matter what has been spent.
-  let seasonIncomeCents = 0;
-  let seasonExpenseCents = 0;
-  let seasonNetCents = 0;
-  if (showFinances && season) {
-    // Every ledger, via the shared helper. Income used to be summed inline from
-    // club_fees only, so recorded reinstatement and tournament money read as
-    // $0.00 — and it was wrong here AND on /fees because each page did its own
-    // arithmetic. Net is computed in exactly one place for the same reason.
-    const finances = await getSeasonFinances(supabase, { id: season.id });
-    seasonIncomeCents = finances.income.totalCents;
-    seasonExpenseCents = finances.expenseCents;
-    seasonNetCents = finances.netCents;
-  }
-
-  // The per-ledger charts' rows: one query per ledger this person may read AND
-  // will actually be shown, and none at all for the rest, decided inside
-  // getDashboardFinances.
-  //
-  // `&& !hasTiles` on two of the three is not a second permission check — it is
-  // WHERE THE PANEL IS DRAWN. The expense and other-income panels belong to the
-  // narrowed landing, so fetching their rows for an admin whose dashboard is
-  // full of panels would be a query nobody renders and a ledger in the payload
-  // for no reason. The dues panel is the mirror image: showClubFees is a term of
-  // hasTiles, so its panel is an ordinary-dashboard panel and its fetch is
-  // conditioned on the capability alone.
-  //
-  // The season goes in rather than being looked up again in there — it was
-  // fetched above for the header eyebrow before either branch of this page
-  // decided anything, so re-selecting it was a round trip for a row already in
-  // hand. `null` (no active term) still means no ledgers and no figures.
-  const ledgers = await getDashboardFinances(
-    supabase,
-    season && { id: season.id, name: season.name },
-    {
-      // NOT `&& !hasTiles`. These two used to be, which wired both ledger
-      // charts to the narrowed landing only — so the people most likely to
-      // want them, the officers who can see everything, were the one group
-      // that never got them. The owner spotted it: Money out rendered for a
-      // finance-scoped exec and vanished for an admin.
-      //
-      // The capability is the whole gate. Whether the viewer also has tiles
-      // says nothing about whether they may see the club's books.
-      expenses: showExpenses,
-      clubFees: showClubFees,
-      otherIncome: showOtherIncome,
-    },
-  );
 
   // ------------------------------------------------------------------------
   // SHAPING
