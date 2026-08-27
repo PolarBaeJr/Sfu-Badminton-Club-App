@@ -1,7 +1,29 @@
 'use client';
 
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Card, ResponsiveTable, SearchFilter, filterPlayerOptions } from '@badminton/ui';
+
+/**
+ * Rows mounted at first paint, and added each time the sentinel comes into view.
+ *
+ * Deliberately the same 25 the player ladder uses, but declared HERE rather than
+ * imported from apps/player/src/lib/ladder.ts: the two apps share `packages/`,
+ * not each other's `src`, and reaching across would be the first such import in
+ * the repo. Same number, same reasoning, independent knob.
+ */
+const ROSTER_WINDOW_STEP = 25;
+
+/**
+ * How far BELOW the viewport the sentinel starts extending, in CSS pixels.
+ *
+ * A roster row is taller than a ladder row (two lines of badges and a 44px
+ * action button), so 800px is roughly eight rows of warning rather than the
+ * ladder's twelve — still enough that the next batch is mounted before anyone
+ * scrolls to the end of this one. It is a distance because that is what
+ * IntersectionObserver's rootMargin takes; quoting it in rows here is what keeps
+ * the number honest when somebody changes the row padding.
+ */
+const ROSTER_WINDOW_LOOKAHEAD_PX = 800;
 
 export interface RosterRow {
   id: string;
@@ -72,14 +94,59 @@ interface Props {
  *
  * Filtering is client-side over the rows the page already fetched — no round
  * trip per keystroke, and no way for the list to disagree with its own tab
- * count. It therefore searches exactly what the table is showing, which is the
- * page's first 500 rows — and the count line below is measured against the
- * tab's real total, so it is also where that cap would become visible.
+ * count. It searches the page's first 500 rows, which is MORE than the table is
+ * showing: the rows are windowed 25 at a time, and the slice is taken after the
+ * filter precisely so that searching still reaches a row that has never been
+ * mounted. The count line below is measured against the tab's real total, so it
+ * is also where the 500 cap would become visible.
+ *
+ * The window is a MOUNT budget, not a fetch budget. Every row was already
+ * server-rendered and shipped in this page's payload; holding 25 of them in the
+ * DOM keeps a 500-row roster from laying out 500 rows' worth of badges and 44px
+ * buttons at once, but it does not make the payload smaller. Making the payload
+ * incremental means paging the query itself, which this component cannot do
+ * alone — the page accumulates the standings chart's counts inside the same map
+ * that builds these rows, so a server-side page would silently chart only the
+ * rows it fetched.
  */
 export function RosterTable({ head, rows, tabs, total, initialQuery = '', note }: Props) {
   const [query, setQuery] = useState(initialQuery);
 
   const filtered = useMemo(() => filterPlayerOptions(rows, query), [rows, query]);
+
+  // WINDOWED, and the slice is taken AFTER the filter — never before. Searching
+  // only what happens to be mounted is the trap here: type "chen" with 25 of 500
+  // rows on screen and a roster of Chens would answer "no players match", which
+  // is worse than slow. filterPlayerOptions still ranks the whole fetched set;
+  // the window only decides how much of the ANSWER is in the DOM.
+  const [shown, setShown] = useState(ROSTER_WINDOW_STEP);
+
+  // Reset on the QUERY only. Not on `rows`: this page revalidates on every
+  // roster mutation, and resetting there would yank an admin scrolled to row 200
+  // back to the top because somebody else approved a signup. A new search is the
+  // one moment the reader has actually asked for a different list.
+  useEffect(() => {
+    setShown(ROSTER_WINDOW_STEP);
+  }, [query]);
+
+  const windowed = useMemo(() => filtered.slice(0, shown), [filtered, shown]);
+  const hasMore = shown < filtered.length;
+
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !hasMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setShown((n) => Math.min(n + ROSTER_WINDOW_STEP, filtered.length));
+        }
+      },
+      { rootMargin: `0px 0px ${ROSTER_WINDOW_LOOKAHEAD_PX}px 0px` },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, filtered.length]);
 
   return (
     <div className="space-y-4">
@@ -112,24 +179,60 @@ export function RosterTable({ head, rows, tabs, total, initialQuery = '', note }
             {query ? `No players match “${query}”` : 'No players found'}
           </p>
         ) : (
-          <ResponsiveTable cards={filtered.map((r) => <Fragment key={r.id}>{r.card}</Fragment>)}>
-            <table className="w-full border-collapse">
-              <thead>{head}</thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {filtered.map((r) => (
-                  <Fragment key={r.id}>{r.row}</Fragment>
-                ))}
-              </tbody>
-            </table>
-          </ResponsiveTable>
+          <>
+            <ResponsiveTable cards={windowed.map((r) => <Fragment key={r.id}>{r.card}</Fragment>)}>
+              <table className="w-full border-collapse">
+                <thead>{head}</thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {windowed.map((r) => (
+                    <Fragment key={r.id}>{r.row}</Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </ResponsiveTable>
+
+            {/* The sentinel sits INSIDE the card, below the last mounted row, so
+                it crosses the viewport as part of the list rather than after the
+                card's bottom rule. aria-hidden: it is a scroll tripwire, not
+                content, and a screen reader has the button below instead. */}
+            {hasMore && (
+              <>
+                <div ref={sentinelRef} aria-hidden className="h-px w-full" />
+                {/* The keyboard and screen-reader path to the same extension.
+                    IntersectionObserver only ever fires for somebody scrolling a
+                    pointer; without this, tabbing through the roster stops dead
+                    at row 25 with no way forward. */}
+                <div className="flex justify-center border-t border-[var(--border)] px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShown((n) => Math.min(n + ROSTER_WINDOW_STEP, filtered.length))
+                    }
+                    className="min-h-[44px] font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
+                  >
+                    Show more · {filtered.length - shown} left
+                  </button>
+                </div>
+              </>
+            )}
+          </>
         )}
       </Card>
 
       {/* Outside the card, in the margin voice: what you are looking at on the
           left, what the console will hold you to on the right. */}
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+        {/* THREE numbers, because with a window there are three honest answers
+            to "how much am I looking at": what is mounted, what the search
+            matched, and what the tab holds. The last two only separate when
+            something is hiding rows — a search, or the query's 500 cap — so in
+            the ordinary case this still reads "Showing 10 of 10" and no more.
+            Dropping `total` was never an option: the list query is capped at 500
+            and the count query is not, so it is the only warning anyone gets
+            that the cap is in play. */}
         <span>
-          Showing {filtered.length} of {total}
+          Showing {windowed.length} of {filtered.length}
+          {filtered.length !== total && ` · ${total} in tab`}
         </span>
         {note && <span className="text-right">{note}</span>}
       </div>
