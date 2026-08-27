@@ -56,6 +56,18 @@ if (process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN) {
     tunnelRoute: '/monitoring',
     hideSourceMaps: true,
     disableLogger: true,
+
+    // Tree-shake Sentry code we never execute. Session Replay is sampled at 0
+    // in sentry.client.config.ts and replayIntegration is not registered, so
+    // its rrweb payload was being shipped and parsed for nothing. Note the
+    // installed SDK has no excludeReplayShim flag, so this trims replay but
+    // cannot remove it outright. Tracing stays in (we use it).
+    bundleSizeOptimizations: {
+      excludeDebugStatements: true,
+      excludeReplayIframe: true,
+      excludeReplayShadowDom: true,
+      excludeReplayWorker: true,
+    },
   });
 } else {
   module.exports = nextConfig;
