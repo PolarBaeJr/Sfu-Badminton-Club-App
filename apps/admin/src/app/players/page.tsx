@@ -156,7 +156,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, membership_type, is_banned, deletion_requested_at, waiver_reset_at, user_id, onboarding_completed, privilege_claim_review, elo_review, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
