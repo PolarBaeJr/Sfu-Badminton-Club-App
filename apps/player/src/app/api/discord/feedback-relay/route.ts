@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getClientIp, rateLimit } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { getServerSupabaseUrl } from '@badminton/shared';
 import {
   discordServiceUnauthorized,
   isAuthorizedDiscordService,
@@ -93,6 +94,7 @@ interface ReportRow {
   title: string | null;
   body: string;
   image_url: string | null;
+  image_path: string | null;
   discord_user_id: string | null;
   created_at: string;
   players: { full_name: string | null; handle: string | null } | null;
@@ -101,7 +103,7 @@ interface ReportRow {
 interface SurveyRow {
   id: string;
   rating: number | null;
-  comment: string | null;
+  body: string | null;
   created_at: string;
   updated_at: string;
   tournaments: { name: string | null } | null;
@@ -171,6 +173,47 @@ function playerName(p: { full_name: string | null; handle: string | null } | nul
  * than left blank: "not linked" is the difference between "we cannot reply
  * through the app" and "we do not know who this is".
  */
+// Screenshots from the in-app form live in a PRIVATE bucket, so the bot cannot
+// fetch them by path — it gets a URL signed here, at the moment we post.
+//
+// Two details that are easy to get wrong:
+//
+//  - The lifetime is short on purpose. This is the same trust model the bot's
+//    host allowlist already assumes for Discord's CDN links: fetch promptly,
+//    treat an expired one as an ordinary miss. The row keeps the PATH, so a
+//    later triage page can always sign a fresh one (00174).
+//  - The base has to be rewritten. This client is built with
+//    getServerSupabaseUrl(), which on prod is SUPABASE_INTERNAL_URL — a hostname
+//    that only resolves inside the app's own network. Handing that to the bot,
+//    a separate container, produces a fetch that fails for a reason nothing in
+//    the log would explain. NEXT_PUBLIC_SUPABASE_URL is the reachable one.
+const SCREENSHOT_URL_TTL_SECONDS = 60 * 30;
+
+async function signScreenshot(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  path: string | null,
+): Promise<string | null> {
+  if (!path) return null;
+
+  const { data, error } = await supabase.storage
+    .from('feedback-screenshots')
+    .createSignedUrl(path, SCREENSHOT_URL_TTL_SECONDS);
+
+  if (error || !data?.signedUrl) {
+    // Best effort by design: the words are the report, the screenshot is a
+    // bonus. Losing the image must never hold back the post.
+    console.error('[discord] feedback relay: could not sign screenshot:', error?.message);
+    return null;
+  }
+
+  const internal = getServerSupabaseUrl();
+  const publicBase = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (publicBase && data.signedUrl.startsWith(internal)) {
+    return publicBase.replace(/\/$/, '') + data.signedUrl.slice(internal.replace(/\/$/, '').length);
+  }
+  return data.signedUrl;
+}
+
 function reportAuthor(row: ReportRow): string {
   const name = playerName(row.players);
   const mention = row.discord_user_id ? `<@${row.discord_user_id}>` : '';
@@ -270,9 +313,14 @@ export async function GET(request: Request) {
     const { data, error } = await supabase
       .from('feedback_reports')
       .select(
-        'id, kind, title, body, image_url, discord_user_id, created_at, ' +
+        'id, kind, title, body, image_url, image_path, discord_user_id, created_at, ' +
           'players(full_name, handle)'
       )
+      // EXCLUDED, and this is load-bearing since 00175 merged the survey into
+      // this table: without it every survey response is picked up twice — once
+      // here as a report and once by the survey branch below — and posted to
+      // both channels under two different mappings.
+      .neq('kind', 'tournament_feedback')
       .gte('created_at', since)
       .order('created_at', { ascending: false })
       .limit(MAX_WINDOW);
@@ -310,7 +358,7 @@ export async function GET(request: Request) {
       author: reportAuthor(r),
       context: label,
       rating: null,
-      imageUrl: r.image_url,
+      imageUrl: r.image_url ?? (await signScreenshot(supabase, r.image_path)),
       createdAt: r.created_at,
     });
   }
@@ -327,13 +375,14 @@ export async function GET(request: Request) {
     .map((m) => m.source_id);
 
   const surveySelect =
-    'id, rating, comment, created_at, updated_at, tournaments(name), players(full_name, handle)';
+    'id, rating, body, created_at, updated_at, tournaments(name), players(full_name, handle)';
 
   const [freshResult, knownResult] = await Promise.all([
     surveyChannel
       ? supabase
-          .from('event_feedback')
+          .from('feedback_reports')
           .select(surveySelect)
+          .eq('kind', 'tournament_feedback')
           .gte('updated_at', since)
           .order('updated_at', { ascending: false })
           .limit(MAX_WINDOW)
@@ -343,7 +392,11 @@ export async function GET(request: Request) {
     // that as a deletion. Aimed at exactly the mapped ids, which MAX_MAPPED
     // keeps small enough that this read cannot itself truncate.
     mappedSurveyIds.length
-      ? supabase.from('event_feedback').select(surveySelect).in('id', mappedSurveyIds)
+      ? supabase
+          .from('feedback_reports')
+          .select(surveySelect)
+          .eq('kind', 'tournament_feedback')
+          .in('id', mappedSurveyIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -363,7 +416,7 @@ export async function GET(request: Request) {
     byId.set(row.id, row);
   }
 
-  // THE SWEEP FIRES ONLY ON POSITIVE EVIDENCE THAT event_feedback IS READABLE.
+  // THE SWEEP FIRES ONLY ON POSITIVE EVIDENCE THAT feedback_reports IS READABLE.
   // Zero rows is not that evidence — see the header. A non-empty byId settles
   // it: the table answered, so an id absent from it is absent because the row is
   // gone. When byId is empty the question is open, and one unfiltered read
@@ -374,7 +427,7 @@ export async function GET(request: Request) {
 
   if (!sweepable && mappedSurveyIds.length > 0) {
     const { data: anyRow, error: livenessError } = await supabase
-      .from('event_feedback')
+      .from('feedback_reports')
       .select('id')
       .limit(1);
 
@@ -383,7 +436,7 @@ export async function GET(request: Request) {
     if (!sweepable) {
       console.error(
         `[discord] feedback relay: all ${mappedSurveyIds.length} mapped survey response(s) ` +
-          'look deleted and public.event_feedback reads as empty — refusing to retract on ' +
+          'look deleted and public.feedback_reports reads as empty — refusing to retract on ' +
           'evidence this weak. Check the SELECT grant (read pg_class.relacl, not ' +
           'information_schema) and whether the PostgREST schema cache has been reloaded. ' +
           `${livenessError?.message ?? ''}`
@@ -418,7 +471,7 @@ export async function GET(request: Request) {
 
   for (const s of byId.values()) {
     const existing = mapped.get(`event_feedback:${s.id}`) ?? null;
-    const comment = cleanText(s.comment, MAX_BODY);
+    const comment = cleanText(s.body, MAX_BODY);
 
     // A BARE RATING IS NOT RELAYED. It is a number for the stats page, not
     // something for a human to read, and relaying them would bury the responses

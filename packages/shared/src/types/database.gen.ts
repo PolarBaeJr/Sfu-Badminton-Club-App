@@ -14,7 +14,7 @@
 // SOURCE DATABASE: staging — container "supabase-staging-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 52 tables, 2 views and 26 enums.
+// Covers 65 tables, 2 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -547,6 +547,320 @@ export type Database = {
         }
         Relationships: []
       }
+      discord_announcement_posts: {
+        Row: {
+          announcement_id: string
+          channel_id: string
+          created_at: string
+          discord_message_id: string
+          guild_id: string
+          synced_body: string
+          synced_title: string
+          synced_type: string
+          updated_at: string
+        }
+        Insert: {
+          announcement_id: string
+          channel_id: string
+          created_at?: string
+          discord_message_id: string
+          guild_id: string
+          synced_body: string
+          synced_title: string
+          synced_type: string
+          updated_at?: string
+        }
+        Update: {
+          announcement_id?: string
+          channel_id?: string
+          created_at?: string
+          discord_message_id?: string
+          guild_id?: string
+          synced_body?: string
+          synced_title?: string
+          synced_type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      discord_feedback_posts: {
+        Row: {
+          channel_id: string
+          created_at: string
+          discord_message_id: string
+          guild_id: string
+          source: string
+          source_id: string
+          synced_summary: string
+          updated_at: string
+        }
+        Insert: {
+          channel_id: string
+          created_at?: string
+          discord_message_id: string
+          guild_id: string
+          source: string
+          source_id: string
+          synced_summary: string
+          updated_at?: string
+        }
+        Update: {
+          channel_id?: string
+          created_at?: string
+          discord_message_id?: string
+          guild_id?: string
+          source?: string
+          source_id?: string
+          synced_summary?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      discord_guild_roles: {
+        Row: {
+          guild_id: string
+          role_id: string
+          role_name: string
+        }
+        Insert: {
+          guild_id: string
+          role_id: string
+          role_name: string
+        }
+        Update: {
+          guild_id?: string
+          role_id?: string
+          role_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discord_guild_roles_guild_id_fkey"
+            columns: ["guild_id"]
+            isOneToOne: false
+            referencedRelation: "discord_guilds"
+            referencedColumns: ["guild_id"]
+          },
+        ]
+      }
+      discord_guilds: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          guild_id: string
+          label: string | null
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          guild_id: string
+          label?: string | null
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          guild_id?: string
+          label?: string | null
+        }
+        Relationships: []
+      }
+      discord_link_tokens: {
+        Row: {
+          consumed_at: string | null
+          consumed_by: string | null
+          created_at: string
+          discord_user_id: string
+          expires_at: string
+          guild_id: string | null
+          token_hash: string
+        }
+        Insert: {
+          consumed_at?: string | null
+          consumed_by?: string | null
+          created_at?: string
+          discord_user_id: string
+          expires_at: string
+          guild_id?: string | null
+          token_hash: string
+        }
+        Update: {
+          consumed_at?: string | null
+          consumed_by?: string | null
+          created_at?: string
+          discord_user_id?: string
+          expires_at?: string
+          guild_id?: string | null
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discord_link_tokens_consumed_by_fkey"
+            columns: ["consumed_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      discord_match_posts: {
+        Row: {
+          channel_id: string
+          created_at: string
+          discord_message_id: string
+          guild_id: string
+          match_id: string
+          synced_summary: string
+          updated_at: string
+        }
+        Insert: {
+          channel_id: string
+          created_at?: string
+          discord_message_id: string
+          guild_id: string
+          match_id: string
+          synced_summary: string
+          updated_at?: string
+        }
+        Update: {
+          channel_id?: string
+          created_at?: string
+          discord_message_id?: string
+          guild_id?: string
+          match_id?: string
+          synced_summary?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      discord_role_revocations: {
+        Row: {
+          discord_user_id: string
+          queued_at: string
+        }
+        Insert: {
+          discord_user_id: string
+          queued_at?: string
+        }
+        Update: {
+          discord_user_id?: string
+          queued_at?: string
+        }
+        Relationships: []
+      }
+      discord_self_roles: {
+        Row: {
+          channel_id: string | null
+          created_at: string
+          emoji: string | null
+          guild_id: string
+          label: string
+          role_id: string
+          sort_order: number
+          track: Database["public"]["Enums"]["session_group"] | null
+        }
+        Insert: {
+          channel_id?: string | null
+          created_at?: string
+          emoji?: string | null
+          guild_id: string
+          label: string
+          role_id: string
+          sort_order?: number
+          track?: Database["public"]["Enums"]["session_group"] | null
+        }
+        Update: {
+          channel_id?: string | null
+          created_at?: string
+          emoji?: string | null
+          guild_id?: string
+          label?: string
+          role_id?: string
+          sort_order?: number
+          track?: Database["public"]["Enums"]["session_group"] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discord_self_roles_guild_id_fkey"
+            columns: ["guild_id"]
+            isOneToOne: false
+            referencedRelation: "discord_guilds"
+            referencedColumns: ["guild_id"]
+          },
+        ]
+      }
+      discord_session_pings: {
+        Row: {
+          pinged_at: string
+          role_id: string
+          session_id: string
+        }
+        Insert: {
+          pinged_at?: string
+          role_id: string
+          session_id: string
+        }
+        Update: {
+          pinged_at?: string
+          role_id?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discord_session_pings_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      discord_settings: {
+        Row: {
+          key: string
+          value: string | null
+        }
+        Insert: {
+          key: string
+          value?: string | null
+        }
+        Update: {
+          key?: string
+          value?: string | null
+        }
+        Relationships: []
+      }
+      discord_tournament_events: {
+        Row: {
+          created_at: string
+          discord_event_id: string
+          guild_id: string
+          synced_ends_at: string
+          synced_name: string
+          synced_starts_at: string
+          tournament_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          discord_event_id: string
+          guild_id: string
+          synced_ends_at: string
+          synced_name: string
+          synced_starts_at: string
+          tournament_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          discord_event_id?: string
+          guild_id?: string
+          synced_ends_at?: string
+          synced_name?: string
+          synced_starts_at?: string
+          tournament_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       disputes: {
         Row: {
           created_at: string
@@ -754,6 +1068,75 @@ export type Database = {
             columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      feedback_reports: {
+        Row: {
+          body: string | null
+          created_at: string
+          discord_user_id: string | null
+          guild_id: string | null
+          id: string
+          image_path: string | null
+          image_url: string | null
+          kind: string
+          player_id: string | null
+          rating: number | null
+          source: string
+          status: string
+          title: string | null
+          tournament_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          discord_user_id?: string | null
+          guild_id?: string | null
+          id?: string
+          image_path?: string | null
+          image_url?: string | null
+          kind: string
+          player_id?: string | null
+          rating?: number | null
+          source?: string
+          status?: string
+          title?: string | null
+          tournament_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          discord_user_id?: string | null
+          guild_id?: string | null
+          id?: string
+          image_path?: string | null
+          image_url?: string | null
+          kind?: string
+          player_id?: string | null
+          rating?: number | null
+          source?: string
+          status?: string
+          title?: string | null
+          tournament_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feedback_reports_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "feedback_reports_tournament_id_fkey"
+            columns: ["tournament_id"]
+            isOneToOne: false
+            referencedRelation: "tournaments"
             referencedColumns: ["id"]
           },
         ]
@@ -1396,6 +1779,35 @@ export type Database = {
             foreignKeyName: "platform_settings_updated_by_fkey"
             columns: ["updated_by"]
             isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      player_discord_links: {
+        Row: {
+          discord_user_id: string
+          last_synced_at: string | null
+          linked_at: string
+          player_id: string
+        }
+        Insert: {
+          discord_user_id: string
+          last_synced_at?: string | null
+          linked_at?: string
+          player_id: string
+        }
+        Update: {
+          discord_user_id?: string
+          last_synced_at?: string | null
+          linked_at?: string
+          player_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "player_discord_links_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: true
             referencedRelation: "players"
             referencedColumns: ["id"]
           },
@@ -3292,6 +3704,13 @@ export type Database = {
       club_local_instant: {
         Args: { p_date: string; p_time: string }
         Returns: string
+      }
+      consume_discord_link_token: {
+        Args: { p_token_hash: string }
+        Returns: {
+          displaced_discord_user_id: string
+          linked_discord_user_id: string
+        }[]
       }
       create_player_with_rating: {
         Args: {
