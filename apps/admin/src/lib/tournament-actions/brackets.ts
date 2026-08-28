@@ -37,6 +37,7 @@ import {
   newDrawSeed,
   planGroupAssignment,
   drawAvoidingSameGroupRound1,
+  assertFieldDidNotGrow,
 } from './_internal';
 
 // Block (re)generating a draw once any match has a recorded result —
@@ -1272,6 +1273,14 @@ async function generateSingleEliminationBracketImpl(
     assertWritesSucceeded('Numbering the bracket matches', failures);
   }
 
+  // Audit F-004, the draw half: a member who entered while this draw was being
+  // built is in the event and would be in no match. Checked BEFORE the publish,
+  // so nothing has been advertised and the matches inserted above are simply
+  // replaced by the next Generate. Pool-seeded events are exempt — their field
+  // comes from another event's standings, so a new entry here was never going
+  // to be in it.
+  if (!seededFromPool) await assertFieldDidNotGrow(adminClient, eventId, doubles, N);
+
   // Update event status.
   //
   // THE LAST WRITE IS THE ONE THAT PUBLISHES THE DRAW, so it is the one that
@@ -1639,6 +1648,14 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       }
     }
   }
+
+  // Audit F-004, the draw half: a member who entered while this draw was being
+  // built is in the event and would be in no match. Checked BEFORE the publish,
+  // so nothing has been advertised and the matches inserted above are simply
+  // replaced by the next Generate. Pool-seeded events are exempt — their field
+  // comes from another event's standings, so a new entry here was never going
+  // to be in it.
+  await assertFieldDidNotGrow(adminClient, eventId, doubles, N);
 
   // Update event status.
   //

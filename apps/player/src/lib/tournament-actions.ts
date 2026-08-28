@@ -10,11 +10,6 @@ import {
   isMembershipAllowed,
   membershipRefusalMessage,
   eventHasDraw,
-  loadTournamentEntryCounts,
-  isAtEntryCap,
-  countDoublesField,
-  doublesDrawSlots,
-  wouldExceedCapacity,
   screenSelfEntry,
   toCompetitionCategory,
   ExpectedError,
@@ -60,13 +55,6 @@ function pickAllowedMemberships(embed: unknown): string[] | null {
   return Array.isArray(value) ? value : null;
 }
 
-// Same object-or-array unwrap again, for the per-member event cap (00098).
-function pickEntryCap(embed: unknown): number | null {
-  const row = Array.isArray(embed) ? embed[0] : embed;
-  const value = (row as { max_events_per_player?: number | null } | null)?.max_events_per_player;
-  return typeof value === 'number' ? value : null;
-}
-
 /**
  * What the member has to have been TOLD before this runs.
  *
@@ -104,7 +92,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, existingPairRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships, max_events_per_player)')
+      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -242,67 +230,6 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
     throw new ExpectedError('You must accept the event waiver to register');
   }
 
-  // Capacity check is the only thing that has to wait — it depends on a fresh count.
-  //
-  // FOR DOUBLES IT IS COUNTED IN DRAW SLOTS: formed pairs, plus one slot per two
-  // people still waiting for a partner. max_participants has always meant "how
-  // many entries fit" and a doubles entry is a TEAM, so counting participant
-  // rows would let forty loose entrants into an event with room for eight teams.
-  // The same arithmetic the admin app enforces and the same the /tournaments
-  // card shows — one implementation, in @badminton/shared, so the screen cannot
-  // promise a place this action then refuses.
-  if (event.max_participants) {
-    if (doubles) {
-      const [unpairedRes, pairsRes] = await Promise.all([
-        service.from('tournament_participants').select('player_id, status').eq('event_id', eventId),
-        service.from('tournament_pairs').select('player1_id, player2_id, status').eq('event_id', eventId),
-      ]);
-      // A failed read must not read as "the event is empty" and wave somebody
-      // past a full event.
-      if (unpairedRes.error || pairsRes.error) {
-        throw new Error('Could not check how full this event is. Nothing was changed — try again.');
-      }
-      const field = countDoublesField(unpairedRes.data ?? [], pairsRes.data ?? []);
-      const after = doublesDrawSlots(field.pairs, field.unpaired + 1);
-      if (wouldExceedCapacity(field.slots, after, event.max_participants)) {
-        throw new ExpectedError('Event is full');
-      }
-    } else {
-      const { count } = await service.from('tournament_participants')
-        .select('id', { count: 'exact', head: true })
-        .eq('event_id', eventId)
-        .not('status', 'in', '("withdrawn","disqualified")');
-      if (count && count >= event.max_participants) throw new ExpectedError('Event is full');
-    }
-  }
-
-  // THE PER-MEMBER EVENT CAP (00098). The tournament may limit how many of its
-  // events any one member takes; the capacity check above asks whether the
-  // EVENT has room, this asks whether the MEMBER has an entry left.
-  //
-  // The cap rides along on the tournament embed already being read above, so an
-  // uncapped tournament — which is every tournament that exists today — pays
-  // for nothing extra and does not reach the counting queries at all.
-  //
-  // Counted across BOTH tables, because this member may already be half of a
-  // doubles pair and that pair is not a tournament_participants row. An
-  // unpaired doubles entrant DOES have one, and counts once through it — the
-  // same single slot they keep when an exec later pairs them.
-  const entryCap = pickEntryCap(event.tournament);
-  if (entryCap !== null) {
-    const counts = await loadTournamentEntryCounts(service, event.tournament_id);
-    if (isAtEntryCap(counts.get(player.id) ?? 0, entryCap)) {
-      throw new ExpectedError(
-        `You are already entered in ${entryCap} ${entryCap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
-        // "Withdraw from one" is not advice a member in a formed doubles pair
-        // can act on — leaving a pair is an exec action, because it takes
-        // somebody else's team away from them. Don't tell them to do something
-        // the app will refuse.
-        'Withdraw from one to enter another, or ask a tournament admin if one of them is a doubles pair.',
-      );
-    }
-  }
-
   // NO 400 FALLBACK. elo_before is a snapshot that seeding, the pool display
   // and the legacy undo path all read back as fact, so inventing 400 for a
   // member whose rating row simply failed to load contaminates all three and
@@ -317,13 +244,52 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
     throw new ExpectedError('Your club rating is not set up yet — contact an exec before entering.');
   }
 
-  const { error: insertErr } = await service.from('tournament_participants').insert({
-    event_id: eventId,
-    player_id: player.id,
-    elo_before: eloBefore,
-    status: 'registered',
+  // THE THREE COUNTS AND THE INSERT, IN ONE TRANSACTION — audit F-004.
+  //
+  // Capacity, the per-member cap and the event's own status used to be read
+  // here and acted on hundreds of milliseconds later, under the SERVICE ROLE,
+  // so RLS was not in the picture and nothing held any of it still. Two members
+  // entering a 16-slot event with 15 entries both counted 15 and both inserted;
+  // an exec generating the draw in that window got a bracket built from a field
+  // that gained somebody afterwards, leaving an entrant in the event and in no
+  // match.
+  //
+  // 00185 takes the event row FOR UPDATE and does all three inside it. The
+  // counting now has ONE implementation and it is that function — the reads
+  // that used to live here are gone rather than kept as a fast path, because
+  // two copies of "is this event full" is how the screen ends up promising a
+  // place this action refuses.
+  const { data: entered, error: enterErr } = await service.rpc('enter_tournament_event', {
+    p_event_id: eventId,
+    p_player_id: player.id,
+    p_elo_before: eloBefore,
+    p_doubles: doubles,
   });
-  if (insertErr) throw new Error(insertErr.message);
+  if (enterErr) throw new Error(enterErr.message);
+  if (!entered) throw new Error('Could not complete your entry — please try again shortly.');
+  if (!entered.ok) {
+    switch (entered.reason) {
+      case 'event_full':
+        throw new ExpectedError('Event is full');
+      case 'registration_closed':
+        throw new ExpectedError('Registration is closed');
+      case 'entry_cap':
+        throw new ExpectedError(
+          `You are already entered in ${entered.cap} ${entered.cap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
+          // "Withdraw from one" is not advice a member in a formed doubles pair
+          // can act on — leaving a pair is an exec action, because it takes
+          // somebody else's team away from them. Don't tell them to do
+          // something the app will refuse.
+          'Withdraw from one to enter another, or ask a tournament admin if one of them is a doubles pair.',
+        );
+      case 'already_registered':
+        throw new ExpectedError('Already registered');
+      case 'event_not_found':
+        throw new Error('Event not found');
+      default:
+        throw new Error('Could not complete your entry — please try again shortly.');
+    }
+  }
 
   // What this entry costs, on the club's fee ledger, priced from the member's
   // membership_type. Deliberately AFTER the participant row and deliberately

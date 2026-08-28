@@ -2215,3 +2215,55 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   if (grouped) return qualificationOrder(rankable, seedBy);
   return sortStandings(rankable, seedBy).map((s, i) => ({ ...s, groupRank: i + 1 }));
 }
+
+/**
+ * Refuse to publish a draw that a late entry has already made wrong.
+ *
+ * Audit F-004, the draw half. A generator reads the field, spends 40+ sequential
+ * round trips seeding and inserting matches, and only then moves the event out
+ * of `registration`. A member entering anywhere in that window is admitted —
+ * enter_tournament_event (00185) sees a status that is still open, and is
+ * right to — and then does not appear in the bracket. The result is an entrant
+ * who is in the event and in no match, which the draw page has no way to render
+ * and the exec no way to repair except by hand.
+ *
+ * The entry side cannot fix this alone: the two operations are separate
+ * transactions, and the lock the RPC takes on the event row is released long
+ * before the generator gets to the end.
+ *
+ * SO THIS IS A FENCE, NOT A LOCK. Count the field again just before the publish
+ * and refuse if it grew. Nothing has been published at that point, the matches
+ * that were inserted are replaceable (that is what Generate already does on an
+ * event that has a draw), and the exec is told the one thing they need to know
+ * instead of finding out from a member on the day.
+ *
+ * `expected` is the size the draw was actually built from. Pool-seeded events
+ * pass their own subset and are exempted by the caller — their field comes from
+ * another event's standings, so a new entry here was never going to be in it.
+ */
+export async function assertFieldDidNotGrow(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  doubles: boolean,
+  expected: number,
+): Promise<void> {
+  const { data, error } = await adminClient
+    .from(doubles ? 'tournament_pairs' : 'tournament_participants')
+    .select('id')
+    .eq('event_id', eventId)
+    .in('status', ['registered', 'checked_in']);
+
+  // A failed re-count must not read as "nobody arrived". It is the same
+  // silently-permissive shape as every other discarded read in this audit.
+  if (error) throw new Error(`Could not re-check the field before publishing: ${writeErrorMessage(error)}`);
+
+  const now = (data ?? []).length;
+  if (now > expected) {
+    const arrived = now - expected;
+    throw new ExpectedError(
+      `${arrived} ${arrived === 1 ? 'entry' : 'entries'} arrived while this draw was being built, so it would have left `
+      + `${arrived === 1 ? 'somebody' : 'people'} out. Nothing was published — press Generate again to include `
+      + `${arrived === 1 ? 'them' : 'everyone'}.`,
+    );
+  }
+}
