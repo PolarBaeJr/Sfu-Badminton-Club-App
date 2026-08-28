@@ -6,6 +6,7 @@ import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
+import { ExpectedError } from '@badminton/shared';
 // The exec's verdict on a walkover is private free text and no longer lives on
 // the walkover row — 00118. See lib/private-notes.ts.
 import { WALKOVER_NOTES, writePrivateNote } from '../private-notes';
@@ -92,29 +93,34 @@ async function rejectWalkoverImpl(walkoverId: string, notes: string) {
   const admin = await requireCapability('walkovers.reject.write');
   const adminClient = createAdminClient();
 
-  const { data: walkover } = await adminClient.from('walkovers').select('*').eq('id', walkoverId).single();
-
-  // `admin_notes` is deliberately NOT set here any more — 00118. This is the
-  // sharpest case of the four that migration moves: a REJECTION reason is the
-  // exec's assessment of a claim the forfeiting player made, and
-  // walkovers_select names that player.
-  const { error } = await adminClient
-    .from('walkovers')
-    .update({
-      status: 'rejected',
-      admin_confirmed_by: admin.id,
-      admin_confirmed_at: new Date().toISOString(),
-    })
-    .eq('id', walkoverId);
+  // ONE STATEMENT, and it is the reject half of audit F-009. This used to read
+  // the walkover (discarding the read error), update it to 'rejected'
+  // unconditionally, and then reopen the challenge. Nothing tested that the
+  // walkover was still pending, so two execs clicking Reject both succeeded,
+  // and an exec rejecting one a colleague had just CONFIRMED reopened a
+  // challenge whose match had already been played and rated. A failed read
+  // reopened nothing and said nothing.
+  //
+  // 00184 takes the walkover FOR UPDATE, refuses anything that is not still
+  // pending, and reopens the challenge only from 'walkover_pending'.
+  //
+  // `admin_notes` is deliberately NOT set — 00118. This is the sharpest case of
+  // the four that migration moves: a REJECTION reason is the exec's assessment
+  // of a claim the forfeiting player made, and walkovers_select names that
+  // player.
+  const { data: rejected, error } = await adminClient.rpc('reject_walkover_atomic', {
+    p_walkover_id: walkoverId,
+    p_admin_id: admin.id,
+  });
 
   if (error) throw new Error(error.message);
-
-  // Restore challenge status
-  if (walkover) {
-    await adminClient
-      .from('challenges')
-      .update({ status: 'accepted' })
-      .eq('id', walkover.challenge_id);
+  if (!rejected) throw new Error('Could not reject this walkover — please try again.');
+  if (!rejected.ok) {
+    throw new ExpectedError(
+      rejected.reason === 'already_settled'
+        ? `This walkover has already been ${rejected.status} by somebody else. Reload the queue.`
+        : 'Walkover not found',
+    );
   }
 
   // After the rejection lands, before the audit, and it does not throw — the
