@@ -2687,6 +2687,7 @@ export type Database = {
       tournament_events: {
         Row: {
           created_at: string | null
+          draw_generation_id: string | null
           draw_locked: boolean | null
           elo_multiplier: number | null
           event_type: string
@@ -2709,6 +2710,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          draw_generation_id?: string | null
           draw_locked?: boolean | null
           elo_multiplier?: number | null
           event_type: string
@@ -2731,6 +2733,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          draw_generation_id?: string | null
           draw_locked?: boolean | null
           elo_multiplier?: number | null
           event_type?: string
@@ -2853,6 +2856,7 @@ export type Database = {
           bracket_position: number
           court: string | null
           created_at: string | null
+          draw_generation_id: string | null
           elo_snapshot: Json | null
           event_id: string
           games_per_match: number | null
@@ -2892,6 +2896,7 @@ export type Database = {
           bracket_position: number
           court?: string | null
           created_at?: string | null
+          draw_generation_id?: string | null
           elo_snapshot?: Json | null
           event_id: string
           games_per_match?: number | null
@@ -2931,6 +2936,7 @@ export type Database = {
           bracket_position?: number
           court?: string | null
           created_at?: string | null
+          draw_generation_id?: string | null
           elo_snapshot?: Json | null
           event_id?: string
           games_per_match?: number | null
@@ -3868,7 +3874,7 @@ export type Database = {
       }
       delete_phase_matches: {
         Args: { p_event_id: string; p_phase: string }
-        Returns: number
+        Returns: Json
       }
       derive_member_code: { Args: { p_player_id: string }; Returns: string }
       derived_format_weight: {
@@ -4074,7 +4080,9 @@ export type Database = {
           p_doubles: boolean
           p_event_id: string
           p_expected: number
+          p_generation: string
           p_new_status: string
+          p_phase: string
         }
         Returns: Json
       }

@@ -240,12 +240,16 @@ async function publishDraw(
   newStatus: 'live' | 'bracket_generated' | 'pool_live' | 'pool_generated',
   doubles: boolean,
   expected: number | null,
+  phase: TournamentMatchPhase | null,
+  generation: string,
 ): Promise<void> {
   const { data, error } = await adminClient.rpc('publish_event_draw', {
     p_event_id: eventId,
     p_new_status: newStatus,
     p_doubles: doubles,
     p_expected: expected,
+    p_phase: phase,
+    p_generation: generation,
   });
   if (error) throw new Error(`Publishing the draw failed: ${error.message}`);
   if (!data) throw new Error('Publishing the draw returned nothing.');
@@ -257,6 +261,29 @@ async function publishDraw(
         + `${arrived === 1 ? 'somebody' : 'people'} out. Nothing was published — press Generate again to include `
         + `${arrived === 1 ? 'them' : 'everyone'}.`,
       );
+    }
+    // SOMEBODY ELSE REBUILT THIS DRAW while this one was being built (00197).
+    // Nothing of this generation's is in the table — the trigger refused it —
+    // so there is nothing to undo and the remedy is to look at what is there.
+    if (data.reason === 'superseded') {
+      throw new ExpectedError(
+        'This draw was rebuilt by somebody else while it was being generated, so nothing here was saved. '
+        + 'Reload the event to see the draw that was published, and press Generate again if it is not the one you wanted.',
+      );
+    }
+    // Both of these are unreachable while the trigger and the inserts above
+    // hold, which is why they are worth reporting as faults rather than as
+    // something the exec did.
+    if (data.reason === 'foreign_matches') {
+      Sentry.captureMessage('publish_event_draw: foreign matches in the phase', {
+        level: 'error',
+        tags: { eventId, count: String(data.count ?? '') },
+      });
+      throw new Error('This draw contains matches from another generation and was not published.');
+    }
+    if (data.reason === 'no_matches') {
+      Sentry.captureMessage('publish_event_draw: nothing was built', { level: 'error', tags: { eventId } });
+      throw new Error('No matches were created for this draw, so it was not published.');
     }
     if (data.reason === 'event_not_found') throw new Error('Event not found');
     throw new Error('Could not publish the draw — please try again.');
@@ -313,12 +340,25 @@ async function deletePhaseMatches(
   adminClient: ReturnType<typeof createAdminClient>,
   eventId: string,
   phase: TournamentMatchPhase | null,
-) {
-  const { error } = await adminClient.rpc('delete_phase_matches', {
+): Promise<string> {
+  const { data, error } = await adminClient.rpc('delete_phase_matches', {
     p_event_id: eventId,
     p_phase: phase,
   });
-  if (!error) return;
+  if (!error) {
+    // THE GENERATION THIS TEARDOWN CLAIMED (00197). Every match inserted below
+    // carries it, publish_event_draw refuses a claim that has moved on, and a
+    // BEFORE INSERT trigger refuses a stamped row from a superseded one. It is
+    // returned rather than re-read because re-reading it would be a second
+    // round trip that could see somebody else's claim and stamp the whole draw
+    // with it — which is the failure this is built to prevent, arrived at by a
+    // different route.
+    const generation = (data as { generation?: unknown } | null)?.generation;
+    if (typeof generation !== 'string') {
+      throw new Error('The draw teardown did not return a generation, so this draw cannot be fenced.');
+    }
+    return generation;
+  }
   // The function raises its own refusals with messages written for the desk —
   // which matches to void, which to unvoid, which are on court — so they are
   // passed through rather than replaced with something vaguer.
@@ -776,6 +816,7 @@ async function createThirdPlaceMatch(
   // The shape lives on the row, so it is simply passed in, and it is the
   // final's: "third place games best to 3 21s".
   shape: { games_per_match: number; points_per_game: number } | null,
+  generation: string,
 ): Promise<string | null> {
   if (totalRounds < 2 || semiFinalIds.length !== 2) return null;
 
@@ -788,6 +829,7 @@ async function createThirdPlaceMatch(
   const { data: created, error } = await adminClient.from('tournament_matches').insert({
     event_id: eventId,
     phase,
+    draw_generation_id: generation,
     round_number: totalRounds,
     round_name: THIRD_PLACE_ROUND_NAME,
     bracket_position: 1,
@@ -1122,7 +1164,7 @@ async function generateSingleEliminationBracketImpl(
   // Delete the existing matches OF THIS PHASE. On a pool_to_bracket event the
   // played-out pool sits in the same table and must survive a redraw of the
   // knockout — see deletePhaseMatches.
-  await deletePhaseMatches(adminClient, eventId, phase);
+  const generation = await deletePhaseMatches(adminClient, eventId, phase);
 
   // THE ROUND LADDER (00108). Stamped onto the rows as they are created rather
   // than stored as a plan on the event, so there is nothing that can disagree
@@ -1154,6 +1196,7 @@ async function generateSingleEliminationBracketImpl(
       const { data: match, error } = await adminClient.from('tournament_matches').insert({
         event_id: eventId,
         phase,
+        draw_generation_id: generation,
         round_number: round,
         round_name: roundName,
         bracket_position: pos,
@@ -1279,7 +1322,7 @@ async function generateSingleEliminationBracketImpl(
   const thirdPlaceId = includeThirdPlace
     ? await createThirdPlaceMatch(
         adminClient, eventId, totalRounds, matchesByRound[totalRounds - 1] ?? [],
-        phase, ladder?.thirdPlace ?? null,
+        phase, ladder?.thirdPlace ?? null, generation,
       )
     : null;
 
@@ -1336,7 +1379,7 @@ async function generateSingleEliminationBracketImpl(
   // entrants are the qualifiers, not everyone registered, so a live count of
   // the participant table is not the number this draw was built from and would
   // refuse every pool-to-bracket publication.
-  await publishDraw(adminClient, eventId, statusAfterDraw(event, phase), doubles, seededFromPool ? null : N);
+  await publishDraw(adminClient, eventId, statusAfterDraw(event, phase), doubles, seededFromPool ? null : N, phase, generation);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
@@ -1629,7 +1672,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   }
 
   // Delete any existing matches OF THIS PHASE — see deletePhaseMatches.
-  await deletePhaseMatches(adminClient, eventId, phase);
+  const generation = await deletePhaseMatches(adminClient, eventId, phase);
 
   // ONE SHARED ROUND NUMBERING ACROSS THE GROUPS, and one shared
   // bracket_position within each round. 00081 put a UNIQUE index on
@@ -1657,6 +1700,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
         const insertData: Record<string, unknown> = {
           event_id: eventId,
           phase,
+          draw_generation_id: generation,
           // THE POOL IS PLAYED TO 11 (00108) — "we play round robin 11s". Only
           // on the pool_to_bracket format, for the same reason the knockout
           // ladder is: an ordinary round robin that has always been played at
@@ -1713,7 +1757,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   // this bracket. publish_event_draw takes the event row, which is the same row
   // an entry must take, so only two orderings exist: the entry commits first
   // and this refuses, or this commits first and the entry is closed out.
-  await publishDraw(adminClient, eventId, statusAfterDraw(event, phase), doubles, N);
+  await publishDraw(adminClient, eventId, statusAfterDraw(event, phase), doubles, N, phase, generation);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,

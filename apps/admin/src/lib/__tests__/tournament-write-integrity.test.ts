@@ -28,6 +28,15 @@ const store = vi.hoisted(() => ({
    * other desk's result commits in production, and the only way to reach D1.
    */
   beforeDeletePhase: null as null | (() => void),
+  /**
+   * Runs before each tournament_matches INSERT — the only place a competing
+   * generation can land in production, because a draw is built one PostgREST
+   * round trip at a time and the advisory lock its teardown took was released
+   * at that teardown's COMMIT. Nothing else in this harness can put the other
+   * desk's redraw INSIDE the insert loop, which is where 00197's whole finding
+   * lives.
+   */
+  beforeMatchInsert: null as null | (() => void),
   // Stands in for `gen_random_uuid()`. Bracket generation inserts a match shell
   // and immediately uses the id it gets back to wire up the next round, so an
   // insert that returns no id cannot be exercised at all.
@@ -116,6 +125,27 @@ const makeClient = vi.hoisted(() => () => {
       }
       if (op === 'insert') {
         const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
+        // trg_tournament_match_generation (00197). A stamped row whose claim is
+        // not the event's current one is refused; an unstamped row passes. This
+        // is on the TABLE and not in an RPC because the real inserts go straight
+        // through PostgREST, and modelling it anywhere else would make the
+        // superseded-generator tests pass without the fence existing.
+        if (table === 'tournament_matches') {
+          store.beforeMatchInsert?.();
+          for (const r of rows) {
+            if (r.draw_generation_id == null) continue;
+            const ev = (store.db.tournament_events ?? []).find((e) => e.id === r.event_id);
+            if (ev?.draw_generation_id !== r.draw_generation_id) {
+              return {
+                data: null,
+                error: {
+                  message: 'This draw was rebuilt by somebody else while it was being generated, so these matches were not saved. Press Generate again to build the current draw.',
+                  code: '23514',
+                },
+              };
+            }
+          }
+        }
         // The id is spread FIRST so an explicit one in the payload wins, exactly
         // as a DEFAULT does. Rows are returned rather than discarded because
         // `.insert(...).select('id').single()` is how every match shell in the
@@ -446,7 +476,14 @@ const makeClient = vi.hoisted(() => () => {
     if (played > 0) return refuse(`${played} match(es) in this draw have a result`);
     if (rated > 0) return refuse(`${rated} match(es) in this draw still carry an applied rating that was never reversed`);
     if (live > 0) return refuse(`${live} match(es) in this draw are being played right now`);
-    return Promise.resolve({ data: gone.length, error: null });
+
+    // THE CLAIM (00197), issued after the three refusals for the same reason
+    // the real one is: a teardown that is not allowed to proceed must not take
+    // the event's generation away from one that is.
+    const generation = `gen-${++store.seq}-draw`;
+    const ev = (store.db.tournament_events ?? []).find((r) => r.id === eventId);
+    if (ev) ev.draw_generation_id = generation;
+    return Promise.resolve({ data: { deleted: gone.length, generation }, error: null });
   }
 
   // The grant ledger of 00188, which is what actually makes a bonus once-only.
@@ -608,8 +645,26 @@ const makeClient = vi.hoisted(() => () => {
       if (f) return Promise.resolve({ data: null, error: { message: f.message } });
       const ev = (store.db.tournament_events ?? []).find((r) => r.id === eventId);
       if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      // THE THREE ASSERTIONS 00197 ADDED. The first is the fence: publishing a
+      // claim that has moved on would put this generation's status on somebody
+      // else's bracket. The other two are about what was actually built, which
+      // publication never looked at before.
+      if (ev.draw_generation_id !== args.p_generation) {
+        return Promise.resolve({ data: { ok: false, reason: 'superseded' }, error: null });
+      }
+      const phase = (args.p_phase as string | null) ?? null;
+      const built = (store.db.tournament_matches ?? []).filter(
+        (m) => m.event_id === eventId && (phase === null || m.phase === phase),
+      );
+      const foreign = built.filter((m) => m.draw_generation_id !== args.p_generation).length;
+      if (foreign > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'foreign_matches', count: foreign }, error: null });
+      }
+      if (built.length === 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'no_matches' }, error: null });
+      }
       Object.assign(ev, payload);
-      return Promise.resolve({ data: { ok: true }, error: null });
+      return Promise.resolve({ data: { ok: true, matches: built.length }, error: null });
     }
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
@@ -684,6 +739,7 @@ const LIVE_RATING_DEFAULTS = {
 beforeEach(() => {
   store.faults = [];
   store.beforeDeletePhase = null;
+  store.beforeMatchInsert = null;
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
     tournament_events: [{
@@ -2133,6 +2189,82 @@ describe('regenerating a draw that already exists', () => {
     const rated = store.db.tournament_matches!.find((m) => m.elo_snapshot != null);
     // The snapshot is still there, so the delta is still reversible.
     expect(rated?.elo_snapshot).toEqual(snapshot);
+  });
+
+  // ==========================================================================
+  // A SUPERSEDED GENERATION CANNOT WRITE (00197)
+  // ==========================================================================
+  //
+  // 00193 made the PUBLICATION of a draw atomic and said in its own header what
+  // it left open: generation is dozens of separate round trips, and the advisory
+  // lock its teardown takes is an xact lock that is gone the moment that DELETE
+  // commits. So two execs pressing Generate interleave — A deletes and starts
+  // inserting, B deletes (taking A's rows) and finishes, and A's remaining
+  // INSERTs land in a draw that is already live.
+  //
+  // WHY THIS HAS NOT OBVIOUSLY BROKEN ANYTHING, and why that is not a defence.
+  // tournament_matches_draw_position_idx (00107) is UNIQUE on
+  // (event_id, phase, round_number, bracket_position), so most of A's late rows
+  // collide with B's. That only holds while both generators build the SAME
+  // position space. One withdrawal between A and B is enough to make A's draw
+  // larger, and A's surplus positions collide with nothing.
+  //
+  // The hook fires INSIDE the insert loop, because that is the only place the
+  // race exists. Fired at the teardown instead — the one window this file
+  // already had — it would reproduce nothing: at that point A has written
+  // nothing to supersede.
+  it('REFUSES A DRAW WHOSE GENERATION WAS SUPERSEDED MID-BUILD, and publishes nothing', async () => {
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+
+    // The other desk redraws after A's first insert has landed: its teardown
+    // clears the table and claims the event's generation. Once only — A must be
+    // refused on its very next write, not repeatedly rescued.
+    let fired = false;
+    store.beforeMatchInsert = () => {
+      if (fired || (store.db.tournament_matches ?? []).length === 0) return;
+      fired = true;
+      store.db.tournament_matches = [];
+      Object.assign(event(), { draw_generation_id: 'the-other-desks-claim' });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/rebuilt by somebody else/);
+    // THE ASSERTION THAT MATTERS. Not "it threw" — that a superseded generation
+    // left no fixture behind and did not advertise a draw. A test that only
+    // checked the message would pass on a fix that refused the publish and let
+    // the orphan matches stand, which is the corrupt state, not the safe one.
+    expect(store.db.tournament_matches ?? []).toHaveLength(0);
+    expect(event().status).toBe('checkin');
+  });
+
+  // The other end of the same fence, and the case the trigger alone does not
+  // cover: A's inserts ALL land — nothing supersedes it until it has finished
+  // building — and the claim moves in the window between its last INSERT and its
+  // publish. Without the check in publish_event_draw this flips a status onto a
+  // table whose contents belong to somebody else's draw.
+  it('refuses to publish a draw whose claim moved after the last insert', async () => {
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+
+    const claim = event().draw_generation_id;
+    expect(typeof claim).toBe('string');
+    Object.assign(event(), { draw_generation_id: 'the-other-desks-claim' });
+
+    const publish = await makeClient().rpc('publish_event_draw', {
+      p_event_id: 'e1',
+      p_new_status: 'bracket_generated',
+      p_doubles: false,
+      p_expected: null,
+      p_phase: null,
+      p_generation: claim,
+    });
+    expect(publish.data).toMatchObject({ ok: false, reason: 'superseded' });
+    expect(event().status).toBe('checkin');
   });
 
   it('refuses when a match is ON COURT — no race required', async () => {
