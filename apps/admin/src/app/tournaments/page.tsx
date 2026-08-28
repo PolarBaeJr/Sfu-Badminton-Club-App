@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import Link from 'next/link';
-import { scopeToActiveSeason, selectInChunks, quoteEntryFee, type PricingTier } from '@badminton/shared';
+import { scopeToActiveSeason, selectInChunks, quoteEntryFee, type PricingTier, clubToday } from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import {
@@ -194,7 +194,11 @@ export default async function TournamentsPage({
   // would hand that stale row the card ahead of the one actually coming up. So:
   // upcoming first, soonest at the top; anything already past falls behind them,
   // most recent first.
-  const today = new Date().toISOString().slice(0, 10);
+  // clubToday, not toISOString(): this runs on the server, the container has
+  // TZ unset, and from 17:00 Pacific onwards the UTC date is already tomorrow
+  // — which flips a tournament starting today from 'upcoming' to 'past' on the
+  // evening before it starts, and demotes it off the featured card.
+  const today = clubToday();
   const openTournaments = tournaments
     .filter((t) => stageOf.get(t.id) === 'entries-open')
     .sort((a, b) => {

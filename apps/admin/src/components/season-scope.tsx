@@ -1,3 +1,4 @@
+import { clubToday } from '@badminton/shared';
 export interface ScopeSeason {
   id: string;
   name: string;
@@ -30,7 +31,9 @@ export function resolveSeasonScope(
   // "Past" drives the read-only framing below, and is about the DATES rather
   // than the flag — a term whose last day has gone is history even if nobody
   // has activated the next one yet.
-  const today = new Date().toLocaleDateString('en-CA');
+  // The club's today; see clubToday(). This decides whether a term is framed
+  // read-only, and the host zone is UTC.
+  const today = clubToday();
   const isPast = !!selected && !!selected.end_date && selected.end_date < today;
 
   return { seasons: all, selected, isPast };

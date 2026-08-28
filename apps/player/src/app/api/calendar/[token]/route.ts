@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import {
-  CLUB_TIMEZONE,
   buildICSCalendar,
   getClientIp,
   rateLimit,
+  clubToday,
 } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
@@ -68,7 +68,11 @@ export async function GET(
 
   // All future sessions plus the past 60 days (club-local today), capped at
   // 200 events. Same track filter as the sessions page.
-  const todayClub = new Date().toLocaleDateString('en-CA', { timeZone: CLUB_TIMEZONE });
+  // clubToday rather than asking Intl here: from 2026-11-01 BC is UTC-7
+  // year-round (tzdata 2026b) and production Node predates that release, so
+  // the answer would be an hour off — enough to cross midnight — for every
+  // date past the cutover. One implementation, pinned.
+  const todayClub = clubToday();
   const [y, m, d] = todayClub.split('-').map(Number) as [number, number, number];
   const cutoff = new Date(Date.UTC(y, m - 1, d - 60)).toISOString().slice(0, 10);
 

@@ -14,6 +14,7 @@ import { ExpectedError } from '@badminton/shared';
 // third hardcoded number is how the first two drift apart.
 import { REASON_MIN } from '../audit-reason';
 import { MIN_REASON_LENGTH } from '../legal-reason';
+import { clubToday } from '@badminton/shared';
 
 // Platform configuration. Admin-only, and this is the boundary that matters:
 // /ratings and /accounts merely decide who is shown the form.
@@ -95,7 +96,10 @@ export async function updatePlatformSettings(
 // accepted versions against the current one). Versions are date strings; a
 // same-day second bump appends '.2', '.3', ... so the string still changes.
 function nextVersion(oldVersion: string): string {
-  const today = new Date().toISOString().split('T')[0]!;
+  // The club's today. A version bumped on a Friday evening used to be stamped
+  // with Saturday's date, and the version string is what every member's
+  // acceptance record is compared against — so the wrong date is durable.
+  const today = clubToday();
   if (oldVersion === today) return `${today}.2`;
   const sameDay = oldVersion.match(new RegExp(`^${today}\\.(\\d+)$`));
   if (sameDay) return `${today}.${Number(sameDay[1]) + 1}`;

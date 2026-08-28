@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
-import { selectInChunks } from '@badminton/shared';
+import { selectInChunks, clubToday } from '@badminton/shared';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
 import { AuditActivityChart } from './activity-chart';
@@ -62,7 +62,11 @@ export default async function AuditPage({
   // explicit ?season= is still honoured either way. Picking a season that has
   // not started and being shown nothing is a correct answer to a question
   // somebody asked; being shown nothing on arrival is not.
-  const today = new Date().toLocaleDateString('en-CA');
+  // The club's today — toLocaleDateString with no timeZone reads the HOST
+  // zone, and the containers run UTC. On a club evening it would call a
+  // season that starts tomorrow 'already started' and stop defaulting to
+  // full history.
+  const today = clubToday();
   const impliedAndUnstarted =
     !season && !!scopeSeason?.start_date && scopeSeason.start_date > today;
   const selectedSeason = fullHistory || impliedAndUnstarted ? null : scopeSeason;
