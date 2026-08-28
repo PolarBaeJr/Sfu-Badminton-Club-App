@@ -22,6 +22,16 @@ const CLUB_TZ = CLUB_TIMEZONE;
 // sending rather than never.
 const RETRY_STALE_CLAIM_MS = 15 * 60_000;
 
+// How many claims one RSVP gets before the job stops trying (00194, 00195).
+//
+// The retry above had no end. An RSVP whose send fails for a reason that will
+// not fix itself was re-attempted every fifteen minutes until the session
+// started, reporting the same claimed-but-not-notified split each time with
+// nothing accumulating that anyone could alert on. Five attempts spans
+// seventy-five minutes, which covers a container restart, a deploy and a
+// provider blip; past that it is not transient and the run says so once.
+const MAX_REMINDER_ATTEMPTS = 5;
+
 // sessions.date is a DATE and start_time a TIME, both meaning club-local wall
 // clock. Deciding whether a player's chosen lead time has come due needs the
 // real UTC instant of that wall clock.
@@ -71,7 +81,7 @@ export async function POST(request: Request) {
 
     const { data: sessions, error } = await admin
       .from('sessions')
-      .select('id, date, start_time, session_rsvp(player_id, reminded_at, reminder_attempted_at, intent)')
+      .select('id, date, start_time, session_rsvp(player_id, reminded_at, reminder_attempted_at, reminder_failed_at, intent)')
       .gte('date', clubDate(now))
       .lte('date', clubDate(new Date(now.getTime() + horizonDays * 86400000)))
       .eq('status', 'open');
@@ -79,7 +89,9 @@ export async function POST(request: Request) {
 
     // `claimed` and `notified` disagreeing is the signal that a run half
     // failed — the reason for reporting both rather than one number.
-    const results: { session_id: string; notified: number; claimed: number }[] = [];
+    const results: {
+      session_id: string; notified: number; claimed: number; gave_up: number;
+    }[] = [];
 
     for (const s of sessions ?? []) {
       // No start time means no window to work back from; those still get the
@@ -90,14 +102,16 @@ export async function POST(request: Request) {
 
       const rsvps = (s.session_rsvp ?? []) as {
         player_id: string; reminded_at: string | null;
-        reminder_attempted_at: string | null; intent: string;
+        reminder_attempted_at: string | null; reminder_failed_at: string | null;
+        intent: string;
       }[];
-      // Still owed a reminder: no receipt, and either never claimed or claimed
-      // by a tick that never came back (00186). A claim with no receipt after
-      // the retry window is a crash, not work in progress.
+      // Still owed a reminder: no receipt, not already given up on, and either
+      // never claimed or claimed by a tick that never came back (00186). A
+      // claim with no receipt after the retry window is a crash, not work in
+      // progress.
       const staleBefore = now.getTime() - RETRY_STALE_CLAIM_MS;
       const pending = rsvps.filter((r) =>
-        r.intent === 'going' && !r.reminded_at &&
+        r.intent === 'going' && !r.reminded_at && !r.reminder_failed_at &&
         (!r.reminder_attempted_at || Date.parse(r.reminder_attempted_at) < staleBefore));
       if (pending.length === 0) continue;
 
@@ -124,29 +138,49 @@ export async function POST(request: Request) {
       // was nothing to find it by. apps/bot/src/session-pings.ts has always
       // done it the other way round and says why.
       //
-      // Chunked, because an UPDATE's `.in()` filter is in the query string too.
-      // Every property that makes this a real compare-and-swap survives the
-      // split: the WHERE clause stays in each chunk, and each
-      // `.select('player_id')` returns only the rows THAT statement won.
-      const claimedAt = now.toISOString();
-      const staleCutoff = new Date(staleBefore).toISOString();
-      const ids: string[] = [];
-      for (const batch of chunkIds(due.map((r) => r.player_id))) {
-        const { data: claimed, error: claimErr } = await admin
-          .from('session_rsvp')
-          .update({ reminder_attempted_at: claimedAt })
-          .eq('session_id', s.id)
-          .in('player_id', batch)
-          .is('reminded_at', null)
-          // Re-check the claim under the UPDATE rather than trusting the read
-          // above: another tick may have claimed between the two. `or` keeps
-          // the never-claimed and the crashed-claim cases in one statement.
-          .or(`reminder_attempted_at.is.null,reminder_attempted_at.lt.${staleCutoff}`)
-          .select('player_id');
-        if (claimErr) throw new Error(claimErr.message);
-        for (const c of claimed ?? []) ids.push(c.player_id as string);
+      // ONE STATEMENT, in the database (00195). It re-checks every condition
+      // under the UPDATE rather than trusting the read above — another tick may
+      // have claimed between the two — and in the same statement increments the
+      // attempt counter and decides whether this attempt is the one that
+      // exhausts the cap. Neither of those is expressible through PostgREST:
+      // `attempts = attempts + 1` has to be a value the app already read, which
+      // would turn the compare-and-swap back into a read-then-write. It also
+      // retires the id chunking, because an RPC argument travels in the body
+      // rather than the query string.
+      const { data: claimRows, error: claimErr } = await admin.rpc('claim_session_reminders', {
+        p_session_id: s.id as string,
+        p_player_ids: due.map((r) => r.player_id),
+        p_stale_before: new Date(staleBefore).toISOString(),
+        p_max_attempts: MAX_REMINDER_ATTEMPTS,
+      });
+      if (claimErr) throw new Error(claimErr.message);
+
+      const claims = (claimRows ?? []) as { player_id: string; gave_up: boolean }[];
+      // Retired, not claimed: the cap was already reached, so this call marked
+      // the RSVP permanently failed instead of taking it. Reported ONCE, at the
+      // moment it becomes terminal — which is the whole point of bounding the
+      // retry. Left unbounded these rows produced the same
+      // claimed-but-never-notified split on every tick and no event at all.
+      const gaveUp = claims.filter((c) => c.gave_up).map((c) => c.player_id);
+      if (gaveUp.length > 0) {
+        Sentry.captureException(
+          new Error(`Session reminders permanently failed for ${gaveUp.length} player(s) on session ${s.id} after ${MAX_REMINDER_ATTEMPTS} attempts — they will not be reminded`),
+          { extra: { job: 'session-reminders', session_id: s.id, players: gaveUp } },
+        );
       }
-      if (ids.length === 0) continue;
+      const ids = claims.filter((c) => !c.gave_up).map((c) => c.player_id);
+      if (ids.length === 0) {
+        // Still reported when something was retired here. A session whose every
+        // remaining RSVP hit the cap on this tick has nothing to send and had
+        // to be skipped — but "0 sessions" in the response would say the run
+        // found nothing to do, which is the opposite of what happened.
+        if (gaveUp.length > 0) {
+          results.push({
+            session_id: s.id as string, notified: 0, claimed: 0, gave_up: gaveUp.length,
+          });
+        }
+        continue;
+      }
 
       const { notified, delivered } = await remindSessionGoers(s.id as string, null, ids);
 
@@ -173,7 +207,9 @@ export async function POST(request: Request) {
         }
       }
 
-      results.push({ session_id: s.id as string, notified, claimed: ids.length });
+      results.push({
+        session_id: s.id as string, notified, claimed: ids.length, gave_up: gaveUp.length,
+      });
     }
 
     return NextResponse.json({ ran_at: now.toISOString(), sessions: results.length, results });

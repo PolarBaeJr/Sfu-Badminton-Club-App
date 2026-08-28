@@ -84,7 +84,7 @@ describe('sendCategoryEmail suppression gate', () => {
 
     const outcome = await sendChallengeReceivedEmail('x@sfu.ca', 'Opponent', 'singles', 'ladder', 'c1');
 
-    expect(outcome).toEqual({ sent: true });
+    expect(outcome).toEqual({ sent: true, providerMessageId: 'msg-1' });
     expect(send).toHaveBeenCalledTimes(1);
   });
 
@@ -97,7 +97,7 @@ describe('sendCategoryEmail suppression gate', () => {
 
     const outcome = await sendChallengeReceivedEmail('x@sfu.ca', 'Opponent', 'singles', 'ladder', 'c1');
 
-    expect(outcome).toEqual({ sent: true });
+    expect(outcome).toEqual({ sent: true, providerMessageId: 'msg-1' });
     expect(send).toHaveBeenCalledTimes(1);
   });
 });
@@ -132,7 +132,7 @@ describe('the missing unsubscribe secret is no longer silent', () => {
     const outcome = await sendChallengeReceivedEmail('x@sfu.ca', 'Opponent', 'singles', 'ladder', 'c1');
 
     // Still sent. That is the whole trade and it must not have moved.
-    expect(outcome).toEqual({ sent: true });
+    expect(outcome).toEqual({ sent: true, providerMessageId: 'msg-1' });
     expect(send).toHaveBeenCalledTimes(1);
 
     expect(warn).toHaveBeenCalledTimes(1);

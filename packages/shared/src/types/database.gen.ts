@@ -14,7 +14,7 @@
 // SOURCE DATABASE: staging — container "supabase-staging-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 66 tables, 2 views and 26 enums.
+// Covers 67 tables, 2 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -546,6 +546,41 @@ export type Database = {
           value?: string
         }
         Relationships: []
+      }
+      digest_deliveries: {
+        Row: {
+          claimed_at: string
+          completed_at: string | null
+          outcome: string | null
+          player_id: string
+          provider_message_id: string | null
+          week_start: string
+        }
+        Insert: {
+          claimed_at?: string
+          completed_at?: string | null
+          outcome?: string | null
+          player_id: string
+          provider_message_id?: string | null
+          week_start: string
+        }
+        Update: {
+          claimed_at?: string
+          completed_at?: string | null
+          outcome?: string | null
+          player_id?: string
+          provider_message_id?: string | null
+          week_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "digest_deliveries_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       discord_announcement_posts: {
         Row: {
@@ -2396,6 +2431,8 @@ export type Database = {
           player_id: string
           reminded_at: string | null
           reminder_attempted_at: string | null
+          reminder_attempts: number
+          reminder_failed_at: string | null
           session_id: string
           updated_at: string
         }
@@ -2406,6 +2443,8 @@ export type Database = {
           player_id: string
           reminded_at?: string | null
           reminder_attempted_at?: string | null
+          reminder_attempts?: number
+          reminder_failed_at?: string | null
           session_id: string
           updated_at?: string
         }
@@ -2416,6 +2455,8 @@ export type Database = {
           player_id?: string
           reminded_at?: string | null
           reminder_attempted_at?: string | null
+          reminder_attempts?: number
+          reminder_failed_at?: string | null
           session_id?: string
           updated_at?: string
         }
@@ -3766,6 +3807,15 @@ export type Database = {
       claim_privilege_attribution: {
         Args: { p_player_id: string }
         Returns: Json
+      }
+      claim_session_reminders: {
+        Args: {
+          p_max_attempts?: number
+          p_player_ids: string[]
+          p_session_id: string
+          p_stale_before: string
+        }
+        Returns: { gave_up: boolean; player_id: string }[]
       }
       club_local_instant: {
         Args: { p_date: string; p_time: string }

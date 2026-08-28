@@ -80,7 +80,7 @@ describe('sendCategoryEmail gates', () => {
 
     const outcome = await sendChallengeReceivedEmail('Member@Example.test', 'Alex', 'singles', 'ranked', 'ch-1');
 
-    expect(outcome).toEqual({ sent: true });
+    expect(outcome).toEqual({ sent: true, providerMessageId: 'stub' });
     expect(sent).toHaveLength(1);
     // The address is lower-cased for the two LOOKUPS — a member stored in one
     // casing must still match a suppression list keyed in another — but the
@@ -126,7 +126,7 @@ describe('sendCategoryEmail gates', () => {
 
     const outcome = await sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles', 'ranked', 'ch-1');
 
-    expect(outcome).toEqual({ sent: true });
+    expect(outcome).toEqual({ sent: true, providerMessageId: 'stub' });
     expect(sent).toHaveLength(1);
     // The point of the change: the old code did `void preferenceError`, so a
     // preference read broken for EVERY recipient of a digest run mailed

@@ -9,6 +9,14 @@
 // (reminded_at). These tests pin the three properties that split has to have:
 // a crash leaves no receipt, a stale claim is retried, and two concurrent ticks
 // still cannot both notify.
+//
+// 00194/00195 add the end of that retry. Without a cap an RSVP whose send fails
+// for a reason that will not fix itself is re-claimed every fifteen minutes
+// until the session starts, reporting the same claimed-but-not-notified split
+// on every tick with nothing accumulating that anyone could alert on. The claim
+// is now one statement in the database, so the fake below models the RPC rather
+// than the UPDATE — and models it the way the SQL behaves, including that a row
+// at the cap is retired instead of claimed.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -26,10 +34,13 @@ interface Rsvp {
   intent: string;
   reminded_at: string | null;
   reminder_attempted_at: string | null;
+  reminder_attempts: number;
+  reminder_failed_at: string | null;
 }
 
 const SESSION_ID = 'sess-1';
 let rsvps: Rsvp[];
+let rpcError: string | null = null;
 
 // Start time far enough out that every player's lead has come due but the
 // session has not begun — both gates the job applies before it claims anything.
@@ -55,6 +66,37 @@ const sessionRow = () => ({
 
 vi.mock('@/lib/supabase-server', () => ({
   createAdminClient: () => ({
+    // claim_session_reminders (00195). Modelled on the SQL, not on what the
+    // route wants back: the same WHERE clause, the same increment, and the same
+    // decision that a row already at the cap is RETIRED by this call rather
+    // than claimed by it.
+    rpc: async (fn: string, args: {
+      p_session_id: string; p_player_ids: string[];
+      p_stale_before: string; p_max_attempts: number;
+    }) => {
+      if (fn !== 'claim_session_reminders') throw new Error(`unexpected rpc ${fn}`);
+      if (rpcError) return { data: null, error: { message: rpcError } };
+      const now = new Date().toISOString();
+      const hit = rsvps.filter((r) =>
+        r.session_id === args.p_session_id &&
+        args.p_player_ids.includes(r.player_id) &&
+        r.intent === 'going' &&
+        r.reminded_at === null &&
+        r.reminder_failed_at === null &&
+        (r.reminder_attempted_at === null || r.reminder_attempted_at < args.p_stale_before));
+      const out: { player_id: string; gave_up: boolean }[] = [];
+      for (const r of hit) {
+        if (r.reminder_attempts >= args.p_max_attempts) {
+          r.reminder_failed_at = now;
+          out.push({ player_id: r.player_id, gave_up: true });
+        } else {
+          r.reminder_attempted_at = now;
+          r.reminder_attempts += 1;
+          out.push({ player_id: r.player_id, gave_up: false });
+        }
+      }
+      return { data: out, error: null };
+    },
     from(table: string) {
       if (table === 'sessions') {
         const q: Record<string, unknown> = {};
@@ -122,13 +164,15 @@ const run = () =>
 
 const rsvp = (player_id: string, over: Partial<Rsvp> = {}): Rsvp => ({
   session_id: SESSION_ID, player_id, intent: 'going',
-  reminded_at: null, reminder_attempted_at: null, ...over,
+  reminded_at: null, reminder_attempted_at: null,
+  reminder_attempts: 0, reminder_failed_at: null, ...over,
 });
 const find = (id: string) => rsvps.find((r) => r.player_id === id)!;
 
 beforeEach(() => {
   process.env.CRON_SECRET = SECRET;
   rsvps = [rsvp('p1'), rsvp('p2')];
+  rpcError = null;
   remindSessionGoers.mockReset();
   remindSessionGoers.mockImplementation(async (_s: string, _a: null, ids: string[]) => ({
     notified: ids.length, delivered: ids,
@@ -205,5 +249,86 @@ describe('reminder claim and receipt (F-018)', () => {
     // p2 keeps its claim, so it is retried once the window passes rather than
     // being dropped — the whole point of the split.
     expect(find('p2').reminder_attempted_at).not.toBeNull();
+  });
+});
+
+// The end of the retry (00194, 00195). 00186 made a crashed claim retryable
+// after fifteen minutes, which is what stopped a crash being a permanent silent
+// drop — and left it running for ever.
+describe('reminder retry is bounded (F-018)', () => {
+  const stale = () => new Date(Date.now() - 20 * 60_000).toISOString();
+
+  it('stops claiming an RSVP once the attempt cap is reached, and says so once', async () => {
+    const Sentry = await import('@sentry/nextjs');
+    rsvps = [rsvp('p1', { reminder_attempts: 5, reminder_attempted_at: stale() })];
+    remindSessionGoers.mockImplementation(async () => ({ notified: 0, delivered: [] }));
+
+    const res = await run();
+    const body = await res.json();
+
+    // Retired by this call, not claimed by it — nobody was asked to notify.
+    expect(remindSessionGoers).not.toHaveBeenCalled();
+    expect(find('p1').reminder_failed_at).not.toBeNull();
+    expect(body.results[0].gave_up).toBe(1);
+    expect(Sentry.captureException).toHaveBeenCalled();
+  });
+
+  it('never looks at a retired RSVP again, however many ticks run', async () => {
+    const Sentry = await import('@sentry/nextjs');
+    rsvps = [rsvp('p1', { reminder_attempts: 5, reminder_attempted_at: stale() })];
+    await run();
+    vi.clearAllMocks();
+
+    // The alert fires at the moment it becomes terminal and never again — an
+    // every-fifteen-minutes alert is the same as no alert.
+    const res = await run();
+    expect(remindSessionGoers).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+    expect((await res.json()).sessions).toBe(0);
+  });
+
+  it('counts every claim, so a repeatedly crashing send converges on the cap', async () => {
+    rsvps = [rsvp('p1')];
+    // Delivery never lands: claimed each time, receipt never written.
+    remindSessionGoers.mockImplementation(async () => ({ notified: 0, delivered: [] }));
+
+    await run();
+    expect(find('p1').reminder_attempts).toBe(1);
+
+    // Each later tick has to find the claim stale, which is 00186's window.
+    for (let i = 2; i <= 5; i += 1) {
+      find('p1').reminder_attempted_at = stale();
+      await run();
+      expect(find('p1').reminder_attempts).toBe(i);
+    }
+
+    expect(find('p1').reminder_failed_at).toBeNull();
+    find('p1').reminder_attempted_at = stale();
+    await run();
+    // Sixth tick: the cap is already reached, so this one retires it.
+    expect(find('p1').reminder_failed_at).not.toBeNull();
+    expect(find('p1').reminder_attempts).toBe(5);
+  });
+
+  it('a delivered reminder is never retried, whatever the attempt count says', async () => {
+    rsvps = [rsvp('p1', { reminder_attempts: 1, reminder_attempted_at: stale(),
+      reminded_at: new Date().toISOString() })];
+
+    await run();
+
+    // The receipt is the only thing that means "reminded". The counter bounds
+    // the retry; it does not decide whether one is owed.
+    expect(remindSessionGoers).not.toHaveBeenCalled();
+    expect(find('p1').reminder_failed_at).toBeNull();
+  });
+
+  it('fails the run rather than sending unclaimed when the claim errors', async () => {
+    rsvps = [rsvp('p1')];
+    rpcError = 'deadlock detected';
+
+    const res = await run();
+
+    expect(remindSessionGoers).not.toHaveBeenCalled();
+    expect(res.status).toBe(500);
   });
 });

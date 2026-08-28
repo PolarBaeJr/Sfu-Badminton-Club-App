@@ -56,7 +56,7 @@ export async function sendEmail(
   subject: string,
   html: string,
   headers?: Record<string, string>,
-): Promise<void> {
+): Promise<{ providerMessageId: string | null }> {
   // Throws on failure so callers can decide whether to swallow + log.
   // We deliberately don't catch internally — earlier behaviour double-swallowed
   // errors (here and at every call site), making delivery failures invisible.
@@ -64,14 +64,21 @@ export async function sendEmail(
     throw new Error('RESEND_API_KEY not set');
   }
   const r = getResend();
-  const { error } = await r.emails.send({ from: FROM, to, subject, html, headers });
+  const { data, error } = await r.emails.send({ from: FROM, to, subject, html, headers });
   if (error) {
     throw new Error(`Resend send failed: ${error.message}`);
   }
+  // Returned, not discarded. It is the only durable link between a member who
+  // says the mail never arrived and the provider's own log of what happened to
+  // it, and the weekly digest now writes it down per recipient. Callers that do
+  // not care simply ignore it; nothing about the throw-on-failure contract
+  // changes. `null` rather than undefined so a caller storing it has one shape
+  // to handle whether or not the provider named the message.
+  return { providerMessageId: data?.id ?? null };
 }
 
 export type SendOutcome =
-  | { sent: true }
+  | { sent: true; providerMessageId: string | null }
   | { sent: false; reason: 'suppressed' | 'opted_out' };
 
 /**
@@ -189,8 +196,9 @@ async function sendCategoryEmail(
     headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
   }
 
-  await sendEmail(to, subject, withUnsubscribeFooter(html, oneUrl, allUrl), headers);
-  return { sent: true };
+  const { providerMessageId } = await sendEmail(
+    to, subject, withUnsubscribeFooter(html, oneUrl, allUrl), headers);
+  return { sent: true, providerMessageId };
 }
 
 // ONCE PER PROCESS, TO THE CONTAINER LOG, AND NOT TO THE RECIPIENT.
