@@ -31,14 +31,17 @@ async function checkInToSessionImpl(sessionId: string) {
 // performCheckIn — the token flow is the way in that the policy exists to
 // require, and gating it there would close the only door it leaves open.
 //
-// ITS OWN QUERY, AND ITS OWN ERROR HANDLING, for the reason spelled out over
-// the select in performCheckIn: migrations here are applied by hand, so the app
-// can be deployed against a database that has never heard of this column.
-// Naming an unknown column is a 42703 that would arrive as `session == null`
-// and turn into "This session is closed" for every member in the club. Folded
-// into the select below, one missing column would break check-in outright;
-// isolated here, a failure of any kind means the policy is unknown, and unknown
-// resolves to the permissive answer that has always been in force.
+// ITS OWN QUERY, for the reason spelled out over the select in performCheckIn:
+// folded into that select, one missing column would break check-in outright.
+//
+// It used to have its own error handling too, and that was the bug. While 00116
+// was still unlanded, a 42703 on this column arrived on every call, so unknown
+// resolved to the permissive answer. 00116 is long since applied everywhere and
+// the release preflight now refuses to promote an image against a database that
+// lacks its migrations, so "the column might not exist yet" has stopped being a
+// state of the world — and what the permissive branch actually did was let any
+// transient error switch the door-code requirement off for whoever hit it.
+// Unknown now means declined.
 async function assertScanNotRequired(sessionId: string) {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
@@ -46,9 +49,10 @@ async function assertScanNotRequired(sessionId: string) {
     .select('require_scan_to_check_in')
     .eq('id', sessionId)
     .maybeSingle();
-  // No throw, no Sentry: before 00116 lands this errors on every single call,
-  // and that is an expected state of the world rather than an incident.
-  if (error || !data) return;
+  if (error || !data) {
+    if (error) Sentry.captureException(error, { tags: { gate: 'require_scan_to_check_in' } });
+    throw new ExpectedError('Cannot check you in right now — please try again shortly');
+  }
   if (data.require_scan_to_check_in === true) {
     throw new ExpectedError(
       'This session needs the check-in code on the door — scan it to check in.',

@@ -15,7 +15,8 @@ import { StandingProvider } from '@/components/standing-provider';
 import { StandingBanner } from '@/components/standing-banner';
 import { LegalFooter } from '@/components/legal-footer';
 import { cookies } from 'next/headers';
-import { getMissingLegalDocuments, hasConsoleAccess, getAccountStanding, type AccountStanding } from '@badminton/shared';
+import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, getAccountStanding, type AccountStanding } from '@badminton/shared';
+import { evaluateLegalGate, type LegalAcceptance } from '../lib/legal-gate';
 import { createServiceRoleClient, createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
@@ -238,12 +239,18 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       // A member needs the waiver gate when any of the four legal documents
       // lacks a valid acceptance — current version, and for the waiver also
       // re-signed within the last year (four tiny rows — skipped when no player).
+      //
+      // Shares evaluateLegalGate() with the gameplay server actions so the two
+      // can never disagree. When the read fails the actions decline every
+      // mutation, so the chrome must not carry on as if nothing were wrong:
+      // 'unavailable' raises the gate, which is the only screen that tells the
+      // member why the rest of the app has stopped responding to them.
       if (player) {
-        const { data: docs } = await supabase
-          .from('legal_documents')
-          .select('document, version, reacceptance_required_since');
-        const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string; accepted_at: string }[];
-        missingLegalDocs = getMissingLegalDocuments(docs ?? [], acceptances, new Date(), player.waiver_reset_at);
+        const gate = await evaluateLegalGate(
+          supabase,
+          player as { waiver_reset_at?: string | null; waiver_acceptances?: LegalAcceptance[] | null },
+        );
+        missingLegalDocs = gate.status === 'unavailable' ? LEGAL_DOCUMENT_ORDER.slice() : gate.missing;
       }
 
       const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;

@@ -9,6 +9,7 @@ import { getMissingLegalDocuments, isPushCategoryEnabled, isSelfReactivatable, E
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 import { reactivateLapsedMember } from '../reactivate';
+import { evaluateLegalGate } from '../legal-gate';
 
 export type ActionResult<T = void> =
   | { ok: true; data: T }
@@ -127,12 +128,16 @@ export async function assertCurrentWaiver(
     waiver_acceptances?: { document: string; version: string; accepted_at: string }[] | null;
   }
 ) {
-  const { data: docs } = await supabase
-    .from('legal_documents')
-    .select('document, version, reacceptance_required_since');
-  if (!docs || docs.length === 0) return;
-
-  const missing = getMissingLegalDocuments(docs, player.waiver_acceptances ?? [], new Date(), player.waiver_reset_at);
+  // FAIL CLOSED via the shared evaluator. A failed read arrives as
+  // `docs == null`, which is indistinguishable from "the club has configured no
+  // legal documents" unless the error is inspected — and the permissive reading
+  // of that ambiguity let a transient database or RLS fault open check-in,
+  // challenges and tournament entry to members with no current waiver.
+  const gate = await evaluateLegalGate(supabase, player);
+  if (gate.status === 'unavailable') {
+    throw new ExpectedError('Cannot verify your waiver right now — please try again shortly');
+  }
+  const missing = gate.missing;
   if (missing.length > 0) {
     throw new ExpectedError("Please accept the club's current legal documents before playing");
   }

@@ -91,6 +91,11 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   const checkedIn: string[] = [];
   const alreadyIn: string[] = [];
   const toClaim: string[] = [];
+  // The label to report per participant row, so the response can be built from
+  // the rows the UPDATE actually changed rather than from the rows we hoped it
+  // would change.
+  const labelById = new Map<string, string>();
+  const lostRace: string[] = [];
 
   for (const row of rows) {
     const label = row.event?.event_type ?? 'Event';
@@ -102,11 +107,11 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     // early, and once the bracket exists the field is fixed.
     if (row.event?.status !== 'checkin') continue;
     toClaim.push(row.id);
-    checkedIn.push(label);
+    labelById.set(row.id, label);
   }
 
   if (toClaim.length > 0) {
-    const { error } = await service
+    const { data: claimed, error } = await service
       .from('tournament_participants')
       // The TIMESTAMP as well as the status, because the console reads the
       // timestamp. This wrote status alone, so a member who scanned the QR at
@@ -122,8 +127,36 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
       .in('id', toClaim)
       // Re-assert the precondition in the WHERE clause so two rapid scans
       // cannot both claim the same row.
-      .eq('status', 'registered');
+      .eq('status', 'registered')
+      // The rows this UPDATE actually changed. `checkedIn` used to be built
+      // from the read a few lines above, so a participant withdrawn,
+      // disqualified, or checked in by an officer between the read and the
+      // write matched zero rows here — and the member was still told they were
+      // checked in. Zero rows changed is not success.
+      .select('id');
     if (error) throw new Error(error.message);
+
+    const landed = new Set((claimed ?? []).map((r) => r.id as string));
+    for (const id of toClaim) {
+      const label = labelById.get(id) ?? 'Event';
+      if (landed.has(id)) checkedIn.push(label);
+      else lostRace.push(id);
+    }
+
+    // Something moved these rows underneath us. Report what they are now rather
+    // than guessing: a second scan should say "already checked in", while an
+    // officer withdrawing someone mid-queue should not.
+    if (lostRace.length > 0) {
+      const { data: nowRows } = await service
+        .from('tournament_participants')
+        .select('id, status')
+        .in('id', lostRace);
+      for (const r of nowRows ?? []) {
+        if ((r as { status: string }).status === 'checked_in') {
+          alreadyIn.push(labelById.get((r as { id: string }).id) ?? 'Event');
+        }
+      }
+    }
   }
 
   if (checkedIn.length === 0 && alreadyIn.length === 0) {
