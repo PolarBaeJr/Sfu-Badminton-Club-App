@@ -89,10 +89,16 @@ async function readBonusLedger(
   return ledger;
 }
 
-export async function applyPlacementBonuses(
-  eventId: string,
-  opts: { allowLegacyRepay?: boolean } = {},
-) {
+// NO OVERRIDE PARAMETER, DELIBERATELY. This module is 'use server', so every
+// exported function is a Server Action and every parameter is an input the
+// client supplies. An `opts: { allowLegacyRepay?: boolean }` here was not a
+// test-only escape hatch however carefully the UI avoided it — it was a POST
+// body field that any holder of tournaments.results.bonuses.write could set to
+// walk straight through the guard below, which is the one population the guard
+// exists to constrain. The remedy for a genuinely-unpaid marked event is the
+// deliberate one-row DELETE documented in 00190's header, performed by someone
+// who has read the ratings against the final standings first.
+export async function applyPlacementBonuses(eventId: string) {
   const admin = await requireCapability('tournaments.results.bonuses.write');
   const adminClient = createAdminClient();
 
@@ -147,11 +153,11 @@ export async function applyPlacementBonuses(
       `Refusing to apply bonuses — a repeat application would double every rating.`
     );
   }
-  if (legacyPaid && !opts.allowLegacyRepay) {
+  if (legacyPaid) {
     throw new ExpectedError(
       'This event was already awarded placement bonuses by an older version that kept no per-player record, ' +
       'so there is no way to tell which players were paid. Re-running would double every bonus on the event. ' +
-      'Check the ratings against the final standings first; if they are genuinely unpaid, an admin can force the run.'
+      'Check the ratings against the final standings first; if they are genuinely unpaid, the marker has to be removed in the database by hand.'
     );
   }
 

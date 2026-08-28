@@ -1810,13 +1810,27 @@ describe('placement bonuses', () => {
       expect(participant('p-alice').elo_change ?? 0).toBe(0);
     });
 
-    it('lets an admin force the run once they have checked the ratings', async () => {
+    // This used to assert the opposite — that an override argument let an admin
+    // force the run. It was removed because finalize.ts is a 'use server'
+    // module, which makes that argument a field of the POST body rather than a
+    // test affordance: anyone holding tournaments.results.bonuses.write could
+    // send it and walk through the guard, and that capability is exactly who
+    // the guard is for. A marked event is now unpayable through the action at
+    // all; the remedy is a deliberate DELETE of the marker row in the database.
+    it('cannot be forced past the marker by a caller supplying extra arguments', async () => {
       markLegacyPaid('e1');
 
-      await applyPlacementBonuses('e1', { allowLegacyRepay: true });
+      // Deliberately shaped like the old override call. The cast is the point:
+      // a client POST is not type-checked, so the only thing that can stop this
+      // is the signature genuinely not reading a second argument.
+      const forced = applyPlacementBonuses as unknown as (
+        id: string, opts?: Record<string, unknown>,
+      ) => Promise<unknown>;
 
-      expect(ratingOf('pl-alice')).toBe(1032);
-      expect(ratingOf('pl-bob')).toBe(1020);
+      await expect(forced('e1', { allowLegacyRepay: true })).rejects.toThrow(/already awarded placement bonuses/);
+      expect(ratingOf('pl-alice')).toBe(1000);
+      expect(ratingOf('pl-bob')).toBe(1000);
+      expect(participant('p-alice').elo_change ?? 0).toBe(0);
     });
 
     it('fails closed when the marker cannot be read at all', async () => {
