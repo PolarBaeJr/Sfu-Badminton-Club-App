@@ -20,6 +20,7 @@ import { runTournamentEvents } from './tournament-events.js';
 import { runAnnouncements } from './announcements.js';
 import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
+import { startGateway, type GatewayHandle } from './gateway.js';
 import { isAuthorizedService } from './service-auth.js';
 import { verifyDiscordRequest } from './verify.js';
 
@@ -175,13 +176,26 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+// Held open only so Discord shows the bot online; see gateway.ts. Null when
+// there is no token to connect with.
+let gateway: GatewayHandle | null = null;
+
 const server = createServer(async (req, res) => {
   // Health: a real GET, not a bare TCP accept. proxy-manager falls back to a TCP
   // dial when no proxy.health label is set, and a dial cannot tell "process is
   // up" from "process cannot reach the app API" — so the label is set and this
   // endpoint exists to give it something meaningful to ask.
   if (req.method === 'GET' && req.url === '/health') {
-    return send(res, 200, { ok: true });
+    // ok is deliberately not conditioned on the gateway. proxy.health points
+    // here, so reporting a gateway blip as unhealthy would pull a perfectly
+    // good interactions endpoint out of the pool -- the gateway only decides
+    // whether Discord draws us green, and interactions do not travel over it.
+    // Surface the state in the body so it is diagnosable without doing that.
+    return send(res, 200, {
+      ok: true,
+      gateway: gateway ? gateway.state() : 'disabled',
+      gatewayConnectedSince: gateway?.connectedSince() ?? null,
+    });
   }
 
   // The reconciliation sweep, driven from outside rather than by a timer in
@@ -529,6 +543,20 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[bot] listening on ${PORT}`);
+
+  // Presence. Interactions arrive over HTTP and do not need this, so a missing
+  // token costs a grey dot and nothing else -- never a failed boot.
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (token) {
+    try {
+      gateway = startGateway({ token });
+    } catch (error) {
+      console.error(`[bot] gateway failed to start: ${String(error)}`);
+    }
+  } else {
+    console.log('[bot] no DISCORD_BOT_TOKEN — gateway disabled, bot will show offline');
+  }
+
   // Where config comes from, said once. The guild map and audit channel are
   // read from the database at runtime now, so the env vars are only the
   // bootstrap fallback for a bot running against a database without 00167 —
@@ -554,6 +582,7 @@ server.listen(PORT, '0.0.0.0', () => {
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     console.log(`[bot] ${signal} — shutting down`);
+    gateway?.stop();
     server.close(() => process.exit(0));
   });
 }
