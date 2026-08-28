@@ -14,6 +14,13 @@
 # Skipped: prod auth sessions / refresh_tokens / etc — staging gets
 # fresh sessions.
 #
+# Two things are deliberately NOT faithful copies of prod afterwards, because a
+# faithful copy is the wrong answer for both:
+#   - Discord config is staging's own, never prod's (see the capture/scrub pair
+#     below) — inheriting prod's would aim the staging bot at the real guild.
+#   - $STAGING_ADMIN_EMAILS are re-granted admin on staging, because prod roles
+#     leave the owner unable to use the staging admin console at all.
+#
 # Idempotent. Safe to re-run. Existing dev DB rows in those scopes are wiped,
 # and so is anything in dev's public schema that prod does not have — see
 # "the drop is explicit" below.
@@ -549,6 +556,67 @@ if [ -s "$DISCORD_SQL" ]; then
   docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$DISCORD_SQL"
 else
   echo "[$(date -u +%FT%TZ)] staging had no Discord config to restore (left empty, not inherited)."
+fi
+
+# ---------------------------------------------------------------------------
+# RE-GRANT THE STAGING-ONLY ADMIN.
+#
+# The restore above put PROD's players table on staging, so staging roles ARE
+# prod roles -- and the owner is `player` + is_exec on prod, not admin. is_exec
+# on its own holds ZERO writes (EXEC_BASELINE in apps/admin/src/lib/permissions.ts
+# is eight section pages and four reads), so the admin console renders in full
+# and every Edit control is simply absent. That reads as "the app is broken",
+# not as "you are not an admin here", and it has already cost one debugging
+# session chasing a permissions bug that did not exist.
+#
+# Admin on staging grants nothing that matters -- staging is a disposable copy
+# of prod that is overwritten again tomorrow morning.
+#
+# PROD IS NOT REACHABLE FROM HERE. This runs against DEV_CONTAINER, like every
+# other write in this script; PROD_CONTAINER is only ever read from.
+#
+# The privileged-column trigger allows this: guard_player_privileged_columns()
+# opens with `IF auth.uid() IS NULL OR is_admin(auth.uid())`, and a psql session
+# has no JWT subject, so auth.uid() is NULL. It is one of the few places where
+# going in through psql genuinely behaves differently from going in through the
+# app, and here that is the point.
+#
+# Comma-separated and overridable, so the next person who needs an account on
+# staging edits an env var and not this file.
+STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca}"
+
+if [ -n "$STAGING_ADMIN_EMAILS" ]; then
+  echo "[$(date -u +%FT%TZ)] re-granting staging admin: $STAGING_ADMIN_EMAILS"
+  grant_result=$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
+      -Atq -v ON_ERROR_STOP=1 -v emails="$STAGING_ADMIN_EMAILS" <<'SQL'
+WITH t AS (
+  SELECT btrim(e) AS email
+    FROM unnest(string_to_array(:'emails', ',')) AS e
+   WHERE btrim(e) <> ''
+), upd AS (
+  UPDATE public.players p
+     SET role = 'admin', is_exec = TRUE
+    FROM t
+   WHERE p.email = t.email
+  RETURNING p.email
+)
+-- Reported per requested address rather than as a count, because the failure
+-- worth seeing is "that email is not in prod at all" (a typo, or an account
+-- that was never created), and a count of 0 does not say which one.
+SELECT CASE WHEN u.email IS NULL THEN 'MISSING ' ELSE 'granted ' END || t.email
+  FROM t LEFT JOIN upd u ON u.email = t.email
+ ORDER BY 1;
+SQL
+  )
+  echo "$grant_result" | sed 's/^/  /'
+  # Not fatal: a stale address in the list is not a reason to fail a refresh
+  # that has otherwise completely succeeded. But it must be visible, because the
+  # symptom on the other end is a console with no buttons.
+  if echo "$grant_result" | grep -q '^MISSING '; then
+    echo "WARNING: the above address(es) are not in prod's players table, so" >&2
+    echo "         nothing was granted for them. Staging will render the admin" >&2
+    echo "         console for that account but show no Edit controls at all." >&2
+  fi
 fi
 
 # PostgREST caches the schema, and the app reads these tables through it. A
