@@ -103,7 +103,13 @@ async function resolveDisputeImpl(data: DisputeResolveInput) {
       if (!r.ok) throw new Error(r.error);
     }
 
-    const { error } = await adminClient
+    // Fence the close on the claim we took above. The claim has a 15 minute
+    // TTL, so a slow void/convert can outlive it and let a second admin claim
+    // the same dispute; without this predicate the slow writer would then
+    // overwrite the outcome the second admin already recorded. Matching on
+    // claimed_by turns that race into a visible error instead of a silent
+    // last-writer-wins.
+    const { data: closed, error } = await adminClient
       .from('disputes')
       .update({
         status: 'resolved',
@@ -112,8 +118,15 @@ async function resolveDisputeImpl(data: DisputeResolveInput) {
         resolved_by: admin.id,
         resolved_at: new Date().toISOString(),
       })
-      .eq('id', data.dispute_id);
+      .eq('id', data.dispute_id)
+      .eq('claimed_by', admin.id)
+      .select('id');
     if (error) throw new Error(error.message);
+    if (!closed || closed.length === 0) {
+      throw new ExpectedError(
+        'This dispute took too long to resolve and was picked up by another admin. The match change was applied — reload the page to see the current state before acting again.'
+      );
+    }
   }
 
   await logAdminAudit(adminClient, {

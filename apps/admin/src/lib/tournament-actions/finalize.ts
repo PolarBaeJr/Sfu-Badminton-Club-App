@@ -89,7 +89,10 @@ async function readBonusLedger(
   return ledger;
 }
 
-export async function applyPlacementBonuses(eventId: string) {
+export async function applyPlacementBonuses(
+  eventId: string,
+  opts: { allowLegacyRepay?: boolean } = {},
+) {
   const admin = await requireCapability('tournaments.results.bonuses.write');
   const adminClient = createAdminClient();
 
@@ -117,6 +120,31 @@ export async function applyPlacementBonuses(eventId: string) {
   // Pure helper — pull bonus from final_position so the batched paths below stay tidy.
   const bonusFor = (pos: number | null | undefined): number => placementBonusFor(pos, bonuses);
 
+
+  // THE ONE CASE THE PER-SUBJECT CLAIM CANNOT COVER (00189). Events paid
+  // before 00188 have no grant rows at all — the per-player backfill read
+  // details -> 'rated_players' from the audit log, and those details are NULL
+  // on every historical row, so it inserted nothing. For such an event the
+  // unique index excludes nobody and a second run would pay it in full again.
+  // 00189 marks those events, and this refuses them: the per-subject facts are
+  // gone, so a human has to look at the ratings and decide.
+  const { data: legacyPaid, error: legacyErr } = await adminClient
+    .rpc('event_has_legacy_bonus_payment', { p_event_id: eventId });
+  // Fail closed for the same reason readBonusLedger does — not knowing whether
+  // this event was already paid is exactly the state where paying is unsafe.
+  if (legacyErr) {
+    throw new Error(
+      `Could not check whether this event was already paid before the bonus ledger existed (${legacyErr.message}). ` +
+      `Refusing to apply bonuses — a repeat application would double every rating.`
+    );
+  }
+  if (legacyPaid && !opts.allowLegacyRepay) {
+    throw new ExpectedError(
+      'This event was already awarded placement bonuses by an older version that kept no per-player record, ' +
+      'so there is no way to tell which players were paid. Re-running would double every bonus on the event. ' +
+      'Check the ratings against the final standings first; if they are genuinely unpaid, an admin can force the run.'
+    );
+  }
 
   // A HINT NOW, NOT THE GUARANTEE (00188). Both bonus writes claim a row in
   // tournament_bonus_grants before they pay, so a repeat is refused by a unique

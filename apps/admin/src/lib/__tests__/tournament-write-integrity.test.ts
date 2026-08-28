@@ -573,6 +573,17 @@ const makeClient = vi.hoisted(() => () => {
     if (name === 'delete_phase_matches') return deletePhaseRpc(args);
     if (name === 'apply_placement_bonus') return placementBonusRpc(args);
     if (name === 'credit_participant_placement_bonus') return creditParticipantRpc(args);
+    // Mirrors event_has_legacy_bonus_payment (00189), reading the same marker
+    // rows the SQL reads rather than a parallel fixture.
+    if (name === 'event_has_legacy_bonus_payment') {
+      const eventId = args.p_event_id as string;
+      const f = faultFor('tournament_bonus_grants', 'select', { filters: [['event_id', eventId]], payload: {} });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      const marked = (store.db.tournament_bonus_grants ?? []).some(
+        (g) => g.event_id === eventId && g.kind === 'event_legacy_paid' && g.subject_id === eventId,
+      );
+      return Promise.resolve({ data: marked, error: null });
+    }
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -1775,6 +1786,50 @@ describe('placement bonuses', () => {
     store.faults.push({ table: 'tournament_audit_log', op: 'insert', message: 'disk full' });
 
     await expect(applyPlacementBonuses('e1')).rejects.toThrow(/Do NOT re-run placement bonuses/);
+  });
+
+  // 00189. The per-subject grant rows only exist for payments made after 00188.
+  // An event paid before it has none — the backfill that was supposed to
+  // reconstruct them read details -> 'rated_players' out of the audit log, and
+  // those details are NULL on every historical row, so it inserted nothing.
+  // Without an event-level marker the unique index excludes nobody and the
+  // whole podium gets paid a second time.
+  describe('events paid before the grant ledger existed', () => {
+    const markLegacyPaid = (eventId: string) => {
+      (store.db.tournament_bonus_grants ??= []).push({
+        event_id: eventId, kind: 'event_legacy_paid', subject_id: eventId, applied_delta: 0,
+      });
+    };
+
+    it('refuses to pay an event marked as already paid by the old code path', async () => {
+      markLegacyPaid('e1');
+
+      await expect(applyPlacementBonuses('e1')).rejects.toThrow(/already awarded placement bonuses/);
+      expect(ratingOf('pl-alice')).toBe(1000);
+      expect(ratingOf('pl-bob')).toBe(1000);
+      expect(participant('p-alice').elo_change ?? 0).toBe(0);
+    });
+
+    it('lets an admin force the run once they have checked the ratings', async () => {
+      markLegacyPaid('e1');
+
+      await applyPlacementBonuses('e1', { allowLegacyRepay: true });
+
+      expect(ratingOf('pl-alice')).toBe(1032);
+      expect(ratingOf('pl-bob')).toBe(1020);
+    });
+
+    it('fails closed when the marker cannot be read at all', async () => {
+      store.faults.push({ table: 'tournament_bonus_grants', op: 'select', message: 'permission denied' });
+
+      await expect(applyPlacementBonuses('e1')).rejects.toThrow(/would double every rating/);
+      expect(ratingOf('pl-alice')).toBe(1000);
+    });
+
+    it('does not block an event that was never paid', async () => {
+      await applyPlacementBonuses('e1');
+      expect(ratingOf('pl-alice')).toBe(1032);
+    });
   });
 });
 

@@ -3850,6 +3850,10 @@ export type Database = {
         }
         Returns: Json
       }
+      event_has_legacy_bonus_payment: {
+        Args: { p_event_id: string }
+        Returns: boolean
+      }
       format_best_of: {
         Args: { p_format: Database["public"]["Enums"]["match_format"] }
         Returns: number

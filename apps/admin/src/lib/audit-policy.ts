@@ -30,9 +30,12 @@
 //
 // Neither class is transactional, and this file is the place that says so
 // plainly rather than a doc that promises otherwise. Making the audit row
-// commit with the mutation means moving each mutation into an RPC; the ones
-// that already are (00163 merge_players, 00177-00179) write their audit
-// facts in SQL and never reach this file at all. docs/ops/audit-policy.md
+// commit with the mutation means moving each mutation into an RPC, and only
+// two have made that trip: 00163 merge_players and 00177 apply_match_result
+// write their audit facts in SQL and never reach this file at all. 00178 and
+// 00179 are atomic but NOT self-auditing — their callers still log through
+// here, so their audit row can be lost while the mutation stands.
+// docs/ops/audit-policy.md
 // carries the same statement for the people who do not read TypeScript.
 
 /**
