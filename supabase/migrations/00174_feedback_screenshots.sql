@@ -46,8 +46,8 @@ ON CONFLICT (id) DO UPDATE
 -- The folder is auth.uid(), NOT players.id — players.id is a separate uuid and
 -- storage RLS can only see the JWT subject. foldername()[1] is the first path
 -- segment.
-DROP POLICY IF EXISTS "own folder insert" ON storage.objects;
-CREATE POLICY "own folder insert" ON storage.objects
+DROP POLICY IF EXISTS feedback_screenshots_auth_insert ON storage.objects;
+CREATE POLICY feedback_screenshots_auth_insert ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'feedback-screenshots'
