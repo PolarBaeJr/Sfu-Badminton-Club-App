@@ -4,7 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, disputeResolveSchema, type DisputeResolveInput } from '@badminton/shared';
+import { parseOrThrow, disputeResolveSchema, ExpectedError, type DisputeResolveInput } from '@badminton/shared';
 import { requireCapability } from './_shared';
 import { voidMatch, convertMatchToCasual } from './matches';
 import { runAction, type ActionResult } from '../action-result';
@@ -64,13 +64,33 @@ async function resolveDisputeImpl(data: DisputeResolveInput) {
     // before doing the work so a retry cannot run the reversal twice.
     const { data: claim, error: claimErr } = await adminClient.rpc('claim_dispute_for_resolution', {
       p_dispute_id: data.dispute_id,
+      // WHO is claiming, because without it the claim excluded nobody (00188).
+      // The old one-argument form moved the dispute to under_review and
+      // returned claimed = true even when it was ALREADY under_review, so two
+      // admins pressing Void and Convert to casual at the same moment both got
+      // a claim and both went on to do their conflicting work.
+      p_actor_id: admin.id,
     });
     if (claimErr) throw new Error(claimErr.message);
-    const claimed = claim as { already_resolved?: boolean; match_id?: string } | null;
+    const claimed = claim as {
+      claimed?: boolean;
+      already_resolved?: boolean;
+      held_by_other?: boolean;
+      match_id?: string;
+    } | null;
     if (claimed?.already_resolved) {
       revalidatePath('/disputes');
       revalidatePath('/matches');
       return;
+    }
+    // Somebody else is inside the claim window. Say so rather than proceeding:
+    // the two resolutions this branch serves are not commutative, and the
+    // second one to land would reverse or reclassify a match the first already
+    // dealt with.
+    if (claimed?.held_by_other) {
+      throw new ExpectedError(
+        'Another admin is resolving this dispute right now. Reload the page in a few minutes to see how it was settled.'
+      );
     }
     const matchId = claimed?.match_id;
     if (!matchId) throw new Error('Dispute not found');

@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
-import { selectInChunks, clubToday } from '@badminton/shared';
+import { selectInChunks, clubToday, wallClockToUtc } from '@badminton/shared';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
 import { AuditActivityChart } from './activity-chart';
@@ -9,17 +9,24 @@ import { SeasonSelect } from '@/components/season-select';
 import { resolveSeasonScope } from '@/components/season-scope';
 
 /**
- * The day AFTER a season's last day, as a timestamp.
+ * Club-local midnight opening `date`, as a UTC instant.
  *
- * end_date is a DATE and means "this day inclusive", but created_at is a
- * timestamptz — so filtering `<= end_date` compares against midnight and drops
- * everything that happened during the season's final day. Half-open interval
- * instead: >= start, < the next morning.
+ * BOTH ENDS OF THIS FILTER WERE IN THE WRONG ZONE (F-022). The season's
+ * start_date and end_date are DATE columns and mean club-local calendar days,
+ * but created_at is a timestamptz: the start bound was pinned to UTC midnight
+ * and the end bound was `new Date('YYYY-MM-DDT00:00:00')`, which parses in
+ * whatever timezone the container happens to run in — UTC in production. Both
+ * therefore sat 7 hours ahead of the club's own midnight, so every season's
+ * window opened and closed at 17:00 the previous afternoon. Actions taken on
+ * the last evening of a season were filed under the next one.
+ *
+ * `offset` shifts by whole calendar days before the conversion, which is what
+ * makes the end bound half-open: end_date means "this day inclusive", so the
+ * filter runs up to (but not including) club-local midnight the morning after.
  */
-function dayAfter(date: string): string {
-  const d = new Date(`${date}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString();
+function clubDayStart(date: string, offset = 0): string {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  return wallClockToUtc(y, m, d + offset, 0, 0).toISOString();
 }
 
 export default async function AuditPage({
@@ -82,10 +89,16 @@ export default async function AuditPage({
   if (fullHistory) {
     scopeLabel = 'Full history';
   } else if (selectedSeason) {
-    query = query.gte('created_at', `${selectedSeason.start_date}T00:00:00Z`);
+    // start_date is nullable, and the string-template form this replaced hid
+    // that: a null interpolated to the literal `nullT00:00:00Z`, which
+    // PostgREST rejects — so the filter silently became "no rows" rather than
+    // "no lower bound". A season without a start simply has no lower bound.
+    if (selectedSeason.start_date) {
+      query = query.gte('created_at', clubDayStart(selectedSeason.start_date));
+    }
     // An unfinished season has no end: everything since it started, up to now.
     if (selectedSeason.end_date) {
-      query = query.lt('created_at', dayAfter(selectedSeason.end_date));
+      query = query.lt('created_at', clubDayStart(selectedSeason.end_date, 1));
     }
     scopeLabel = selectedSeason.name;
   } else {

@@ -44,13 +44,28 @@ Actions that run through a `SECURITY DEFINER` RPC write their audit fact in SQL,
 inside the same transaction as the change, and never reach `audit.ts`:
 
 - `merge_players` (00163)
-- `apply_rating_delta` / `apply_match_result` (00177)
-- `resolve_dispute_atomic` (00178)
-- `apply_placement_bonus` (00179)
+- `apply_match_result` (00177)
 
 This is the strongest form and it is where new high-risk actions should go. It
 is not retrofitted across the other 79 call sites, because each one would have
 to become an RPC to get it.
+
+### What is atomic but NOT self-auditing
+
+This list used to also name dispute resolution and placement bonuses, and that
+was wrong — neither function contains an audit insert. Being one transaction and
+writing its own audit fact are separate properties, and only the two above have
+both. These are atomic in the change they make, but their audit row is still
+written afterwards by `audit.ts` on the best-effort path described above:
+
+- `resolve_dispute_rated` / `claim_dispute_for_resolution` (00178, 00188)
+- `apply_placement_bonus` / `credit_participant_placement_bonus` (00179, 00188)
+
+For the bonuses the gap is narrower than it looks: `tournament_bonus_grants`
+(00188) records every grant in the paying transaction, so who was paid what is
+durable even when the audit row is lost. That table is a ledger, not an audit
+trail — it does not record who pressed the button — but it means a lost audit
+row cannot make a payment unaccountable.
 
 ## Keeping the list honest
 

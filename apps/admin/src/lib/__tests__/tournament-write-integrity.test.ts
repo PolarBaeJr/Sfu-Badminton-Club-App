@@ -449,17 +449,58 @@ const makeClient = vi.hoisted(() => () => {
     return Promise.resolve({ data: gone.length, error: null });
   }
 
-  // Mirrors apply_placement_bonus (00179): read the CURRENT rating, add,
-  // clamp to the CONFIGURED bounds, write, and report what actually landed.
-  // The clamp used to happen in TypeScript before the write; the point of
-  // 00179 is that the read, the add and the write are one locked operation, so
-  // the tests that assert clamping are really asserting this function.
+  // The grant ledger of 00188, which is what actually makes a bonus once-only.
+  // Modelled as a table rather than a flag because the uniqueness is per
+  // (event, kind, subject) and the two kinds are independent.
+  function claimGrant(eventId: string, kind: string, subjectId: string): boolean {
+    const grants = (store.db.tournament_bonus_grants ??= []);
+    if (grants.some((g) => g.event_id === eventId && g.kind === kind && g.subject_id === subjectId)) {
+      return false;
+    }
+    grants.push({ event_id: eventId, kind, subject_id: subjectId, applied_delta: 0 });
+    return true;
+  }
+
+  // THE GRANT AND THE PAYMENT SHARE A TRANSACTION, so a failure after the claim
+  // takes the claim down with it and the retry pays. Modelling the claim as
+  // durable-on-failure would make a transient error permanently un-payable —
+  // the opposite of what the ledger is for — and would quietly assert the
+  // wrong contract about SQL that does roll back.
+  function releaseGrant(eventId: string, kind: string, subjectId: string): void {
+    const grants = (store.db.tournament_bonus_grants ??= []);
+    const i = grants.findIndex(
+      (g) => g.event_id === eventId && g.kind === kind && g.subject_id === subjectId
+    );
+    if (i >= 0) grants.splice(i, 1);
+  }
+
+  function ratingBounds(): { lo: number; hi: number } {
+    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
+    let lo = (settings?.min_elo as number | undefined) ?? 100;
+    let hi = (settings?.max_elo as number | undefined) ?? 1500;
+    // rating_bounds() falls back wholesale when the pair is nonsensical.
+    if (hi <= lo) { lo = 100; hi = 1500; }
+    return { lo, hi };
+  }
+
+  // Mirrors apply_placement_bonus (00179, 00188): claim the grant, then read
+  // the CURRENT rating, add, clamp to the CONFIGURED bounds, write, and report
+  // what actually landed. The clamp used to happen in TypeScript before the
+  // write; the point of 00179 is that the read, the add and the write are one
+  // locked operation, and of 00188 that the claim is in the same transaction,
+  // so the tests that assert clamping and single-payment are really asserting
+  // this function.
   function placementBonusRpc(args: Record<string, unknown>) {
     const pid = args.p_player_id as string;
+    const eventId = args.p_event_id as string;
+    if (!claimGrant(eventId, 'rating', pid)) {
+      return Promise.resolve({ data: { applied: false, already_granted: true, applied_delta: 0 }, error: null });
+    }
     const field = args.p_discipline === 'singles' ? 'singles_elo' : 'doubles_elo';
     const row = (store.db.ratings ?? []).find((r) => r.player_id === pid);
     // The SQL raises rather than inventing 400 for a player with no rating row.
     if (!row) {
+      releaseGrant(eventId, 'rating', pid);
       return Promise.resolve({
         data: null,
         error: { message: `No ratings row for player ${pid} — cannot award a placement bonus` },
@@ -469,17 +510,61 @@ const makeClient = vi.hoisted(() => () => {
     // PostgREST write would present, so fault fixtures written against
     // `ratings`/`update` keep describing this write after it moved into SQL.
     const fault = faultFor('ratings', 'update', { filters: [['player_id', pid]], payload: {} });
-    if (fault) return Promise.resolve({ data: null, error: { message: fault.message } });
-    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
-    let lo = (settings?.min_elo as number | undefined) ?? 100;
-    let hi = (settings?.max_elo as number | undefined) ?? 1500;
-    // rating_bounds() falls back wholesale when the pair is nonsensical.
-    if (hi <= lo) { lo = 100; hi = 1500; }
+    if (fault) {
+      releaseGrant(eventId, 'rating', pid);
+      return Promise.resolve({ data: null, error: { message: fault.message } });
+    }
+    const { lo, hi } = ratingBounds();
     const before = row[field] as number;
     const after = Math.min(Math.max(before + ((args.p_bonus as number) ?? 0), lo), hi);
     row[field] = after;
     row.updated_at = new Date().toISOString();
-    return Promise.resolve({ data: { new_elo: after, applied_delta: after - before }, error: null });
+    return Promise.resolve({
+      data: { applied: true, already_granted: false, new_elo: after, applied_delta: after - before },
+      error: null,
+    });
+  }
+
+  // Mirrors credit_participant_placement_bonus (00188). Same grant, same lock,
+  // same clamp — this write was a read-modify-write issued from the
+  // application until 00188, and it carried the whole batch as its race
+  // window exactly as the rating write did before 00179.
+  function creditParticipantRpc(args: Record<string, unknown>) {
+    const eventId = args.p_event_id as string;
+    const partId = args.p_participant_id as string;
+    const bonus = (args.p_bonus as number) ?? 0;
+    if (!claimGrant(eventId, 'participant_credit', partId)) {
+      return Promise.resolve({ data: { applied: false, already_granted: true }, error: null });
+    }
+    const row = (store.db.tournament_participants ?? []).find(
+      (r) => r.id === partId && r.event_id === eventId
+    );
+    if (!row) {
+      releaseGrant(eventId, 'participant_credit', partId);
+      return Promise.resolve({
+        data: null,
+        error: { message: `No participant ${partId} in event ${eventId}` },
+      });
+    }
+    // Same { table, op, filters, payload } shape a direct PostgREST write
+    // presented, so fault fixtures written against tournament_participants
+    // keep describing this write after it moved into SQL.
+    const fault = faultFor('tournament_participants', 'update', { filters: [['id', partId]], payload: {} });
+    if (fault) {
+      releaseGrant(eventId, 'participant_credit', partId);
+      return Promise.resolve({ data: null, error: { message: fault.message } });
+    }
+    const { lo, hi } = ratingBounds();
+    const prevAfter = row.elo_after as number | null | undefined;
+    const newAfter = prevAfter === null || prevAfter === undefined
+      ? null
+      : Math.min(Math.max(prevAfter + bonus, lo), hi);
+    row.elo_change = ((row.elo_change as number | null) ?? 0) + bonus;
+    row.elo_after = newAfter;
+    return Promise.resolve({
+      data: { applied: true, already_granted: false, elo_change: row.elo_change, elo_after: newAfter },
+      error: null,
+    });
   }
 
   function rpc(name: string, args: Record<string, unknown>) {
@@ -487,6 +572,7 @@ const makeClient = vi.hoisted(() => () => {
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
     if (name === 'delete_phase_matches') return deletePhaseRpc(args);
     if (name === 'apply_placement_bonus') return placementBonusRpc(args);
+    if (name === 'credit_participant_placement_bonus') return creditParticipantRpc(args);
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -1650,6 +1736,30 @@ describe('placement bonuses', () => {
     // modify-write has no idempotency of its own, so the ledger has to supply it.
     expect(ratingOf('pl-alice')).toBe(1032);
     expect(ratingOf('pl-bob')).toBe(1020); // finalist bonus is 20
+    expect(participant('p-alice').elo_change).toBe(32);
+    expect(participant('p-bob').elo_change).toBe(20);
+  });
+
+  // F-003. The audit-log ledger could only ever be written AFTER the whole
+  // batch was paid, so between two concurrent finalises — or one retried
+  // through a proxy timeout — both runs read a ledger with no rows in it and
+  // both paid the podium. Blanking the ledger after a successful run is
+  // exactly what the loser of that race sees.
+  it('pays nobody twice even when the ledger is invisible to the second run', async () => {
+    await applyPlacementBonuses('e1');
+    expect(ratingOf('pl-alice')).toBe(1032);
+    expect(ratingOf('pl-bob')).toBe(1020);
+
+    // The second run's view: the first run's ledger row does not exist yet.
+    store.db.tournament_audit_log = [];
+
+    await applyPlacementBonuses('e1');
+
+    // Unchanged. The grant rows of 00188 are what refuse it, and they were
+    // written in the same transaction as each payment — so there is no window
+    // in which a second caller can observe "not yet paid".
+    expect(ratingOf('pl-alice')).toBe(1032);
+    expect(ratingOf('pl-bob')).toBe(1020);
     expect(participant('p-alice').elo_change).toBe(32);
     expect(participant('p-bob').elo_change).toBe(20);
   });

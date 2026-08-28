@@ -4,7 +4,6 @@ import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import {
   isDoublesEvent,
-  clampElo,
   placementBonusFor,
   ExpectedError,
   endsInKnockout,
@@ -16,7 +15,6 @@ import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings } from '../platform-settings';
 import {
   requireCapability,
-  getRatingSettings,
   revalidateEventPaths,
   notifyPlayers,
   computeRoundRobinStandings,
@@ -120,13 +118,16 @@ export async function applyPlacementBonuses(eventId: string) {
   const bonusFor = (pos: number | null | undefined): number => placementBonusFor(pos, bonuses);
 
 
+  // A HINT NOW, NOT THE GUARANTEE (00188). Both bonus writes claim a row in
+  // tournament_bonus_grants before they pay, so a repeat is refused by a unique
+  // index inside the same transaction as the payment rather than by this read.
+  // It is still worth doing: it skips the round trip for players a previous run
+  // already settled, and it is what lets a retry report the same set as before.
   const ledger = await readBonusLedger(adminClient, eventId);
-  // The live ceiling is 3000+, not the 1500 that clampElo falls back to. Left
-  // to the fallback, a player above 1500 would be pushed DOWN by winning the
-  // event — a placement bonus that demotes the champion. rating_bounds() in SQL
-  // reads the same two settings, so both engines clamp to the same range.
-  const ratingSettings = await getRatingSettings(adminClient);
-  const bounds = { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo };
+  // NO CLAMP HERE ANY MORE. Both writes clamp inside SQL against
+  // rating_bounds(), which reads the live min_elo/max_elo settings — clampElo's
+  // 1500 fallback would have pushed anyone above it DOWN for winning the event.
+  // One engine, one ceiling.
 
   // Filled by whichever branch runs, then recorded in the ledger before any
   // failure is raised.
@@ -169,6 +170,7 @@ export async function applyPlacementBonuses(eventId: string) {
         targets.map(([pid, bonus]) => [
           `ratings.doubles_elo for player ${pid}`,
           adminClient.rpc('apply_placement_bonus', {
+            p_event_id: eventId,
             p_player_id: pid,
             p_discipline: 'doubles',
             p_bonus: bonus,
@@ -208,6 +210,7 @@ export async function applyPlacementBonuses(eventId: string) {
           writes.push([
             `ratings.singles_elo for player ${p.player_id}`,
             adminClient.rpc('apply_placement_bonus', {
+              p_event_id: eventId,
               p_player_id: p.player_id,
               p_discipline: 'singles',
               p_bonus: p.bonus,
@@ -216,7 +219,6 @@ export async function applyPlacementBonuses(eventId: string) {
         }
         if (!ledger.creditedParticipants.has(p.id)) {
           participantTargets.push(p.id);
-          const prevChange = (p.elo_change as number | null) ?? 0;
           // elo_after MOVES WITH elo_change, and it did not before. The bonus
           // was credited to the rating and to elo_change but never to the
           // snapshot, so the results table showed a player's rating BEFORE
@@ -224,26 +226,20 @@ export async function applyPlacementBonuses(eventId: string) {
           // 1190 (+108)" for somebody actually sitting on 1222. The ladder was
           // right; the row describing it was not.
           //
-          // Clamped the same way the rating is, so the snapshot cannot claim a
-          // number the rating bounds would have refused. Null elo_after means
-          // this entry was never rated (no matches played), and adding a bonus
-          // to nothing would invent a rating — left alone.
-          const prevAfter = p.elo_after as number | null;
+          // BOTH HALVES ARE READ-MODIFY-WRITE IN THE DATABASE NOW (00188).
+          // This one used to read elo_change and elo_after out of the batched
+          // participants SELECT above and write `previous + bonus` back, so it
+          // carried the whole batch as its race window — the same shape the
+          // rating write had before 00179, and the same fix: one locked
+          // read-add-clamp behind a grant row that can only be inserted once.
+          // The clamp and the "null elo_after stays null" rule moved with it.
           writes.push([
             `tournament_participants.elo_change for ${p.id}`,
-            adminClient.from('tournament_participants')
-              .update({
-                elo_change: prevChange + p.bonus,
-                ...(prevAfter === null || prevAfter === undefined
-                  ? {}
-                  : { elo_after: clampElo(prevAfter + p.bonus, bounds) }),
-              })
-              .eq('id', p.id)
-              // So settleWrites can tell a write that changed nothing from one
-              // that worked: without a returned row an UPDATE matching zero
-              // rows is indistinguishable from success, and the ledger would
-              // then record this participant as credited forever.
-              .select('id'),
+            adminClient.rpc('credit_participant_placement_bonus', {
+              p_event_id: eventId,
+              p_participant_id: p.id,
+              p_bonus: p.bonus,
+            }),
           ]);
         }
       }
