@@ -1,6 +1,7 @@
 'use server';
 
 import { headers } from 'next/headers';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import {
@@ -120,6 +121,24 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
     // and the number the team they end up in would be built from.
     service.from('ratings').select('singles_elo, doubles_elo').eq('player_id', player.id).maybeSingle(),
   ]);
+
+  // FAIL CLOSED ON EVERY PREREQUISITE. All four of these reads answer a
+  // question whose failure mode is silently permissive: a failed pair read is
+  // "not in a pair", a failed participant read is "not registered", a failed
+  // rating read is Elo 400. Awaiting a Supabase call is not error handling —
+  // PostgREST failures resolve, they do not reject — so each one has to be
+  // inspected or the guards below are decided by an outage.
+  for (const [what, res] of [
+    ['event', eventRes],
+    ['existing entry', existingRes],
+    ['existing pair', existingPairRes],
+    ['rating', ratingRes],
+  ] as const) {
+    if (res.error) {
+      Sentry.captureException(res.error, { tags: { action: 'registerForEvent', read: what } });
+      throw new ExpectedError('Cannot process your entry right now — please try again shortly');
+    }
+  }
 
   const event = eventRes.data;
   if (!event) throw new Error('Event not found');
@@ -284,10 +303,24 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
     }
   }
 
+  // NO 400 FALLBACK. elo_before is a snapshot that seeding, the pool display
+  // and the legacy undo path all read back as fact, so inventing 400 for a
+  // member whose rating row simply failed to load contaminates all three and
+  // leaves no trace that it was a guess. A member with no rating row at all is
+  // an integrity problem to repair, not a number to make up.
+  const eloBefore = doubles ? ratingRes.data?.doubles_elo : ratingRes.data?.singles_elo;
+  if (eloBefore == null) {
+    Sentry.captureMessage('registerForEvent: no rating row for player', {
+      level: 'error',
+      tags: { action: 'registerForEvent', playerId: player.id, discipline: doubles ? 'doubles' : 'singles' },
+    });
+    throw new ExpectedError('Your club rating is not set up yet — contact an exec before entering.');
+  }
+
   const { error: insertErr } = await service.from('tournament_participants').insert({
     event_id: eventId,
     player_id: player.id,
-    elo_before: (doubles ? ratingRes.data?.doubles_elo : ratingRes.data?.singles_elo) ?? 400,
+    elo_before: eloBefore,
     status: 'registered',
   });
   if (insertErr) throw new Error(insertErr.message);

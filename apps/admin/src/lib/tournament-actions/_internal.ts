@@ -125,9 +125,26 @@ export async function settleWrites(writes: readonly LabelledWrite[]): Promise<Se
       failures.push({ label, message: writeErrorMessage(result.reason) });
       return false;
     }
-    const error = (result.value as { error?: unknown } | null)?.error;
+    const value = result.value as { error?: unknown; data?: unknown } | null;
+    const error = value?.error;
     if (error) {
       failures.push({ label, message: writeErrorMessage(error) });
+      return false;
+    }
+    // A CONDITIONAL UPDATE THAT MATCHED NOTHING IS NOT A SUCCESS.
+    //
+    // PostgREST reports "no error" for an UPDATE whose WHERE clause selected
+    // zero rows, so a write racing against a status change, a withdrawal or a
+    // concurrent edit came back clean and was recorded as landed — which for
+    // the placement-bonus ledger means the player is marked paid and skipped by
+    // every future retry.
+    //
+    // Only writes that asked for their rows back can be checked, which is why
+    // this looks at `data` rather than assuming it. A builder without .select()
+    // returns data: null and keeps the old behaviour, so the ~40 call sites
+    // that do not care are unaffected; the ones that do opt in by selecting.
+    if (Array.isArray(value?.data) && value.data.length === 0) {
+      failures.push({ label, message: 'matched no rows' });
       return false;
     }
     return true;

@@ -119,7 +119,6 @@ export async function applyPlacementBonuses(eventId: string) {
   // Pure helper — pull bonus from final_position so the batched paths below stay tidy.
   const bonusFor = (pos: number | null | undefined): number => placementBonusFor(pos, bonuses);
 
-  const nowIso = new Date().toISOString();
 
   const ledger = await readBonusLedger(adminClient, eventId);
   // The live ceiling is 3000+, not the 1500 that clampElo falls back to. Left
@@ -136,10 +135,13 @@ export async function applyPlacementBonuses(eventId: string) {
   let writeFailures: Awaited<ReturnType<typeof settleWrites>>['failures'] = [];
 
   if (doubles) {
-    const { data: pairs } = await adminClient.from('tournament_pairs')
+    const { data: pairs, error: pairsErr } = await adminClient.from('tournament_pairs')
       .select('id, player1_id, player2_id, final_position')
       .eq('event_id', eventId)
       .not('final_position', 'is', null);
+    // A failed read arrives as `pairs == null`, which reads as "nobody placed"
+    // and finalises the event having paid nobody.
+    if (pairsErr) throw new Error(`Could not read placements: ${pairsErr.message}`);
 
     // Build playerId → bonus map (a player may appear in multiple pairs, sum bonuses).
     const playerBonus = new Map<string, number>();
@@ -155,45 +157,41 @@ export async function applyPlacementBonuses(eventId: string) {
     for (const pid of ledger.ratedPlayers) playerBonus.delete(pid);
 
     if (playerBonus.size > 0) {
-      // Single batched fetch for all affected ratings.
-      const playerIds = [...playerBonus.keys()];
-      const { data: ratings } = await adminClient.from('ratings')
-        .select('player_id, doubles_elo')
-        .in('player_id', playerIds);
-      const ratingMap = new Map<string, number>();
-      for (const r of ratings ?? []) ratingMap.set(r.player_id, r.doubles_elo ?? 400);
-
-      // Parallel UPDATEs — one row per player, no contention.
+      // ONE LOCKED READ-ADD-CLAMP PER PLAYER, IN THE DATABASE (00179).
+      //
+      // This used to batch-read every medallist's rating, add the bonus here,
+      // and write the sums back — so anything that moved a player between the
+      // read and the write was erased, and the window was the whole batch. A
+      // player missing from the batched read was treated as 400 and had the
+      // bonus added to that, silently resetting them.
       const targets = [...playerBonus.entries()];
       const { failures, landed } = await settleWrites(
         targets.map(([pid, bonus]) => [
           `ratings.doubles_elo for player ${pid}`,
-          adminClient.from('ratings')
-            .update({ doubles_elo: clampElo((ratingMap.get(pid) ?? 400) + bonus, bounds), updated_at: nowIso })
-            .eq('player_id', pid),
+          adminClient.rpc('apply_placement_bonus', {
+            p_player_id: pid,
+            p_discipline: 'doubles',
+            p_bonus: bonus,
+          }),
         ] as const)
       );
       writeFailures = failures;
       targets.forEach(([pid], i) => { if (landed[i]) ratedPlayers.push(pid); });
     }
   } else {
-    const { data: participants } = await adminClient.from('tournament_participants')
+    const { data: participants, error: participantsErr } = await adminClient.from('tournament_participants')
       .select('id, player_id, final_position, elo_change, elo_after')
       .eq('event_id', eventId)
       .not('final_position', 'is', null);
+    // Same as the doubles branch: a failed read looks exactly like an event
+    // where nobody placed.
+    if (participantsErr) throw new Error(`Could not read placements: ${participantsErr.message}`);
 
     const eligible = (participants ?? [])
       .map(p => ({ ...p, bonus: bonusFor(p.final_position) }))
       .filter(p => p.bonus > 0);
 
     if (eligible.length > 0) {
-      const playerIds = eligible.map(p => p.player_id);
-      const { data: ratings } = await adminClient.from('ratings')
-        .select('player_id, singles_elo')
-        .in('player_id', playerIds);
-      const ratingMap = new Map<string, number>();
-      for (const r of ratings ?? []) ratingMap.set(r.player_id, r.singles_elo ?? 400);
-
       // Parallel: rating UPDATE + participant elo_change UPDATE for each row.
       // The two are ledgered separately because they can fail independently —
       // elo_change is read-modify-write just like the rating is, so a retry
@@ -205,11 +203,15 @@ export async function applyPlacementBonuses(eventId: string) {
       for (const p of eligible) {
         if (!ledger.ratedPlayers.has(p.player_id)) {
           ratingTargets.push(p.player_id);
+          // Locked read-add-clamp in the database (00179) — see the doubles
+          // branch for why the batched-read-then-write shape had to go.
           writes.push([
             `ratings.singles_elo for player ${p.player_id}`,
-            adminClient.from('ratings')
-              .update({ singles_elo: clampElo((ratingMap.get(p.player_id) ?? 400) + p.bonus, bounds), updated_at: nowIso })
-              .eq('player_id', p.player_id),
+            adminClient.rpc('apply_placement_bonus', {
+              p_player_id: p.player_id,
+              p_discipline: 'singles',
+              p_bonus: p.bonus,
+            }),
           ]);
         }
         if (!ledger.creditedParticipants.has(p.id)) {
@@ -236,7 +238,12 @@ export async function applyPlacementBonuses(eventId: string) {
                   ? {}
                   : { elo_after: clampElo(prevAfter + p.bonus, bounds) }),
               })
-              .eq('id', p.id),
+              .eq('id', p.id)
+              // So settleWrites can tell a write that changed nothing from one
+              // that worked: without a returned row an UPDATE matching zero
+              // rows is indistinguishable from success, and the ledger would
+              // then record this participant as credited forever.
+              .select('id'),
           ]);
         }
       }
