@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getClientIp, rateLimit } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { getServerSupabaseUrl } from '@badminton/shared';
 import {
   discordServiceUnauthorized,
   isAuthorizedDiscordService,
@@ -93,6 +94,7 @@ interface ReportRow {
   title: string | null;
   body: string;
   image_url: string | null;
+  image_path: string | null;
   discord_user_id: string | null;
   created_at: string;
   players: { full_name: string | null; handle: string | null } | null;
@@ -171,6 +173,47 @@ function playerName(p: { full_name: string | null; handle: string | null } | nul
  * than left blank: "not linked" is the difference between "we cannot reply
  * through the app" and "we do not know who this is".
  */
+// Screenshots from the in-app form live in a PRIVATE bucket, so the bot cannot
+// fetch them by path — it gets a URL signed here, at the moment we post.
+//
+// Two details that are easy to get wrong:
+//
+//  - The lifetime is short on purpose. This is the same trust model the bot's
+//    host allowlist already assumes for Discord's CDN links: fetch promptly,
+//    treat an expired one as an ordinary miss. The row keeps the PATH, so a
+//    later triage page can always sign a fresh one (00174).
+//  - The base has to be rewritten. This client is built with
+//    getServerSupabaseUrl(), which on prod is SUPABASE_INTERNAL_URL — a hostname
+//    that only resolves inside the app's own network. Handing that to the bot,
+//    a separate container, produces a fetch that fails for a reason nothing in
+//    the log would explain. NEXT_PUBLIC_SUPABASE_URL is the reachable one.
+const SCREENSHOT_URL_TTL_SECONDS = 60 * 30;
+
+async function signScreenshot(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  path: string | null,
+): Promise<string | null> {
+  if (!path) return null;
+
+  const { data, error } = await supabase.storage
+    .from('feedback-screenshots')
+    .createSignedUrl(path, SCREENSHOT_URL_TTL_SECONDS);
+
+  if (error || !data?.signedUrl) {
+    // Best effort by design: the words are the report, the screenshot is a
+    // bonus. Losing the image must never hold back the post.
+    console.error('[discord] feedback relay: could not sign screenshot:', error?.message);
+    return null;
+  }
+
+  const internal = getServerSupabaseUrl();
+  const publicBase = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (publicBase && data.signedUrl.startsWith(internal)) {
+    return publicBase.replace(/\/$/, '') + data.signedUrl.slice(internal.replace(/\/$/, '').length);
+  }
+  return data.signedUrl;
+}
+
 function reportAuthor(row: ReportRow): string {
   const name = playerName(row.players);
   const mention = row.discord_user_id ? `<@${row.discord_user_id}>` : '';
@@ -270,7 +313,7 @@ export async function GET(request: Request) {
     const { data, error } = await supabase
       .from('feedback_reports')
       .select(
-        'id, kind, title, body, image_url, discord_user_id, created_at, ' +
+        'id, kind, title, body, image_url, image_path, discord_user_id, created_at, ' +
           'players(full_name, handle)'
       )
       .gte('created_at', since)
@@ -310,7 +353,7 @@ export async function GET(request: Request) {
       author: reportAuthor(r),
       context: label,
       rating: null,
-      imageUrl: r.image_url,
+      imageUrl: r.image_url ?? (await signScreenshot(supabase, r.image_path)),
       createdAt: r.created_at,
     });
   }
