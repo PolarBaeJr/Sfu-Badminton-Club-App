@@ -47,12 +47,19 @@ async function submitEventFeedbackImpl(input: EventFeedbackInput) {
     throw new ExpectedError('Feedback opens once the event has finished.');
   }
 
-  const { error } = await supabase.from('event_feedback').upsert(
+  // Since 00175 this is a row in feedback_reports like every other piece of
+  // feedback, told apart by kind. The upsert key is the plain unique index on
+  // (tournament_id, player_id) — see the migration for why it is not partial.
+  const { error } = await supabase.from('feedback_reports').upsert(
     {
+      kind: 'tournament_feedback',
+      source: 'app',
       tournament_id: input.tournament_id,
       player_id: player.id,
       rating: input.rating ?? null,
-      comment: input.comment ?? null,
+      // NULL, not '': the table's check allows a rating with no words, and an
+      // empty string would count as words and defeat it.
+      body: input.comment?.trim() || null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'tournament_id,player_id' },

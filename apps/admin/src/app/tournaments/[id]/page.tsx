@@ -96,8 +96,9 @@ export default async function TournamentDetailPage({ params }: { params: Promise
 
   // Player feedback for this tournament (attributed — the exec team moderates).
   const { data: feedback } = await supabase
-    .from('event_feedback')
-    .select('id, rating, comment, created_at, player:players(full_name)')
+    .from('feedback_reports')
+    .select('id, rating, comment:body, created_at, player:players(full_name)')
+    .eq('kind', 'tournament_feedback')
     .eq('tournament_id', id)
     .order('created_at', { ascending: false });
   type FeedbackRow = { id: string; rating: number | null; comment: string | null; created_at: string; player: { full_name: string } | { full_name: string }[] | null };

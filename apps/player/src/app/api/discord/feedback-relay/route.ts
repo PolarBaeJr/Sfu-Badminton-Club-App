@@ -103,7 +103,7 @@ interface ReportRow {
 interface SurveyRow {
   id: string;
   rating: number | null;
-  comment: string | null;
+  body: string | null;
   created_at: string;
   updated_at: string;
   tournaments: { name: string | null } | null;
@@ -316,6 +316,11 @@ export async function GET(request: Request) {
         'id, kind, title, body, image_url, image_path, discord_user_id, created_at, ' +
           'players(full_name, handle)'
       )
+      // EXCLUDED, and this is load-bearing since 00175 merged the survey into
+      // this table: without it every survey response is picked up twice — once
+      // here as a report and once by the survey branch below — and posted to
+      // both channels under two different mappings.
+      .neq('kind', 'tournament_feedback')
       .gte('created_at', since)
       .order('created_at', { ascending: false })
       .limit(MAX_WINDOW);
@@ -370,13 +375,14 @@ export async function GET(request: Request) {
     .map((m) => m.source_id);
 
   const surveySelect =
-    'id, rating, comment, created_at, updated_at, tournaments(name), players(full_name, handle)';
+    'id, rating, body, created_at, updated_at, tournaments(name), players(full_name, handle)';
 
   const [freshResult, knownResult] = await Promise.all([
     surveyChannel
       ? supabase
-          .from('event_feedback')
+          .from('feedback_reports')
           .select(surveySelect)
+          .eq('kind', 'tournament_feedback')
           .gte('updated_at', since)
           .order('updated_at', { ascending: false })
           .limit(MAX_WINDOW)
@@ -386,7 +392,11 @@ export async function GET(request: Request) {
     // that as a deletion. Aimed at exactly the mapped ids, which MAX_MAPPED
     // keeps small enough that this read cannot itself truncate.
     mappedSurveyIds.length
-      ? supabase.from('event_feedback').select(surveySelect).in('id', mappedSurveyIds)
+      ? supabase
+          .from('feedback_reports')
+          .select(surveySelect)
+          .eq('kind', 'tournament_feedback')
+          .in('id', mappedSurveyIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -406,7 +416,7 @@ export async function GET(request: Request) {
     byId.set(row.id, row);
   }
 
-  // THE SWEEP FIRES ONLY ON POSITIVE EVIDENCE THAT event_feedback IS READABLE.
+  // THE SWEEP FIRES ONLY ON POSITIVE EVIDENCE THAT feedback_reports IS READABLE.
   // Zero rows is not that evidence — see the header. A non-empty byId settles
   // it: the table answered, so an id absent from it is absent because the row is
   // gone. When byId is empty the question is open, and one unfiltered read
@@ -417,7 +427,7 @@ export async function GET(request: Request) {
 
   if (!sweepable && mappedSurveyIds.length > 0) {
     const { data: anyRow, error: livenessError } = await supabase
-      .from('event_feedback')
+      .from('feedback_reports')
       .select('id')
       .limit(1);
 
@@ -426,7 +436,7 @@ export async function GET(request: Request) {
     if (!sweepable) {
       console.error(
         `[discord] feedback relay: all ${mappedSurveyIds.length} mapped survey response(s) ` +
-          'look deleted and public.event_feedback reads as empty — refusing to retract on ' +
+          'look deleted and public.feedback_reports reads as empty — refusing to retract on ' +
           'evidence this weak. Check the SELECT grant (read pg_class.relacl, not ' +
           'information_schema) and whether the PostgREST schema cache has been reloaded. ' +
           `${livenessError?.message ?? ''}`
@@ -461,7 +471,7 @@ export async function GET(request: Request) {
 
   for (const s of byId.values()) {
     const existing = mapped.get(`event_feedback:${s.id}`) ?? null;
-    const comment = cleanText(s.comment, MAX_BODY);
+    const comment = cleanText(s.body, MAX_BODY);
 
     // A BARE RATING IS NOT RELAYED. It is a number for the stats page, not
     // something for a human to read, and relaying them would bury the responses

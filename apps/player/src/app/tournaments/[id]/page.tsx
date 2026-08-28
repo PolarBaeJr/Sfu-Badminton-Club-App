@@ -112,8 +112,11 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   let myFeedback: { rating: number | null; comment: string | null } | null = null;
   if (currentPlayer) {
     const { data: fb } = await supabase
-      .from('event_feedback')
-      .select('rating, comment')
+      // 00175 folded the survey into feedback_reports; `comment` is that table's
+      // `body`, aliased here so the form below keeps its own vocabulary.
+      .from('feedback_reports')
+      .select('rating, comment:body')
+      .eq('kind', 'tournament_feedback')
       .eq('tournament_id', id)
       .eq('player_id', currentPlayer.id)
       .maybeSingle();

@@ -30,8 +30,9 @@ interface ReportSeed {
 
 interface SurveySeed {
   id: string;
+  kind: string;
   rating: number | null;
-  comment: string | null;
+  body: string | null;
   created_at: string;
   updated_at: string;
   tournaments: { name: string | null } | null;
@@ -68,8 +69,9 @@ function report(over: Partial<ReportSeed> = {}): ReportSeed {
 function survey(over: Partial<SurveySeed> = {}): SurveySeed {
   return {
     id: 'f1',
+    kind: 'tournament_feedback',
     rating: 4,
-    comment: 'Great draw, long waits between rounds.',
+    body: 'Great draw, long waits between rounds.',
     created_at: iso(-3),
     updated_at: iso(-1),
     tournaments: { name: 'Summer Open' },
@@ -117,6 +119,10 @@ function rowBuilder(
     rows = rows.filter((r) => r[column] === value);
     return builder;
   };
+  builder.neq = (column: string, value: unknown) => {
+    rows = rows.filter((r) => r[column] !== value);
+    return builder;
+  };
   builder.in = (column: string, values: unknown[]) => {
     rows = rows.filter((r) => values.includes(r[column]));
     return builder;
@@ -127,6 +133,38 @@ function rowBuilder(
   };
   builder.then = (resolve: (v: unknown) => unknown) =>
     Promise.resolve({ data: error() ? null : rows, error: error() }).then(resolve);
+  return builder;
+}
+
+/**
+ * Since 00175 both reports and survey responses live in feedback_reports, so
+ * this serves BOTH seed arrays from one builder and lets the route's own
+ * .eq('kind') / .neq('kind') do the separating. That is deliberate: it makes
+ * the double-post guard testable, because a route that forgot to exclude
+ * tournament_feedback from the report window now really does see the survey
+ * rows here.
+ *
+ * Which kind filter arrived also picks which seeded error to raise, so the
+ * "report read failed" and "survey read failed" tests still aim at one read
+ * each. The unfiltered liveness probe gets neither.
+ */
+function feedbackBuilder() {
+  let mode: 'report' | 'survey' | null = null;
+  const builder = rowBuilder(
+    () => [...reports, ...surveys],
+    () => (mode === 'survey' ? surveyError : mode === 'report' ? reportError : null)
+  ) as Record<string, unknown>;
+
+  const eq = builder.eq as (c: string, v: unknown) => unknown;
+  const neq = builder.neq as (c: string, v: unknown) => unknown;
+  builder.eq = (c: string, v: unknown) => {
+    if (c === 'kind') mode = 'survey';
+    return eq(c, v);
+  };
+  builder.neq = (c: string, v: unknown) => {
+    if (c === 'kind') mode = 'report';
+    return neq(c, v);
+  };
   return builder;
 }
 
@@ -161,8 +199,7 @@ vi.mock('@/lib/supabase-server', () => ({
         return b;
       }
       if (table === 'discord_feedback_posts') return mappingBuilder();
-      if (table === 'feedback_reports') return rowBuilder(() => reports, () => reportError);
-      if (table === 'event_feedback') return rowBuilder(() => surveys, () => surveyError);
+      if (table === 'feedback_reports') return feedbackBuilder();
       throw new Error(`unexpected table ${table}`);
     },
   }),
@@ -321,7 +358,7 @@ describe('survey responses', () => {
   it('does not relay a bare rating', async () => {
     // A number for the stats page, not something for a human to read. Relaying
     // them would bury the responses that have words in them.
-    surveys = [survey({ comment: null })];
+    surveys = [survey({ body: null })];
 
     const { body } = await get();
     expect(body.actions).toEqual([]);
@@ -329,7 +366,7 @@ describe('survey responses', () => {
   });
 
   it('edits its own message when the comment is revised', async () => {
-    surveys = [survey({ comment: 'Actually the waits were fine.' })];
+    surveys = [survey({ body: 'Actually the waits were fine.' })];
     mappings = [mapping()];
 
     const [action] = (await get()).body.actions as Action[];
@@ -348,7 +385,7 @@ describe('survey responses', () => {
 
   it('retracts when the member empties their comment', async () => {
     // The only retraction a member has: the form offers no delete.
-    surveys = [survey({ comment: '   ' })];
+    surveys = [survey({ body: '   ' })];
     mappings = [mapping()];
 
     const [action] = (await get()).body.actions as Action[];
