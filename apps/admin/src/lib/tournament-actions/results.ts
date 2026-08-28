@@ -1541,59 +1541,35 @@ async function undoMatchResultImpl(matchId: string) {
   // Check no downstream matches have results
   await assertDownstreamUndecided(adminClient, match, 'undo');
 
-  // Reverse Elo changes (both singles and doubles) using snapshot persisted at apply time.
-  // Falls back to legacy elo_before behaviour for singles matches that pre-date the snapshot column.
+  // Reverse Elo changes (both singles and doubles) from the snapshot persisted
+  // at apply time. The snapshot is the ONLY reversal evidence, and that is a
+  // complete answer rather than a gap: apply_tournament_match_rating writes the
+  // snapshot in the SAME transaction as the ladder move (00070, and every
+  // revision since), so a decided match with no snapshot is a match that was
+  // never rated, and doing nothing here is exactly right.
   //
-  // The legacy branch is gated on BOTH sides existing because that is exactly
-  // when applyTournamentMatchElo rates a match. An unopposed walkover (the
-  // recovery path for a collapsed half of the draw) has no loser and was never
-  // rated, and rewinding its winner to elo_before — a value frozen at
-  // registration — would wipe every rating change they earned earlier in the
-  // event.
+  // There used to be a fallback for "singles matches that pre-date the snapshot
+  // column", which rewound both players to tournament_participants.elo_before.
+  // It is gone, and could not have been kept:
   //
-  // It is gated a second time, per side, on elo_after still being STAMPED. "No
-  // snapshot" is not on its own evidence that a rating is outstanding: a
-  // reversal clears the snapshot and the stamp together, in one transaction, but
-  // resetting the match row below is a separate write. If that reset fails — or
-  // its response is lost — the match is left decided with no snapshot, and the
-  // retry would land here and overwrite both players' CURRENT rating with a
-  // registration-time figure, erasing every match they have played since.
-  // elo_after is what the pre-snapshot rating path wrote and what every reversal
-  // clears, so its presence is the honest test for "this match's delta is still
-  // on the ladder".
+  //   * There is no such match. elo_snapshot is part of the baseline schema
+  //     (00001_schema.sql), so no row in this database has ever been rated
+  //     without one. Confirmed against production: zero decided singles matches
+  //     with a null snapshot and both sides set.
+  //   * elo_before is stamped at REGISTRATION. Rewinding to it does not undo
+  //     this match, it undoes the player's whole event — every earlier round
+  //     they won on the way here, erased, along with any club match rated in
+  //     between. That is the defect, not a rough edge of it.
+  //   * Since 00083 elo_after/elo_change are EVENT-level accumulators, so the
+  //     `elo_after: null, elo_change: null` that went with it discarded the
+  //     recorded swing of the event's other matches too.
+  //
+  // The branch was also unreachable in the one case it claimed to serve and
+  // dangerous in one it did not: it fired on ANY snapshot-less decided singles
+  // match, including one whose sibling round-robin match had legitimately moved
+  // the ladder, and rewound the player for a match that never touched it.
   if (match.elo_snapshot) {
     await reverseEloSnapshot(adminClient, matchId);
-  } else if (!doubles && match.winner_participant_id && match.loser_participant_id) {
-    const winnerId = match.winner_participant_id;
-    const loserId = match.loser_participant_id;
-
-    if (winnerId) {
-      const { data: winnerP } = await adminClient.from('tournament_participants')
-        .select('player_id, elo_before, elo_after')
-        .eq('id', winnerId).single();
-      if (winnerP?.elo_before != null && winnerP.elo_after != null) {
-        await adminClient.from('ratings')
-          .update({ singles_elo: winnerP.elo_before, updated_at: new Date().toISOString() })
-          .eq('player_id', winnerP.player_id);
-        await adminClient.from('tournament_participants')
-          .update({ elo_after: null, elo_change: null })
-          .eq('id', winnerId);
-      }
-    }
-
-    if (loserId) {
-      const { data: loserP } = await adminClient.from('tournament_participants')
-        .select('player_id, elo_before, elo_after')
-        .eq('id', loserId).single();
-      if (loserP?.elo_before != null && loserP.elo_after != null) {
-        await adminClient.from('ratings')
-          .update({ singles_elo: loserP.elo_before, updated_at: new Date().toISOString() })
-          .eq('player_id', loserP.player_id);
-        await adminClient.from('tournament_participants')
-          .update({ elo_after: null, elo_change: null })
-          .eq('id', loserId);
-      }
-    }
   }
 
   // Remove the winner from the next match, and the loser from the third-place

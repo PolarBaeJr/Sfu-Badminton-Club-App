@@ -74,6 +74,15 @@ DECLARE
   v_singles       INTEGER;
   v_entries       INTEGER;
 BEGIN
+  -- 00126's shape: a SECURITY DEFINER function that accepts the player it should
+  -- act as is an impersonation primitive the moment it is reachable with an
+  -- `authenticated` key. The grant below says service_role only; this makes a
+  -- future mis-grant harmless rather than catastrophic. The service role has no
+  -- auth.uid(), so the real caller passes straight through.
+  IF auth.uid() IS NOT NULL AND get_player_id(auth.uid()) IS DISTINCT FROM p_player_id THEN
+    RAISE EXCEPTION 'Not permitted to act for another member' USING ERRCODE = '42501';
+  END IF;
+
   IF p_elo_before IS NULL THEN
     -- The caller refuses this before it gets here; belt and braces, because a
     -- null Elo written into the snapshot column is the thing seeding, the pool

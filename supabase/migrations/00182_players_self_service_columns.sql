@@ -88,6 +88,21 @@ BEGIN
       '00182: public.players is missing %. The self-service column list is out of date — reconcile it with the player app before granting.',
       v_missing;
   END IF;
+
+  -- 00180 IS A HARD PREREQUISITE, in the shape 00164 used for 00163. These are
+  -- applied by hand, one at a time. Revoking the table-wide UPDATE takes
+  -- notification_preferences off the member's own client, and the only thing
+  -- that writes it afterwards is merge_my_notification_preferences. Applied on
+  -- its own, this migration silently breaks every notification toggle in
+  -- Settings — silently, because a column-privilege failure surfaces as an
+  -- ordinary error toast on a screen nobody watches.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public' AND p.proname = 'merge_my_notification_preferences'
+  ) THEN
+    RAISE EXCEPTION
+      '00182 requires 00180: public.merge_my_notification_preferences() does not exist. Run 00180_notification_preferences_atomic_merge.sql first.';
+  END IF;
 END
 $precheck$;
 

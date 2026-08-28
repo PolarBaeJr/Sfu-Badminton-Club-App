@@ -458,21 +458,39 @@ describe('void / restore / replay', () => {
     expect(match(QF).status).toBe('ready');
   });
 
-  it('still rewinds a genuinely pre-snapshot match, where elo_after is stamped', async () => {
-    // The other half of that guard: a match rated before the snapshot column
-    // existed has no snapshot but DOES carry elo_after, and must still reverse.
+  // F-010. The above used to have a mirror-image partner asserting that a
+  // snapshot-less match with elo_after stamped "still rewinds" to elo_before.
+  // That behaviour is gone, and this is the test that pins its absence.
+  //
+  // elo_before is a REGISTRATION-time figure, so rewinding to it undoes the
+  // player's whole event rather than this match — here Alice arrives at the
+  // semi on 1030 having won the quarter, and the old branch would have put her
+  // back on 1000 and thrown away the quarter with it. The branch could not
+  // distinguish that from the case it was written for, because no per-match
+  // evidence survives without a snapshot.
+  //
+  // Nothing is lost by removing it: apply_tournament_match_rating writes the
+  // snapshot in the same transaction as the ladder move, so "decided, no
+  // snapshot" means "never rated" and leaving the ladder alone is correct.
+  it('leaves the ladder alone when a decided match carries no snapshot', async () => {
     Object.assign(match(QF), {
       status: 'completed', winner_participant_id: 'p-alice', loser_participant_id: 'p-bob',
       scores: [{ a: 21, b: 15 }], elo_snapshot: null,
     });
+    // Stamped by a DIFFERENT, genuinely rated match in the same event — which is
+    // exactly why their presence was never evidence about this one.
     store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after = 1030;
     store.db.tournament_participants!.find((p) => p.id === 'p-bob')!.elo_after = 970;
     store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_elo = 1030;
 
     expect((await undoMatchResult(QF)).ok).toBe(true);
 
-    expect(ratingOf('pl-alice')).toBe(1000); // back to elo_before
-    expect(store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after).toBeNull();
+    // Her rating and the event's accumulated record both survive the undo.
+    expect(ratingOf('pl-alice')).toBe(1030);
+    expect(store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after).toBe(1030);
+    // The match itself is still undone.
+    expect(match(QF).status).toBe('ready');
+    expect(match(QF).scores).toBeNull();
   });
 
   it('only restores a voided match', async () => {
