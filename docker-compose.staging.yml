@@ -173,8 +173,20 @@ services:
       # in their own browser. Staging's origin, so a staging link cannot walk
       # somebody into production.
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://badminton.polardev.org}
-    ports:
-      - "3015:3002"
+    # No `ports:` here on purpose. The proxy reaches this container on the
+    # `edge` network at 3002 (proxy.port below) and never through a host port,
+    # so publishing one bought nothing -- and it cost the deploy pipeline. This
+    # is the only badminton service that compose actually starts and names
+    # (container_name below), so it is the only one whose running container
+    # carries a HostConfig.PortBindings. Auto-update has to destroy and recreate
+    # to change an image, its recreate spec does not carry port bindings across,
+    # and rather than silently unpublish the port it refuses outright:
+    # "auto-update would drop PortBindings on recreate -- update manually".
+    # That left this service pinned with no path forward through the dashboard
+    # while newer images piled up in the registry. Production's bot never had a
+    # host port, which is why only staging was stuck. If you ever need direct
+    # access again, reach it over Tailscale by container IP rather than
+    # re-publishing -- a host port here silently disables auto-update.
     restart: unless-stopped
     networks: [edge, default]
     labels:
