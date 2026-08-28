@@ -9,7 +9,6 @@ import {
   isDoublesEvent,
   isMembershipAllowed,
   membershipRefusalMessage,
-  eventHasDraw,
   screenSelfEntry,
   toCompetitionCategory,
   ExpectedError,
@@ -259,11 +258,20 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // that used to live here are gone rather than kept as a fast path, because
   // two copies of "is this event full" is how the screen ends up promising a
   // place this action refuses.
+  // The waiver travels WITH the entry now (00193). It used to be written after
+  // this call returned, with its result discarded, so a member could end up
+  // registered with no acceptance record at all — best-effort storage for the
+  // one artefact whose entire purpose is to be evidence. The function refuses an
+  // entry that brings no hash when the tournament has a waiver, so this is also
+  // the gate rather than a copy of it.
+  const enterWaiverHash = eventWaiverText ? eventWaiverHash(eventWaiverText) : null;
   const { data: entered, error: enterErr } = await service.rpc('enter_tournament_event', {
     p_event_id: eventId,
     p_player_id: player.id,
     p_elo_before: eloBefore,
     p_doubles: doubles,
+    p_waiver_hash: enterWaiverHash,
+    p_user_agent: eventWaiverText ? (await headers()).get('user-agent') : null,
   });
   if (enterErr) throw new Error(enterErr.message);
   if (!entered) throw new Error('Could not complete your entry — please try again shortly.');
@@ -284,6 +292,11 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
         );
       case 'already_registered':
         throw new ExpectedError('Already registered');
+      // The application checked this above; reaching it here means the two
+      // disagreed, which is worth a distinct sentence rather than the generic
+      // retry message.
+      case 'waiver_required':
+        throw new ExpectedError('You must accept the event waiver to register');
       case 'event_not_found':
         throw new Error('Event not found');
       default:
@@ -297,19 +310,6 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // ensureEntryFees never throws for exactly that reason. Per tournament, not
   // per event, so entering a second event here finds the existing row.
   await ensureEntryFees(service, event.tournament_id, [player.id]);
-
-  // Record immutable acceptance evidence keyed by the text hash. onConflict
-  // ignore keeps it idempotent if the same text is accepted twice.
-  if (eventWaiverText) {
-    const waiverHash = eventWaiverHash(eventWaiverText);
-    const userAgent = (await headers()).get('user-agent');
-    await service.from('event_waiver_acceptances').upsert({
-      player_id: player.id,
-      tournament_id: event.tournament_id,
-      waiver_hash: waiverHash,
-      user_agent: userAgent,
-    }, { onConflict: 'player_id,tournament_id,waiver_hash', ignoreDuplicates: true });
-  }
 
   revalidateTournamentPaths(event.tournament_id, eventId);
 }
@@ -387,62 +387,51 @@ async function withdrawFromEventImpl(eventId: string) {
   const player = await requirePlayer();
   const service = createServiceRoleClient();
 
-  const { data: participant } = await service.from('tournament_participants')
-    .select('id, status, event:tournament_events(tournament_id, status)')
-    .eq('event_id', eventId).eq('player_id', player.id).maybeSingle();
-
-  // NO PARTICIPANT ROW IS NOT THE SAME AS NOT ENTERED, since 00102. A member in
-  // a formed doubles pair is entered and has no row here, and 'Not registered'
-  // is flatly wrong for them.
+  // ONE STATEMENT, NOT READ-THEN-UPDATE (00193). This used to read the
+  // participant row and the event status, reason about them, and then issue an
+  // UPDATE keyed on the participant id alone — so a draw published in the gap
+  // turned a refusal that had already been decided into a withdrawal from an
+  // event that now has a bracket. The entry stays seeded, its match stays
+  // playable, the bye it was handed stays on the record, and the forfeit
+  // cascade that makes a late withdrawal coherent never runs.
   //
-  // LEAVING A FORMED PAIR IS AN EXEC ACTION, deliberately. It is not a solo act:
-  // it takes another member's team away from them and puts them back in the
-  // pool, and that person has to be told. Nothing on the player side can tell
-  // them. The exec's withdrawPairMember does the whole thing properly — the
-  // partner keeps their fee, their event waiver and their entry-cap slot — and
-  // this is the same line the app already draws once a draw is published.
-  //
-  // Entering alone and changing your mind BEFORE being paired needs none of
-  // that, and falls straight through to the ordinary withdrawal below.
-  if (!participant) {
-    const { data: pair } = await service.from('tournament_pairs')
-      .select('id').eq('event_id', eventId)
-      .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
-      .limit(1);
-    if ((pair?.length ?? 0) > 0) {
-      throw new ExpectedError(
-        'You have been paired with a partner, so leaving is not something you can do on your own — ' +
-        'it puts them back in the pool too. Ask a tournament admin to withdraw you.',
-      );
-    }
-    throw new ExpectedError('Not registered');
-  }
-  if (participant.status !== 'registered' && participant.status !== 'checked_in') {
-    throw new ExpectedError('Cannot withdraw at this stage');
-  }
-
-  const event = (Array.isArray(participant.event) ? participant.event[0] : participant.event) as
-    { tournament_id: string; status: string } | null;
-
-  // Self-withdrawal stops the moment the draw is published. Up to that point
-  // leaving only affects you; afterwards it hands your opponent a rated
-  // walkover, shifts the round above, and can strand a slot at TBD. That is a
-  // tournament-desk decision, and the machinery that makes it coherent (the
-  // forfeit cascade and its Elo snapshots) lives in the admin app — reachable
-  // only by an exec. Letting the button through here would leave the bracket
-  // exactly as broken as doing nothing.
-  if (eventHasDraw(event?.status)) {
-    throw new ExpectedError(
-      'The draw is already published — ask a tournament admin to withdraw you so your matches can be forfeited properly.',
-    );
-  }
-
-  const { error } = await service.from('tournament_participants')
-    .update({ status: 'withdrawn' })
-    .eq('id', participant.id);
+  // Every rule below still lives in exactly one place; the function is that
+  // place, and it holds the event row while it decides.
+  const { data: result, error } = await service.rpc('withdraw_from_tournament_event', {
+    p_event_id: eventId,
+    p_player_id: player.id,
+  });
   if (error) throw new Error(error.message);
+  if (!result) throw new Error('Could not withdraw you — please try again shortly.');
 
-  if (event?.tournament_id) revalidateTournamentPaths(event.tournament_id, eventId);
+  if (!result.ok) {
+    switch (result.reason) {
+      // No participant row is not the same as not entered: half of a formed
+      // pair is entered and has no row. Leaving a pair puts the partner back in
+      // the pool and they have to be told, which nothing on the player side can
+      // do — so it stays an exec action, the same line drawn once a draw exists.
+      case 'in_pair':
+        throw new ExpectedError(
+          'You have been paired with a partner, so leaving is not something you can do on your own — ' +
+          'it puts them back in the pool too. Ask a tournament admin to withdraw you.',
+        );
+      case 'not_registered':
+        throw new ExpectedError('Not registered');
+      case 'not_withdrawable':
+        throw new ExpectedError('Cannot withdraw at this stage');
+      case 'draw_published':
+        throw new ExpectedError(
+          'The draw is already published — ask a tournament admin to withdraw you so your matches can be forfeited properly.',
+        );
+      case 'event_not_found':
+        throw new Error('Event not found');
+      default:
+        throw new Error('Could not withdraw you — please try again shortly.');
+    }
+  }
+
+  const tournamentId = result.tournament_id as string | undefined;
+  if (tournamentId) revalidateTournamentPaths(tournamentId, eventId);
   else revalidatePath('/tournaments');
 }
 

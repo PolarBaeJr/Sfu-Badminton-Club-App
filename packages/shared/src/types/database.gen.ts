@@ -3854,6 +3854,8 @@ export type Database = {
           p_elo_before: number
           p_event_id: string
           p_player_id: string
+          p_user_agent?: string
+          p_waiver_hash?: string
         }
         Returns: Json
       }
@@ -4017,6 +4019,15 @@ export type Database = {
         Returns: number
       }
       points_cap: { Args: { p_target: number }; Returns: number }
+      publish_event_draw: {
+        Args: {
+          p_doubles: boolean
+          p_event_id: string
+          p_expected: number
+          p_new_status: string
+        }
+        Returns: Json
+      }
       rating_bounds: {
         Args: Record<PropertyKey, never>
         Returns: { hi: number; lo: number }
@@ -4119,6 +4130,10 @@ export type Database = {
           p_partner_id?: string
           p_type: string
         }
+        Returns: Json
+      }
+      withdraw_from_tournament_event: {
+        Args: { p_event_id: string; p_player_id: string }
         Returns: Json
       }
     }

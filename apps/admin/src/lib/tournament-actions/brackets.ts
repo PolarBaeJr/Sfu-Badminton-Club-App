@@ -227,6 +227,43 @@ function statusAfterDraw(
 }
 
 /**
+ * Publish a generated draw: re-count the field and flip the status together.
+ *
+ * The reason this is not just another mustWrite is that the two halves have to
+ * be one statement. Everything else in generation is recoverable by re-running
+ * it; a draw published over a field that grew is not, because the entry it
+ * missed has no fixture and nothing says so.
+ */
+async function publishDraw(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  newStatus: 'live' | 'bracket_generated' | 'pool_live' | 'pool_generated',
+  doubles: boolean,
+  expected: number | null,
+): Promise<void> {
+  const { data, error } = await adminClient.rpc('publish_event_draw', {
+    p_event_id: eventId,
+    p_new_status: newStatus,
+    p_doubles: doubles,
+    p_expected: expected,
+  });
+  if (error) throw new Error(`Publishing the draw failed: ${error.message}`);
+  if (!data) throw new Error('Publishing the draw returned nothing.');
+  if (!data.ok) {
+    if (data.reason === 'field_grew') {
+      const arrived = Number(data.now ?? 0) - Number(data.expected ?? 0);
+      throw new ExpectedError(
+        `${arrived} ${arrived === 1 ? 'entry' : 'entries'} arrived while this draw was being built, so it would have left `
+        + `${arrived === 1 ? 'somebody' : 'people'} out. Nothing was published — press Generate again to include `
+        + `${arrived === 1 ? 'them' : 'everyone'}.`,
+      );
+    }
+    if (data.reason === 'event_not_found') throw new Error('Event not found');
+    throw new Error('Could not publish the draw — please try again.');
+  }
+}
+
+/**
  * Delete the matches of ONE phase, leaving the other half alone.
  *
  * The single most destructive line in this module used to be
@@ -1288,13 +1325,18 @@ async function generateSingleEliminationBracketImpl(
   // throws rather than continuing, which means reaching this line is the
   // assertion that the whole draw landed; letting this one write fail silently
   // would leave the event advertising a bracket it does not have.
-  await mustWrite(
-    'Publishing the draw',
-    adminClient.from('tournament_events')
-      .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
-      .eq('id', eventId)
-      .select('id'),
-  );
+  // THE RE-COUNT AND THE FLIP UNDER ONE LOCK (00193). assertFieldDidNotGrow
+  // above re-counts the field, but "immediately before the flip" is not
+  // "atomically with it": an entry landing in that gap is admitted by
+  // enter_tournament_event — correctly, the event is still open — and is not in
+  // this bracket. publish_event_draw takes the event row, which is the same row
+  // an entry must take, so only two orderings exist: the entry commits first
+  // and this refuses, or this commits first and the entry is closed out.
+  // `null` when the field came out of a pool, matching the guard above: the
+  // entrants are the qualifiers, not everyone registered, so a live count of
+  // the participant table is not the number this draw was built from and would
+  // refuse every pool-to-bracket publication.
+  await publishDraw(adminClient, eventId, statusAfterDraw(event, phase), doubles, seededFromPool ? null : N);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
@@ -1664,13 +1706,14 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   // throws rather than continuing, which means reaching this line is the
   // assertion that the whole draw landed; letting this one write fail silently
   // would leave the event advertising a bracket it does not have.
-  await mustWrite(
-    'Publishing the draw',
-    adminClient.from('tournament_events')
-      .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
-      .eq('id', eventId)
-      .select('id'),
-  );
+  // THE RE-COUNT AND THE FLIP UNDER ONE LOCK (00193). assertFieldDidNotGrow
+  // above re-counts the field, but "immediately before the flip" is not
+  // "atomically with it": an entry landing in that gap is admitted by
+  // enter_tournament_event — correctly, the event is still open — and is not in
+  // this bracket. publish_event_draw takes the event row, which is the same row
+  // an entry must take, so only two orderings exist: the entry commits first
+  // and this refuses, or this commits first and the entry is closed out.
+  await publishDraw(adminClient, eventId, statusAfterDraw(event, phase), doubles, N);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,

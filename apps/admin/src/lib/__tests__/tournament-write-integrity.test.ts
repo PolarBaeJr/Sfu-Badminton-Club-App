@@ -584,6 +584,33 @@ const makeClient = vi.hoisted(() => () => {
       );
       return Promise.resolve({ data: marked, error: null });
     }
+    // Mirrors publish_event_draw (00193). The status flip stopped being a plain
+    // UPDATE when the re-count moved into the same statement, so the fake has to
+    // model both halves — and it still consults faultFor on the tournament_events
+    // UPDATE, because the fault-injection tests that make the publish fail are
+    // asserting on the draw not being advertised, not on which wire call carried
+    // it.
+    if (name === 'publish_event_draw') {
+      const eventId = args.p_event_id as string;
+      const doubles = args.p_doubles as boolean;
+      const expected = args.p_expected as number | null;
+      const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+      const now = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && (r.status === 'registered' || r.status === 'checked_in'),
+      ).length;
+      if (expected != null && now > expected) {
+        return Promise.resolve({
+          data: { ok: false, reason: 'field_grew', expected, now }, error: null,
+        });
+      }
+      const payload = { status: args.p_new_status, updated_at: new Date().toISOString() };
+      const f = faultFor('tournament_events', 'update', { filters: [['id', eventId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      const ev = (store.db.tournament_events ?? []).find((r) => r.id === eventId);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      Object.assign(ev, payload);
+      return Promise.resolve({ data: { ok: true }, error: null });
+    }
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
