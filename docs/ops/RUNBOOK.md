@@ -100,6 +100,13 @@ To re-seed the primary admin from scratch, see `scripts/reseed-admin.sql`.
 
 1. Write the new migration file in `supabase/migrations/` (next number in sequence).
 2. **Back up the DB first.**
+2b. Regenerate the release manifest and commit it:
+   ```sh
+   ./scripts/gen-migration-manifest.sh    # writes supabase/migrations/.manifest.json
+   ```
+   `migration-manifest.test.ts` fails when the committed manifest disagrees with
+   the directory, so forgetting this fails CI rather than shipping an image that
+   claims to expect a schema it does not.
 3. Apply it manually by piping the file over SSH into the Postgres container, stopping on the first error:
    ```sh
    cat supabase/migrations/000NN_your_change.sql \
@@ -126,6 +133,29 @@ To re-seed the primary admin from scratch, see `scripts/reseed-admin.sql`.
    Nothing enforces this step, which is how the file once got 18 tables behind.
 
 Nothing in CI or the app runs SQL — so migrations are always a deliberate manual step.
+
+### Before promoting an image: preflight (mandatory)
+
+```sh
+./scripts/db-migrate.sh preflight prod       # or staging
+```
+
+This is **the authoritative schema-compatibility gate** (F-012). It compares
+`supabase/migrations/.manifest.json` — the rollup of every migration's version
+and checksum — against `public.schema_migrations`, and exits non-zero on a
+pending file, a checksum that drifted after the migration was applied, or a
+database that is *ahead* of the checkout (promoting would be a downgrade).
+Exit 3 is its own state: the database has no `schema_migrations` table at all,
+which is a bootstrap problem rather than a version mismatch.
+
+**The readiness probe deliberately does not check this.** Readiness gates the
+proxy backend, so a lagging database would fail it on every replica at once,
+empty the local backend pool, and hand the site to a mesh peer talking to the
+same database — turning a blocked promotion into a total outage. Readiness
+answers "can this container reach the database" and only that. Schema
+compatibility is a release-time decision made once, by a human, here.
+
+Preserve the preflight output in the release record.
 
 ---
 

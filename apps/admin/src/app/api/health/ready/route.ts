@@ -51,6 +51,27 @@ export const runtime = 'nodejs';
 // floors the proxy's own healthy() check) out of the blast radius of an edge
 // wobble. Until the variable is set, keep treating a simultaneous
 // all-backends-unhealthy event as "suspect the edge first".
+// WHAT THIS PROBE DELIBERATELY DOES NOT CHECK: whether the database is at the
+// schema this image expects (F-012).
+//
+// The audit asked for one of readiness or a separate preflight to be
+// authoritative about schema compatibility. It is the preflight —
+// `./scripts/db-migrate.sh preflight <target>`, which compares
+// supabase/migrations/.manifest.json against public.schema_migrations and
+// refuses the promotion on any pending file, checksum drift, or a database
+// ahead of the checkout.
+//
+// It cannot be this route, and the reason is in the paragraphs above. Readiness
+// gates the proxy backend. A lagging database is the same for every replica at
+// once, so failing here would empty the local backend pool and hand the site to
+// a mesh peer talking to the same database, which fails identically. A schema
+// mismatch would become a total outage instead of a blocked promotion — and an
+// outage nothing could clear except applying the migration under load.
+//
+// So this asks only what a readiness probe should: can THIS container reach the
+// database. Schema compatibility is a release-time decision, made once, by a
+// human, before the image is promoted.
+
 const PROBE_TIMEOUT_MS = 1500;
 
 // Every refusal is this exact body — no version string, no configuration value,
