@@ -179,9 +179,60 @@ async function convertMatchToCasualImpl(matchId: string, reason: string) {
   const admin = await requireCapability('matches.convert.write');
   const adminClient = createAdminClient();
 
-  const { data: m } = await adminClient.from('matches').select('result_status').eq('id', matchId).single();
+  // THE BRANCH KEYS ON THE TARGET STATE, NOT ON `result_status` ALONE, AND
+  // THAT IS THE WHOLE POINT.
+  //
+  // 00192 bound the dispute claim to the resolution it was taken for, on the
+  // stated grounds that "both mutations are idempotent for their own type, so
+  // re-running one is harmless". For this one that was false, and the failure
+  // it left behind is worse than the divergent outcome 00192 closed:
+  //
+  //   1. A pending/disputed match takes the else branch below and is confirmed
+  //      as casual by apply_match_result.
+  //   2. The dispute close fails. The match mutation has already committed.
+  //   3. The admin retries as the SAME resolution — which 00192 permits, and
+  //      must permit, because it is the only resolution the dispute will now
+  //      accept.
+  //   4. A branch on live `result_status` alone now reads 'confirmed' and takes
+  //      the OTHER path: reverse_match_result, which sets 'voided'.
+  //
+  // The dispute would then close as converted_to_casual against a voided match,
+  // with the rating that step 1 applied reversed back out. So the question is
+  // not "what is this match's status" but "how much of the conversion has
+  // already landed", and every partial state has to answer it:
+  //
+  //   fully converted (casual + unrated + settled)  -> nothing left to do
+  //   voided, flags not yet written                 -> flags only; re-confirming
+  //                                                    would double head-to-head
+  //   confirmed and still rated                     -> reverse, then flags
+  //   never confirmed                               -> flags, then confirm
+  //
+  // A match that was ALWAYS casual and is only now being disputed is why the
+  // first arm also tests the status: it is already casual and unrated, but it
+  // still needs confirming, so it must fall through to the last arm.
+  const { data: m } = await adminClient
+    .from('matches')
+    .select('result_status, event_type, rated_flag')
+    .eq('id', matchId)
+    .single();
+  if (!m) throw new Error('Match not found');
 
-  if (m?.result_status === 'confirmed') {
+  const flagsWritten = m.event_type === 'casual' && m.rated_flag === false;
+  const settled = m.result_status === 'confirmed' || m.result_status === 'voided';
+
+  if (flagsWritten && settled) {
+    // A retry of an attempt that already got the match all the way there. Fall
+    // through to the note and the audit row — those are what the failed attempt
+    // never reached, and they are the reason this is not an early return.
+  } else if (m.result_status === 'voided') {
+    // Elo already reversed, by an earlier attempt of this same conversion or by
+    // a prior void. Only the classification is missing.
+    const { error } = await adminClient
+      .from('matches')
+      .update({ rated_flag: false, event_type: 'casual' })
+      .eq('id', matchId);
+    if (error) throw new Error(error.message);
+  } else if (m.result_status === 'confirmed') {
     // Elo was applied — reverse it (this also marks the match voided). We keep
     // the existing "voided + casual flags" outcome for an already-confirmed
     // match to avoid re-firing the on_match_confirmed stats trigger.
