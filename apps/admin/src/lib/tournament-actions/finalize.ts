@@ -128,6 +128,15 @@ export async function applyPlacementBonuses(
   // unique index excludes nobody and a second run would pay it in full again.
   // 00189 marks those events, and this refuses them: the per-subject facts are
   // gone, so a human has to look at the ratings and decide.
+  //
+  // 00190 widened WHICH events get that marker, because 00189 still asked the
+  // audit log and the audit log is best-effort: a pre-ledger payment whose
+  // audit insert failed left no row for 00189 to find. 00190 asks the event
+  // instead — completed, bonus-enabled and no grant rows at all means "cannot
+  // prove this was not paid", which for an irreversible rating movement is the
+  // same answer as "assume it was". It inserted zero extra rows on both hosts,
+  // so this is the same set of events as before; the difference is that it is
+  // now closed by construction rather than by that set happening to be empty.
   const { data: legacyPaid, error: legacyErr } = await adminClient
     .rpc('event_has_legacy_bonus_payment', { p_event_id: eventId });
   // Fail closed for the same reason readBonusLedger does — not knowing whether
