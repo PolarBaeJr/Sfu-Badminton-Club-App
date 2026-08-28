@@ -2,13 +2,24 @@
 #
 # db-migrate.sh - report and apply supabase/migrations against a live database.
 #
-#   ./scripts/db-migrate.sh status  [prod|staging]
+#   ./scripts/db-migrate.sh status   [prod|staging]
 #   ./scripts/db-migrate.sh backfill [prod|staging]
-#   ./scripts/db-migrate.sh apply   [prod|staging] <version>
+#   ./scripts/db-migrate.sh prepare  [prod|staging] <version>
+#   ./scripts/db-migrate.sh apply    [prod|staging] <version> [--yes]
 #
 # Everything runs over `ssh pi` into the database container. `status` is read
 # only and safe to run any time. `backfill` and `apply` write, and print the
 # exact SQL they are about to run before running it.
+#
+# `prepare` USED TO BE CALLED `apply`, AND THAT WAS A TRAP. It builds the
+# bundle, prints an ssh command, and exits 0 without running it. The final line
+# says "Read the bundle, then run", so the behaviour was discoverable — but a
+# command named `apply` that exits successfully having applied nothing is the
+# wrong thing to be reading carefully at 2am during a release. The name now
+# describes what it does, and `apply` does what its name says: it runs the
+# bundle, then CONFIRMS against the database that the migration row landed with
+# the expected checksum before reporting success. Bundle creation is never
+# treated as evidence of anything.
 #
 # Two things this script exists to get right, both of which have gone wrong by
 # hand before:
@@ -169,9 +180,11 @@ cmd_backfill() {
   echo "  ssh pi 'docker exec -i $CONTAINER psql -U postgres -d postgres -v ON_ERROR_STOP=1' < $sql_file"
 }
 
-cmd_apply() {
+# Builds the bundle (migration + its schema_migrations row) and echoes its path.
+# Applying it is the caller's job — cmd_apply below, or an operator by hand.
+cmd_prepare() {
   local v="${3:-}"
-  [ -n "$v" ] || { echo "usage: $0 apply $target <version>" >&2; exit 2; }
+  [ -n "$v" ] || { echo "usage: $0 prepare $target <version>" >&2; exit 2; }
   local f
   f="$(ls "$MIGRATIONS_DIR/${v}_"*.sql 2>/dev/null | head -1)" || true
   [ -n "$f" ] || { echo "no migration file for version '$v'" >&2; exit 1; }
@@ -223,14 +236,86 @@ cmd_apply() {
   echo "wrapping:  $reason"
   echo "bundle:    $bundle  (the file, plus its schema_migrations row)"
   echo
-  echo "Read the bundle, then run:"
+  echo "NOTHING HAS BEEN APPLIED. Read the bundle, then either run:"
   echo
   echo "  ssh pi 'docker exec -i $CONTAINER psql -U postgres -d postgres -v ON_ERROR_STOP=1$flag' < $bundle"
+  echo
+  echo "or let the runner do it and verify the result:"
+  echo
+  echo "  $0 apply $target $v"
+
+  # Exported for cmd_apply, which reuses this whole preparation step rather
+  # than duplicating the wrapping and splicing decisions.
+  PREPARED_BUNDLE="$bundle"
+  PREPARED_FLAG="$flag"
+  PREPARED_FILE="$f"
 }
+
+cmd_apply() {
+  local v="${3:-}"
+  [ -n "$v" ] || { echo "usage: $0 apply $target <version> [--yes]" >&2; exit 2; }
+
+  cmd_prepare "$@"
+  echo
+
+  if [ "$ASSUME_YES" != "1" ]; then
+    # A live database write. Refuse to guess when nobody is at the keyboard.
+    if [ ! -t 0 ]; then
+      echo "Refusing to apply non-interactively without --yes." >&2
+      exit 1
+    fi
+    printf 'Apply %s to %s? Type the target name to confirm: ' "$v" "$target"
+    read -r reply
+    [ "$reply" = "$target" ] || { echo "Not confirmed; nothing applied." >&2; exit 1; }
+  fi
+
+  echo "applying..."
+  # ON_ERROR_STOP is what makes a mid-file failure a non-zero exit rather than a
+  # partially applied migration reported as fine.
+  if ! ssh pi "docker exec -i $CONTAINER psql -U postgres -d postgres -v ON_ERROR_STOP=1$PREPARED_FLAG" < "$PREPARED_BUNDLE"; then
+    echo >&2
+    echo "psql FAILED. $v is NOT recorded as applied — the row is spliced into the" >&2
+    echo "same transaction as the DDL, so a failure rolls both back together." >&2
+    echo "Bundle kept for inspection: $PREPARED_BUNDLE" >&2
+    exit 1
+  fi
+
+  # THE POINT OF THE COMMAND. A zero exit from psql is necessary and not
+  # sufficient: read the row back and compare the checksum to the file on disk.
+  # Success is what the database says happened, never what the runner intended.
+  local recorded expected
+  expected="$(checksum "$PREPARED_FILE")"
+  recorded="$(psql_value "SELECT checksum FROM public.schema_migrations WHERE version = '$v';")"
+  if [ -z "$recorded" ]; then
+    echo "psql exited 0 but $v has no schema_migrations row on $target." >&2
+    echo "Do not assume it applied. Bundle: $PREPARED_BUNDLE" >&2
+    exit 1
+  fi
+  if [ "$recorded" != "$expected" ]; then
+    echo "$v recorded with checksum $recorded, expected $expected." >&2
+    echo "The file on disk is not the file that was applied. Bundle: $PREPARED_BUNDLE" >&2
+    exit 1
+  fi
+
+  rm -f "$PREPARED_BUNDLE"
+  echo
+  echo "APPLIED and VERIFIED: $v on $target (checksum $expected)"
+}
+
+ASSUME_YES=0
+args=()
+for a in "$@"; do
+  case "$a" in
+    --yes|-y) ASSUME_YES=1 ;;
+    *) args+=("$a") ;;
+  esac
+done
+set -- "${args[@]+"${args[@]}"}"
 
 case "${1:-}" in
   status)   cmd_status ;;
   backfill) cmd_backfill ;;
+  prepare)  cmd_prepare "$@" ;;
   apply)    cmd_apply "$@" ;;
-  *) sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  *) sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac

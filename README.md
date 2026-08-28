@@ -2,7 +2,7 @@
 
 A members' web app (installable PWA) for running a university badminton club: a live **ELO ladder** (singles + doubles), **seasons & fees**, **sessions with attendance**, a full **tournament system**, and a private **admin console** — plus a public landing page, leaderboard, and exec roster.
 
-**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin) · **Status:** executive beta (August 2026) · **Version:** 1.1.0
+**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin) · **Status:** executive beta (August 2026) · **Version:** see `version` in the root `package.json` (also shown in the app under Settings → About)
 
 > New here? Start with the plain-language overview in **[docs/project/](docs/project/README.md)**.
 
@@ -41,7 +41,7 @@ Full breakdown: **[docs/project/06-tech-stack.md](docs/project/06-tech-stack.md)
 
 ## Quick start (local development)
 
-**Prerequisites:** Node 20, npm 10.
+**Prerequisites:** Node 24 (`engines.node` is `>=24.0.0 <25`, enforced by `engine-strict` in `.npmrc`), npm 10.
 
 ```sh
 # 1. Install
