@@ -449,10 +449,44 @@ const makeClient = vi.hoisted(() => () => {
     return Promise.resolve({ data: gone.length, error: null });
   }
 
+  // Mirrors apply_placement_bonus (00179): read the CURRENT rating, add,
+  // clamp to the CONFIGURED bounds, write, and report what actually landed.
+  // The clamp used to happen in TypeScript before the write; the point of
+  // 00179 is that the read, the add and the write are one locked operation, so
+  // the tests that assert clamping are really asserting this function.
+  function placementBonusRpc(args: Record<string, unknown>) {
+    const pid = args.p_player_id as string;
+    const field = args.p_discipline === 'singles' ? 'singles_elo' : 'doubles_elo';
+    const row = (store.db.ratings ?? []).find((r) => r.player_id === pid);
+    // The SQL raises rather than inventing 400 for a player with no rating row.
+    if (!row) {
+      return Promise.resolve({
+        data: null,
+        error: { message: `No ratings row for player ${pid} — cannot award a placement bonus` },
+      });
+    }
+    // Consulted with the same { table, op, filters, payload } shape a direct
+    // PostgREST write would present, so fault fixtures written against
+    // `ratings`/`update` keep describing this write after it moved into SQL.
+    const fault = faultFor('ratings', 'update', { filters: [['player_id', pid]], payload: {} });
+    if (fault) return Promise.resolve({ data: null, error: { message: fault.message } });
+    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
+    let lo = (settings?.min_elo as number | undefined) ?? 100;
+    let hi = (settings?.max_elo as number | undefined) ?? 1500;
+    // rating_bounds() falls back wholesale when the pair is nonsensical.
+    if (hi <= lo) { lo = 100; hi = 1500; }
+    const before = row[field] as number;
+    const after = Math.min(Math.max(before + ((args.p_bonus as number) ?? 0), lo), hi);
+    row[field] = after;
+    row.updated_at = new Date().toISOString();
+    return Promise.resolve({ data: { new_elo: after, applied_delta: after - before }, error: null });
+  }
+
   function rpc(name: string, args: Record<string, unknown>) {
     if (name === 'apply_tournament_match_rating') return applyRpc(args);
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
     if (name === 'delete_phase_matches') return deletePhaseRpc(args);
+    if (name === 'apply_placement_bonus') return placementBonusRpc(args);
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
