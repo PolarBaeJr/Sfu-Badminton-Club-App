@@ -14,6 +14,13 @@
 # Skipped: prod auth sessions / refresh_tokens / etc — staging gets
 # fresh sessions.
 #
+# Two things are deliberately NOT faithful copies of prod afterwards, because a
+# faithful copy is the wrong answer for both:
+#   - Discord config is staging's own, never prod's (see the capture/scrub pair
+#     below) — inheriting prod's would aim the staging bot at the real guild.
+#   - $STAGING_ADMIN_EMAILS are re-granted admin on staging, because prod roles
+#     leave the owner unable to use the staging admin console at all.
+#
 # Idempotent. Safe to re-run. Existing dev DB rows in those scopes are wiped,
 # and so is anything in dev's public schema that prod does not have — see
 # "the drop is explicit" below.
@@ -157,8 +164,9 @@ ACL_SQL="$OUT_DIR/acls-$TS.sql"
 # cron_config.discord_service_secret in plaintext. 0600, and removed on every
 # exit path including failure.
 DISCORD_SQL="$(mktemp)"
-chmod 600 "$DISCORD_SQL"
-trap 'rm -f "$DISCORD_SQL"' EXIT
+DISCORD_RAW="$(mktemp)"
+chmod 600 "$DISCORD_SQL" "$DISCORD_RAW"
+trap 'rm -f "$DISCORD_SQL" "$DISCORD_RAW"' EXIT
 PUB_SQL="$OUT_DIR/publications-$TS.sql"
 
 # Verify both containers are up
@@ -278,22 +286,33 @@ fi
 # "staging had no config" must end as "staging has no config", NEVER as
 # "staging inherits prod's". The delete below is therefore unconditional; this
 # capture only decides what goes back afterwards.
+# psql is asked for -q, and the result is then FILTERED to INSERT lines anyway.
+# Both, because -q alone was not enough and the failure was silent for a night:
+# without it psql writes the command tag of every statement to stdout, so
+# `CREATE TEMP TABLE` and the `DO` block put the literal words "CREATE TABLE"
+# and "DO" at the top of the captured file. Replaying that is
+# `ERROR: syntax error at or near "DO"` -- psql had already read "CREATE TABLE"
+# and "DO" as one unterminated statement -- which under ON_ERROR_STOP + set -e
+# killed the whole script AFTER the scrub had deleted prod's rows. Staging woke
+# up with no Discord config at all, and the NOTIFY and the retention sweep at
+# the end never ran either. The grep is the actual guarantee: it does not depend
+# on which psql outputs are considered "informational" by which version.
 echo "[$(date -u +%FT%TZ)] capturing staging's own Discord config..."
-docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 > "$DISCORD_SQL" <<'SQL'
+docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 > "$DISCORD_RAW" <<'SQL'
 -- Dynamic SQL, and it has to be. A plain `SELECT ... FROM public.discord_guilds
 -- WHERE to_regclass(...) IS NOT NULL` does NOT survive the table being absent:
 -- Postgres resolves every relation at parse time, long before any WHERE is
 -- evaluated, so the guard never runs and the whole script dies on a staging
 -- database that predates 00167. EXECUTE defers the parse until the IF has
 -- already decided the table is there.
-CREATE TEMP TABLE _captured (stmt text);
+CREATE TEMP TABLE _captured (ord int, stmt text);
 
 DO $do$
 BEGIN
   IF to_regclass('public.discord_guilds') IS NOT NULL THEN
     EXECUTE $q$
       INSERT INTO _captured
-      SELECT format(
+      SELECT 1, format(
         'INSERT INTO public.discord_guilds (guild_id, label, enabled) VALUES (%L, %L, %L) '
         'ON CONFLICT (guild_id) DO UPDATE SET label = EXCLUDED.label, enabled = EXCLUDED.enabled;',
         guild_id, label, enabled)
@@ -304,7 +323,7 @@ BEGIN
   IF to_regclass('public.discord_guild_roles') IS NOT NULL THEN
     EXECUTE $q$
       INSERT INTO _captured
-      SELECT format(
+      SELECT 4, format(
         'INSERT INTO public.discord_guild_roles (guild_id, role_name, role_id) VALUES (%L, %L, %L) '
         'ON CONFLICT (guild_id, role_name) DO UPDATE SET role_id = EXCLUDED.role_id;',
         guild_id, role_name, role_id)
@@ -315,7 +334,7 @@ BEGIN
   IF to_regclass('public.discord_settings') IS NOT NULL THEN
     EXECUTE $q$
       INSERT INTO _captured
-      SELECT format(
+      SELECT 2, format(
         'INSERT INTO public.discord_settings (key, value) VALUES (%L, %L) '
         'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;', key, value)
       FROM public.discord_settings
@@ -327,19 +346,82 @@ BEGIN
     -- table holds unrelated secrets that are none of this script's business.
     EXECUTE $q$
       INSERT INTO _captured
-      SELECT format(
+      SELECT 3, format(
         'INSERT INTO public.cron_config (key, value) VALUES (%L, %L) '
         'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;', key, value)
       FROM public.cron_config
       WHERE key IN ('discord_bot_url', 'discord_service_secret')
     $q$;
   END IF;
+
+  -- player_discord_links belongs here for the SAME reason as the tables above,
+  -- and was the remaining hole: the scrub did not clear it, so once prod has
+  -- links, staging inherits PROD MEMBERS' Discord accounts. A /sync on staging
+  -- would then try to grant roles to real people's Discord ids. It is not
+  -- guild-scoped -- the row is (player_id -> discord_user_id) -- so nothing in
+  -- the data marks it as belonging to another server.
+  --
+  -- The WHERE EXISTS is not optional. player_id is a FK onto players, and by
+  -- the time this is replayed players holds PROD's rows; a staging link for
+  -- somebody prod has since deleted would abort the restore. Player ids are
+  -- stable across a snapshot (staging's players ARE prod's), so a live member's
+  -- link survives the night; a deleted member's is silently dropped, which is
+  -- the correct outcome rather than a nightly failure.
+  IF to_regclass('public.player_discord_links') IS NOT NULL THEN
+    EXECUTE $q$
+      INSERT INTO _captured
+      SELECT 5, format(
+        'INSERT INTO public.player_discord_links (player_id, discord_user_id, linked_at, last_synced_at) '
+        'SELECT %L::uuid, %L, %L::timestamptz, %L::timestamptz '
+        'WHERE EXISTS (SELECT 1 FROM public.players WHERE id = %L::uuid) '
+        'ON CONFLICT (player_id) DO UPDATE SET discord_user_id = EXCLUDED.discord_user_id;',
+        player_id, discord_user_id, linked_at, last_synced_at, player_id)
+      FROM public.player_discord_links
+    $q$;
+  END IF;
 END
 $do$;
 
--- Ordered so the parent row is inserted before the rows that reference it.
-SELECT stmt FROM _captured ORDER BY stmt LIKE 'INSERT INTO public.discord_guild_roles%';
+-- Ordered so a parent row is inserted before anything that references it:
+-- guilds(1) before guild_roles(4), and players are already restored by the
+-- time links(5) run. An explicit rank, not the previous `ORDER BY stmt LIKE
+-- '...guild_roles%'` boolean, which only ever encoded ONE of these pairs and
+-- silently had no room for a third table.
+SELECT stmt FROM _captured ORDER BY ord, stmt;
 SQL
+
+# Only generated statements reach the replay file. `|| true` because grep exits
+# 1 on no match, and "staging has no Discord config" is a legitimate state that
+# must not fail the run -- the scrub below is unconditional precisely so that
+# an empty capture still ends as "staging has none" rather than "staging keeps
+# prod's". Note this cannot mask a psql failure: psql wrote $DISCORD_RAW under
+# set -e on its own line, so a failed capture has already stopped the script.
+grep '^INSERT INTO public\.' "$DISCORD_RAW" > "$DISCORD_SQL" || true
+
+# REPLAY IT ONCE, HERE, AND ROLL IT BACK -- while staging is still intact.
+#
+# This is the guard the previous version was missing, and it is the same shape
+# as the privilege and publication floors above: the failure it catches is one
+# that otherwise lands AFTER the point of no return. The scrub deletes prod's
+# Discord rows and the replay puts staging's back; if the replay is malformed,
+# ON_ERROR_STOP + set -e abort the run in between, and staging is left with
+# nothing -- which is silent, because an empty discord_guilds reads to the bot
+# as "not configured yet" rather than as an error.
+#
+# The tables still hold staging's own rows at this point, so every ON CONFLICT
+# path is exercised for real. ROLLBACK means nothing is kept.
+if [ -s "$DISCORD_SQL" ]; then
+  echo "[$(date -u +%FT%TZ)] test-replaying captured Discord config (rolled back)..."
+  if ! { echo 'BEGIN;'; cat "$DISCORD_SQL"; echo 'ROLLBACK;'; } \
+       | docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
+           -v ON_ERROR_STOP=1 -q; then
+    echo "FATAL: staging's captured Discord config does not replay cleanly." >&2
+    echo "       Refusing to drop staging -- the scrub would delete prod's rows" >&2
+    echo "       and this would then fail to put staging's back, leaving the bot" >&2
+    echo "       unconfigured with nothing in any log but this one." >&2
+    exit 1
+  fi
+fi
 
 # CASCADE, and ours rather than pg_dump's. The NOTICEs list what dev had that
 # prod does not — normally the migrations being rehearsed on staging.
@@ -459,6 +541,12 @@ BEGIN
     DELETE FROM public.cron_config
      WHERE key IN ('discord_bot_url', 'discord_service_secret');
   END IF;
+  -- Prod's member->Discord mappings are as much "prod's Discord setup" as the
+  -- guild row is, and they are not guild-scoped, so nothing downstream can tell
+  -- they came from another server. Cleared unconditionally, same as the rest.
+  IF to_regclass('public.player_discord_links') IS NOT NULL THEN
+    DELETE FROM public.player_discord_links;
+  END IF;
 END
 $do$;
 SQL
@@ -468,6 +556,67 @@ if [ -s "$DISCORD_SQL" ]; then
   docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$DISCORD_SQL"
 else
   echo "[$(date -u +%FT%TZ)] staging had no Discord config to restore (left empty, not inherited)."
+fi
+
+# ---------------------------------------------------------------------------
+# RE-GRANT THE STAGING-ONLY ADMIN.
+#
+# The restore above put PROD's players table on staging, so staging roles ARE
+# prod roles -- and the owner is `player` + is_exec on prod, not admin. is_exec
+# on its own holds ZERO writes (EXEC_BASELINE in apps/admin/src/lib/permissions.ts
+# is eight section pages and four reads), so the admin console renders in full
+# and every Edit control is simply absent. That reads as "the app is broken",
+# not as "you are not an admin here", and it has already cost one debugging
+# session chasing a permissions bug that did not exist.
+#
+# Admin on staging grants nothing that matters -- staging is a disposable copy
+# of prod that is overwritten again tomorrow morning.
+#
+# PROD IS NOT REACHABLE FROM HERE. This runs against DEV_CONTAINER, like every
+# other write in this script; PROD_CONTAINER is only ever read from.
+#
+# The privileged-column trigger allows this: guard_player_privileged_columns()
+# opens with `IF auth.uid() IS NULL OR is_admin(auth.uid())`, and a psql session
+# has no JWT subject, so auth.uid() is NULL. It is one of the few places where
+# going in through psql genuinely behaves differently from going in through the
+# app, and here that is the point.
+#
+# Comma-separated and overridable, so the next person who needs an account on
+# staging edits an env var and not this file.
+STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca}"
+
+if [ -n "$STAGING_ADMIN_EMAILS" ]; then
+  echo "[$(date -u +%FT%TZ)] re-granting staging admin: $STAGING_ADMIN_EMAILS"
+  grant_result=$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
+      -Atq -v ON_ERROR_STOP=1 -v emails="$STAGING_ADMIN_EMAILS" <<'SQL'
+WITH t AS (
+  SELECT btrim(e) AS email
+    FROM unnest(string_to_array(:'emails', ',')) AS e
+   WHERE btrim(e) <> ''
+), upd AS (
+  UPDATE public.players p
+     SET role = 'admin', is_exec = TRUE
+    FROM t
+   WHERE p.email = t.email
+  RETURNING p.email
+)
+-- Reported per requested address rather than as a count, because the failure
+-- worth seeing is "that email is not in prod at all" (a typo, or an account
+-- that was never created), and a count of 0 does not say which one.
+SELECT CASE WHEN u.email IS NULL THEN 'MISSING ' ELSE 'granted ' END || t.email
+  FROM t LEFT JOIN upd u ON u.email = t.email
+ ORDER BY 1;
+SQL
+  )
+  echo "$grant_result" | sed 's/^/  /'
+  # Not fatal: a stale address in the list is not a reason to fail a refresh
+  # that has otherwise completely succeeded. But it must be visible, because the
+  # symptom on the other end is a console with no buttons.
+  if echo "$grant_result" | grep -q '^MISSING '; then
+    echo "WARNING: the above address(es) are not in prod's players table, so" >&2
+    echo "         nothing was granted for them. Staging will render the admin" >&2
+    echo "         console for that account but show no Edit controls at all." >&2
+  fi
 fi
 
 # PostgREST caches the schema, and the app reads these tables through it. A
