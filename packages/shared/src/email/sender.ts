@@ -156,7 +156,14 @@ async function sendCategoryEmail(
         .select('notification_preferences')
         .eq('email', address)
         .maybeSingle();
-      void preferenceError;
+      // The POLICY does not change — a failed preference read still sends, for
+      // the reason above. What changes is that it stops being silent. One
+      // member's lookup failing is noise; the read failing for EVERY recipient
+      // of a digest run means the club just mailed everyone who opted out, and
+      // the old `void preferenceError` left exactly nothing to notice that by.
+      // Same lesson as the suppression gate above, one severity down: fail open
+      // if you must, but never fail open quietly.
+      if (preferenceError) warnPreferenceCheckFailed(preferenceError.message);
       if (player && !isEmailCategoryEnabled(player.notification_preferences, category)) {
         return { sent: false, reason: 'opted_out' };
       }
@@ -226,6 +233,22 @@ function warnUnsubscribeUnavailable(base: string | undefined): void {
     'Every notification email from this container leaves "Report spam" as the recipient\'s only ' +
     'option, which costs sender reputation for the whole club. Set it in .env and restart. ' +
     'Reported once per process.',
+  );
+}
+
+// ONCE PER PROCESS, like the unsubscribe warning above and for the same reason:
+// this sits inside the per-recipient loop of every bulk send, so reporting each
+// occurrence would turn one broken read into thousands of identical lines.
+let preferenceWarningIssued = false;
+
+function warnPreferenceCheckFailed(message: string): void {
+  if (preferenceWarningIssued) return;
+  preferenceWarningIssued = true;
+
+  console.warn(
+    `email: the notification-preference lookup failed (${message}). Mail is still being sent — ` +
+    'a failed lookup is not evidence the member said no — but while this persists, category ' +
+    'opt-outs are NOT being honoured. Reported once per process.',
   );
 }
 
