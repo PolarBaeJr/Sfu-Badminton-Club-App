@@ -308,14 +308,25 @@ BEGIN
   -- WHAT WAS ACTUALLY BUILT (00197). Publication used to assert nothing at all
   -- about the matches — only about the field they were built from.
   SELECT COUNT(*),
-         COUNT(*) FILTER (WHERE m.draw_generation_id IS DISTINCT FROM p_generation)
+         COUNT(*) FILTER (WHERE m.draw_generation_id IS NOT NULL
+                            AND m.draw_generation_id <> p_generation)
     INTO v_matches, v_foreign
     FROM tournament_matches m
    WHERE m.event_id = p_event_id
      AND (p_phase IS NULL OR m.phase = p_phase);
 
-  -- Unreachable while the trigger stands, which is exactly why it is asserted:
-  -- this is what notices the trigger having been dropped.
+  -- A NULL STAMP IS NOT FOREIGN, and the predicate says so explicitly rather
+  -- than leaning on IS DISTINCT FROM, which would have counted it. This is the
+  -- same judgement the trigger makes twenty lines up and the two halves of this
+  -- migration have to agree: an unstamped row was not written by a generator,
+  -- so it is not evidence of a race. Counting it here would have let a single
+  -- unstamped row block publication of the phase forever, as a hard fault
+  -- rather than a refusal the desk can act on.
+  --
+  -- Narrowing costs nothing the check was there for. A superseded generator
+  -- always stamps — that is what makes it superseded — so if the trigger is
+  -- ever dropped, its rows still arrive with a claim that is NOT NULL and NOT
+  -- this one, and are still caught here.
   IF v_foreign > 0 THEN
     RETURN jsonb_build_object('ok', FALSE, 'reason', 'foreign_matches', 'count', v_foreign);
   END IF;

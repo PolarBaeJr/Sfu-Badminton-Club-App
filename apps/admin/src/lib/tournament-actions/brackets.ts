@@ -341,6 +341,33 @@ async function deletePhaseMatches(
   eventId: string,
   phase: TournamentMatchPhase | null,
 ): Promise<string> {
+  // SCHEMA FENCE, AND IT HAS TO BE BEFORE THE TEARDOWN (00197).
+  //
+  // delete_phase_matches commits its DELETE in its own round trip. If this
+  // image is running against a database where 00197 has not been applied yet,
+  // the RPC is still 00144's integer-returning version: the delete lands, and
+  // then the generation check below throws over a phase that no longer exists
+  // and cannot be rebuilt until the migration runs. Deploying the image before
+  // the migration is the DEFAULT order here — images auto-update from CI while
+  // migrations are run by hand — so this is the likely sequence, not the exotic
+  // one.
+  //
+  // Asking for the column 00197 adds is the cheapest way to date the schema:
+  // on an old database PostgREST answers 42703 and nothing has been destroyed
+  // yet. One extra round trip on an operation an exec performs by hand.
+  const { error: fenceError } = await adminClient
+    .from('tournament_events')
+    .select('draw_generation_id')
+    .eq('id', eventId)
+    .maybeSingle();
+  if (fenceError) {
+    Sentry.captureException(fenceError);
+    throw new Error(
+      'This draw cannot be fenced against a competing rebuild, so it was left alone. ' +
+        'The database is likely older than this version of the app; no matches were deleted.',
+    );
+  }
+
   const { data, error } = await adminClient.rpc('delete_phase_matches', {
     p_event_id: eventId,
     p_phase: phase,

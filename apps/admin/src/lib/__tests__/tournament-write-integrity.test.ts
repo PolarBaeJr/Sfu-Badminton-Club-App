@@ -15,8 +15,14 @@ interface Fault {
   table: string;
   op: Op;
   message: string;
-  /** Narrow the fault to one row: gets the filters and the payload of the write. */
-  when?: (ctx: { filters: Array<[string, unknown]>; payload: Row }) => boolean;
+  /**
+   * Narrow the fault to one row: gets the filters and the payload of the write,
+   * and the column list it asked for. `cols` is what lets a fault stand for a
+   * MISSING COLUMN rather than a broken table — PostgREST answers 42703 only to
+   * the query that names the column, and a fault that took down every read of
+   * the table instead would model an outage, not an out-of-date schema.
+   */
+  when?: (ctx: { filters: Array<[string, unknown]>; payload: Row; cols: string }) => boolean;
 }
 
 const store = vi.hoisted(() => ({
@@ -37,6 +43,17 @@ const store = vi.hoisted(() => ({
    * lives.
    */
   beforeMatchInsert: null as null | (() => void),
+  /**
+   * "This database predates 00197" — ONE fact, honoured everywhere it shows.
+   *
+   * It has to be one switch rather than a hand-placed fault, because the two
+   * observable consequences are not independent: the column the fence probes is
+   * missing AND delete_phase_matches is still 00144's integer-returning
+   * version. A test that arranged only one of them would be describing a
+   * database that cannot exist, and the mutation proof would land on the wrong
+   * line.
+   */
+  oldSchema: false,
   // Stands in for `gen_random_uuid()`. Bracket generation inserts a match shell
   // and immediately uses the id it gets back to wire up the next round, so an
   // insert that returns no id cannot be exercised at all.
@@ -107,8 +124,16 @@ const makeClient = vi.hoisted(() => () => {
         ? { ...r, event: (store.db.tournament_events ?? []).find((e) => e.id === r.event_id) ?? null }
         : { ...r };
 
-    const fault = () =>
-      store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when({ filters, payload })));
+    const fault = () => {
+      // 42703, and only for the query that names the missing column — the
+      // generator's own `select('*')` on this row still succeeds on an old
+      // database, it just comes back a column short.
+      if (store.oldSchema && table === 'tournament_events' && op === 'select'
+          && cols.includes('draw_generation_id')) {
+        return { table, op, message: 'column tournament_events.draw_generation_id does not exist' } as Fault;
+      }
+      return store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when({ filters, payload, cols })));
+    };
 
     const run = () => {
       const f = fault();
@@ -249,8 +274,8 @@ const makeClient = vi.hoisted(() => () => {
   // would, so the existing fault fixtures keep working — but the FIRST failure
   // restores the whole store and returns an error. A harness that let half the
   // writes survive could not tell the fixed behaviour from the bug it replaces.
-  const faultFor = (table: string, op: Op, ctx: { filters: Array<[string, unknown]>; payload: Row }) =>
-    store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when(ctx)));
+  const faultFor = (table: string, op: Op, ctx: { filters: Array<[string, unknown]>; payload: Row; cols?: string }) =>
+    store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when({ cols: '*', ...ctx })));
 
   // rating_setting_int('provisional_threshold', 8)
   const threshold = () => {
@@ -483,6 +508,9 @@ const makeClient = vi.hoisted(() => () => {
     const generation = `gen-${++store.seq}-draw`;
     const ev = (store.db.tournament_events ?? []).find((r) => r.id === eventId);
     if (ev) ev.draw_generation_id = generation;
+    // 00144 returned a bare count. The app reading `.generation` off that is
+    // the whole reason the fence has to run before the DELETE commits.
+    if (store.oldSchema) return Promise.resolve({ data: gone.length, error: null });
     return Promise.resolve({ data: { deleted: gone.length, generation }, error: null });
   }
 
@@ -740,6 +768,7 @@ beforeEach(() => {
   store.faults = [];
   store.beforeDeletePhase = null;
   store.beforeMatchInsert = null;
+  store.oldSchema = false;
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
     tournament_events: [{
@@ -2265,6 +2294,38 @@ describe('regenerating a draw that already exists', () => {
     });
     expect(publish.data).toMatchObject({ ok: false, reason: 'superseded' });
     expect(event().status).toBe('checkin');
+  });
+
+  it('REFUSES TO TEAR DOWN A DRAW AGAINST A DATABASE OLDER THAN THIS IMAGE, deleting nothing', async () => {
+    // The deploy order this repo actually runs. Images auto-update from CI the
+    // moment a merge lands; migrations are applied by hand afterwards. So the
+    // ordinary sequence is new-image-old-database, and in that window
+    // delete_phase_matches is still 00144's integer-returning version.
+    //
+    // Without the fence, the shape of the failure is the worst one available:
+    // the RPC commits its DELETE in its own round trip, the generation check
+    // then finds no generation in an integer and throws, and the phase is gone
+    // with nothing rebuilt. Pressing Generate again just repeats it. The fence
+    // turns that into a refusal with the draw untouched, by dating the schema
+    // BEFORE anything destructive runs.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const before = store.db.tournament_matches!.length;
+    expect(before).toBeGreaterThan(0);
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+
+    // 42703 — what PostgREST answers when 00197 has not been applied and the
+    // column the fence asks for does not exist yet.
+    store.oldSchema = true;
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    // FIRST, because it is the one that matters: the old draw is still
+    // standing. Remove the fence and this is what breaks — the teardown commits
+    // and the phase is gone, which no re-press can undo.
+    expect(store.db.tournament_matches!.length).toBe(before);
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/left alone/);
   });
 
   it('refuses when a match is ON COURT — no race required', async () => {
