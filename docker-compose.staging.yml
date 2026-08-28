@@ -205,7 +205,36 @@ services:
       # See the production compose for why this is unscalable: /bug's screenshot
       # rides an in-memory nonce between two independently routed interactions.
       proxy.unscalable: "true"
-      proxy.autoupdate: "true"
+      # NO proxy.autoupdate HERE, and it is not an oversight -- see below.
+      #
+      # THIS SERVICE MUST NOT BE REPLACED BY THE DASHBOARD. It is the only
+      # badminton container that compose both starts AND names
+      # (container_name: badminton-staging-bot above). Every dashboard recreate
+      # path -- autoupdate, replace_service, rolling_replace_service, even the
+      # label flip in set_autoupdate -- generates the new container's name
+      # unconditionally as `goproxy-<service>-<n>` and then removes the old one.
+      # Nothing in that path checks compose ownership.
+      #
+      # So a successful replace would leave `goproxy-badminton-staging-discord-bot-1`
+      # running and NO container answering to `badminton-staging-bot`. Compose
+      # cannot see that: the next `docker compose up -d bot` finds nothing under
+      # its container_name and starts a SECOND bot. Two bots on one Discord
+      # token, one of them invisible to compose forever after.
+      #
+      # This was masked until now. The host port this service used to publish
+      # made `inspectHostConfigUnknowns` refuse every replace before it reached
+      # createContainer -- an accidental guard, not a real one. Dropping that
+      # port (the commit before this one) removed the block and armed the trap,
+      # which is why the label goes now rather than later.
+      #
+      # Deploy this service with `docker compose -f docker-compose.staging.yml
+      # up -d bot` -- naming `bot` explicitly, never a bare `up -d`, because
+      # the player and admin services in this file are NOT what runs on staging.
+      #
+      # Production is unaffected: docker-compose.yml sets no container_name on
+      # any service, so the dashboard owns those outright and autoupdate there
+      # is correct.
+      #
       # See the production compose for why only the bot carries this: the
       # bucket is keyed per service, so the same label on the player app
       # (proxy.path "/") would meter the whole site against one bucket per
