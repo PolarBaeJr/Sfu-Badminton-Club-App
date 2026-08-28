@@ -154,8 +154,44 @@ export async function POST(request: Request) {
     const window = periodEnd.toISOString().slice(0, 10);
 
     const progress = await readProgress(admin, window);
+
+    // Everyone this window has already been DECIDED ABOUT — mailed, suppressed,
+    // opted out, failed, or claimed by an invocation still running. Read once;
+    // the claim below is what actually excludes, this only avoids walking over
+    // members another run has plainly finished.
+    const { data: settled, error: settledErr } = await admin
+      .from(DIGEST_DELIVERIES)
+      .select('player_id, claimed_at, completed_at')
+      .eq('week_start', window);
+    // Fail closed, for the same reason readProgress does: a failed read here is
+    // indistinguishable from "nobody has been mailed yet", and acting on that
+    // is the duplicate mailing this table exists to prevent.
+    if (settledErr) throw new Error(`Could not read digest deliveries: ${settledErr.message}`);
+    const already = new Set((settled ?? []).map((r) => r.player_id as string));
+
+    // Claims nobody closed. NOT retried — see the completion comment below and
+    // 00194. Reported, because a claim with no outcome is the one member this
+    // design may silently not mail, and the alert is what makes that a decision
+    // somebody can act on rather than a hole.
+    //
+    // BEFORE the already-complete gate, not after. A crash in the run that
+    // finishes the week strands its own claims and then nothing else runs, so
+    // reporting after the gate would be the one case that never reports.
+    const stranded = (settled ?? []).filter(
+      (r) => !r.completed_at && Date.parse(r.claimed_at as string) < now.getTime() - STRANDED_CLAIM_MS,
+    );
+    if (stranded.length > 0) {
+      Sentry.captureMessage(
+        `weekly-digest: ${stranded.length} delivery claim(s) for ${window} were never completed — those members may not have been mailed`,
+        'warning',
+      );
+    }
+
     if (progress.complete) {
-      return NextResponse.json({ ran_at: now.toISOString(), window, already_complete: true });
+      return NextResponse.json({
+        ran_at: now.toISOString(), window, already_complete: true,
+        stranded_claims: stranded.length,
+      });
     }
 
     // Only players who actually played. A digest saying "0 matches, no change"
@@ -246,20 +282,6 @@ export async function POST(request: Request) {
     // the name, because names are neither unique nor immutable.
     const eligible = Array.from(byPlayer.values()).sort((a, b) => (a.playerId < b.playerId ? -1 : 1));
 
-    // Everyone this window has already been DECIDED ABOUT — mailed, suppressed,
-    // opted out, failed, or claimed by an invocation still running. Read once;
-    // the claim below is what actually excludes, this only avoids walking over
-    // members another run has plainly finished.
-    const { data: settled, error: settledErr } = await admin
-      .from(DIGEST_DELIVERIES)
-      .select('player_id, claimed_at, completed_at')
-      .eq('week_start', window);
-    // Fail closed, for the same reason readProgress does: a failed read here is
-    // indistinguishable from "nobody has been mailed yet", and acting on that
-    // is the duplicate mailing this table exists to prevent.
-    if (settledErr) throw new Error(`Could not read digest deliveries: ${settledErr.message}`);
-    const already = new Set((settled ?? []).map((r) => r.player_id as string));
-
     const pending = eligible.filter(
       (a) => !already.has(a.playerId) && (!progress.after || a.playerId > progress.after),
     );
@@ -347,20 +369,6 @@ export async function POST(request: Request) {
       // would resend to everyone the batch had already reached.
       progress.after = agg.playerId;
       await writeProgress(admin, progress);
-    }
-
-    // Claims nobody closed. NOT retried — see the completion comment above and
-    // 00194. Reported, because a claim with no outcome is the one member this
-    // design may silently not mail, and the alert is what makes that a decision
-    // somebody can act on rather than a hole.
-    const stranded = (settled ?? []).filter(
-      (r) => !r.completed_at && Date.parse(r.claimed_at as string) < now.getTime() - STRANDED_CLAIM_MS,
-    );
-    if (stranded.length > 0) {
-      Sentry.captureMessage(
-        `weekly-digest: ${stranded.length} delivery claim(s) for ${window} were never completed — those members may not have been mailed`,
-        'warning',
-      );
     }
 
     const remaining = pending.length - batch.length;

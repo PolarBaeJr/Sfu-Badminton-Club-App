@@ -396,3 +396,28 @@ describe('weekly-digest — the per-recipient claim, not the cursor', () => {
     expect(Sentry.captureMessage).toHaveBeenCalled();
   });
 });
+
+describe('weekly-digest — a finished week still reports what it stranded', () => {
+  it('reports a stranded claim even once the week is marked complete', async () => {
+    const Sentry = await import('@sentry/nextjs');
+    matchRows = [row('p-00')];
+    await run();
+
+    // The week is complete, so every later POST short-circuits. If the sweep
+    // sat after that gate, a crash in the run that FINISHED the week would be
+    // the one case nothing ever reports.
+    deliveries.set('2026-08-17|p-99', {
+      week_start: '2026-08-17', player_id: 'p-99',
+      claimed_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+      completed_at: null, outcome: null, provider_message_id: null,
+    });
+    vi.clearAllMocks();
+
+    const res = await run();
+    const body = await res.json();
+
+    expect(body.already_complete).toBe(true);
+    expect(body.stranded_claims).toBe(1);
+    expect(Sentry.captureMessage).toHaveBeenCalled();
+  });
+});
