@@ -4,6 +4,7 @@ import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { rateLimit, getClientIp } from '@badminton/shared';
 import { getCurrentPlayer, createServiceRoleClient } from '@/lib/supabase-server';
 import { signPayload } from '@/lib/passkey/cookie';
+import { recordChallenge } from '@/lib/passkey/challenge-store';
 import {
   getRpId,
   isPasskeyConfigured,
@@ -52,6 +53,9 @@ export async function POST(request: Request) {
       userVerification: 'preferred',
     },
   });
+
+  // Single-use record, server side (00181).
+  await recordChallenge(createServiceRoleClient(), options.challenge, 'player_register', player.user_id, CHALLENGE_TTL_SECONDS);
 
   const challengeToken = await signPayload(
     { challenge: options.challenge, sub: player.user_id, type: 'reg' },

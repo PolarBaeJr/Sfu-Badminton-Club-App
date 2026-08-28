@@ -4,6 +4,7 @@ import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { rateLimit, getClientIp } from '@badminton/shared';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { signPayload } from '@/lib/passkey/cookie';
+import { recordChallenge } from '@/lib/passkey/challenge-store';
 import {
   getRpId,
   PASSKEY_CHALLENGE_COOKIE,
@@ -43,6 +44,11 @@ export async function POST(request: Request) {
     })),
     userVerification: 'preferred',
   });
+
+  // Single-use record, server side (00181). Written BEFORE the cookie is
+  // handed out, so a challenge the browser holds always has something for
+  // the verify route to claim.
+  await recordChallenge(adminClient, options.challenge, 'admin_stepup', player.user_id, CHALLENGE_TTL_SECONDS);
 
   const challengeToken = await signPayload(
     { challenge: options.challenge, sub: player.user_id, type: 'auth' },

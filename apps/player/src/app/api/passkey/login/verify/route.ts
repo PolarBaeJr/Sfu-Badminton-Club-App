@@ -15,6 +15,7 @@ import {
 import { getServerSupabaseUrl } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { verifyPayload } from '@/lib/passkey/cookie';
+import { consumeChallenge } from '@/lib/passkey/challenge-store';
 import {
   getRpId,
   getExpectedOrigin,
@@ -88,6 +89,19 @@ export async function POST(request: Request) {
   const challenge = token ? await verifyPayload(token) : null;
   if (!challenge || challenge.type !== 'login') return fail();
 
+  // CLAIM THE CHALLENGE, SERVER SIDE (00181).
+  //
+  // The cookie above proves the challenge was issued to this browser and is
+  // unexpired. It cannot prove it has not already been spent: clearing a cookie
+  // is a response header, so two requests carrying the same cookie and the same
+  // assertion, sent before either response lands, both got this far and both
+  // verified. The signature counter cannot catch that either — synced passkeys
+  // report 0 every time, so there is no regression to detect.
+  //
+  // One atomic UPDATE, bound to THIS flow's purpose so a challenge minted
+  // elsewhere cannot be redeemed here.
+  if (!(await consumeChallenge(createServiceRoleClient(), challenge.challenge as string, 'player_login'))) return fail();
+
   const service = createServiceRoleClient();
   const { data: stored } = await service
     .from('passkey_credentials')
@@ -135,10 +149,34 @@ export async function POST(request: Request) {
   if (authErr || !email) return fail();
   if (authUser.user?.banned_until) return fail(403);
 
-  await service
+  // COMPARE AND SWAP ON THE COUNTER WE VERIFIED AGAINST, and only issue a
+  // session once exactly one row has moved.
+  //
+  // This was a blind `WHERE id = ...` whose result was never inspected, so a
+  // failed write still handed out the cookie: the stored counter stayed where
+  // it was, and the next replay of the same assertion compared against the
+  // same old value and passed the regression check again. The whole point of
+  // persisting the counter is that it moves.
+  //
+  // The predicate also closes the concurrent case the audit describes — two
+  // assertions verified at once both compared against the same stored value,
+  // and both wrote. Now the second finds the row already moved and is refused.
+  //
+  // Zero-counter authenticators (iCloud- and Google-synced passkeys always
+  // report 0) are NOT protected by this, because 0 -> 0 is a legitimate write
+  // that any number of replays would also satisfy. That class is covered by
+  // single-use challenges (00181), not by the counter.
+  const { data: counterRows, error: counterErr } = await service
     .from('passkey_credentials')
     .update({ counter: newCounter, last_used_at: new Date().toISOString() })
-    .eq('id', stored.id);
+    .eq('id', stored.id)
+    .eq('counter', Number(stored.counter))
+    .select('id');
+  if (counterErr || !counterRows || counterRows.length === 0) {
+    const response = NextResponse.json({ error: 'Passkey verification failed' }, { status: 400 });
+    clearChallengeCookie(response);
+    return response;
+  }
 
   // GoTrue has no WebAuthn grant, so a session is minted the supported way:
   // generateLink produces a single-use token WITHOUT sending mail, and
