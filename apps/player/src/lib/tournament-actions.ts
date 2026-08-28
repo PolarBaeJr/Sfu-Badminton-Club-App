@@ -297,6 +297,35 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
       // retry message.
       case 'waiver_required':
         throw new ExpectedError('You must accept the event waiver to register');
+      // THE FIVE ELIGIBILITY REFUSALS 00196 MOVED INSIDE THE LOCK. Every one of
+      // them is also checked above, so reaching one here means the check and the
+      // function disagreed — which is precisely the race 00196 closes, and is a
+      // permanent refusal rather than something to retry. Telling a member whose
+      // tournament was archived mid-dialog to "try again shortly" is an
+      // instruction they can follow forever.
+      case 'tournament_suspended':
+        throw new ExpectedError(
+          `This tournament is currently suspended${entered.suspension_reason ? `: ${entered.suspension_reason}` : ''}`,
+        );
+      case 'tournament_closed':
+        // Same sentence the app-side gate produces, from the same helper, so the
+        // member cannot get two different answers to the same question.
+        throw new ExpectedError(
+          refuseClosedTournament(entered.status, 'enter this event')
+          ?? 'This tournament has ended.',
+        );
+      case 'membership_not_allowed':
+        throw new ExpectedError(
+          membershipRefusalMessage(Array.isArray(entered.allowed) ? entered.allowed : null),
+        );
+      case 'player_suspended':
+        throw new ExpectedError(
+          'Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.',
+        );
+      case 'already_in_pair':
+        throw new ExpectedError('You are already in a pair in this event.');
+      case 'player_not_found':
+        throw new Error('Player not found');
       case 'event_not_found':
         throw new Error('Event not found');
       default:
