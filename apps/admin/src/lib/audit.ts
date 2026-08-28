@@ -49,6 +49,13 @@ export async function logAudit(
   // and its most likely reason to be refused, so the fact is retried without
   // it. Every action on this trail that reaches a completed event, a voided
   // match or a deleted draw is in the required class.
+  //
+  // That sentence was aspirational until 2026-08-28: the set it consults held
+  // only `action_type:` names from the admin trail, and this trail writes
+  // `action:`, so isRequiredAudit returned false for all 32 of them and no
+  // degraded retry ever ran here. The drift test that should have caught it
+  // scanned only the other spelling. Both are now classified and both are
+  // scanned; see audit-policy.ts.
   if (!isRequiredAudit(params.action)) return;
 
   const { error: fallbackError } = await adminClient.from('tournament_audit_log').insert({

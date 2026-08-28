@@ -112,12 +112,23 @@ describe('audit policy drift', () => {
   for (const file of sourceFiles(join(__dirname, '..', '..'))) {
     const src = readFileSync(file, 'utf8');
     for (const m of src.matchAll(/action_type:\s*'([a-z0-9_]+)'/g)) used.add(m[1]!);
+    // THE TOURNAMENT TRAIL WRITES `action:`, NOT `action_type:`.
+    //
+    // Scanning only the admin trail is why 32 tournament action names sat
+    // unclassified while logAudit called isRequiredAudit on every one of them:
+    // the guard against drift had a blind spot exactly the shape of the trail
+    // that most needed it. Both spellings now feed the same classification.
+    for (const m of src.matchAll(/\baction:\s*'([a-z0-9_]+)'/g)) used.add(m[1]!);
   }
 
   it('finds the action types (guards against the scan itself breaking)', () => {
     expect(used.size).toBeGreaterThan(40);
     expect(used.has('fee_waived')).toBe(true);
     expect(used.has('session_updated')).toBe(true);
+    // One name from each trail, so a regex that silently stops matching either
+    // spelling fails here rather than passing a vacuous classification check.
+    expect(used.has('event_finalized')).toBe(true);
+    expect(used.has('match_voided')).toBe(true);
   });
 
   it('classifies every action whose name puts it in a risk class', () => {

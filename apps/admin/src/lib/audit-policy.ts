@@ -120,6 +120,43 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'passkey_counter_anomaly',
   'tournament_checkin_token_rotated',
   'session_checkin_token_rotated',
+
+  // THE TOURNAMENT TRAIL, WHICH THIS SET SILENTLY DID NOT COVER.
+  //
+  // audit.ts's logAudit calls isRequiredAudit(params.action) against this very
+  // set, and its comment claimed "every action on this trail that reaches a
+  // completed event, a voided match or a deleted draw is in the required
+  // class". Not one of them was. The tournament trail writes `action:`, the
+  // admin trail writes `action_type:`, and the drift test below only ever
+  // scanned the latter — so 32 action names went unclassified without the
+  // guard that exists to prevent exactly that.
+  //
+  // This is not academic. The whole 00189/00190/00191 sequence exists because a
+  // placement-bonus payment's audit row could go missing, which left no way to
+  // tell a paid event from an unpaid one and forced a fail-closed marker keyed
+  // on the event rather than the player. A degraded retry is what that row
+  // needed and did not have.
+  //
+  // Same rule as above: irreversible rating movement, destruction of a record,
+  // or the settlement of a contested result.
+  'event_finalized',
+  'event_deleted',
+  'void_match',
+  'match_voided',
+  'unvoid_match',
+  'match_unvoided',
+  'convert_to_casual',
+  'confirm_walkover',
+  'reject_walkover',
+  'enter_walkover',
+  'walkover_entered',
+  'double_no_show',
+  'match_double_no_show',
+  'result_edited',
+  'result_undone',
+  'participant_removed',
+  'seeds_cleared',
+  'draw_unlocked',
 ]);
 
 /**
@@ -144,6 +181,20 @@ export const RISK_CLASS_PATTERNS: readonly RegExp[] = [
   /^reliability_adjusted$/,
   /^season_(ended|fees_updated)$/,
   /^tournament_(status_changed|suspended|event_force_completed)$/,
+  // Tournament trail. `walkover` and `void` are matched as substrings on
+  // purpose: the trail names the same fact four different ways
+  // (enter_walkover / walkover_entered / confirm_walkover / reject_walkover,
+  // and void_match / match_voided / unvoid_match / match_unvoided), and a
+  // pattern anchored to one spelling is how the next one gets missed.
+  /walkover/,
+  /void/,
+  /^event_(finalized|deleted)$/,
+  /^convert_to_casual$/,
+  /^double_no_show$|^match_double_no_show$/,
+  /^result_(edited|undone)$/,
+  /^participant_removed$/,
+  /^seeds_cleared$/,
+  /^draw_unlocked$/,
 ];
 
 export function isRequiredAudit(actionType: string): boolean {
