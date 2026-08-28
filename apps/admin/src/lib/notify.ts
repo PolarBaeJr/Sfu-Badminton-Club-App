@@ -63,15 +63,31 @@ async function filterPushRecipients(
 // throws, so the parent admin action still succeeds. Uses the service-role
 // admin client because notifications RLS blocks inserting rows for other
 // players and push_subscriptions RLS only lets a player read their own rows.
+//
+// Returns WHO WAS ACTUALLY REACHED, which is not the same as who was asked for
+// (F-018). Swallowing the insert error keeps the parent action succeeding —
+// that is the point — but a caller that then records "reminded 40 people"
+// because it passed 40 ids is reporting an intention as an outcome, and the
+// session-reminder job used that number to stamp a permanent per-player
+// receipt. `delivered` is empty when the notification rows did not commit.
+//
+// Delivery means the in-app row, not the push. Push is fire-and-forget by
+// design and a member with no subscription is not a failure; the bell is the
+// channel that always works and the one that makes a reminder recoverable.
+export interface NotifyResult {
+  delivered: string[];
+}
+
 export async function notifyPlayers(
   adminClient: ReturnType<typeof createAdminClient>,
   playerIds: string[],
   input: NotifyInput,
   push?: PushPayload,
   pushCategory?: NotificationCategory,
-): Promise<void> {
-  if (playerIds.length === 0) return;
+): Promise<NotifyResult> {
+  if (playerIds.length === 0) return { delivered: [] };
 
+  let delivered: string[] = [];
   try {
     const rows = playerIds.map((pid) => ({
       player_id: pid,
@@ -80,8 +96,12 @@ export async function notifyPlayers(
       body: input.body ?? null,
       metadata: input.metadata ?? {},
     }));
+    // A single INSERT, so it either commits for everyone or for nobody — there
+    // is no partial case to report. `.in()` chunking does not apply: these ids
+    // travel in the body, not the query string.
     const { error } = await adminClient.from('notifications').insert(rows);
     if (error) throw error;
+    delivered = playerIds;
   } catch (err) {
     Sentry.captureException(err);
   }
@@ -96,4 +116,6 @@ export async function notifyPlayers(
       sendPushToPlayers(adminClient, recipients, push).catch((err) => Sentry.captureException(err));
     }
   }
+
+  return { delivered };
 }

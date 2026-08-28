@@ -2394,6 +2394,7 @@ export type Database = {
           intent: Database["public"]["Enums"]["session_intent"]
           player_id: string
           reminded_at: string | null
+          reminder_attempted_at: string | null
           session_id: string
           updated_at: string
         }
@@ -2403,6 +2404,7 @@ export type Database = {
           intent: Database["public"]["Enums"]["session_intent"]
           player_id: string
           reminded_at?: string | null
+          reminder_attempted_at?: string | null
           session_id: string
           updated_at?: string
         }
@@ -2412,6 +2414,7 @@ export type Database = {
           intent?: Database["public"]["Enums"]["session_intent"]
           player_id?: string
           reminded_at?: string | null
+          reminder_attempted_at?: string | null
           session_id?: string
           updated_at?: string
         }
