@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
@@ -59,16 +60,61 @@ export function createAdminClient() {
   );
 }
 
+// THE THREE CALLS THIS GATE MAKES, DEDUPLICATED PER REQUEST. The layout and the
+// page both authenticate independently, so an authenticated console page used to
+// spend six Supabase round trips before rendering: two in the middleware, then
+// the same two again in the layout and a third time in the page. These three
+// collapse the page's copies into the layout's.
+//
+// react's cache() is REQUEST-scoped, not process-scoped: it looks up the render's
+// own dispatcher and stores results on a cache node that is dropped with the
+// response. That is what makes it safe here, and the distinction is the whole
+// point — a module-level Map or a TTL cache in this path would let two containers
+// disagree about a role that was just revoked, so the same member would keep or
+// lose access depending on which host answered.
+//
+// Outside a render there is no dispatcher and cache() calls straight through, so
+// the server actions and route handlers that share this gate are unaffected.
+// The middleware cannot benefit for the same reason: it is a separate invocation
+// with no render in scope, which is why its two round trips survive.
+
+// Cached with NO arguments, so every caller in a render shares one node.
+const getSessionUser = cache(async () => {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+});
+
+// Keyed on the id STRING, deliberately. cache() keys object arguments by identity
+// through a WeakMap, so a function taking the usual `options` object would miss
+// on every call — a fresh `{}` never matches another `{}`. That is also why the
+// gate itself is not cached: it takes a freshly-created `authorize` closure.
+const getConsolePlayerRow = cache(async (userId: string) => {
+  const { data } = await createAdminClient()
+    .from('players')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+  return data;
+});
+
+// Off the happy path — only reached when the signed verified-cookie is missing or
+// does not match — but cached for the same reason as the others.
+const countAdminPasskeys = cache(async (playerId: string) => {
+  const { count } = await createAdminClient()
+    .from('passkey_credentials')
+    .select('id', { count: 'exact', head: true })
+    .eq('player_id', playerId)
+    .eq('enrolled_via', 'admin');
+  return count ?? 0;
+});
+
 // Belt-and-braces mirror of the middleware passkey gate: once a player has
 // enrolled at least one passkey, server actions also require the signed
 // verified-cookie (zero passkeys = grace period, no requirement). The
 // /api/passkey handlers opt out via { skipPasskey: true } — they must work
 // while UNverified, otherwise enrolment/verification would deadlock.
-async function assertPasskeyVerified(
-  userId: string,
-  playerId: string,
-  adminClient: ReturnType<typeof createAdminClient>
-) {
+async function assertPasskeyVerified(userId: string, playerId: string) {
   const cookieStore = await cookies();
   const token = cookieStore.get(PASSKEY_VERIFIED_COOKIE)?.value;
   if (token) {
@@ -82,12 +128,7 @@ async function assertPasskeyVerified(
   // here (00051). Without the enrolled_via filter this duplicate count let the
   // middleware wave a request through and then threw from the server side,
   // which is how an exec lost the panel with the migration already applied.
-  const { count } = await adminClient
-    .from('passkey_credentials')
-    .select('id', { count: 'exact', head: true })
-    .eq('player_id', playerId)
-    .eq('enrolled_via', 'admin');
-  if ((count ?? 0) >= 1) {
+  if ((await countAdminPasskeys(playerId)) >= 1) {
     Sentry.setUser(null);
     throw new ExpectedError('Passkey verification required');
   }
@@ -105,8 +146,7 @@ async function getAuthenticatedConsolePlayer(
   authorize: (level: AccessLevel | null, permissions: Permissions) => string | null,
   options: { skipPasskey?: boolean } = {}
 ) {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) {
     // Clear any Sentry user context left over from a previous request handler
     // sharing this Node process — avoids misattributing the next error.
@@ -114,12 +154,7 @@ async function getAuthenticatedConsolePlayer(
     throw new ExpectedError('Not authenticated');
   }
 
-  const adminClient = createAdminClient();
-  const { data: player } = await adminClient
-    .from('players')
-    .select('*')
-    .eq('user_id', user.id)
-    .maybeSingle();
+  const player = await getConsolePlayerRow(user.id);
 
   if (!player) {
     Sentry.setUser(null);
@@ -169,7 +204,7 @@ async function getAuthenticatedConsolePlayer(
   }
 
   if (!options.skipPasskey) {
-    await assertPasskeyVerified(user.id, player.id, adminClient);
+    await assertPasskeyVerified(user.id, player.id);
   }
 
   Sentry.setUser({ id: player.id });
