@@ -45,7 +45,39 @@ const COLOR_SURVEY = 0xf1c40f;
 // secret could make the bot issue a GET to an arbitrary address from inside the
 // Pi's network and mirror the response into a Discord channel — an SSRF with a
 // readback channel. A real screenshot always comes from one of these two.
-const ALLOWED_IMAGE_HOSTS = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
+const DISCORD_IMAGE_HOSTS = ['cdn.discordapp.com', 'media.discordapp.net'];
+
+// The in-app report form uploads to a PRIVATE bucket and the relay hands us a
+// short-lived signed url for it, so this list has to cover the app's own host
+// too. It is derived from APP_API_URL rather than configured separately for two
+// reasons: that variable is already required to be the public origin, and
+// storage is served at <origin>/supabase, so the host is the same one — a second
+// variable would just be a second thing to get wrong. STORAGE_IMAGE_HOST is the
+// escape hatch for a deployment that puts storage on its own hostname.
+//
+// Read at call time, not module load: the bot reads the rest of its config the
+// same way, and a startup-time snapshot is one more thing that goes stale in a
+// container that outlives a config change.
+function allowedImageHosts(): Set<string> {
+  const hosts = new Set(DISCORD_IMAGE_HOSTS);
+
+  const explicit = process.env.STORAGE_IMAGE_HOST?.trim();
+  if (explicit) {
+    hosts.add(explicit);
+    return hosts;
+  }
+
+  const base = process.env.APP_API_URL?.trim();
+  if (base) {
+    try {
+      hosts.add(new URL(base).hostname);
+    } catch {
+      // A malformed APP_API_URL is already fatal for every other call this bot
+      // makes; here it just means no app host is allowed, which fails closed.
+    }
+  }
+  return hosts;
+}
 
 // Matches the bot's own pick-time cap. Enforced again here because this is the
 // side actually spending the memory, and the route is not the only writer of
@@ -73,7 +105,7 @@ export async function fetchImage(
     return null;
   }
 
-  if (parsed.protocol !== 'https:' || !ALLOWED_IMAGE_HOSTS.has(parsed.hostname)) {
+  if (parsed.protocol !== 'https:' || !allowedImageHosts().has(parsed.hostname)) {
     console.error(`[bot] feedback: refusing to fetch a screenshot from ${parsed.hostname}`);
     return null;
   }

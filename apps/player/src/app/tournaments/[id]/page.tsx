@@ -111,9 +111,18 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // The current player's existing feedback for this tournament, if any.
   let myFeedback: { rating: number | null; comment: string | null } | null = null;
   if (currentPlayer) {
-    const { data: fb } = await supabase
-      .from('event_feedback')
-      .select('rating, comment')
+    // Service role, NOT the request-scoped client. 00172 revoked feedback_reports
+    // from `authenticated` outright so bug reports stay staff-only, and 00175
+    // moved the survey into that same table — so a user-scoped read here comes
+    // back as an empty list with NO error, and the form silently forgets what
+    // the player already submitted. The row is still scoped to this player by
+    // the player_id filter below, so nothing widens.
+    const { data: fb } = await createServiceRoleClient()
+      // 00175 folded the survey into feedback_reports; `comment` is that table's
+      // `body`, aliased here so the form below keeps its own vocabulary.
+      .from('feedback_reports')
+      .select('rating, comment:body')
+      .eq('kind', 'tournament_feedback')
       .eq('tournament_id', id)
       .eq('player_id', currentPlayer.id)
       .maybeSingle();

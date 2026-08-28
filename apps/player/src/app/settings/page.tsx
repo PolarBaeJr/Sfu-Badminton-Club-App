@@ -30,6 +30,7 @@ import {
   Loader2,
   Receipt,
   ChevronRight,
+  MessageSquareWarning,
   Trash2,
 } from 'lucide-react';
 
@@ -766,6 +767,22 @@ export default function SettingsPage() {
 
           <Section icon={KeyRound} title="Passkeys">
             <PasskeyManager />
+          </Section>
+
+          <Section icon={MessageSquareWarning} title="Help & Feedback">
+            <Link
+              href="/feedback"
+              className="settings-row settings-row-nav"
+              style={{ textDecoration: 'none', color: 'inherit' }}
+            >
+              <div>
+                <div className="settings-row-label">Report a bug or send feedback</div>
+                <div className="settings-row-hint">Tell us what broke or what you&apos;d like to see. You can attach a screenshot.</div>
+              </div>
+              <div className="settings-row-control">
+                <ChevronRight size={16} className="text-[var(--mute)]" />
+              </div>
+            </Link>
           </Section>
 
           <Section icon={Info} title="About">
