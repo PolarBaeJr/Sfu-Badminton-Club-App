@@ -865,6 +865,7 @@ export type Database = {
         Row: {
           claimed_at: string | null
           claimed_by: string | null
+          claimed_resolution_type: Database["public"]["Enums"]["dispute_resolution"] | null
           created_at: string
           description: string
           id: string
@@ -881,6 +882,7 @@ export type Database = {
         Insert: {
           claimed_at?: string | null
           claimed_by?: string | null
+          claimed_resolution_type?: Database["public"]["Enums"]["dispute_resolution"] | null
           created_at?: string
           description: string
           id?: string
@@ -897,6 +899,7 @@ export type Database = {
         Update: {
           claimed_at?: string | null
           claimed_by?: string | null
+          claimed_resolution_type?: Database["public"]["Enums"]["dispute_resolution"] | null
           created_at?: string
           description?: string
           id?: string
@@ -3753,7 +3756,11 @@ export type Database = {
         Returns: boolean
       }
       claim_dispute_for_resolution: {
-        Args: { p_actor_id: string; p_dispute_id: string }
+        Args: {
+          p_actor_id: string
+          p_dispute_id: string
+          p_resolution_type?: Database["public"]["Enums"]["dispute_resolution"]
+        }
         Returns: Json
       }
       claim_privilege_attribution: {

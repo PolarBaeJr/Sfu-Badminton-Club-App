@@ -70,12 +70,21 @@ async function resolveDisputeImpl(data: DisputeResolveInput) {
       // admins pressing Void and Convert to casual at the same moment both got
       // a claim and both went on to do their conflicting work.
       p_actor_id: admin.id,
+      // WHAT they are claiming it as (00192). The claim used to bind only the
+      // actor, so a retry after a failed close could come back as the opposite
+      // resolution and push the match through the other branch — voidMatch has
+      // no precondition on the match's classification, so a match already
+      // converted to casual was simply re-marked voided. Binding the intent to
+      // the claim costs nothing extra: it is the same statement.
+      p_resolution_type: data.resolution_type,
     });
     if (claimErr) throw new Error(claimErr.message);
     const claimed = claim as {
       claimed?: boolean;
       already_resolved?: boolean;
       held_by_other?: boolean;
+      type_conflict?: boolean;
+      claimed_resolution_type?: string | null;
       match_id?: string;
     } | null;
     if (claimed?.already_resolved) {
@@ -92,6 +101,17 @@ async function resolveDisputeImpl(data: DisputeResolveInput) {
         'Another admin is resolving this dispute right now. Reload the page in a few minutes to see how it was settled.'
       );
     }
+    // An earlier attempt on this dispute already claimed it for a DIFFERENT
+    // resolution, and may well have applied that resolution's match mutation
+    // before failing to close. Going ahead would apply the opposite one on top.
+    // The recorded resolution is named because it is the actionable part: the
+    // operator retries as that, or looks at the match to see what landed.
+    if (claimed?.type_conflict) {
+      throw new ExpectedError(
+        `This dispute was already being resolved as "${claimed.claimed_resolution_type ?? 'another resolution'}", and the match may already have been changed that way. Check the match, then resolve the dispute as that same outcome — resolving it differently now would overwrite what was already applied.`
+      );
+    }
+
     const matchId = claimed?.match_id;
     if (!matchId) throw new Error('Dispute not found');
 
