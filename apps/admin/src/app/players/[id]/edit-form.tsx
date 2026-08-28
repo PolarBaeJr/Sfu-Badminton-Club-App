@@ -172,8 +172,20 @@ export function PlayerEditForm({
     setLoading(false);
   }
 
+  // `pending_approval` is not something this form SETS — letting a signup in
+  // goes through the Approve button, which posts approvePlayer, emails them and
+  // records it. So it is filtered out of the choices.
+  //
+  // But it has to stay in the list for somebody who IS pending. Filtered out
+  // unconditionally, the <select> was left with no option matching its own
+  // value, and a browser handed a value it has no option for renders the FIRST
+  // option instead. The result: this form told an admin that a pending member
+  // was "Competitive" while the badge two inches above it said Pending
+  // Approval, and the only way to actually make them competitive was to pick
+  // some other status and come back, because re-picking the value already on
+  // screen fires no change event.
   const statusOptions = Object.entries(PLAYER_STATUS_LABELS)
-    .filter(([v]) => v !== 'pending_approval')
+    .filter(([v]) => v !== 'pending_approval' || player.status === 'pending_approval')
     .map(([value, label]) => ({ value, label }));
 
   return (

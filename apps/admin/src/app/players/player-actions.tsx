@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, resolvePaymentMethod } from '@badminton/shared';
+import { MEMBERSHIP_TYPES, PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, resolvePaymentMethod } from '@badminton/shared';
 import { removePlayer, updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
 import { isApprovalEdit } from '@/lib/player-approval';
 
@@ -68,6 +68,12 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
   const [status, setStatus] = useState(
     playerData?.active_flag === false ? 'inactive' : ((playerData?.status as string) || 'pending_approval')
   );
+  // Which group of the club they belong to — internal / alumni / external. It
+  // decides which events they may enter, and it is NOT console access: an exec
+  // is still an internal member. Exec-allowed, same as on the detail form.
+  const [membershipType, setMembershipType] = useState(
+    (playerData?.membership_type as string) || 'internal'
+  );
   const [feeExempt, setFeeExempt] = useState(Boolean(playerData?.fee_exempt));
   const [singlesElo, setSinglesElo] = useState('');
   const [doublesElo, setDoublesElo] = useState('');
@@ -115,6 +121,15 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
           // server guard is on presence, so an exec must send neither key.
           singles_elo: isAdmin && singlesElo ? parseInt(singlesElo) : undefined,
           doubles_elo: isAdmin && doublesElo ? parseInt(doublesElo) : undefined,
+          // Only when it actually moved. In `fields` rather than inline so the
+          // approval branch picks it up too: approvePlayer writes status and
+          // active_flag and nothing else, and the follow-up below is keyed on
+          // this object having something in it. A membership change made in the
+          // same Save as an approval would otherwise be silently dropped.
+          membership_type:
+            membershipType !== ((playerData?.membership_type as string) || 'internal')
+              ? (membershipType as 'internal' | 'alumni' | 'external')
+              : undefined,
         };
         // Letting a pending signup in belongs to approvePlayer, not
         // updatePlayer — see lib/player-approval.ts for why. Edit is the only
@@ -450,6 +465,20 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
               you do not hold. Ask an admin.
             </p>
           )}
+          {/* Not behind isAdmin: an exec sets this on the member detail form
+              already, and updatePlayer admits it from them, so hiding it here
+              only made the two edit surfaces disagree about what an exec can
+              do. It is independent of console access — promoting somebody must
+              not change which events they can enter. */}
+          <Select
+            label="Membership"
+            options={MEMBERSHIP_TYPES.map((m) => ({ value: m.value, label: m.label }))}
+            value={membershipType}
+            onChange={(e) => setMembershipType(e.target.value)}
+          />
+          <p className="text-xs text-[var(--text-muted)] -mt-2">
+            {MEMBERSHIP_TYPES.find((m) => m.value === membershipType)?.description}
+          </p>
           {isAdmin && (
             <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
           )}
