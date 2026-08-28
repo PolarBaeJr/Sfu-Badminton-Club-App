@@ -20,6 +20,33 @@ export const LEGAL_DOCUMENT_LABELS: Record<WaiverDocument, string> = {
   code_of_conduct: 'Code of Conduct',
 };
 
+// Public URL slug for each document. The documents are keyed by their database
+// enum everywhere else, but those names are not what belongs in a link a member
+// reads or a regulator follows, so /legal/privacy resolves to privacy_policy.
+// Kept here rather than in the page that renders them because the footer, the
+// index and the document page all have to agree on one spelling.
+export const LEGAL_DOCUMENT_SLUGS: Record<WaiverDocument, string> = {
+  terms_of_use: 'terms',
+  privacy_policy: 'privacy',
+  waiver: 'waiver',
+  code_of_conduct: 'conduct',
+};
+
+// The inverse, built from the map above so the two can never drift apart.
+export const SLUG_TO_LEGAL_DOCUMENT: Record<string, WaiverDocument> = Object.fromEntries(
+  Object.entries(LEGAL_DOCUMENT_SLUGS).map(([document, slug]) => [slug, document as WaiverDocument])
+) as Record<string, WaiverDocument>;
+
+// Short label for the footer and the index. LEGAL_DOCUMENT_LABELS is the formal
+// title ("Liability Waiver & Assumption of Risk") — correct at the top of the
+// document itself, too long for a row of links.
+export const LEGAL_DOCUMENT_SHORT_LABELS: Record<WaiverDocument, string> = {
+  terms_of_use: 'Terms of Use',
+  privacy_policy: 'Privacy Policy',
+  waiver: 'Liability Waiver',
+  code_of_conduct: 'Code of Conduct',
+};
+
 // Sort fetched legal_documents rows into LEGAL_DOCUMENT_ORDER.
 export function sortLegalDocuments<T extends { document: string }>(docs: T[]): T[] {
   return [...docs].sort(

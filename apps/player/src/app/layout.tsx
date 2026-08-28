@@ -13,6 +13,7 @@ import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { StandingProvider } from '@/components/standing-provider';
 import { StandingBanner } from '@/components/standing-banner';
+import { LegalFooter } from '@/components/legal-footer';
 import { cookies } from 'next/headers';
 import { getMissingLegalDocuments, hasConsoleAccess, getAccountStanding, type AccountStanding } from '@badminton/shared';
 import { createServiceRoleClient, createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
@@ -318,6 +319,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <StandingBanner />
                 <main className="page pb-safe-nav">
                   {children}
+                  <LegalFooter />
                 </main>
                 <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} />
               </StandingProvider>
