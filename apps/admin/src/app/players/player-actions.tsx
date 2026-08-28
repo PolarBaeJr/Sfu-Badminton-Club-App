@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { MEMBERSHIP_TYPES, PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, resolvePaymentMethod } from '@badminton/shared';
 import { removePlayer, updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
 import { isApprovalEdit } from '@/lib/player-approval';
+import type { PlayerEditRow } from '@/lib/player-edit-row';
 
 // NO CONSOLE-ACCESS CONTROL HERE ANY MORE. This dialog carried the same four-way
 // select the member detail form did, and both posted role / is_exec / is_trainer
@@ -26,7 +27,10 @@ interface Props {
   mode: 'edit' | 'ban' | 'unban' | 'restore' | 'inactive' | 'remove';
   playerId: string;
   playerName?: string;
-  playerData?: Record<string, unknown>;
+  // Typed, NOT `Record<string, unknown>` — see lib/player-edit-row.ts. A page
+  // whose select omits a column the dialog seeds a control from is a compile
+  // error here, instead of a control that silently opens on the wrong value.
+  playerData?: PlayerEditRow;
   // Execs get the roster controls; ratings, fee-exempt and the reinstatement fee
   // stay with admins. Server-side guards are the boundary — this only keeps
   // execs from seeing a control that would reject them. Console access is on

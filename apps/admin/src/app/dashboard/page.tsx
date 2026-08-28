@@ -29,6 +29,7 @@ import {
 } from '@/components/dashboard/finance-panels';
 import { getLadderSpread } from '@/lib/dashboard-ladder';
 import { LadderPanel } from '@/components/dashboard/ladder-panel';
+import type { PlayerEditRow } from '@/lib/player-edit-row';
 
 /** A club-local wall clock reading of an instant — "19:00", never "02:00Z". */
 const clubTime = (at: Date) =>
@@ -92,18 +93,14 @@ type PendingApprovalFlags = {
 
 // Same job for the pending-approvals query: it only needs a type so the
 // not-an-approver branch agrees with the real one.
-type PendingPlayer = {
-  id: string;
+type PendingPlayer = PlayerEditRow & {
   full_name: string;
   email: string;
   avatar_url: string | null;
   created_at: string;
-  status: string;
-  active_flag: boolean;
   role: string;
   is_exec: boolean;
   is_trainer: boolean;
-  fee_exempt: boolean;
 };
 
 type Acceptance = { document: string; version: string; accepted_at: string };
@@ -397,7 +394,7 @@ export default async function DashboardPage({
           // The flag columns are here for the Edit dialog, which reads them to
           // seed its controls — it would otherwise open showing "None" for an
           // exec's console access and offer to take it away.
-          .select('id, full_name, email, avatar_url, created_at, status, active_flag, role, is_exec, is_trainer, fee_exempt')
+          .select('id, full_name, email, avatar_url, created_at, status, active_flag, role, is_exec, is_trainer, fee_exempt, membership_type')
           .eq('status', 'pending_approval')
           // Same exclusion as the count above (00132), and it must be the same
           // or the header prints one number over a list of another. Safe as an
