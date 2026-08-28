@@ -14,7 +14,7 @@
 // SOURCE DATABASE: staging — container "supabase-staging-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 65 tables, 2 views and 26 enums.
+// Covers 66 tables, 2 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -863,6 +863,8 @@ export type Database = {
       }
       disputes: {
         Row: {
+          claimed_at: string | null
+          claimed_by: string | null
           created_at: string
           description: string
           id: string
@@ -877,6 +879,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          claimed_at?: string | null
+          claimed_by?: string | null
           created_at?: string
           description: string
           id?: string
@@ -891,6 +895,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          claimed_at?: string | null
+          claimed_by?: string | null
           created_at?: string
           description?: string
           id?: string
@@ -905,6 +911,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "disputes_claimed_by_fkey"
+            columns: ["claimed_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "disputes_match_id_fkey"
             columns: ["match_id"]
@@ -948,51 +961,6 @@ export type Database = {
           reason?: string
         }
         Relationships: []
-      }
-      event_feedback: {
-        Row: {
-          comment: string | null
-          created_at: string
-          id: string
-          player_id: string
-          rating: number | null
-          tournament_id: string
-          updated_at: string
-        }
-        Insert: {
-          comment?: string | null
-          created_at?: string
-          id?: string
-          player_id: string
-          rating?: number | null
-          tournament_id: string
-          updated_at?: string
-        }
-        Update: {
-          comment?: string | null
-          created_at?: string
-          id?: string
-          player_id?: string
-          rating?: number | null
-          tournament_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "event_feedback_player_id_fkey"
-            columns: ["player_id"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "event_feedback_tournament_id_fkey"
-            columns: ["tournament_id"]
-            isOneToOne: false
-            referencedRelation: "tournaments"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       event_waiver_acceptances: {
         Row: {
@@ -1653,6 +1621,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      passkey_challenges: {
+        Row: {
+          challenge_hash: string
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          purpose: string
+          user_id: string | null
+        }
+        Insert: {
+          challenge_hash: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          purpose: string
+          user_id?: string | null
+        }
+        Update: {
+          challenge_hash?: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          purpose?: string
+          user_id?: string | null
+        }
+        Relationships: []
       }
       passkey_credentials: {
         Row: {
@@ -2568,6 +2566,47 @@ export type Database = {
             columns: ["tournament_id"]
             isOneToOne: false
             referencedRelation: "tournaments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tournament_bonus_grants: {
+        Row: {
+          applied_delta: number
+          discipline: string | null
+          event_id: string
+          granted_at: string
+          id: string
+          kind: string
+          requested_bonus: number
+          subject_id: string
+        }
+        Insert: {
+          applied_delta?: number
+          discipline?: string | null
+          event_id: string
+          granted_at?: string
+          id?: string
+          kind: string
+          requested_bonus: number
+          subject_id: string
+        }
+        Update: {
+          applied_delta?: number
+          discipline?: string | null
+          event_id?: string
+          granted_at?: string
+          id?: string
+          kind?: string
+          requested_bonus?: number
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_bonus_grants_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_events"
             referencedColumns: ["id"]
           },
         ]
@@ -3650,6 +3689,15 @@ export type Database = {
         Args: { p_confirmed_by: string; p_match_id: string }
         Returns: undefined
       }
+      apply_placement_bonus: {
+        Args: {
+          p_bonus: number
+          p_discipline: string
+          p_event_id: string
+          p_player_id: string
+        }
+        Returns: Json
+      }
       apply_rating_delta: {
         Args: {
           p_delta: number
@@ -3679,6 +3727,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      assert_notification_patch: {
+        Args: { p_email_only?: boolean; p_patch: Json }
+        Returns: undefined
+      }
       assign_member_code: { Args: { p_player_id: string }; Returns: string }
       calculate_elo_update: {
         Args: {
@@ -3700,6 +3752,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      claim_dispute_for_resolution: {
+        Args: { p_actor_id: string; p_dispute_id: string }
+        Returns: Json
+      }
       claim_privilege_attribution: {
         Args: { p_player_id: string }
         Returns: Json
@@ -3715,6 +3771,27 @@ export type Database = {
           linked_discord_user_id: string
         }[]
       }
+      consume_passkey_challenge: {
+        Args: { p_challenge_hash: string; p_purpose: string }
+        Returns: boolean
+      }
+      create_challenge_atomic: {
+        Args: {
+          p_format: string
+          p_games_per_match?: number
+          p_note?: string
+          p_opponent_id: string
+          p_opponent_partner_id?: string
+          p_partner_id?: string
+          p_points_per_game?: number
+          p_rated_flag: boolean
+          p_scheduled_date?: string
+          p_scheduled_time?: string
+          p_session_id?: string
+          p_type: string
+        }
+        Returns: Json
+      }
       create_player_with_rating: {
         Args: {
           p_display_name?: string
@@ -3727,6 +3804,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      credit_participant_placement_bonus: {
+        Args: { p_bonus: number; p_event_id: string; p_participant_id: string }
+        Returns: Json
       }
       delete_phase_matches: {
         Args: { p_event_id: string; p_phase: string }
@@ -3760,6 +3841,15 @@ export type Database = {
         Returns: number
       }
       ensure_player_for_user: { Args: { p_user_id: string }; Returns: string }
+      enter_tournament_event: {
+        Args: {
+          p_doubles: boolean
+          p_elo_before: number
+          p_event_id: string
+          p_player_id: string
+        }
+        Returns: Json
+      }
       format_best_of: {
         Args: { p_format: Database["public"]["Enums"]["match_format"] }
         Returns: number
@@ -3852,12 +3942,29 @@ export type Database = {
         Args: { p_a: number; p_b: number; p_target: number }
         Returns: boolean
       }
+      issue_passkey_challenge: {
+        Args: {
+          p_challenge_hash: string
+          p_purpose: string
+          p_ttl_seconds: number
+          p_user_id: string
+        }
+        Returns: undefined
+      }
       match_counts_toward_stats: {
         Args: {
           p_result_status: Database["public"]["Enums"]["result_status"]
           p_walkover_type: Database["public"]["Enums"]["walkover_type"]
         }
         Returns: boolean
+      }
+      merge_my_notification_preferences: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
+      merge_notification_preferences_by_email: {
+        Args: { p_email: string; p_patch: Json }
+        Returns: Json
       }
       merge_players: {
         Args: { p_actor: string; p_keep: string; p_remove: string }
@@ -3920,6 +4027,34 @@ export type Database = {
         Returns: boolean
       }
       recompute_player_stats: { Args: { p_player: string }; Returns: number }
+      reject_walkover_atomic: {
+        Args: { p_admin_id: string; p_walkover_id: string }
+        Returns: Json
+      }
+      report_walkover_atomic: {
+        Args: {
+          p_challenge_id: string
+          p_forfeit_player_id: string
+          p_notice_hours?: number
+          p_walkover_type: string
+        }
+        Returns: Json
+      }
+      resolve_dispute_rated: {
+        Args: {
+          p_admin_id: string
+          p_dispute_id: string
+          p_games?: Json
+          p_resolution_note?: string
+          p_resolution_type: Database["public"]["Enums"]["dispute_resolution"]
+          p_winner_side?: Database["public"]["Enums"]["team_side"]
+        }
+        Returns: Json
+      }
+      respond_to_challenge: {
+        Args: { p_challenge_id: string; p_response: string }
+        Returns: Json
+      }
       reverse_match_result: { Args: { p_match_id: string }; Returns: undefined }
       reverse_tournament_match_rating: {
         Args: { p_match_id: string }
