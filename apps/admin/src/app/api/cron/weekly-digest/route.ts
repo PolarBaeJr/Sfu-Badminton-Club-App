@@ -66,8 +66,17 @@ async function readProgress(
   admin: ReturnType<typeof createAdminClient>,
   window: string,
 ): Promise<DigestProgress> {
-  const { data } = await admin.from('cron_config').select('value').eq('key', PROGRESS_KEY).maybeSingle();
+  const { data, error } = await admin.from('cron_config').select('value').eq('key', PROGRESS_KEY).maybeSingle();
   const fresh: DigestProgress = { window, after: null, complete: false };
+  // FAIL CLOSED. A failed read is indistinguishable from "no cursor yet"
+  // unless the error is inspected, and "no cursor yet" means start at the
+  // beginning — so a transient read failure part-way through a week's send
+  // re-mails everyone the previous batches already reached. writeProgress
+  // below already refuses to swallow its own error for exactly this reason;
+  // the read has the same consequence and has to be treated the same way.
+  if (error) {
+    throw new Error(`Could not read digest progress: ${error.message}`);
+  }
   if (!data?.value) return fresh;
   try {
     const parsed = JSON.parse(data.value as string) as Partial<DigestProgress>;
@@ -76,11 +85,20 @@ async function readProgress(
     if (parsed.window !== window) return fresh;
     return { window, after: parsed.after ?? null, complete: parsed.complete === true };
   } catch {
-    // Unparseable state must not wedge the job for ever. Losing the cursor
-    // costs at most one week's duplicate sends; refusing to run costs the
-    // digest entirely, every week, until somebody notices.
-    Sentry.captureMessage('weekly-digest: unreadable progress cursor, restarting the week');
-    return fresh;
+    // AN INCIDENT, NOT A RESTART. This used to fall through to a fresh cursor,
+    // reasoning that one week of duplicates beats a wedged job. That trade is
+    // the wrong way round for a mass mailing: duplicates go to the whole club,
+    // are unrecallable, and drive unsubscribes and spam complaints that cost
+    // the sending domain's reputation — while a skipped digest costs one week
+    // of a weekly summary and is visible in the same alert this raises.
+    //
+    // Clearing it deliberately is one statement, and doing it deliberately is
+    // the point: DELETE FROM cron_config WHERE key = '<PROGRESS_KEY>';
+    Sentry.captureMessage('weekly-digest: unreadable progress cursor — refusing to run', 'error');
+    throw new Error(
+      `Digest progress cursor is unreadable. Refusing to run rather than re-mailing the club. ` +
+      `Inspect cron_config key '${PROGRESS_KEY}' and clear it deliberately to restart the week.`,
+    );
   }
 }
 

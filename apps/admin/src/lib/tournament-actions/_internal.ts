@@ -160,6 +160,35 @@ export async function settleWrites(writes: readonly LabelledWrite[]): Promise<Se
  * runAction (which captures it), so capturing here as well would file every
  * one of these twice.
  */
+/**
+ * Await one write and throw unless it landed.
+ *
+ * The batched settleWrites path above covers writes that are independent of one
+ * another. Draw generation is full of writes that are NOT — seed a match, read
+ * back where its winner routes, advance the bye into that slot, mark the next
+ * match ready — and those were written as bare `await`s with no destructuring
+ * at all. A PostgrestBuilder RESOLVES on a Postgres error, so `await` on its own
+ * is not error handling: an RLS denial, a constraint violation or a missing
+ * column sailed straight past, generation carried on, the event was marked
+ * generated, and the admin was told the draw was published. The bracket had a
+ * hole in it and nothing said so.
+ */
+export async function mustWrite(
+  label: string,
+  write: PromiseLike<{ error?: unknown; data?: unknown }>,
+): Promise<void> {
+  const result = await write;
+  if (result?.error) {
+    throw new Error(`${label} failed: ${writeErrorMessage(result.error)}`);
+  }
+  // Only meaningful when the caller asked for its rows back with .select();
+  // without it PostgREST returns data: null and this cannot distinguish a
+  // conditional update that matched nothing from one that worked.
+  if (Array.isArray(result?.data) && result.data.length === 0) {
+    throw new Error(`${label} failed: matched no rows`);
+  }
+}
+
 export function assertWritesSucceeded(action: string, failures: readonly WriteFailure[]): void {
   if (failures.length === 0) return;
   const detail = failures.map(f => `${f.label} (${f.message})`).join('; ');

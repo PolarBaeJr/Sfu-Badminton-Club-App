@@ -31,6 +31,7 @@ import {
   computeRoundRobinStandings,
   settleWrites,
   assertWritesSucceeded,
+  mustWrite,
   drawWithinTiers,
   makeDrawRng,
   newDrawSeed,
@@ -1176,38 +1177,58 @@ async function generateSingleEliminationBracketImpl(
       updateData.status = 'ready';
     }
 
-    await adminClient.from('tournament_matches').update(updateData).eq('id', matchId);
+    await mustWrite(
+      `Seeding round-1 match ${matchId}`,
+      adminClient.from('tournament_matches').update(updateData).eq('id', matchId).select('id'),
+    );
 
     // If bye, advance winner to next match
     if (isBye) {
-      const { data: currentMatch } = await adminClient.from('tournament_matches')
+      const { data: currentMatch, error: routeErr } = await adminClient.from('tournament_matches')
         .select('winner_to_match_id, winner_to_position')
         .eq('id', matchId)
         .single();
+      // A failed read here reads as "this match routes nowhere", which for a
+      // bye means the player who received it is never advanced — a bracket
+      // with a missing entrant in round 2, published as complete.
+      if (routeErr) {
+        throw new Error(`Reading the winner route for match ${matchId} failed: ${routeErr.message}`);
+      }
 
       if (currentMatch?.winner_to_match_id) {
         const advanceField = doubles
           ? (currentMatch.winner_to_position === 'a' ? 'pair_a_id' : 'pair_b_id')
           : (currentMatch.winner_to_position === 'a' ? 'participant_a_id' : 'participant_b_id');
 
-        await adminClient.from('tournament_matches')
-          .update({ [advanceField]: (slotA ?? slotB)!.id })
-          .eq('id', currentMatch.winner_to_match_id);
+        await mustWrite(
+          `Advancing the bye from match ${matchId} into ${currentMatch.winner_to_match_id}`,
+          adminClient.from('tournament_matches')
+            .update({ [advanceField]: (slotA ?? slotB)!.id })
+            .eq('id', currentMatch.winner_to_match_id)
+            .select('id'),
+        );
 
         // Check if next match now has both participants → set to ready
-        const { data: nextMatch } = await adminClient.from('tournament_matches')
+        const { data: nextMatch, error: nextErr } = await adminClient.from('tournament_matches')
           .select('*')
           .eq('id', currentMatch.winner_to_match_id)
           .single();
+        if (nextErr) {
+          throw new Error(`Reading match ${currentMatch.winner_to_match_id} failed: ${nextErr.message}`);
+        }
 
         if (nextMatch) {
           const hasBoth = doubles
             ? (nextMatch.pair_a_id && nextMatch.pair_b_id)
             : (nextMatch.participant_a_id && nextMatch.participant_b_id);
           if (hasBoth) {
-            await adminClient.from('tournament_matches')
-              .update({ status: 'ready' })
-              .eq('id', currentMatch.winner_to_match_id);
+            await mustWrite(
+              `Marking match ${currentMatch.winner_to_match_id} ready`,
+              adminClient.from('tournament_matches')
+                .update({ status: 'ready' })
+                .eq('id', currentMatch.winner_to_match_id)
+                .select('id'),
+            );
           }
         }
       }
@@ -1251,10 +1272,20 @@ async function generateSingleEliminationBracketImpl(
     assertWritesSucceeded('Numbering the bracket matches', failures);
   }
 
-  // Update event status
-  await adminClient.from('tournament_events')
-    .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
-    .eq('id', eventId);
+  // Update event status.
+  //
+  // THE LAST WRITE IS THE ONE THAT PUBLISHES THE DRAW, so it is the one that
+  // must never succeed quietly on top of a failure. Everything above now
+  // throws rather than continuing, which means reaching this line is the
+  // assertion that the whole draw landed; letting this one write fail silently
+  // would leave the event advertising a bracket it does not have.
+  await mustWrite(
+    'Publishing the draw',
+    adminClient.from('tournament_events')
+      .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
+      .eq('id', eventId)
+      .select('id'),
+  );
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
@@ -1598,15 +1629,31 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
           insertData.participant_b_id = away.id;
         }
 
-        await adminClient.from('tournament_matches').insert(insertData);
+        // A round-robin fixture that fails to insert used to leave a hole in
+        // the published schedule: two players who never find their match on
+        // the board, discovered on the day.
+        await mustWrite(
+          `Inserting round-robin fixture ${insertData.match_number ?? ''}`.trim(),
+          adminClient.from('tournament_matches').insert(insertData).select('id'),
+        );
       }
     }
   }
 
-  // Update event status
-  await adminClient.from('tournament_events')
-    .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
-    .eq('id', eventId);
+  // Update event status.
+  //
+  // THE LAST WRITE IS THE ONE THAT PUBLISHES THE DRAW, so it is the one that
+  // must never succeed quietly on top of a failure. Everything above now
+  // throws rather than continuing, which means reaching this line is the
+  // assertion that the whole draw landed; letting this one write fail silently
+  // would leave the event advertising a bracket it does not have.
+  await mustWrite(
+    'Publishing the draw',
+    adminClient.from('tournament_events')
+      .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
+      .eq('id', eventId)
+      .select('id'),
+  );
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
