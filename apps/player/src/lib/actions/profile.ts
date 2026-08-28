@@ -103,27 +103,25 @@ export async function updateNotificationPreferences(
       clean.session_reminder_lead_minutes = getReminderLeadMinutes(prefs);
     }
 
-    // MERGE onto what is stored rather than replacing it. This used to write
-    // `clean` directly, which silently destroyed every key the client did not
-    // send — so a member flipping one push toggle would wipe an email
-    // unsubscribe and put themselves back on the mailing list without either
-    // side noticing. The whitelist above still governs what a caller may SET;
-    // merging governs what survives.
-    const { data: existing } = await supabase
-      .from('players')
-      .select('notification_preferences')
-      .eq('id', player.id)
-      .maybeSingle();
-
-    const merged = {
-      ...((existing?.notification_preferences as Record<string, unknown> | null) ?? {}),
-      ...clean,
-    };
-
-    const { error } = await supabase
-      .from('players')
-      .update({ notification_preferences: merged })
-      .eq('id', player.id);
+    // MERGE onto what is stored rather than replacing it. Writing `clean`
+    // directly silently destroyed every key the client did not send — so a
+    // member flipping one push toggle would wipe an email unsubscribe and put
+    // themselves back on the mailing list without either side noticing. The
+    // whitelist above still governs what a caller may SET; merging governs
+    // what survives.
+    //
+    // THE MERGE IS ONE STATEMENT IN THE DATABASE NOW (00180). Doing it here
+    // meant a SELECT and an UPDATE with a window between them, and that window
+    // had two ways to destroy preferences: a failed read arrived as null, the
+    // merge started from {}, and the successful UPDATE that followed replaced
+    // the whole blob with just the submitted keys; and two saves in quick
+    // succession both read the same object, so the second overwrote the first.
+    // Under the opt-in model of 00058 a key that vanishes is a key that is OFF,
+    // so both of those unsubscribe somebody. `||` on jsonb inside a single
+    // UPDATE has no window at all.
+    const { error } = await supabase.rpc('merge_my_notification_preferences', {
+      p_patch: clean,
+    });
 
     if (error) {
       Sentry.captureException(error, { extra: { action: 'updateNotificationPreferences', playerId: player.id } });

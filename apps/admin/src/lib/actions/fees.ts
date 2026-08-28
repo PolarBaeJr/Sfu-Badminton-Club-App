@@ -332,11 +332,26 @@ export async function markFeeUnpaid(playerId: string, seasonId: string) {
   if (!oldFee) throw new Error('Fee record not found');
 
   // Keep the row — only clear the payment fields.
-  const { error } = await adminClient
+  //
+  // COMPARE AND SWAP ON THE PAYMENT STATE WE READ. `WHERE id = ...` alone made
+  // this a blind write: with two operators on the roster, A opening Mark Unpaid
+  // and B recording a corrected payment in between meant A's delayed update
+  // erased B's payment — and A's audit row recorded the OLD value, so nothing
+  // in the trail showed that a newer payment had been destroyed.
+  const unpaidQuery = adminClient
     .from('club_fees')
     .update({ paid_at: null, marked_by: null, method: null })
     .eq('id', oldFee.id);
+  const { data: cleared, error } = await (
+    oldFee.paid_at === null ? unpaidQuery.is('paid_at', null) : unpaidQuery.eq('paid_at', oldFee.paid_at)
+  ).select('id');
   if (error) throw new Error(error.message);
+  // Zero rows means the predicate no longer held: somebody changed the payment
+  // after the read. Refuse rather than retry — the operator has to see the
+  // current state before deciding again.
+  if (!cleared || cleared.length === 0) {
+    throw new Error('This fee was changed by someone else while you were working on it. Reload and try again.');
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,

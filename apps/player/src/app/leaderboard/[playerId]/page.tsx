@@ -1,6 +1,7 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { getPublicProfile } from '@/lib/public-profile';
-import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, buildChallengeQrUrl, getAccountStanding } from '@badminton/shared';
+import { getRatingSettings } from '@/lib/rating-settings';
+import { getKFactor, PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, buildChallengeQrUrl, getAccountStanding } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Crosshair, QrCode, Trophy } from 'lucide-react';
 import Link from 'next/link';
@@ -24,6 +25,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const [
     player,
     { data: rating },
+    ratingSettings,
     { data: recentMatchesRaw },
     { data: h2hStats },
   ] = await Promise.all([
@@ -35,6 +37,14 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     // RLS as well as the column grants.
     getPublicProfile(playerId, viewer),
     supabase.from('ratings').select('*').eq('player_id', playerId).single(),
+    // The K chip below used to render ratings.singles_k_factor /
+    // doubles_k_factor. Those columns hold the PROVISIONAL constants (80 and
+    // 64), and the chip only shows when the player is NOT provisional — so
+    // every established player was shown a K the ladder does not use. 00138
+    // recorded the mismatch as measured and left it. The number is derived
+    // from the same settings row and the same helper apply_match_result reads,
+    // rather than from a column that copied a tunable at write time.
+    getRatingSettings(supabase),
     supabase
       .from('match_participants')
       .select('*, match:matches(score_summary, played_at, match_type, format, result_status, winner_side)')
@@ -187,14 +197,14 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               <div className="stat-label">SINGLES ELO</div>
               <div className="stat-value">{r.singles_elo}</div>
               <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-                {r.singles_provisional ? 'Provisional' : `K=${r.singles_k_factor}`} · {r.singles_wins}W–{r.singles_losses}L · {getWinRate(r.singles_wins, r.singles_losses)}
+                {r.singles_provisional ? 'Provisional' : `K=${getKFactor('singles', false, r.singles_matches_played, ratingSettings)}`} · {r.singles_wins}W–{r.singles_losses}L · {getWinRate(r.singles_wins, r.singles_losses)}
               </div>
             </div>
             <div className="card-base">
               <div className="stat-label">DOUBLES ELO</div>
               <div className="stat-value">{r.doubles_elo}</div>
               <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-                {r.doubles_provisional ? 'Provisional' : `K=${r.doubles_k_factor}`} · {r.doubles_wins}W–{r.doubles_losses}L · {getWinRate(r.doubles_wins, r.doubles_losses)}
+                {r.doubles_provisional ? 'Provisional' : `K=${getKFactor('doubles', false, r.doubles_matches_played, ratingSettings)}`} · {r.doubles_wins}W–{r.doubles_losses}L · {getWinRate(r.doubles_wins, r.doubles_losses)}
               </div>
             </div>
           </div>
