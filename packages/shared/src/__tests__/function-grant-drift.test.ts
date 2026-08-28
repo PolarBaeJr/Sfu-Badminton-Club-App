@@ -113,7 +113,7 @@ function createdFunctions(sql: string): string[] {
   const names = new Set<string>();
   const re = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z0-9_]+)\s*\(/gi;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(sql)) !== null) names.add(m[1].toLowerCase());
+  while ((m = re.exec(sql)) !== null) names.add(m[1]!.toLowerCase());
   return [...names];
 }
 
@@ -125,7 +125,7 @@ function triggerFunctions(sql: string): Set<string> {
   const names = new Set<string>();
   const re = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z0-9_]+)\s*\([\s\S]*?RETURNS\s+TRIGGER/gi;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(sql)) !== null) names.add(m[1].toLowerCase());
+  while ((m = re.exec(sql)) !== null) names.add(m[1]!.toLowerCase());
   return names;
 }
 
@@ -138,7 +138,7 @@ function revokedRoles(sql: string, fn: string): Set<string> {
   );
   let m: RegExpExecArray | null;
   while ((m = re.exec(sql)) !== null) {
-    for (const r of m[1].split(',')) roles.add(r.trim().toLowerCase());
+    for (const r of m[1]!.split(',')) roles.add(r.trim().toLowerCase());
   }
   return roles;
 }

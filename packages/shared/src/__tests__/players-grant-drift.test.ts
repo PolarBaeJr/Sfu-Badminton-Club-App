@@ -80,7 +80,7 @@ function grantedColumns(): string[] {
   );
   const match = sql.match(/GRANT UPDATE \(([^)]*)\) ON public\.players TO authenticated;/);
   if (!match) throw new Error('00182 no longer contains a GRANT UPDATE (...) ON public.players');
-  return match[1]
+  return match[1]!
     .split(',')
     .map((c) => c.replace(/--.*$/gm, '').trim())
     .filter(Boolean)
@@ -97,7 +97,7 @@ function playersColumns(): string[] {
   const updateStart = types.indexOf('        Update: {', start);
   const updateEnd = types.indexOf('        Relationships:', updateStart);
   const body = types.slice(updateStart, updateEnd);
-  return [...body.matchAll(/^ {10}(\w+)\??:/gm)].map((m) => m[1]).sort();
+  return [...body.matchAll(/^ {10}(\w+)\??:/gm)].map((m) => m[1]!).sort();
 }
 
 describe('players self-service grant (00182, audit F-011)', () => {

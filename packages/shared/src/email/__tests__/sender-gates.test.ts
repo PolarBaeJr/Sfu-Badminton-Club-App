@@ -78,7 +78,7 @@ describe('sendCategoryEmail gates', () => {
     preferenceResult.data = { notification_preferences: { email_challenges: true } };
     const { sendChallengeReceivedEmail } = await loadSender();
 
-    const outcome = await sendChallengeReceivedEmail('Member@Example.test', 'Alex', 'singles');
+    const outcome = await sendChallengeReceivedEmail('Member@Example.test', 'Alex', 'singles', 'ranked', 'ch-1');
 
     expect(outcome).toEqual({ sent: true });
     expect(sent).toHaveLength(1);
@@ -95,7 +95,7 @@ describe('sendCategoryEmail gates', () => {
     const { sendChallengeReceivedEmail } = await loadSender();
 
     await expect(
-      sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles')
+      sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles', 'ranked', 'ch-1')
     ).rejects.toThrow(/Suppression check failed, refusing to send/);
     expect(sent).toHaveLength(0);
   });
@@ -104,7 +104,7 @@ describe('sendCategoryEmail gates', () => {
     suppressionResult.data = { email: 'member@example.test' };
     const { sendChallengeReceivedEmail } = await loadSender();
 
-    const outcome = await sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles');
+    const outcome = await sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles', 'ranked', 'ch-1');
 
     expect(outcome).toEqual({ sent: false, reason: 'suppressed' });
     expect(sent).toHaveLength(0);
@@ -114,7 +114,7 @@ describe('sendCategoryEmail gates', () => {
     preferenceResult.data = { notification_preferences: { email_challenges: false } };
     const { sendChallengeReceivedEmail } = await loadSender();
 
-    const outcome = await sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles');
+    const outcome = await sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles', 'ranked', 'ch-1');
 
     expect(outcome).toEqual({ sent: false, reason: 'opted_out' });
     expect(sent).toHaveLength(0);
@@ -124,7 +124,7 @@ describe('sendCategoryEmail gates', () => {
     preferenceResult.error = { message: 'connection reset' };
     const { sendChallengeReceivedEmail } = await loadSender();
 
-    const outcome = await sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles');
+    const outcome = await sendChallengeReceivedEmail('member@example.test', 'Alex', 'singles', 'ranked', 'ch-1');
 
     expect(outcome).toEqual({ sent: true });
     expect(sent).toHaveLength(1);
@@ -140,7 +140,7 @@ describe('sendCategoryEmail gates', () => {
     const { sendChallengeReceivedEmail } = await loadSender();
 
     for (let i = 0; i < 5; i++) {
-      await sendChallengeReceivedEmail(`m${i}@example.test`, 'Alex', 'singles');
+      await sendChallengeReceivedEmail(`m${i}@example.test`, 'Alex', 'singles', 'ranked', 'ch-1');
     }
 
     expect(sent).toHaveLength(5);
