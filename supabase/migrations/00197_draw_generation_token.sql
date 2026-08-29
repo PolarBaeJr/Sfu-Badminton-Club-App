@@ -308,20 +308,39 @@ BEGIN
   -- WHAT WAS ACTUALLY BUILT (00197). Publication used to assert nothing at all
   -- about the matches — only about the field they were built from.
   SELECT COUNT(*),
-         COUNT(*) FILTER (WHERE m.draw_generation_id IS NOT NULL
-                            AND m.draw_generation_id <> p_generation)
+         COUNT(*) FILTER (WHERE m.draw_generation_id IS DISTINCT FROM p_generation)
     INTO v_matches, v_foreign
     FROM tournament_matches m
    WHERE m.event_id = p_event_id
      AND (p_phase IS NULL OR m.phase = p_phase);
 
-  -- A NULL STAMP IS NOT FOREIGN, and the predicate says so explicitly rather
-  -- than leaning on IS DISTINCT FROM, which would have counted it. This is the
-  -- same judgement the trigger makes twenty lines up and the two halves of this
-  -- migration have to agree: an unstamped row was not written by a generator,
-  -- so it is not evidence of a race. Counting it here would have let a single
-  -- unstamped row block publication of the phase forever, as a hard fault
-  -- rather than a refusal the desk can act on.
+  -- A NULL STAMP COUNTS AS FOREIGN HERE, and deliberately does NOT match the
+  -- judgement the trigger makes twenty lines up. This was briefly narrowed to
+  -- `IS NOT NULL AND <> p_generation` on the argument that the two halves of
+  -- this migration ought to agree — that an unstamped row was not written by a
+  -- generator, so it is not evidence of a race. THAT ARGUMENT WAS WRONG and the
+  -- round-7 review caught it.
+  --
+  -- The counter-example is the deploy window this migration already documents.
+  -- An image built before 00197, running against a database that HAS 00197,
+  -- still calls delete_phase_matches (the argument list was kept compatible on
+  -- purpose), ignores the JSON generation it now returns, and inserts rows with
+  -- no stamp. The trigger lets those through by design. So "unstamped" does not
+  -- mean "not written by a generator" — during a rolling deploy it means
+  -- "written by the OLD generator", which is exactly the contamination this
+  -- check exists to catch. If one such row lands after a new generator's
+  -- teardown and before its publish, the narrowed predicate publishes a mixed
+  -- draw and says ok.
+  --
+  -- The justification for narrowing was also weaker than it was written: a
+  -- refusal here does not block the phase "forever". Pressing Generate again
+  -- tears the phase down — unstamped rows included — and rebuilds it with every
+  -- row stamped. A refusal the desk can clear by repeating the action it just
+  -- took is the correct failure for a suspected race.
+  --
+  -- Safe against false refusals under all-new code: all three insert sites in
+  -- brackets.ts (856, 1223, 1759) stamp, so no unstamped row is ever produced
+  -- by this image.
   --
   -- Narrowing costs nothing the check was there for. A superseded generator
   -- always stamps — that is what makes it superseded — so if the trigger is
