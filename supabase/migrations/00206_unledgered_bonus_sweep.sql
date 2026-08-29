@@ -119,6 +119,7 @@ DECLARE
   v_bad      TEXT[] := '{}';
   v_src      TEXT;
   v_before   INTEGER;
+  v_probed   BOOLEAN := false;
   v_remarked INTEGER;
 BEGIN
   -- NOTE ON `array_append`. The obvious `v_bad := v_bad || 'message'` is a trap:
@@ -173,6 +174,7 @@ BEGIN
     -- Nothing to take away means the probe cannot run. Say so rather than
     -- reporting a pass it did not earn.
     RAISE NOTICE '00206: no legacy markers on this database, so the behavioural probe could not run -- the sweep is installed but UNPROVEN here';
+    -- v_probed stays false so the closing notice cannot claim otherwise.
   ELSE
     BEGIN
       DELETE FROM public.tournament_bonus_grants WHERE kind = 'event_legacy_paid';
@@ -184,6 +186,7 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
       IF SQLERRM <> 'probe_rollback' THEN RAISE; END IF;
     END;
+    v_probed := true;
 
     IF v_remarked <> v_before THEN
       v_bad := array_append(v_bad, format(
@@ -201,7 +204,15 @@ BEGIN
   IF array_length(v_bad, 1) > 0 THEN
     RAISE EXCEPTION '00206 verification failed: %', array_to_string(v_bad, '; ');
   END IF;
-  RAISE NOTICE '00206 verified: service_role-only, timestamp-free, re-marks what it selects, idempotent';
+  -- The closing notice must not claim more than was exercised. Without markers
+  -- to remove, the behavioural arm never ran, and saying "re-marks what it
+  -- selects" there would be the same overstatement this migration exists to
+  -- stop making.
+  IF v_probed THEN
+    RAISE NOTICE '00206 verified: service_role-only, timestamp-free, re-marks what it selects, idempotent';
+  ELSE
+    RAISE NOTICE '00206 partially verified: service_role-only, timestamp-free and idempotent -- the re-marking behaviour was NOT exercised (no markers on this database)';
+  END IF;
 END;
 $verify$;
 
