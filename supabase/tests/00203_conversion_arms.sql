@@ -253,7 +253,7 @@ END $$;
 -- ============================================================
 
 DO $$
-DECLARE refused boolean; ok boolean := true;
+DECLARE refused boolean; ok boolean := true; state text;
 BEGIN
   -- A rated resolution must not be served by the unrated function: it would
   -- close the dispute without ever applying the result.
@@ -279,8 +279,23 @@ BEGIN
   EXCEPTION WHEN others THEN refused := true; END;
   IF NOT refused THEN RAISE WARNING 'R4: unknown dispute was not refused'; ok := false; END IF;
 
+  -- R5 asserts the SQLSTATE rather than merely "something was raised", because
+  -- the dispute id here does not exist either: a bare refused-flag would go
+  -- green on 'Dispute not found' and prove nothing about NULL. Before 00204
+  -- this call RETURNED -- it converted the match to casual and closed the
+  -- dispute with resolution_type NULL -- because `NULL NOT IN (...)` is NULL
+  -- and PL/pgSQL runs a NULL IF as false.
+  state := NULL;
+  BEGIN PERFORM resolve_dispute_unrated(gen_random_uuid(),NULL,NULL,'a real note');
+  EXCEPTION WHEN others THEN state := SQLSTATE; END;
+  IF state IS DISTINCT FROM '22004' THEN
+    RAISE WARNING 'R5: NULL resolution type was not refused with null_value_not_allowed (sqlstate %)',
+      COALESCE(state,'none -- it RETURNED');
+    ok := false;
+  END IF;
+
   IF NOT ok THEN RAISE EXCEPTION '00203 refusals: FAILED (see warnings above)'; END IF;
-  RAISE NOTICE '00203 refusals: 4/4 refused';
+  RAISE NOTICE '00203 refusals: 5/5 refused';
 END $$;
 
 -- ============================================================

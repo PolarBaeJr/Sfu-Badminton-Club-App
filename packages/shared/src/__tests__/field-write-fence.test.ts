@@ -67,6 +67,28 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 }
 
 /**
+ * KNOWN GAPS in this census, named by codex round 11 and left in deliberately.
+ * Codex found no current illegal application write through any of them; they
+ * are blind spots in a regression guard, not live holes. Recorded here rather
+ * than closed because closing them properly means parsing TypeScript, and an
+ * AST pass is a bigger and more fragile thing than what it would protect.
+ *
+ *   1. A VARIABLE update payload defeats it. `.update(patch)` yields no
+ *      object literal, objectKeys() returns [], and an empty column list
+ *      satisfies every downstream assertion silently — it fails OPEN, not
+ *      closed. A new fenced write must therefore pass its columns inline.
+ *   2. Indirect aliases are only partly resolved. tableAliases() below matches
+ *      a single-quoted table name in the SAME file on the SAME assignment; a
+ *      name reaching `.from()` through an import, an object property, or a
+ *      template string is invisible.
+ *   3. The scan covers apps/ only. A field write added outside apps/ would not
+ *      be seen at all.
+ *
+ * If you add a field-table write, the guard protects you only if it is a
+ * literal `.from('...')` with a literal object payload, inside apps/.
+ */
+
+/**
  * Identifiers assigned a field-table name anywhere in this file.
  *
  * Deliberately file-wide and not scope-aware: over-collecting a name means a
