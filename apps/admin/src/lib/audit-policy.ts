@@ -200,3 +200,67 @@ export const RISK_CLASS_PATTERNS: readonly RegExp[] = [
 export function isRequiredAudit(actionType: string): boolean {
   return REQUIRED_AUDIT_ACTIONS.has(actionType);
 }
+
+/* -------------------------------------------------------------------------- */
+/* The degraded-row sentinel                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * When a required audit write is refused, the fact is retried without its
+ * payload (see ../audit.ts). The retried row is REAL — who did what, to what,
+ * when — but it is missing the detail the first attempt carried, and a reader
+ * who cannot tell the two apart will read a degraded row as a complete one.
+ *
+ * These are the marks that say "this row is degraded". They live here, next to
+ * the classification that decides which rows get retried at all, because the
+ * writer and the reader have to agree on them exactly and the last time two
+ * halves of this system disagreed about a spelling — `action` versus
+ * `action_type` — the degraded retry silently never ran for 32 action types.
+ *
+ * THE RULE: these strings appear nowhere else in the codebase. Both the writer
+ * and the reader import them, and ./__tests__/audit-policy.test.ts fails if a
+ * literal copy shows up in either file.
+ */
+
+/** jsonb key on `tournament_audit_log.details` for a dropped payload. */
+export const AUDIT_PAYLOAD_DROPPED_KEY = 'audit_payload_dropped';
+
+/** Human-readable marker appended to `audit_logs.reason` for a dropped payload. */
+export const AUDIT_PAYLOAD_DROPPED_NOTE = 'audit payload dropped';
+
+/**
+ * The suffix the admin trail appends to the officer's own words. Built here so
+ * that the reader's detector below and the writer cannot drift apart: there is
+ * one construction and one recognition, and the round trip is tested.
+ */
+export function auditPayloadDroppedSuffix(message: string): string {
+  return ` [${AUDIT_PAYLOAD_DROPPED_NOTE}: ${message.slice(0, 200)}]`;
+}
+
+/**
+ * Whether an `audit_logs.reason` shows the payload was dropped.
+ *
+ * Substring, not prefix or exact match: the officer's typed reason comes first
+ * and the marker is appended after it. Case-insensitive because the reason is
+ * free text a human wrote and the marker sits inside it.
+ */
+export function isDegradedAuditReason(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  return reason.toLowerCase().includes(`[${AUDIT_PAYLOAD_DROPPED_NOTE}:`);
+}
+
+/**
+ * Whether a `tournament_audit_log.details` payload shows the same thing.
+ *
+ * Kept alongside the reason detector rather than in the tournament code so
+ * that both trails' sentinels are read from one file. Accepts unknown because
+ * the column is jsonb and a row written before this convention existed can
+ * hold anything at all.
+ */
+export function isDegradedAuditDetails(details: unknown): boolean {
+  return (
+    typeof details === 'object' &&
+    details !== null &&
+    AUDIT_PAYLOAD_DROPPED_KEY in (details as Record<string, unknown>)
+  );
+}

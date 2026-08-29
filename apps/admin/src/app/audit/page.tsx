@@ -5,6 +5,7 @@ import { selectInChunks, clubToday, wallClockToUtc } from '@badminton/shared';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
 import { AuditActivityChart } from './activity-chart';
+import { countDegraded } from '@/lib/audit-log-view';
 import { SeasonSelect } from '@/components/season-select';
 import { resolveSeasonScope } from '@/components/season-scope';
 
@@ -162,6 +163,8 @@ export default async function AuditPage({
     subject: (log.target_id && subjects.get(log.target_id)) || null,
   }));
 
+  const degraded = countDegraded(rows);
+
   return (
     <div className="space-y-6">
       {/* ACCOUNTABILITY, not "audit": the eyebrow says what the page is FOR.
@@ -173,6 +176,37 @@ export default async function AuditPage({
         sub="Who did what, when, and the reason they typed."
         watermark="A"
       />
+
+      {/* AUDIT HEALTH, stated on the page rather than only in a policy document.
+          This trail is best effort: a write that the database refuses is
+          reported to Sentry and retried without its payload, never thrown,
+          because throwing after the mutation has already landed makes an
+          officer repeat an action that in fact succeeded. The club accepted
+          that trade on 2026-08-29 — see docs/ops/audit-policy.md.
+
+          What the reader is owed in exchange is knowing when it has bitten. A
+          degraded entry is a real fact with its detail missing, and it is
+          counted here and badged in the list.
+
+          The honest limit, which is why this line is unconditional: an entry
+          lost ENTIRELY leaves no row, so no screen can count it. Zero degraded
+          entries means none were degraded, not that none were lost. */}
+      <p className="text-xs leading-relaxed text-[var(--text-muted)]">
+        This log is best effort. A refused write is retried without its detail
+        rather than blocking the action it records, so an entry can be real and
+        incomplete at once
+        {degraded > 0 ? (
+          <>
+            {' — '}
+            <strong className="text-[var(--color-warning)]">
+              {degraded} {degraded === 1 ? 'entry' : 'entries'}
+            </strong>{' '}
+            in this view {degraded === 1 ? 'is' : 'are'} marked{' '}
+            <span className="whitespace-nowrap">&ldquo;Detail lost&rdquo;</span>
+          </>
+        ) : null}
+        . An entry lost outright leaves no row at all, so it cannot appear here.
+      </p>
 
       {/* Above the list and outside it: the shape of the whole scope is what
           makes it navigation, and a chart sitting UNDER the tab filter while

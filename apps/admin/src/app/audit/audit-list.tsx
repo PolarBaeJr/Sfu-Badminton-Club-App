@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Atomic, AvatarChip, Badge, Card, EmptyState, ResponsiveTable, SearchFilter, Tabs, TableCard } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
+import { AUDIT_PAYLOAD_DROPPED_NOTE } from '@/lib/audit-policy';
 import {
   ALL_GROUP,
   abbreviateActor,
@@ -13,6 +14,7 @@ import {
   relativeWhen,
   resolveTab,
   shortRef,
+  isDegradedEntry,
   visibleLogs,
   type AuditLogEntry,
   type SortOrder,
@@ -88,7 +90,29 @@ function Reason({ reason }: { reason: string | null }) {
       </span>
     );
   }
-  return <>{reason}</>;
+  if (!isDegradedEntry({ reason })) return <>{reason}</>;
+
+  // A degraded entry: the first write was refused and the fact was re-recorded
+  // without its payload. The officer's own words are still here — they were
+  // carried into the retry deliberately — but everything else the entry would
+  // have held is gone. Showing the raw marker inline would put a database
+  // error message in the middle of a sentence a human typed, so the words are
+  // shown as words and the marker becomes a badge with the error in its title.
+  const cut = reason.indexOf(`[${AUDIT_PAYLOAD_DROPPED_NOTE}:`);
+  const words = reason.slice(0, cut).trim();
+  const marker = reason.slice(cut);
+
+  return (
+    <>
+      {words ? <>{words} </> : null}
+      <span
+        title={`This entry is incomplete. The original write was refused and only the fact was recorded. ${marker}`}
+        className="whitespace-nowrap"
+      >
+        <Badge variant="warning">Detail lost</Badge>
+      </span>
+    </>
+  );
 }
 
 export function AuditList({

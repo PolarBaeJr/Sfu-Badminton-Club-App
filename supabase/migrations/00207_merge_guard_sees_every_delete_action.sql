@@ -150,6 +150,14 @@ AS $function$
     );
 $function$;
 
+-- Same shape as every other function this system installs: nothing reaches it
+-- except service_role. CREATE OR REPLACE preserves the existing ACL, so these
+-- two lines change nothing today -- they are here so the grant is a property of
+-- the migration rather than of whatever ran before it, which is what
+-- packages/shared's function-grant-drift test insists on.
+REVOKE ALL ON FUNCTION public.merge_players_unhandled() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.merge_players_unhandled() TO service_role;
+
 COMMENT ON FUNCTION public.merge_players_unhandled() IS
   'Every foreign key to players that merge_players does not explicitly handle. Covers all three delete actions since 00207: CASCADE (silent deletion), NO ACTION (the merge throws 23503), SET NULL (the merge silently blanks the column). A non-empty result refuses the merge.';
 
@@ -738,6 +746,9 @@ BEGIN
                             'stats_pairs_recomputed', v_recomputed);
 END;
 $function$;
+
+REVOKE ALL ON FUNCTION public.merge_players(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.merge_players(uuid, uuid, uuid) TO service_role;
 
 -- ---------------------------------------------------------------------------
 -- Verification.

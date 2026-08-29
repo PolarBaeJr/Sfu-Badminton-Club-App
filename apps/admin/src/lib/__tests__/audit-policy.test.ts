@@ -6,14 +6,23 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 vi.mock('server-only', () => ({}));
 const captureException = vi.fn();
 vi.mock('@sentry/nextjs', () => ({ captureException: (...a: unknown[]) => captureException(...a) }));
 
 import { logAdminAudit } from '../audit';
-import { REQUIRED_AUDIT_ACTIONS, RISK_CLASS_PATTERNS, isRequiredAudit } from '../audit-policy';
+import {
+  AUDIT_PAYLOAD_DROPPED_KEY,
+  AUDIT_PAYLOAD_DROPPED_NOTE,
+  REQUIRED_AUDIT_ACTIONS,
+  RISK_CLASS_PATTERNS,
+  auditPayloadDroppedSuffix,
+  isDegradedAuditDetails,
+  isDegradedAuditReason,
+  isRequiredAudit,
+} from '../audit-policy';
 
 interface Attempt { row: Record<string, unknown>; }
 
@@ -213,5 +222,86 @@ describe('audit policy drift', () => {
     // a rename — which is the same drift in the other direction.
     const stale = [...REQUIRED_AUDIT_ACTIONS].filter((a) => !used.has(a)).sort();
     expect(stale).toEqual([]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The degraded-row sentinel                                                   */
+/* -------------------------------------------------------------------------- */
+
+describe('degraded-row sentinel', () => {
+  it('round-trips: what the writer appends, the reader recognises', () => {
+    expect(isDegradedAuditReason(auditPayloadDroppedSuffix('value too long'))).toBe(true);
+  });
+
+  it('recognises the marker after the officer’s own words', () => {
+    const reason = 'Voided — both players agreed the score was wrong.'
+      + auditPayloadDroppedSuffix('payload too large');
+    expect(isDegradedAuditReason(reason)).toBe(true);
+  });
+
+  it('does not flag an ordinary reason, an empty one, or a null one', () => {
+    expect(isDegradedAuditReason('Voided at the players’ request.')).toBe(false);
+    expect(isDegradedAuditReason('')).toBe(false);
+    expect(isDegradedAuditReason(null)).toBe(false);
+  });
+
+  // The word "dropped" appearing in a reason a human typed is not a degraded
+  // row. The detector keys on the bracketed marker, not on the vocabulary.
+  it('does not flag a reason that merely talks about dropping a payload', () => {
+    expect(isDegradedAuditReason('The audit payload dropped out of the export.')).toBe(false);
+  });
+
+  it('recognises the tournament trail’s jsonb key, and nothing else', () => {
+    expect(isDegradedAuditDetails({ [AUDIT_PAYLOAD_DROPPED_KEY]: 'boom' })).toBe(true);
+    expect(isDegradedAuditDetails({ note: 'boom' })).toBe(false);
+    expect(isDegradedAuditDetails({})).toBe(false);
+    expect(isDegradedAuditDetails(null)).toBe(false);
+    expect(isDegradedAuditDetails('audit_payload_dropped')).toBe(false);
+  });
+
+  // THE DRIFT GUARD, and the reason the constants exist at all.
+  //
+  // The last time the writer and the reader of this system disagreed about a
+  // spelling, the degraded retry silently never ran for 32 action types and the
+  // test that should have caught it was scanning the other spelling. So: these
+  // strings are allowed to appear in exactly one file. A literal copy anywhere
+  // else is a second definition that can drift away from this one, and it fails
+  // here rather than in production a year from now.
+  it('the sentinel strings are written down in exactly one place', () => {
+    const root = join(__dirname, '..', '..');
+    const offenders: string[] = [];
+
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === 'node_modules' || name === '.next') continue;
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!/\.tsx?$/.test(name)) continue;
+        // audit-policy.ts is where they are defined.
+        if (full.endsWith(join('lib', 'audit-policy.ts'))) continue;
+        // Tests are exempt, and deliberately so. A literal in a test is not a
+        // second definition that can drift into a bug — it is a PIN on the
+        // wire format, and it is the thing that makes changing the constant a
+        // visible act rather than a silent one. Production code importing the
+        // constant plus a test asserting the literal is the pair that works;
+        // banning the literal from tests too would leave nothing anchoring the
+        // string that is already written into thousands of rows.
+        if (full.includes(`${sep}__tests__${sep}`)) continue;
+
+        const src = readFileSync(full, 'utf8');
+        if (src.includes(`'${AUDIT_PAYLOAD_DROPPED_KEY}'`)
+          || src.includes(`"${AUDIT_PAYLOAD_DROPPED_KEY}"`)
+          || src.includes(AUDIT_PAYLOAD_DROPPED_NOTE)) {
+          offenders.push(full.slice(root.length + 1));
+        }
+      }
+    };
+    walk(root);
+
+    expect(offenders).toEqual([]);
   });
 });

@@ -2,7 +2,11 @@
 // utilities imported by the admin server actions, not actions themselves.
 import * as Sentry from '@sentry/nextjs';
 import type { createAdminClient } from './supabase-server';
-import { isRequiredAudit } from './audit-policy';
+import {
+  AUDIT_PAYLOAD_DROPPED_KEY,
+  auditPayloadDroppedSuffix,
+  isRequiredAudit,
+} from './audit-policy';
 
 // Tournament-scoped audit trail (tournament_audit_log table).
 //
@@ -64,7 +68,7 @@ export async function logAudit(
     match_id: params.match_id ?? null,
     action: params.action,
     performed_by: params.performed_by,
-    details: { audit_payload_dropped: error.message.slice(0, 200) },
+    details: { [AUDIT_PAYLOAD_DROPPED_KEY]: error.message.slice(0, 200) },
   });
   if (fallbackError) {
     Sentry.captureException(
@@ -119,7 +123,7 @@ export async function logAdminAudit(
     // has to survive the truncation that a refused payload might have needed.
     reason:
       `${(entry.reason ?? '').slice(0, 400)}`.trim() +
-      ` [audit payload dropped: ${error.message.slice(0, 200)}]`,
+      auditPayloadDroppedSuffix(error.message),
   });
   if (fallbackError) {
     Sentry.captureException(
