@@ -367,9 +367,18 @@ async function assignPositionsAndPoints(
   eventId: string,
   doubles: boolean,
   table: string,
-): Promise<{ positionMap: Map<string, number>; wonPositions: string[]; cleared: string[] }> {
-  // Positions first: the full (id → position) map is built in memory, then
-  // written as one parallel batch of UPDATEs.
+): Promise<{
+  positionMap: Map<string, number>;
+  pointsMap: Map<string, number>;
+  wonPositions: string[];
+  cleared: string[];
+}> {
+  // COMPUTES ONLY -- it writes nothing. The caller decides where the writes go,
+  // because the two callers need them in different places: finalizeEvent hands
+  // them to the completion RPC so they land inside the advisory lock that
+  // guards the status flip, while recomputeEventStandings writes them directly
+  // (its event is already completed, so the race the lock exists for cannot
+  // happen). See writePlacements below for the direct path.
   const positionMap = new Map<string, number>();
 
   // WHO HOLDS A PLACING BECAUSE THEY WON, hoisted to function scope so it can
@@ -679,26 +688,6 @@ async function assignPositionsAndPoints(
     .filter(r => !positionMap.has(r.id) && (r.final_position !== null || r.points !== null))
     .map(r => r.id);
 
-  if (positionMap.size > 0 || toClear.length > 0) {
-    const positionWrites: LabelledWrite[] = [
-      ...[...positionMap.entries()].map(([id, pos]): LabelledWrite => [
-        `${table}.final_position for ${id}`,
-        adminClient.from(table).update({ final_position: pos }).eq('id', id),
-      ]),
-      ...toClear.map((id): LabelledWrite => [
-        `${table}.clearing the stale placing on ${id}`,
-        adminClient.from(table).update({ final_position: null, points: null }).eq('id', id),
-      ]),
-    ];
-    const { failures } = await settleWrites(positionWrites);
-    // Raised BEFORE the event is flipped to completed. final_position is an
-    // absolute write derived from the finished bracket, so re-running finalize
-    // recomputes the same map and overwrites the rows that did land — and, now,
-    // clears the ones that no longer place. Flipping the status first is what
-    // used to make a half-positioned event unfixable: finalizeEvent refuses
-    // anything that is not live, so there was no second attempt to be had.
-    assertWritesSucceeded('Assigning final positions', failures);
-  }
 
   // Assign points based on format. Compute (id → points) in memory then issue
   // one parallel batch of UPDATEs.
@@ -728,12 +717,15 @@ async function assignPositionsAndPoints(
     // splits them anyway. That is the pre-existing behaviour of that tiebreak
     // rather than something introduced here, and it is why the RESULTS table
     // only says "3rd place" when a play-off was actually played.
-    const { data: allEntries } = await adminClient.from(table)
-      .select('id, final_position')
-      .eq('event_id', eventId)
-      .not('final_position', 'is', null);
-    for (const entry of allEntries ?? []) {
-      const pos = entry.final_position!;
+    //
+    // Read off positionMap rather than back out of the table. It used to
+    // re-select every row with a non-null final_position, which only worked
+    // because the write above had already landed — the points depended on the
+    // positions being IN the database, not merely computed. That coupling is
+    // what kept the two writes from moving under one lock. The two are
+    // equivalent: the clear below nulls exactly the rows positionMap omits, so
+    // the re-read could never return anything positionMap does not hold.
+    for (const [id, pos] of positionMap) {
       let pts: number;
       if (pos === 1) pts = 100;
       else if (pos === 2) pts = 75;
@@ -741,7 +733,7 @@ async function assignPositionsAndPoints(
       else if (pos === 4) pts = 40;
       else if (pos <= 8) pts = 25;
       else pts = 10;
-      pointsMap.set(entry.id, pts);
+      pointsMap.set(id, pts);
     }
   } else {
     // Round Robin: 3 points per win, 1 point for participation
@@ -764,6 +756,43 @@ async function assignPositionsAndPoints(
     }
   }
 
+  return { positionMap, pointsMap, wonPositions: [...wonTheirPosition], cleared: toClear };
+}
+
+/**
+ * Write a computed set of placings straight to the table.
+ *
+ * The direct path, for a caller that does not need the writes fenced --
+ * recomputeEventStandings, whose event is already completed. finalizeEvent
+ * takes the RPC path instead, which performs these same three writes inside
+ * the transaction that flips the status.
+ */
+async function writePlacements(
+  adminClient: ReturnType<typeof createAdminClient>,
+  table: string,
+  positionMap: Map<string, number>,
+  pointsMap: Map<string, number>,
+  toClear: string[],
+): Promise<void> {
+  if (positionMap.size > 0 || toClear.length > 0) {
+    const positionWrites: LabelledWrite[] = [
+      ...[...positionMap.entries()].map(([id, pos]): LabelledWrite => [
+        `${table}.final_position for ${id}`,
+        adminClient.from(table).update({ final_position: pos }).eq('id', id),
+      ]),
+      ...toClear.map((id): LabelledWrite => [
+        `${table}.clearing the stale placing on ${id}`,
+        adminClient.from(table).update({ final_position: null, points: null }).eq('id', id),
+      ]),
+    ];
+    const { failures } = await settleWrites(positionWrites);
+    // final_position is an absolute write derived from the finished bracket, so
+    // a partial batch is recoverable: re-running recomputes the same map and
+    // overwrites the rows that did land -- and clears the ones that no longer
+    // place.
+    assertWritesSucceeded('Assigning final positions', failures);
+  }
+
   if (pointsMap.size > 0) {
     const { failures } = await settleWrites(
       [...pointsMap.entries()].map(([id, pts]) => [
@@ -771,10 +800,9 @@ async function assignPositionsAndPoints(
         adminClient.from(table).update({ points: pts }).eq('id', id),
       ] as const)
     );
-    // Also absolute, also before the status flip, for the same reason.
+    // Also absolute, for the same reason.
     assertWritesSucceeded('Assigning tournament points', failures);
   }
-  return { positionMap, wonPositions: [...wonTheirPosition], cleared: toClear };
 }
 
 /**
@@ -813,7 +841,8 @@ export async function recomputeEventStandings(eventId: string): Promise<{
     (before ?? []).map(r => [r.id as string, (r.final_position ?? null) as number | null]),
   );
 
-  const { positionMap, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+  const { positionMap, pointsMap, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+  await writePlacements(adminClient, table, positionMap, pointsMap, cleared);
 
   // `to: number | null` because a recompute can REMOVE a placing, not just move
   // one. Built from positionMap alone this list could only ever grow or shuffle,
@@ -908,7 +937,8 @@ export async function finalizeEvent(eventId: string) {
   }
   const field = (fieldRows ?? []).map(r => r.id as string);
 
-  const { positionMap, wonPositions } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+  const { positionMap, pointsMap, wonPositions, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+  await writePlacements(adminClient, table, positionMap, pointsMap, cleared);
 
   // THE FLIP, UNDER THE FIELD FENCE (00209 — R1).
   //
