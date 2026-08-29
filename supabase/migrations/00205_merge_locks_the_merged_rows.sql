@@ -150,7 +150,14 @@ BEGIN
   -- repoint: a claim that wins the row before this point is committed, and the
   -- repoint below then moves it to the survivor.
   --
-  -- ORDER BY id so two merges sharing a player cannot invert within players.
+  -- ORDER BY id to reduce the chance that two merges sharing a player invert
+  -- against each other within players. It REDUCES it; it does not prevent it.
+  -- Postgres does not promise that FOR UPDATE acquires row locks in the order
+  -- the ORDER BY names -- the executor is free to lock in whatever order it
+  -- reaches the rows. In practice a two-element PK IN-list is an index scan in
+  -- id order, so this does what it says, and the failure it would leave is a
+  -- 40P01 deadlock abort rather than a bad merge. Do not build anything on top
+  -- of it that needs the ordering to be a guarantee.
   PERFORM id FROM players
    WHERE id IN (p_keep, p_remove)
    ORDER BY id

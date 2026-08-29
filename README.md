@@ -74,6 +74,8 @@ Push to the `deploy/docker-prod` branch → GitHub Actions builds ARM64 images t
 
 **Apply migrations BEFORE pushing.** An image deploy is DB-safe, but app code that expects a new column breaks the moment the containers roll.
 
+**The exception is a migration that changes an existing function's signature or tightens what it accepts.** Migrations-first assumes the old image keeps working against the new schema. That assumption fails when the old image still calls the function the migration just changed, and it fails for the whole rolling window — the old containers keep serving until the last one is replaced. Draw generation is the live case: an old generator can commit an unstamped match after the new one has already checked for foreign matches, and nothing later removes it. Those migrations need the affected feature drained first. See the draw-generation drain step in `docs/sensitive/PROD-CUTOVER-00177-00205.md`.
+
 **Never** run `docker compose --build`, `docker compose up -d`, or a manual `docker pull` for the player/admin containers on the Pi — they are owned by the proxy, not compose, and doing so detaches them from auto-update. See **[docs/ops/RUNBOOK.md](docs/ops/RUNBOOK.md)**.
 
 ## Documentation
