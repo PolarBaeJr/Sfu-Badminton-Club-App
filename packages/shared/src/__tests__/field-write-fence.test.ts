@@ -41,17 +41,42 @@ const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const FIELD_TABLES = ['tournament_participants', 'tournament_pairs'];
 
 /**
- * Columns an application write may set on a field table without a fence.
+ * Columns an application write may set on a field table without a fence, and
+ * the ONLY files allowed to set them.
  *
- * Ordering and scoring only. Every one of these is written about a row whose
- * membership and status the write does not touch, so publication's entrant and
- * capacity checks cannot disagree with it.
+ * Ordering and scoring only. None of these moves anybody in or out of the
+ * field, which is what the fence protects — but "the column is harmless" was
+ * too weak a rule and 00209 is why. seeding.ts wrote seed_number and
+ * group_number from six unfenced call sites, four of them through a runtime
+ * `table` variable, and passed this test on the strength of the column names
+ * alone. Seeds are the draw's INPUT: a seed landing between the generator
+ * building a bracket and publish_event_draw accepting it publishes a bracket
+ * whose seeding no longer matches the rows. Those six now go through
+ * set_field_entry_seed / auto_seed_field_by_rating / clear_field_seeds /
+ * set_field_groups / set_field_entry_group, which take the field key.
+ *
+ * So the allowance is per FILE as well as per column, and each entry has to
+ * say what makes that particular site safe:
+ *
+ *   brackets.ts   — seed_number and group_number, written INSIDE a generation
+ *                   that ends in publish_event_draw. That publication is
+ *                   fenced, re-reads the field under the lock, and refuses on
+ *                   a mismatched entrant set or a moved group digest (00202),
+ *                   so these writes are checked by the step that consumes
+ *                   them. They are not free-standing edits the way seeding.ts's
+ *                   were.
+ *   finalize.ts   — final_position and points, written from an event that is
+ *                   already over. Nothing downstream draws from them, and the
+ *                   flip to completed is itself fenced (00209).
+ *
+ * A write of one of these columns from ANY OTHER file fails, because the
+ * reasoning above is about those two flows and does not transfer.
  */
-const UNFENCED_COLUMNS = new Set([
-  'seed_number',
-  'group_number',
-  'final_position',
-  'points',
+const UNFENCED_COLUMNS = new Map<string, readonly string[]>([
+  ['seed_number', ['apps/admin/src/lib/tournament-actions/brackets.ts']],
+  ['group_number', ['apps/admin/src/lib/tournament-actions/brackets.ts']],
+  ['final_position', ['apps/admin/src/lib/tournament-actions/finalize.ts']],
+  ['points', ['apps/admin/src/lib/tournament-actions/finalize.ts']],
 ]);
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
@@ -208,7 +233,12 @@ describe('field writes are fenced', () => {
   it('finds the field writes at all (a census that matches nothing proves nothing)', () => {
     // The allowed ordering/scoring writes are real and are not going away, so a
     // census returning none of them has stopped working rather than passed.
-    expect(sites.length).toBeGreaterThanOrEqual(8);
+    //
+    // The floor was 8 and is 6 because 00209 took seeding.ts's six sites behind
+    // fenced RPCs — deliberately lowered rather than left slack, so that the
+    // next unfenced write is a change to this number and therefore a decision
+    // somebody has to write down.
+    expect(sites.length).toBeGreaterThanOrEqual(6);
   });
 
   it('never deletes or inserts a field row from application code', () => {
@@ -227,13 +257,17 @@ describe('field writes are fenced', () => {
     ).toEqual([]);
   });
 
-  it('writes only classified columns everywhere else', () => {
+  it('writes only classified columns, and only from the files classified for them', () => {
     const bad = sites
       .flatMap((s) => s.columns.map((c) => ({ ...s, column: c })))
-      .filter((s) => !UNFENCED_COLUMNS.has(s.column));
+      .filter((s) => {
+        const allowed = UNFENCED_COLUMNS.get(s.column);
+        // Windows separators would make every path miss, which fails OPEN.
+        return !allowed?.includes(s.file.split('\\').join('/'));
+      });
     expect(
       bad.map((s) => `${s.file}:${s.line} ${s.column}`),
-      'A new column written directly to a field table. Decide whether it can move the field: if it can, it belongs behind a fenced RPC; if it genuinely cannot, add it to UNFENCED_COLUMNS with the reason.',
+      'An unfenced write to a field table from a file not classified for that column. Decide whether it can move the field: if it can — and every ordering column can, because ordering is what the draw is built from — it belongs behind a fenced RPC. If the flow it sits in genuinely makes it safe, add the file to UNFENCED_COLUMNS with the reason that makes it safe.',
     ).toEqual([]);
   });
 });

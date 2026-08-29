@@ -2267,3 +2267,98 @@ export async function assertFieldDidNotGrow(
     );
   }
 }
+
+/**
+ * WHAT THE FENCED FIELD RPCS RETURN.
+ *
+ * The fenced field RPCs — set_field_entry_status, remove_field_entry and
+ * bulk_check_in_field (00201), the six seeding, grouping and finalisation
+ * writers added by 00209 — all answer in the same shape: `ok`, a machine-readable `reason` when it is
+ * false, and the event context they read UNDER the field lock. The context is
+ * not a convenience — a caller that revalidates from a row it read before the
+ * write is reading state the write may have moved.
+ */
+export interface FencedFieldResult {
+  ok: boolean;
+  reason?: string;
+  already?: boolean;
+  entry_status?: string;
+  event_status?: string;
+  event_id?: string;
+  tournament_id?: string;
+  checked_in?: number;
+  /** auto_seed_field_by_rating, clear_field_seeds, set_field_groups. */
+  seeded?: number;
+  cleared?: number;
+  assigned?: number;
+  group_count?: number;
+  /** How many entries arrived or left between the caller's read and the fence. */
+  arrived?: number;
+  left?: number;
+  /** set_field_groups / set_field_entry_group, when fixtures already exist. */
+  matches?: number;
+  /** complete_event_under_field_lock. */
+  incomplete?: number;
+}
+
+/**
+ * Turn a fenced RPC's refusal into the sentence the exec should read.
+ *
+ * The refusals these RPCs make are the SAME refusals their callers make a
+ * moment earlier — that is the point of 00201: the caller's copy is a fast,
+ * friendly one made outside the lock, and this one is made under it. So a
+ * refusal arriving here is not normally a mistake by the exec; it is the race
+ * being caught. The messages say so where that helps, and stay identical to
+ * the caller's where the distinction would not mean anything to them.
+ *
+ * `notFound` is per-call because "Participant not found" and "Pair not found"
+ * are different sentences at the desk.
+ */
+export function fencedRefusal(result: FencedFieldResult | null, notFound: string): never {
+  if (!result) {
+    throw new Error('Could not read this entry. Nothing was changed — try again.');
+  }
+  switch (result.reason) {
+    case 'entry_not_found':
+      throw new ExpectedError(notFound);
+    case 'event_not_found':
+      throw new ExpectedError('This entry is not attached to an event.');
+    case 'draw_locked':
+      throw new ExpectedError('Draw is locked. Unlock it before making changes.');
+    case 'event_completed':
+      throw new ExpectedError('This event is finished — void the affected matches instead.');
+    case 'event_status':
+      throw new ExpectedError(
+        `The event moved to "${result.event_status ?? 'another status'}" while this was being saved, so the change was not applied. Reload the page to see where it stands.`,
+      );
+    case 'entry_status':
+      throw new ExpectedError(
+        `This entry is "${result.entry_status ?? 'in another state'}" and cannot be checked in. Reload the page to see where it stands.`,
+      );
+    // ---- 00209: the seeding, grouping and finalisation fences ----------
+    case 'not_a_group_stage':
+      throw new ExpectedError('This event is not split into groups. Set a group count on the event first.');
+    case 'group_out_of_range':
+      throw new ExpectedError(`Group must be between 1 and ${result.group_count ?? 1}.`);
+    case 'fixtures_exist':
+      throw new ExpectedError(
+        'The fixtures for this event have already been generated, so its groups are fixed. Regenerate the round robin if the groups really have to change.',
+      );
+    // The two arrival races. Both say what happened and what to press, because
+    // the exec did nothing wrong — somebody else's write landed first.
+    case 'field_changed':
+      throw new ExpectedError(
+        result.arrived
+          ? `${result.arrived} ${result.arrived === 1 ? 'entry' : 'entries'} arrived while this was being prepared, so it would have left `
+            + `${result.arrived === 1 ? 'somebody' : 'people'} out. Nothing was changed — press it again to include `
+            + `${result.arrived === 1 ? 'them' : 'everyone'}.`
+          : 'The entry list changed while this was being prepared, so nothing was changed. Reload the page and try again.',
+      );
+    case 'matches_incomplete':
+      throw new ExpectedError(
+        `${result.incomplete ?? 'Some'} match(es) were still incomplete when this event was about to be finalised, so it was left live. Reload to see which.`,
+      );
+    default:
+      throw new ExpectedError('That change could not be saved. Reload the page and try again.');
+  }
+}

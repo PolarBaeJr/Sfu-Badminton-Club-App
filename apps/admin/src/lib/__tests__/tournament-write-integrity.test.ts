@@ -970,6 +970,202 @@ const makeClient = vi.hoisted(() => () => {
       });
     }
 
+    // ---- 00209: the seeding, grouping and finalisation fences -----------
+    //
+    // Transcribed from the SQL in the same order the SQL asks them, so a guard
+    // added there and not here shows up as a test that stops mirroring the
+    // database rather than as one that quietly passes. faultFor is still
+    // consulted on the underlying table so the existing fault-injection tests
+    // reach these paths.
+
+    /** The refusals every 00209 event-scoped RPC makes, in the SQL's order. */
+    function seedStageRefusal(ev: Row | undefined, statuses: string[]) {
+      if (!ev) return { ok: false, reason: 'event_not_found' };
+      if (ev.draw_locked) return { ok: false, reason: 'draw_locked' };
+      if (!statuses.includes(ev.status as string)) {
+        return { ok: false, reason: 'event_status', event_status: ev.status };
+      }
+      return null;
+    }
+
+    if (name === 'set_field_entry_seed') {
+      const entryId = args.p_entry_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const row = (store.db[table] ?? []).find((r) => r.id === entryId);
+      if (!row) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === row.event_id);
+      const refusal = seedStageRefusal(ev, ['registration']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const payload: Row = { seed_number: (args.p_seed as number | null) ?? null };
+      const f = faultFor(table, 'update', { filters: [['id', entryId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      Object.assign(row, payload);
+      return Promise.resolve({
+        data: { ok: true, event_id: ev!.id, tournament_id: ev!.tournament_id, event_status: ev!.status },
+        error: null,
+      });
+    }
+
+    if (name === 'auto_seed_field_by_rating') {
+      const eventId = args.p_event_id as string;
+      const isPair = args.p_is_pair as boolean;
+      const table = fieldTableFor(isPair);
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      const refusal = seedStageRefusal(ev, ['registration']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const f = faultFor(table, 'update', { filters: [['event_id', eventId]], payload: { seed_number: 1 } });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      // row_number() OVER (ORDER BY <rating> DESC NULLS LAST, id).
+      const ratingCol = isPair ? 'combined_elo' : 'elo_before';
+      const eligible = (store.db[table] ?? [])
+        .filter((r) => r.event_id === eventId && r.status !== 'withdrawn' && r.status !== 'disqualified')
+        .sort((a, b) => {
+          const x = a[ratingCol] as number | null;
+          const y = b[ratingCol] as number | null;
+          if (x === null && y === null) return String(a.id).localeCompare(String(b.id));
+          if (x === null) return 1;
+          if (y === null) return -1;
+          if (x !== y) return y - x;
+          return String(a.id).localeCompare(String(b.id));
+        });
+      eligible.forEach((r, i) => { r.seed_number = i + 1; });
+      return Promise.resolve({
+        data: {
+          ok: true, seeded: eligible.length, event_id: eventId,
+          tournament_id: ev!.tournament_id, event_status: ev!.status,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'clear_field_seeds') {
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      const refusal = seedStageRefusal(ev, ['registration']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const f = faultFor(table, 'update', { filters: [['event_id', eventId]], payload: { seed_number: null } });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      // The WHOLE field, seeded or not — see the SQL's comment.
+      const hit = (store.db[table] ?? []).filter((r) => r.event_id === eventId);
+      for (const r of hit) r.seed_number = null;
+      return Promise.resolve({
+        data: {
+          ok: true, cleared: hit.length, event_id: eventId,
+          tournament_id: ev!.tournament_id, event_status: ev!.status,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'set_field_groups') {
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const assignments = args.p_assignments as Record<string, number>;
+      const expected = args.p_expected as string[];
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      const refusal = seedStageRefusal(ev, ['registration', 'checkin']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const groupCount = (ev!.group_count as number | null) ?? 1;
+      if (groupCount < 2) {
+        return Promise.resolve({ data: { ok: false, reason: 'not_a_group_stage', group_count: groupCount }, error: null });
+      }
+      const matches = (store.db.tournament_matches ?? []).filter((m) => m.event_id === eventId).length;
+      if (matches > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'fixtures_exist', matches }, error: null });
+      }
+      const now = (store.db[table] ?? [])
+        .filter((r) => r.event_id === eventId && (r.status === 'registered' || r.status === 'checked_in'))
+        .map((r) => r.id as string);
+      const arrived = now.filter((id) => !expected.includes(id)).length;
+      const left = expected.filter((id) => !now.includes(id)).length;
+      if (arrived > 0 || left > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'field_changed', arrived, left }, error: null });
+      }
+      const bad = Object.values(assignments).filter((g) => g < 1 || g > groupCount).length;
+      if (bad > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'group_out_of_range', group_count: groupCount, bad }, error: null });
+      }
+      const f = faultFor(table, 'update', { filters: [['event_id', eventId]], payload: { group_number: 1 } });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      let written = 0;
+      for (const [id, group] of Object.entries(assignments)) {
+        const row = (store.db[table] ?? []).find((r) => r.id === id && r.event_id === eventId);
+        if (row) { row.group_number = group; written++; }
+      }
+      return Promise.resolve({
+        data: {
+          ok: true, assigned: written, group_count: groupCount, event_id: eventId,
+          tournament_id: ev!.tournament_id, event_status: ev!.status,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'set_field_entry_group') {
+      const entryId = args.p_entry_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const group = args.p_group as number;
+      const row = (store.db[table] ?? []).find((r) => r.id === entryId);
+      if (!row) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === row.event_id);
+      const refusal = seedStageRefusal(ev, ['registration', 'checkin']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const groupCount = (ev!.group_count as number | null) ?? 1;
+      if (groupCount < 2) {
+        return Promise.resolve({ data: { ok: false, reason: 'not_a_group_stage', group_count: groupCount }, error: null });
+      }
+      if (group < 1 || group > groupCount) {
+        return Promise.resolve({ data: { ok: false, reason: 'group_out_of_range', group_count: groupCount }, error: null });
+      }
+      const matches = (store.db.tournament_matches ?? []).filter((m) => m.event_id === row.event_id).length;
+      if (matches > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'fixtures_exist', matches }, error: null });
+      }
+      const payload: Row = { group_number: group };
+      const f = faultFor(table, 'update', { filters: [['id', entryId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      Object.assign(row, payload);
+      return Promise.resolve({
+        data: { ok: true, event_id: ev!.id, tournament_id: ev!.tournament_id, event_status: ev!.status },
+        error: null,
+      });
+    }
+
+    if (name === 'complete_event_under_field_lock') {
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const field = args.p_field as string[];
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status !== 'live') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      const arrived = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && r.status !== 'withdrawn' && r.status !== 'disqualified'
+          && !field.includes(r.id as string),
+      ).length;
+      if (arrived > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'field_changed', arrived }, error: null });
+      }
+      const incomplete = (store.db.tournament_matches ?? []).filter(
+        (m) => m.event_id === eventId
+          && !['completed', 'walkover', 'voided', 'bye'].includes(m.status as string)
+          && m.is_bye !== true,
+      ).length;
+      if (incomplete > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'matches_incomplete', incomplete }, error: null });
+      }
+      const payload: Row = { status: 'completed', updated_at: new Date().toISOString() };
+      const f = faultFor('tournament_events', 'update', { filters: [['id', eventId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      Object.assign(ev, payload);
+      return Promise.resolve({
+        data: { ok: true, event_id: eventId, tournament_id: ev.tournament_id },
+        error: null,
+      });
+    }
+
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -5402,24 +5598,46 @@ describe('auto-seeding by rating', () => {
     expect(seeds()).toEqual([['p-0', 2], ['p-1', 3], ['p-2', 1]]);
   });
 
-  it('REFUSES rather than half-seeding when a write fails', async () => {
+  it('SEEDS NOBODY when the write fails, rather than some of the field', async () => {
     field([1400, 1300, 1200]);
-    // The behaviour the old code could not have: every update's result was
-    // discarded, so this failure returned success and left a field where one
-    // entrant kept no seed while the others were renumbered around them. Seeds
-    // decide the draw, so a partial application is worse than a refusal.
+    // THE FAILURE MODE THIS ASSERTS CHANGED SHAPE IN 00209, and the assertion
+    // moved with it rather than being deleted.
+    //
+    // Originally every update's result was discarded, so a failure returned
+    // success and left a field where one entrant kept no seed while the others
+    // were renumbered around them. That was fixed by checking N writes and
+    // refusing if any failed. 00209 removed the N writes: seeding is now one
+    // statement inside the field lock, so there is no partial state left to
+    // detect — the guarantee is stronger and it is structural.
+    //
+    // What still has to hold is what the exec sees: a failure must refuse
+    // loudly and leave every seed exactly as it was.
     store.faults.push({
       table: 'tournament_participants',
       op: 'update',
       message: 'connection reset',
-      when: ({ filters }) => filters.some(([col, v]) => col === 'id' && v === 'p-1'),
+      when: ({ filters }) => filters.some(([col]) => col === 'event_id'),
     });
-    await expect(autoSeedEventByElo('e1')).rejects.toThrow(/Auto-seed/);
+    await expect(autoSeedEventByElo('e1')).rejects.toThrow(/connection reset/);
+    expect(seeds()).toEqual([['p-0', null], ['p-1', null], ['p-2', null]]);
   });
 
   it('refuses on a locked draw', async () => {
     field([1400, 1300]);
     Object.assign(event(), { draw_locked: true });
     await expect(autoSeedEventByElo('e1')).rejects.toThrow(/locked/i);
+  });
+
+  it('refuses once the event has left registration, which nothing enforced before', async () => {
+    // The console has always gated every seed control on
+    // `status === 'registration' && !drawLocked` (participant-controls.ts), but
+    // the server action checked only draw_locked — so the status half of its
+    // own rule had no server-side enforcement at all and a stale tab or a
+    // direct call could reseed a live event underneath its own bracket. 00209's
+    // fence is where that rule finally exists.
+    field([1400, 1300, 1200]);
+    Object.assign(event(), { status: 'live' });
+    await expect(autoSeedEventByElo('e1')).rejects.toThrow(/moved to "live"/);
+    expect(seeds()).toEqual([['p-0', null], ['p-1', null], ['p-2', null]]);
   });
 });

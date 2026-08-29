@@ -48,7 +48,9 @@ import {
   notifyEventWaiverRequired,
   forfeitOpenMatchesForEntry,
   FORFEIT_REASON,
+  fencedRefusal,
   type DrawExitStatus,
+  type FencedFieldResult,
 } from './_internal';
 
 // ---------------------------------------------------------------------------
@@ -801,65 +803,6 @@ export async function addParticipantsToEvent(
 
   revalidateEventPaths(event.tournament_id, eventId);
   return { added, failures };
-}
-
-/**
- * WHAT THE FENCED FIELD RPCS RETURN.
- *
- * set_field_entry_status, remove_field_entry and bulk_check_in_field (00201)
- * all answer in the same shape: `ok`, a machine-readable `reason` when it is
- * false, and the event context they read UNDER the field lock. The context is
- * not a convenience — a caller that revalidates from a row it read before the
- * write is reading state the write may have moved.
- */
-interface FencedFieldResult {
-  ok: boolean;
-  reason?: string;
-  already?: boolean;
-  entry_status?: string;
-  event_status?: string;
-  event_id?: string;
-  tournament_id?: string;
-  checked_in?: number;
-}
-
-/**
- * Turn a fenced RPC's refusal into the sentence the exec should read.
- *
- * The refusals these RPCs make are the SAME refusals their callers make a
- * moment earlier — that is the point of 00201: the caller's copy is a fast,
- * friendly one made outside the lock, and this one is made under it. So a
- * refusal arriving here is not normally a mistake by the exec; it is the race
- * being caught. The messages say so where that helps, and stay identical to
- * the caller's where the distinction would not mean anything to them.
- *
- * `notFound` is per-call because "Participant not found" and "Pair not found"
- * are different sentences at the desk.
- */
-function fencedRefusal(result: FencedFieldResult | null, notFound: string): never {
-  if (!result) {
-    throw new Error('Could not read this entry. Nothing was changed — try again.');
-  }
-  switch (result.reason) {
-    case 'entry_not_found':
-      throw new ExpectedError(notFound);
-    case 'event_not_found':
-      throw new ExpectedError('This entry is not attached to an event.');
-    case 'draw_locked':
-      throw new ExpectedError('Draw is locked. Unlock it before making changes.');
-    case 'event_completed':
-      throw new ExpectedError('This event is finished — void the affected matches instead.');
-    case 'event_status':
-      throw new ExpectedError(
-        `The event moved to "${result.event_status ?? 'another status'}" while this was being saved, so the change was not applied. Reload the page to see where it stands.`,
-      );
-    case 'entry_status':
-      throw new ExpectedError(
-        `This entry is "${result.entry_status ?? 'in another state'}" and cannot be checked in. Reload the page to see where it stands.`,
-      );
-    default:
-      throw new ExpectedError('That change could not be saved. Reload the page and try again.');
-  }
 }
 
 export async function removeParticipantFromEvent(participantId: string) {

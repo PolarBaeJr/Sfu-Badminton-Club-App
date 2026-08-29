@@ -21,7 +21,9 @@ import {
   assertTournamentNotSuspended,
   settleWrites,
   assertWritesSucceeded,
+  fencedRefusal,
   type LabelledWrite,
+  type FencedFieldResult,
 } from './_internal';
 
 // ============================================================
@@ -717,36 +719,67 @@ export async function finalizeEvent(eventId: string) {
   }
 
   const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+
+  // THE FIELD THE POSITIONS WERE COMPUTED AGAINST, read immediately before the
+  // work that consumes it. It travels with the flip below so the fence can
+  // tell whether it is still the field. See the block on that call.
+  const { data: fieldRows, error: fieldError } = await adminClient.from(table)
+    .select('id')
+    .eq('event_id', eventId)
+    .not('status', 'in', '("withdrawn","disqualified")');
+  if (fieldError) {
+    throw new Error(`Could not read this event's entries, so it was not finalised: ${fieldError.message}`);
+  }
+  const field = (fieldRows ?? []).map(r => r.id as string);
+
   const positionMap = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
 
-  // Set event to completed. Checked: throwing on the two batches above buys
-  // nothing if the flip that ends the event can itself be lost silently.
+  // THE FLIP, UNDER THE FIELD FENCE (00209 — R1).
   //
-  // Conditional on the event still being LIVE, which turns this into the claim
-  // that decides who finalises. Both officials passed the `status !== 'live'`
-  // read at the top against the same row, and everything expensive — placement
-  // bonuses above all — happens BELOW this line. Without the condition both
-  // proceeded, and because applyPlacementBonuses reads its ledger before it
-  // writes it, both read an empty ledger and both awarded the bonus: the
-  // champion took +32 twice, and because those writes are absolute
-  // read-then-write they could also erase a rating change made in between.
+  // This used to be a conditional UPDATE ... WHERE status = 'live'. That
+  // condition makes two concurrent FINALISATIONS safe and the RPC keeps it —
+  // it asserts the status under the lock and names what it lost to, instead of
+  // returning a zero row count the caller has to interpret. What it never
+  // addressed is the other order:
   //
-  // The count is how the loser finds out. PostgREST reports "matched no rows"
-  // as success, so without it the second official would sail on into the bonus
-  // code believing they had just completed the event.
-  const { error: completeError, count: completeCount } = await adminClient.from('tournament_events')
-    .update({ status: 'completed', updated_at: new Date().toISOString() }, { count: 'exact' })
-    .eq('id', eventId)
-    .eq('status', 'live');
+  //   promote_pool_qualifier commits a new entrant (it holds the field lock,
+  //   correctly)                                                    |
+  //   the positions above were computed without them                |
+  //   this flip still sees status = 'live' and completes the event  <
+  //
+  // The promoted entrant then sits in a completed event with no placing and no
+  // points, invisible to every results screen, and finalizeEvent refuses to run
+  // again because the event is no longer live.
+  //
+  // WHAT IS NOT DONE, AND WHY. Making the lock literally span the read and the
+  // write would mean moving assignPositionsAndPoints into plpgsql: bracket
+  // arithmetic, the third-place playoff split, pool standings and the
+  // slot-versus-result cross-check. That is a rewrite of the highest-risk
+  // function here, not a fence. So finalisation joins the protocol the way
+  // publish_event_draw already does — the caller passes the field it worked
+  // from, and the flip happens only if that is still the field. Growth is
+  // refused; a withdrawal in between is not, because a withdrawn entry needs
+  // no placing.
+  const { data: fenced, error: completeError } = await adminClient.rpc('complete_event_under_field_lock', {
+    p_event_id: eventId,
+    p_is_pair: doubles,
+    p_field: field,
+  });
   if (completeError) {
     throw new Error(`Positions and points were saved but the event could not be marked completed: ${completeError.message}`);
   }
-  if (completeCount === 0) {
-    // Positions and points were rewritten with the same values the winner of the
-    // race wrote, so nothing is damaged — but the bonus must not be paid twice.
-    throw new ExpectedError(
-      'This event was finalised while you were finalising it — most likely another desk got there first. Reload to see the results.',
-    );
+  const completed = fenced as FencedFieldResult | null;
+  if (!completed?.ok) {
+    // Positions and points were rewritten with the same values the winner of a
+    // finalisation race wrote, so nothing is damaged — but the bonus must not
+    // be paid twice, and an event that gained an entrant must be finalised
+    // again rather than half-placed.
+    if (completed?.reason === 'event_status') {
+      throw new ExpectedError(
+        'This event was finalised while you were finalising it — most likely another desk got there first. Reload to see the results.',
+      );
+    }
+    fencedRefusal(completed, 'Event not found');
   }
 
   // Apply placement bonuses only if BOTH the global master switch and the

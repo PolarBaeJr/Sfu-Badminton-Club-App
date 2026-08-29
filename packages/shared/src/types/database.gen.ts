@@ -3786,6 +3786,10 @@ export type Database = {
         Returns: undefined
       }
       assign_member_code: { Args: { p_player_id: string }; Returns: string }
+      auto_seed_field_by_rating: {
+        Args: { p_event_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
       bulk_check_in_field: {
         Args: {
           p_actor: string
@@ -3836,9 +3840,17 @@ export type Database = {
         }
         Returns: { gave_up: boolean; player_id: string }[]
       }
+      clear_field_seeds: {
+        Args: { p_event_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
       club_local_instant: {
         Args: { p_date: string; p_time: string }
         Returns: string
+      }
+      complete_event_under_field_lock: {
+        Args: { p_event_id: string; p_field: string[]; p_is_pair: boolean }
+        Returns: Json
       }
       consume_discord_link_token: {
         Args: { p_token_hash: string }
@@ -4196,12 +4208,29 @@ export type Database = {
       }
       session_cap_for: { Args: { p_match_type: string }; Returns: number }
       session_checkin_open: { Args: { p_session_id: string }; Returns: boolean }
+      set_field_entry_group: {
+        Args: { p_entry_id: string; p_group: number; p_is_pair: boolean }
+        Returns: Json
+      }
+      set_field_entry_seed: {
+        Args: { p_entry_id: string; p_is_pair: boolean; p_seed: number }
+        Returns: Json
+      }
       set_field_entry_status: {
         Args: {
           p_actor: string
           p_entry_id: string
           p_is_pair: boolean
           p_new_status: string
+        }
+        Returns: Json
+      }
+      set_field_groups: {
+        Args: {
+          p_assignments: Json
+          p_event_id: string
+          p_expected: string[]
+          p_is_pair: boolean
         }
         Returns: Json
       }
@@ -4224,6 +4253,10 @@ export type Database = {
           p_pair_name: string
         }
         Returns: undefined
+      }
+      sweep_unledgered_bonus_events: {
+        Args: Record<PropertyKey, never>
+        Returns: { marked_event_id: string; marked_event_type: string }[]
       }
       unpair_tournament_pair: {
         Args: {
