@@ -269,13 +269,39 @@ BEGIN
   -- was a separate round trip that could outlive a 15 minute claim TTL; the
   -- row lock taken above is held until this transaction commits, so there is
   -- no second writer to fence against.
+  -- The claim fields are CLEARED, not just left behind. Two reasons, and the
+  -- second is a live defect and not hygiene:
+  --
+  --   1. A resolved dispute that still carries claimed_resolution_type = X
+  --      while resolution_type = Y is a row that contradicts itself for
+  --      anybody reading it later.
+  --
+  --   2. During the rolling deploy this is a correctness fence. The OLD image
+  --      closes the dispute from TypeScript with `.eq('claimed_by', admin.id)`.
+  --      Sequence: old-image admin A claims (status -> under_review,
+  --      claimed_by = A) and stalls mid-void; new-image admin B calls this
+  --      function, takes the row lock, sees under_review, converts the match
+  --      to casual and closes. A's stale close then runs — and if claimed_by
+  --      were still A it would MATCH, silently overwriting resolution_type
+  --      with A's. The dispute would then name a resolution that is not what
+  --      happened to the match. Clearing claimed_by makes A's update match
+  --      zero rows, which is A's existing ExpectedError ("took too long ...
+  --      picked up by another admin") — the accurate message.
+  --
+  -- This does NOT fix the double MATCH mutation in that same window: A's void
+  -- already committed before its close was refused. That remains a deploy
+  -- constraint of the same shape as F-005 — drain the old image before
+  -- applying — and the runbook is what carries it, not this function.
   UPDATE disputes
-     SET status          = 'resolved',
-         resolution_type = p_resolution_type,
-         resolution_note = p_resolution_note,
-         resolved_by     = p_actor_id,
-         resolved_at     = NOW(),
-         updated_at      = NOW()
+     SET status                  = 'resolved',
+         resolution_type         = p_resolution_type,
+         resolution_note         = p_resolution_note,
+         resolved_by             = p_actor_id,
+         resolved_at             = NOW(),
+         claimed_by              = NULL,
+         claimed_at              = NULL,
+         claimed_resolution_type = NULL,
+         updated_at              = NOW()
    WHERE id = p_dispute_id;
 
   -- Written HERE and not by the caller, which is the F-002 point: the dispute
@@ -413,6 +439,21 @@ BEGIN
   END IF;
   IF v_def NOT LIKE '%PERFORM convert_club_match_to_casual%' THEN
     RAISE EXCEPTION '00203: resolve_dispute_unrated never calls convert_club_match_to_casual';
+  END IF;
+
+  -- The close must CLEAR the claim, not merely stop reading it. All three
+  -- fields, because the old image's close fences on claimed_by and anybody
+  -- reading the row later reads claimed_resolution_type. A grep for the
+  -- assignment, not for the column name: the column name appears in the
+  -- comment above the UPDATE either way.
+  IF v_def !~ 'claimed_by\s*=\s*NULL' THEN
+    RAISE EXCEPTION '00203: the dispute close does not clear claimed_by, so a stale old-image close still matches it';
+  END IF;
+  IF v_def !~ 'claimed_at\s*=\s*NULL' THEN
+    RAISE EXCEPTION '00203: the dispute close does not clear claimed_at';
+  END IF;
+  IF v_def !~ 'claimed_resolution_type\s*=\s*NULL' THEN
+    RAISE EXCEPTION '00203: the dispute close does not clear claimed_resolution_type, so a resolved row can contradict itself';
   END IF;
 
   -- Left in place on purpose. The running image still calls it, and this

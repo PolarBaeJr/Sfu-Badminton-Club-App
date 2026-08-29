@@ -122,6 +122,20 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 // INSERT: the tuples also carry target_type literals like 'match' and 'dispute',
 // and letting those into `used` would quietly weaken the classification test
 // two blocks down.
+//
+// KNOWN LIMITATION, deliberately not fixed. This reads every migration file,
+// including the superseded bodies that a later CREATE OR REPLACE overwrote. So
+// an action name that a migration DELETED from a function stays in `used`
+// forever, and the staleness half of the drift guard is one-directional: it
+// still catches an entry removed from the code, but not one that a later
+// migration replaced out of the live definition.
+//
+// Closing it would mean resolving each function to its final definition —
+// parsing enough SQL to know which CREATE OR REPLACE wins — or querying a live
+// database from a unit test. Neither is worth it here: the failure mode is a
+// stale entry surviving in REQUIRED_AUDIT_ACTIONS, i.e. a list that is
+// misleading to read, not a runtime hole. The check that matters (an action
+// written in code but absent from the policy) is unaffected.
 function sqlAuditActions(migrationsDir: string): Set<string> {
   const found = new Set<string>();
   for (const name of readdirSync(migrationsDir)) {

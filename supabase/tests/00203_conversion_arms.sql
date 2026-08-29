@@ -184,11 +184,22 @@ INSERT INTO match_participants (match_id,player_id,team_side,pre_rating,post_rat
 SELECT m,'aaaaaaaa-0000-4000-8000-000000000001'::uuid,'a'::team_side, 990,1000, 10,21,15,1,0,true  FROM d
 UNION ALL
 SELECT m,'aaaaaaaa-0000-4000-8000-000000000002'::uuid,'b'::team_side,1010,1000,-10,15,21,0,1,false FROM d;
-INSERT INTO disputes (id, match_id, opened_by, reason_category, description, status)
-SELECT dsp, m, 'aaaaaaaa-0000-4000-8000-000000000002'::uuid, 'score_wrong'::dispute_reason, 'harness', 'open'::dispute_status FROM d;
+-- Seeded ALREADY CLAIMED by a DIFFERENT admin, which is what the deployed
+-- image leaves behind: it calls claim_dispute_for_resolution first, and that
+-- sets status/claimed_by/claimed_at/claimed_resolution_type. Seeding the claim
+-- is what makes the "close clears it" assertion below mean something — against
+-- an unclaimed row those columns are NULL before the call and the check passes
+-- for free.
+INSERT INTO disputes (id, match_id, opened_by, reason_category, description, status,
+                      claimed_by, claimed_at, claimed_resolution_type)
+SELECT dsp, m, 'aaaaaaaa-0000-4000-8000-000000000002'::uuid, 'score_wrong'::dispute_reason, 'harness',
+       'under_review'::dispute_status,
+       'aaaaaaaa-0000-4000-8000-000000000002'::uuid, NOW(), 'accepted'::dispute_resolution
+  FROM d;
 
 DO $$
-DECLARE c RECORD; first jsonb; second jsonb; st dispute_status; n_disp int; n_match int; note text; ok boolean := true;
+DECLARE c RECORD; first jsonb; second jsonb; st dispute_status; n_disp int; n_match int; note text;
+        cb uuid; ca timestamptz; crt dispute_resolution; ok boolean := true;
 BEGIN
   FOR c IN SELECT * FROM d ORDER BY tag LOOP
     first  := resolve_dispute_unrated(c.dsp,'aaaaaaaa-0000-4000-8000-000000000001',c.res,'harness note '||c.tag);
@@ -203,8 +214,20 @@ BEGIN
       RAISE WARNING '% : second call was not a no-op (%)', c.tag, second; ok := false;
     END IF;
 
-    SELECT status INTO st FROM disputes WHERE id = c.dsp;
+    SELECT status, claimed_by, claimed_at, claimed_resolution_type
+      INTO st, cb, ca, crt
+      FROM disputes WHERE id = c.dsp;
     IF st <> 'resolved' THEN RAISE WARNING '% : dispute left %', c.tag, st; ok := false; END IF;
+
+    -- The claim must be GONE. Seeded above as a live claim held by admin 2
+    -- with claimed_resolution_type 'accepted' — a type that deliberately
+    -- disagrees with the resolution actually applied. If the close left it
+    -- behind, the row would both contradict itself AND still satisfy the old
+    -- image's `.eq('claimed_by', admin.id)` fence, letting a stale close
+    -- overwrite this resolution.
+    IF cb IS NOT NULL OR ca IS NOT NULL OR crt IS NOT NULL THEN
+      RAISE WARNING '% : claim not cleared (by=%, at=%, type=%)', c.tag, cb, ca, crt; ok := false;
+    END IF;
 
     SELECT count(*) INTO n_disp  FROM audit_logs WHERE target_id = c.dsp AND action_type = 'dispute_resolved';
     SELECT count(*) INTO n_match FROM audit_logs WHERE target_id = c.m
@@ -259,5 +282,114 @@ BEGIN
   IF NOT ok THEN RAISE EXCEPTION '00203 refusals: FAILED (see warnings above)'; END IF;
   RAISE NOTICE '00203 refusals: 4/4 refused';
 END $$;
+
+-- ============================================================
+-- The role the functions are ACTUALLY called as
+-- ============================================================
+--
+-- Everything above ran as `postgres`, and superuser proves nothing about
+-- either grants or the schema cache — it bypasses both. The admin app calls
+-- these through PostgREST as `service_role`, so the whole point is exercised
+-- only by running them under that role. The migration's verify block checks
+-- has_function_privilege in the catalog; this checks that the catalog answer
+-- is the one the executor gives.
+--
+-- Seeded as superuser (the harness needs to write match_participants, which
+-- service_role has no business doing) and only the three CALLS are re-roled.
+
+-- Fixed UUIDs rather than a temp table: the calls below run as service_role,
+-- which cannot read this session's temp schema, and granting it access would
+-- put a privilege the real caller does not have into the middle of the one
+-- test whose whole subject is what the real caller can do.
+CREATE TEMP TABLE rr(tag text, m uuid, dsp uuid) ON COMMIT DROP;
+INSERT INTO rr VALUES
+ ('S1 void',    '00000203-0000-4000-8000-000000000001', NULL),
+ ('S2 convert', '00000203-0000-4000-8000-000000000002', NULL),
+ ('S3 dispute', '00000203-0000-4000-8000-000000000003', '00000203-0000-4000-8000-00000000000d');
+
+INSERT INTO matches (id, match_type, event_type, rated_flag, format, result_status, submitted_by, played_at)
+SELECT m,'singles','rated_challenge',true,'single_21','confirmed','aaaaaaaa-0000-4000-8000-000000000001'::uuid,NOW() FROM rr;
+INSERT INTO match_participants (match_id,player_id,team_side,pre_rating,post_rating,rating_delta,
+                                points_scored,points_allowed,games_won,games_lost,win_flag)
+SELECT m,'aaaaaaaa-0000-4000-8000-000000000001'::uuid,'a'::team_side, 990,1000, 10,21,15,1,0,true  FROM rr
+UNION ALL
+SELECT m,'aaaaaaaa-0000-4000-8000-000000000002'::uuid,'b'::team_side,1010,1000,-10,15,21,0,1,false FROM rr;
+INSERT INTO disputes (id, match_id, opened_by, reason_category, description, status)
+SELECT dsp, m, 'aaaaaaaa-0000-4000-8000-000000000002'::uuid, 'score_wrong'::dispute_reason, 'harness', 'open'::dispute_status
+  FROM rr WHERE dsp IS NOT NULL;
+
+SET LOCAL ROLE service_role;
+DO $$
+DECLARE
+  v_void uuid := '00000203-0000-4000-8000-000000000001';
+  v_conv uuid := '00000203-0000-4000-8000-000000000002';
+  v_dsp  uuid := '00000203-0000-4000-8000-00000000000d';
+  r jsonb;
+BEGIN
+  r := void_club_match(v_void,'aaaaaaaa-0000-4000-8000-000000000001','service_role void');
+  IF (r->>'ok') <> 'true' THEN RAISE EXCEPTION 'S1: void_club_match returned %', r; END IF;
+
+  r := convert_club_match_to_casual(v_conv,'aaaaaaaa-0000-4000-8000-000000000001','service_role convert');
+  IF (r->>'ok') <> 'true' THEN RAISE EXCEPTION 'S2: convert_club_match_to_casual returned %', r; END IF;
+
+  r := resolve_dispute_unrated(v_dsp,'aaaaaaaa-0000-4000-8000-000000000001','converted_to_casual','service_role dispute');
+  IF (r->>'applied') <> 'true' THEN RAISE EXCEPTION 'S3: resolve_dispute_unrated returned %', r; END IF;
+END $$;
+RESET ROLE;
+
+DO $$
+DECLARE ok boolean := true; st text; ev text; rf boolean;
+BEGIN
+  SELECT result_status INTO st FROM matches WHERE id = (SELECT m FROM rr WHERE tag = 'S1 void');
+  IF st <> 'voided' THEN RAISE WARNING 'S1: status % after a service_role void', st; ok := false; END IF;
+
+  SELECT event_type, rated_flag INTO ev, rf FROM matches WHERE id = (SELECT m FROM rr WHERE tag = 'S2 convert');
+  IF ev <> 'casual' OR rf THEN RAISE WARNING 'S2: left %/rated=%', ev, rf; ok := false; END IF;
+
+  SELECT event_type, rated_flag INTO ev, rf FROM matches WHERE id = (SELECT m FROM rr WHERE tag = 'S3 dispute');
+  IF ev <> 'casual' OR rf THEN RAISE WARNING 'S3: left %/rated=%', ev, rf; ok := false; END IF;
+
+  IF NOT ok THEN RAISE EXCEPTION '00203 service_role: FAILED (see warnings above)'; END IF;
+  RAISE NOTICE '00203 service_role: all three functions execute and land their writes as the real caller';
+END $$;
+
+-- The mirror. A grant that is not also a REFUSAL for everybody else is not a
+-- grant. `authenticated` is the role every logged-in browser session carries,
+-- and these three functions rewrite ratings and close disputes.
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE state text;
+BEGIN
+  -- Each check asserts SQLSTATE 42501 (insufficient_privilege) specifically,
+  -- and catches OTHERS to get there. Catching only insufficient_privilege
+  -- would be the wrong shape: if a grant leaked, the call would reach the
+  -- function body and fail on something else entirely ('Dispute not found'),
+  -- which escapes the handler and aborts the run with a message naming the
+  -- wrong problem. Mutation-proven — granting authenticated EXECUTE used to
+  -- report exactly that.
+  state := NULL;
+  BEGIN PERFORM void_club_match(gen_random_uuid(),gen_random_uuid(),'x');
+  EXCEPTION WHEN others THEN state := SQLSTATE; END;
+  IF state IS DISTINCT FROM '42501' THEN
+    RAISE EXCEPTION 'P1: authenticated was not refused void_club_match at the grant (sqlstate %)', COALESCE(state,'none');
+  END IF;
+
+  state := NULL;
+  BEGIN PERFORM convert_club_match_to_casual(gen_random_uuid(),gen_random_uuid(),'x');
+  EXCEPTION WHEN others THEN state := SQLSTATE; END;
+  IF state IS DISTINCT FROM '42501' THEN
+    RAISE EXCEPTION 'P2: authenticated was not refused convert_club_match_to_casual at the grant (sqlstate %)', COALESCE(state,'none');
+  END IF;
+
+  state := NULL;
+  BEGIN PERFORM resolve_dispute_unrated(gen_random_uuid(),gen_random_uuid(),'voided','x');
+  EXCEPTION WHEN others THEN state := SQLSTATE; END;
+  IF state IS DISTINCT FROM '42501' THEN
+    RAISE EXCEPTION 'P3: authenticated was not refused resolve_dispute_unrated at the grant (sqlstate %)', COALESCE(state,'none');
+  END IF;
+
+  RAISE NOTICE '00203 authenticated: 3/3 refused at the grant (42501)';
+END $$;
+RESET ROLE;
 
 ROLLBACK;
