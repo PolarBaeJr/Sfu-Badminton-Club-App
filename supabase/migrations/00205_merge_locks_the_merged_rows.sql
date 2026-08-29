@@ -56,32 +56,6 @@ BEGIN
     RAISE EXCEPTION 'Cannot merge a player into themselves';
   END IF;
 
-  -- THE LOCK. Both rows, FOR UPDATE, before a single class is touched.
-  --
-  -- Without it the merge is not serialised against anything that INSERTS a
-  -- child row for the removed account while the merge is running. The digest
-  -- job is the case that found this: it claims (week_start, player_id) one
-  -- member at a time immediately before sending. A claim committed AFTER the
-  -- repoint below but BEFORE the delete at the end of this function is not
-  -- moved by the repoint and is then destroyed by the delete's ON DELETE
-  -- CASCADE -- so the send happens, the key is gone, and the survivor is
-  -- eligible to be mailed the same digest again.
-  --
-  -- FOR UPDATE is the right strength and not overkill: it is the ONLY row lock
-  -- that conflicts with the FOR KEY SHARE that a foreign key check takes on
-  -- the parent row. Verified on staging rather than read off the lock table --
-  -- a concurrent INSERT into digest_deliveries blocked, and reported
-  -- `while locking tuple ... FOR KEY SHARE OF x`. The blocked insert then
-  -- fails on the foreign key once this transaction commits and the row is
-  -- gone, which is loud, where the cascade was silent.
-  --
-  -- Ordered by id, not by argument position, so two merges that share a player
-  -- cannot take the two rows in opposite orders and deadlock.
-  PERFORM id FROM players
-   WHERE id IN (p_keep, p_remove)
-   ORDER BY id
-     FOR UPDATE;
-
   SELECT * INTO v_keep   FROM players WHERE id = p_keep;
   SELECT * INTO v_remove FROM players WHERE id = p_remove;
 
@@ -145,6 +119,42 @@ BEGIN
   UPDATE sessions               SET host_player_id    = p_keep WHERE host_player_id    = p_remove;
   UPDATE tournaments            SET created_by        = p_keep WHERE created_by        = p_remove;
   UPDATE walkovers              SET admin_confirmed_by = p_keep WHERE admin_confirmed_by = p_remove;
+
+  -- THE LOCK on the two players being merged. Deliberately HERE and not at the
+  -- top of the function.
+  --
+  -- What it is for: without it the merge is not serialised against anything
+  -- that INSERTS a child row for the removed account mid-merge. The digest job
+  -- is the case that found this -- it claims (week_start, player_id) one member
+  -- at a time immediately before sending, so a claim committed after the
+  -- repoint below but before the delete at the end is not moved by the repoint
+  -- and is then destroyed by the delete's ON DELETE CASCADE. The send happens,
+  -- the key is gone, and the survivor -- the same human being -- is eligible to
+  -- be mailed that digest again.
+  --
+  -- FOR UPDATE is the right strength and not overkill: it is the ONLY row lock
+  -- that conflicts with the FOR KEY SHARE a foreign key check takes on the
+  -- parent row. Measured on staging rather than read off the lock table -- a
+  -- concurrent INSERT into digest_deliveries blocked and reported
+  -- `while locking tuple ... FOR KEY SHARE OF x`. Once this transaction commits
+  -- and the row is gone, that insert fails on the foreign key, which is loud
+  -- where the cascade was silent.
+  --
+  -- WHY NOT AT THE TOP, which is where it was first written: tournament entry
+  -- locks the tournament and THEN the player row (00200), so a merge that
+  -- locked players before reaching `UPDATE tournaments ... created_by` above
+  -- would invert that order and deadlock -- A holds both players and waits on
+  -- T, B holds T and waits on a player, 40P01. Taking the lock after the
+  -- authorship repoints preserves tournaments -> players and closes the race
+  -- just the same, because the only requirement is that it precede the digest
+  -- repoint: a claim that wins the row before this point is committed, and the
+  -- repoint below then moves it to the survivor.
+  --
+  -- ORDER BY id so two merges sharing a player cannot invert within players.
+  PERFORM id FROM players
+   WHERE id IN (p_keep, p_remove)
+   ORDER BY id
+     FOR UPDATE;
 
   -- ---- Class 1: nothing can collide, so it all moves (NEW in 00163) ----
   UPDATE club_fees   SET player_id         = p_keep WHERE player_id         = p_remove;
@@ -524,47 +534,72 @@ GRANT EXECUTE ON FUNCTION public.merge_players(uuid, uuid, uuid) TO service_role
 -- ---------------------------------------------------------------------
 -- Verify
 --
--- The lock is asserted BEHAVIOURALLY -- a second session must actually be
--- blocked -- because a source grep for "FOR UPDATE" would pass on a lock
--- placed after the repoint, which is precisely the placement that leaves the
--- race open. pg_try_advisory-style probing cannot express this either; the
--- only honest test is to hold the merge's lock and watch a foreign key insert
--- fail to acquire what it needs. dblink is not installed here, so the two
--- halves are checked separately: the lock statement must precede the repoint
--- in the body, AND the conflict itself is proven by the staging measurement
--- recorded in the header.
+-- Every position() below runs against a COMMENT-STRIPPED copy of the body.
+-- The first draft of this block did not, and was vacuous as a result: it
+-- compared position('FOR UPDATE' ...) against the repoint, and matched the
+-- phrase "Both rows, FOR UPDATE" in the comment above the statement rather
+-- than the statement. It would have passed with no lock in the function at
+-- all. Codex round 13 caught it. Prose that describes a guard is not the
+-- guard, and any assertion that greps a function body has to say so.
 -- ---------------------------------------------------------------------
 DO $verify$
 DECLARE
   v_def  text;
+  v_code text;
   v_lock int;
   v_rep  int;
+  v_trn  int;
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO v_def
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'public' AND p.proname = 'merge_players';
 
-  v_lock := position('FOR UPDATE' in v_def);
+  -- Strip whole-line and trailing -- comments. Crude, and it does not need to
+  -- be better: it only has to stop prose from satisfying a code assertion.
+  v_code := regexp_replace(v_def, '--[^\n]*', '', 'g');
+
+  -- Self-check on the stripping itself. If this ever stops removing the
+  -- comments, every assertion below silently goes back to being satisfiable
+  -- by prose, and nothing else here would notice.
+  IF v_code LIKE '%THE LOCK on the two players%' THEN
+    RAISE EXCEPTION '00205: comment stripping failed, so these assertions can be satisfied by a comment';
+  END IF;
+
+  v_lock := position('PERFORM id FROM players' in v_code);
   IF v_lock = 0 THEN
     RAISE EXCEPTION '00205: merge_players takes no row lock on the players it merges';
   END IF;
 
-  IF v_def !~ 'id IN \(p_keep, p_remove\)' THEN
+  IF v_code !~ 'PERFORM id FROM players[\s\S]{0,120}FOR UPDATE' THEN
+    RAISE EXCEPTION '00205: the players lock is not FOR UPDATE, so it does not conflict with the FK''s FOR KEY SHARE';
+  END IF;
+
+  IF v_code !~ 'id IN \(p_keep, p_remove\)' THEN
     RAISE EXCEPTION '00205: the lock does not cover BOTH merged rows';
   END IF;
 
-  IF v_def !~ 'ORDER BY id' THEN
-    RAISE EXCEPTION '00205: the lock is not deterministically ordered, so two merges sharing a player can deadlock';
+  IF v_code !~ 'PERFORM id FROM players[\s\S]{0,120}ORDER BY id' THEN
+    RAISE EXCEPTION '00205: the lock is not deterministically ordered, so two merges sharing a player can invert';
   END IF;
 
-  -- Placement is the whole point: a lock taken after the repoint would leave
-  -- the exact window this migration exists to close.
-  v_rep := position('UPDATE digest_deliveries' in v_def);
+  -- Placement, both sides. The lock must come BEFORE the digest repoint, or
+  -- the window it exists to close is still open; and AFTER the tournaments
+  -- authorship repoint, or it inverts the tournaments -> players order that
+  -- tournament entry takes and deadlocks against it.
+  v_rep := position('UPDATE digest_deliveries' in v_code);
   IF v_rep = 0 THEN
     RAISE EXCEPTION '00205: the digest repoint from 00204 is gone';
   END IF;
   IF v_lock > v_rep THEN
     RAISE EXCEPTION '00205: the row lock is taken AFTER the digest repoint, which leaves the race open';
+  END IF;
+
+  v_trn := position('UPDATE tournaments' in v_code);
+  IF v_trn = 0 THEN
+    RAISE EXCEPTION '00205: the tournaments authorship repoint is gone, so lock order cannot be checked';
+  END IF;
+  IF v_lock < v_trn THEN
+    RAISE EXCEPTION '00205: the players lock is taken BEFORE the tournaments repoint, inverting the order tournament entry uses (deadlock)';
   END IF;
 END;
 $verify$;
