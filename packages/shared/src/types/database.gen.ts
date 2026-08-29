@@ -4096,11 +4096,12 @@ export type Database = {
       publish_event_draw: {
         Args: {
           p_doubles: boolean
+          p_entrants: string[]
           p_event_id: string
-          p_expected: number
           p_generation: string
           p_new_status: string
           p_phase: string
+          p_whole_field: boolean
         }
         Returns: Json
       }

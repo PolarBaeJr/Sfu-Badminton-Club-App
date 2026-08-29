@@ -10,6 +10,7 @@ import {
   isMembershipAllowed,
   membershipRefusalMessage,
   screenSelfEntry,
+  categoryRefusalMessage,
   toCompetitionCategory,
   ExpectedError,
   type TournamentEventType,
@@ -324,6 +325,25 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
         );
       case 'already_in_pair':
         throw new ExpectedError('You are already in a pair in this event.');
+      // THE COMPETITION CATEGORY, RE-ASKED UNDER THE LOCK (00200). screenSelfEntry
+      // ran above, so reaching either of these means an exec changed this
+      // member's Gender in the window between that screen and the insert — the
+      // one race the app-side gate could never win, because competition_category
+      // is only writable from the console and the console does not wait for us.
+      //
+      // The sentence comes from the same helper screenSelfEntry uses, built from
+      // the event type this action already holds. The function returns a reason
+      // and never the member's category, so this is the only place the wording
+      // exists and a member who loses the race reads what one who never entered
+      // it would have read.
+      case 'category_undeclared':
+        throw new ExpectedError(
+          categoryRefusalMessage(event.event_type as TournamentEventType, 'undeclared'),
+        );
+      case 'category_mismatch':
+        throw new ExpectedError(
+          categoryRefusalMessage(event.event_type as TournamentEventType, 'mismatch'),
+        );
       case 'player_not_found':
         throw new Error('Player not found');
       case 'event_not_found':

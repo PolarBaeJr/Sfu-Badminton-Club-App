@@ -675,16 +675,6 @@ const makeClient = vi.hoisted(() => () => {
     if (name === 'publish_event_draw') {
       const eventId = args.p_event_id as string;
       const doubles = args.p_doubles as boolean;
-      const expected = args.p_expected as number | null;
-      const table = doubles ? 'tournament_pairs' : 'tournament_participants';
-      const now = (store.db[table] ?? []).filter(
-        (r) => r.event_id === eventId && (r.status === 'registered' || r.status === 'checked_in'),
-      ).length;
-      if (expected != null && now > expected) {
-        return Promise.resolve({
-          data: { ok: false, reason: 'field_grew', expected, now }, error: null,
-        });
-      }
       const payload = { status: args.p_new_status, updated_at: new Date().toISOString() };
       const f = faultFor('tournament_events', 'update', { filters: [['id', eventId]], payload });
       if (f) return Promise.resolve({ data: null, error: { message: f.message } });
@@ -696,6 +686,43 @@ const makeClient = vi.hoisted(() => () => {
       // publication never looked at before.
       if (ev.draw_generation_id !== args.p_generation) {
         return Promise.resolve({ data: { ok: false, reason: 'superseded' }, error: null });
+      }
+      // THE DRAWN SET, NOT A COUNT (00200). p_expected was an integer and null
+      // meant "do not check", which is how the pool-seeded path came to assert
+      // nothing at all. Both directions are modelled here because the swap case
+      // — one entrant out, one in, total unchanged — is invisible to a count and
+      // is the reason the shape changed.
+      const entrants = (args.p_entrants as string[] | null) ?? [];
+      const wholeField = args.p_whole_field as boolean;
+      const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+      const live = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && (r.status === 'registered' || r.status === 'checked_in'),
+      );
+      if (entrants.length === 0) {
+        // The real function RAISES here rather than returning a refusal: an
+        // empty list is a caller fault, and letting it through would be the
+        // null-means-do-not-check behaviour coming back by another door.
+        return Promise.resolve({ data: null, error: { message: 'publish_event_draw: p_entrants may not be null or empty' } });
+      }
+      const liveIds = new Set(live.map((r) => r.id as string));
+      const left = entrants.filter((id) => !liveIds.has(id)).length;
+      if (left > 0) {
+        return Promise.resolve({
+          data: { ok: false, reason: 'entrant_left', count: left }, error: null,
+        });
+      }
+      // Only when the draw was supposed to BE the field. A pool-seeded draw is
+      // a subset by construction — the members who did not qualify are still
+      // registered — so extras there are the normal state, not a fault.
+      if (wholeField) {
+        const drawn = new Set(entrants);
+        const extra = live.filter((r) => !drawn.has(r.id as string)).length;
+        if (extra > 0) {
+          return Promise.resolve({
+            data: { ok: false, reason: 'field_grew', expected: entrants.length, now: live.length },
+            error: null,
+          });
+        }
       }
       const phase = (args.p_phase as string | null) ?? null;
       const built = (store.db.tournament_matches ?? []).filter(
@@ -2365,6 +2392,80 @@ describe('regenerating a draw that already exists', () => {
   // race exists. Fired at the teardown instead — the one window this file
   // already had — it would reproduce nothing: at that point A has written
   // nothing to supersede.
+  // THE SWAP. Nobody asked for this one — it fell out of comparing the drawn
+  // SET instead of the drawn TOTAL, and it is the strongest reason 00200
+  // changed the shape.
+  //
+  // One entrant withdraws and another enters while the draw is being built. The
+  // count is identical before and after, so the old `now > expected` comparison
+  // saw nothing at all and published a bracket with a fixture for somebody who
+  // had left and none for somebody who was in the event. Both halves are wrong
+  // and neither is visible from a total.
+  it('REFUSES A DRAW WHEN ONE ENTRANT SWAPPED FOR ANOTHER MID-BUILD, leaving the count unchanged', async () => {
+    seedField(4);
+
+    let fired = false;
+    store.beforeMatchInsert = () => {
+      if (fired || (store.db.tournament_matches ?? []).length === 0) return;
+      fired = true;
+      const rows = store.db.tournament_participants ?? [];
+      // p-3 leaves, somebody new arrives. Four registered before, four after.
+      rows.find((r) => r.id === 'p-3')!.status = 'withdrawn';
+      rows.push({
+        id: 'p-late', event_id: 'e1', player_id: 'pl-late', elo_before: 1400,
+        elo_after: null, elo_change: null, seed_number: null,
+        final_position: null, points: null, status: 'registered',
+      });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    // The count check could not have produced this. Proof it is the set:
+    const live = (store.db.tournament_participants ?? []).filter(
+      (r) => r.status === 'registered' || r.status === 'checked_in',
+    );
+    expect(live).toHaveLength(4);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/left the event while it was being built/);
+    // The remedy is one press of the button they just pressed, and the draw
+    // must not have been advertised in the meantime.
+    expect(res.ok === false && res.error).toMatch(/press Generate again/);
+    expect(event().status).toBe('checkin');
+  });
+
+  // THE OTHER DIRECTION, AND WHAT ACTUALLY ANSWERS IT. A pure arrival never
+  // reaches publish_event_draw's own check: assertFieldDidNotGrow runs a few
+  // lines earlier and refuses first, by design — "it fails the generation early
+  // and cheaply". Neutralising the RPC's arrival branch leaves this test green,
+  // and that is not a gap in the test, it is where the answer comes from.
+  //
+  // So this pins the SENTENCE, not the fence. It is worth keeping through a
+  // rewrite of the fence because the failure it guards against is a plausible
+  // one: 00200 added a departure message beside the arrival message, and an
+  // arrival that starts reading as "somebody left the event" is wrong in a way
+  // no other test here would notice. The fence's own arrival branch is covered
+  // by the swap case above, which assertFieldDidNotGrow cannot see.
+  it('still refuses a draw that somebody entered mid-build, with the arrival sentence', async () => {
+    seedField(4);
+
+    let fired = false;
+    store.beforeMatchInsert = () => {
+      if (fired || (store.db.tournament_matches ?? []).length === 0) return;
+      fired = true;
+      (store.db.tournament_participants ?? []).push({
+        id: 'p-late', event_id: 'e1', player_id: 'pl-late', elo_before: 1400,
+        elo_after: null, elo_change: null, seed_number: null,
+        final_position: null, points: null, status: 'registered',
+      });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/arrived while this draw was being built/);
+    expect(event().status).toBe('checkin');
+  });
+
   it('REFUSES A DRAW WHOSE GENERATION WAS SUPERSEDED MID-BUILD, and publishes nothing', async () => {
     seedField(4);
     expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
@@ -2411,7 +2512,8 @@ describe('regenerating a draw that already exists', () => {
       p_event_id: 'e1',
       p_new_status: 'bracket_generated',
       p_doubles: false,
-      p_expected: null,
+      p_entrants: ['tp-1'],
+      p_whole_field: false,
       p_phase: null,
       p_generation: claim,
     });

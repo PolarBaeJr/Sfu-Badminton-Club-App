@@ -111,3 +111,73 @@ describe('every eligibility refusal reaches the member as its own sentence', () 
     if (!r.ok) expect(r.error).toMatch(/try again shortly/);
   });
 });
+
+// ===========================================================================
+// THE COMPETITION CATEGORY, RE-ASKED UNDER THE LOCK (00200)
+// ===========================================================================
+//
+// competition_category is writable from exactly one place — the console — and
+// the member's own screen reads it hundreds of milliseconds before the entry
+// lands. So this is the one eligibility fact the app-side gate could never win
+// a race on, and until 00200 enter_tournament_event never asked again.
+//
+// The event here is gendered and the member's declared category MATCHES it, so
+// screenSelfEntry passes and the switch below is genuinely reachable. That is
+// the whole shape of the race: an exec changed the answer in between.
+describe('the category refusals the database now makes', () => {
+  beforeEach(() => { store.event.event_type = 'mens_singles'; });
+
+  it('undeclared reaches the member as the Settings remedy, not a retry', async () => {
+    store.rpcResult = { ok: false, reason: 'category_undeclared', event_type: 'mens_singles' };
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/Set your Gender in Settings/);
+      expect(r.error).toMatch(/enter an Open event instead/i);
+      expect(r.error).not.toMatch(/try again shortly/);
+    }
+  });
+
+  it('mismatch reaches the member as the exec remedy, not a retry', async () => {
+    store.rpcResult = { ok: false, reason: 'category_mismatch', event_type: 'mens_singles' };
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/not open to your declared Gender/);
+      expect(r.error).toMatch(/ask an exec/);
+      expect(r.error).not.toMatch(/try again shortly/);
+    }
+  });
+
+  // THE SENTENCE HAS ONE SOURCE. If the switch arms above ever grow their own
+  // wording, a member who loses the race reads something different from one who
+  // never entered it — for the same refusal, about the same event. Comparing
+  // against screenSelfEntry is what makes that impossible to do quietly.
+  it('says exactly what the member would have read without the race', async () => {
+    const { screenSelfEntry } = await import('@badminton/shared');
+
+    const undeclared = screenSelfEntry('mens_singles', null);
+    store.rpcResult = { ok: false, reason: 'category_undeclared' };
+    const a = await registerForEvent('e1');
+    expect(undeclared.ok).toBe(false);
+    if (!a.ok && !undeclared.ok) expect(a.error).toBe(undeclared.message);
+
+    const mismatch = screenSelfEntry('mens_singles', 'womens');
+    store.rpcResult = { ok: false, reason: 'category_mismatch' };
+    const b = await registerForEvent('e1');
+    expect(mismatch.ok).toBe(false);
+    if (!b.ok && !mismatch.ok) expect(b.error).toBe(mismatch.message);
+  });
+
+  // The refusal must be built from the EVENT, not from anything the function
+  // sends back about the member. A fence that returned the member's category
+  // would undo the disclosure property screenSelfEntry's own comment describes,
+  // and the first sign of it would be a sentence that changes when the payload
+  // does.
+  it('ignores a category the database has no business returning', async () => {
+    store.rpcResult = { ok: false, reason: 'category_mismatch', competition_category: 'womens' };
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).not.toMatch(/women/i);
+  });
+});

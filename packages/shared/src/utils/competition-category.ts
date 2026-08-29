@@ -175,49 +175,75 @@ export function screenSelfEntry(
   const required = categoryRequiredBy(eventType);
   if (required === null) return OK;
 
-  const eventLabel = TOURNAMENT_EVENT_TYPE_LABELS[eventType];
-
   if (category === null) {
-    return {
-      ok: false,
-      reason: 'undeclared',
-      message:
-        `${eventLabel} is entered by members who compete in ` +
-        (required === 'mixed'
-          ? 'a named category'
-          : `the ${required === 'mens' ? "men's" : "women's"} category`) +
-        // "Gender in Settings" since 00129 — the control used to be headed
-        // "Tournament events" and a remedy that names a label the app no longer
-        // shows is not a remedy. Still three ways out, and still in this order:
-        // the one the member can act on now, the one that needs nothing, and
-        // the one that needs somebody else.
-        '. Set your Gender in Settings, or enter an Open event instead. ' +
-        'A tournament admin can also enter you by hand.',
-    };
+    return { ok: false, reason: 'undeclared', message: categoryRefusalMessage(eventType, 'undeclared') };
   }
 
   // Mixed takes either declared category — the pair rule does the rest.
   if (required === 'mixed' || category === required) return OK;
 
-  return {
-    ok: false,
-    reason: 'mismatch',
-    // Says which event they are not eligible for, never which category they
-    // are. The member knows their own answer; the sentence does not repeat it
-    // back, so a screenshot of a refusal discloses nothing.
-    //
-    // THE REMEDY CHANGED IN 00129 AND HAD TO. This branch is reached ONLY by a
-    // member who has already declared — that is what makes it a mismatch rather
-    // than an 'undeclared' — and that is exactly the member the write-once lock
-    // refuses. "Change it in Settings" was still true when they could; after
-    // 00129 it sends them to a control that is no longer there to do a write
-    // the database would reject. An exec is the remedy now, and it is the same
-    // remedy COMPETITION_CATEGORY_LOCKED_MESSAGE names.
-    message:
-      `${eventLabel} is not open to your declared Gender. ` +
-      'Enter an Open event instead, or ask an exec if your Gender is wrong.',
-  };
+  return { ok: false, reason: 'mismatch', message: categoryRefusalMessage(eventType, 'mismatch') };
 }
+
+/**
+ * THE TWO SELF-ENTRY REFUSAL SENTENCES, lifted out so the DATABASE can reach
+ * them (00200).
+ *
+ * enter_tournament_event re-asks the category question under the field lock,
+ * because an exec may change a member's Gender in the window between the screen
+ * below and the insert. That function returns a REASON CODE and nothing else —
+ * never the member's category, which is what preserves the disclosure property
+ * the mismatch branch describes. So the sentence has to be built app-side, from
+ * the event type the caller already holds.
+ *
+ * It is built HERE rather than written a second time at that call site for one
+ * reason: a member must not get two different sentences for the same refusal
+ * depending on whether they happened to lose the race.
+ */
+export function categoryRefusalMessage(
+  eventType: TournamentEventType,
+  reason: CategoryRefusalReason,
+): string {
+  // Unreachable for an Open event on both paths — screenSelfEntry returns OK
+  // before it can ask, and the database refuses only for gendered event types.
+  // 'mixed' is the wording that stays true if that ever stops holding, because
+  // it names no category the member might not have.
+  const required = categoryRequiredBy(eventType) ?? 'mixed';
+  const eventLabel = TOURNAMENT_EVENT_TYPE_LABELS[eventType];
+
+  if (reason === 'undeclared') {
+    return (
+      `${eventLabel} is entered by members who compete in ` +
+      (required === 'mixed'
+        ? 'a named category'
+        : `the ${required === 'mens' ? "men's" : "women's"} category`) +
+      // "Gender in Settings" since 00129 — the control used to be headed
+      // "Tournament events" and a remedy that names a label the app no longer
+      // shows is not a remedy. Still three ways out, and still in this order:
+      // the one the member can act on now, the one that needs nothing, and
+      // the one that needs somebody else.
+      '. Set your Gender in Settings, or enter an Open event instead. ' +
+      'A tournament admin can also enter you by hand.'
+    );
+  }
+
+  // Says which event they are not eligible for, never which category they
+  // are. The member knows their own answer; the sentence does not repeat it
+  // back, so a screenshot of a refusal discloses nothing.
+  //
+  // THE REMEDY CHANGED IN 00129 AND HAD TO. This branch is reached ONLY by a
+  // member who has already declared — that is what makes it a mismatch rather
+  // than an 'undeclared' — and that is exactly the member the write-once lock
+  // refuses. "Change it in Settings" was still true when they could; after
+  // 00129 it sends them to a control that is no longer there to do a write
+  // the database would reject. An exec is the remedy now, and it is the same
+  // remedy COMPETITION_CATEGORY_LOCKED_MESSAGE names.
+  return (
+    `${eventLabel} is not open to your declared Gender. ` +
+    'Enter an Open event instead, or ask an exec if your Gender is wrong.'
+  );
+}
+
 
 /**
  * CONSOLE ENTRY, single entrant. An exec is adding somebody by hand.

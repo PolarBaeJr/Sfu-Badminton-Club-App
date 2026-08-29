@@ -239,7 +239,18 @@ async function publishDraw(
   eventId: string,
   newStatus: 'live' | 'bracket_generated' | 'pool_live' | 'pool_generated',
   doubles: boolean,
-  expected: number | null,
+  // THE IDS THIS DRAW WAS BUILT FROM, not how many there were (00200). A count
+  // cannot see a swap: one entrant withdraws and another enters while the draw
+  // is being generated, the total is unchanged, and publication succeeds on a
+  // bracket that has a fixture for somebody who left and none for somebody who
+  // is in the event.
+  entrants: string[],
+  // True when `entrants` is supposed to BE the field. False for a pool-seeded
+  // draw, whose entrants are the qualifiers — the members who did not qualify
+  // are still registered, so "somebody is in the event and not in the draw" is
+  // the normal state there rather than a fault. The other direction is checked
+  // on both paths.
+  wholeField: boolean,
   phase: TournamentMatchPhase | null,
   generation: string,
 ): Promise<void> {
@@ -247,7 +258,8 @@ async function publishDraw(
     p_event_id: eventId,
     p_new_status: newStatus,
     p_doubles: doubles,
-    p_expected: expected,
+    p_entrants: entrants,
+    p_whole_field: wholeField,
     p_phase: phase,
     p_generation: generation,
   });
@@ -260,6 +272,20 @@ async function publishDraw(
         `${arrived} ${arrived === 1 ? 'entry' : 'entries'} arrived while this draw was being built, so it would have left `
         + `${arrived === 1 ? 'somebody' : 'people'} out. Nothing was published — press Generate again to include `
         + `${arrived === 1 ? 'them' : 'everyone'}.`,
+      );
+    }
+    // SOMEBODY IN THIS DRAW IS NO LONGER IN THE EVENT (00200) — a withdrawal
+    // landed while the draw was being built, so a fixture here belongs to
+    // somebody who has left. This is the cost of comparing the set instead of
+    // the total, and it is only acceptable because the remedy is one press of
+    // the button they just pressed. The sentence therefore says exactly that
+    // and does not ask them to work out what changed.
+    if (data.reason === 'entrant_left') {
+      const gone = Number(data.count ?? 0);
+      throw new ExpectedError(
+        `${gone === 1 ? 'Somebody' : `${gone} people`} in this draw left the event while it was being built, `
+        + `so ${gone === 1 ? 'their match' : 'their matches'} would have had nobody to play. Nothing was published — `
+        + 'press Generate again to rebuild it without them.',
       );
     }
     // SOMEBODY ELSE REBUILT THIS DRAW while this one was being built (00197).
@@ -1409,11 +1435,22 @@ async function generateSingleEliminationBracketImpl(
   // this bracket. publish_event_draw takes the event row, which is the same row
   // an entry must take, so only two orderings exist: the entry commits first
   // and this refuses, or this commits first and the entry is closed out.
-  // `null` when the field came out of a pool, matching the guard above: the
-  // entrants are the qualifiers, not everyone registered, so a live count of
-  // the participant table is not the number this draw was built from and would
-  // refuse every pool-to-bracket publication.
-  await publishDraw(adminClient, eventId, statusAfterDraw(event, phase), doubles, seededFromPool ? null : N, phase, generation);
+  // NO LONGER A COUNT, AND NO LONGER EXEMPT (00200). The count was `null` for a
+  // pool-seeded draw because the entrants are the qualifiers, not everyone
+  // registered, so a live total of the participant table is not the number this
+  // draw was built from and would have refused every pool-to-bracket
+  // publication. Passing the ids splits that into two questions, and only the
+  // second one is about the whole field — so the first, "is everybody in this
+  // draw still in the event", is now asked on the pool path too.
+  // `entries` is the field this bracket was built from, whatever produced it —
+  // the pool builders return the same shape as the two direct reads. So the
+  // pool-seeded path is no longer exempt from the check: it passes its
+  // qualifiers and asks only that they all still be in the event, which is the
+  // half a live count of the participant table could never express.
+  await publishDraw(
+    adminClient, eventId, statusAfterDraw(event, phase), doubles,
+    entries.map(e => e.id), !seededFromPool, phase, generation,
+  );
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
@@ -1791,7 +1828,10 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   // this bracket. publish_event_draw takes the event row, which is the same row
   // an entry must take, so only two orderings exist: the entry commits first
   // and this refuses, or this commits first and the entry is closed out.
-  await publishDraw(adminClient, eventId, statusAfterDraw(event, phase), doubles, N, phase, generation);
+  await publishDraw(
+    adminClient, eventId, statusAfterDraw(event, phase), doubles,
+    entries.map(e => e.id), true, phase, generation,
+  );
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
