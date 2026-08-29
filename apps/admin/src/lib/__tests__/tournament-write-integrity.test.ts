@@ -1209,7 +1209,7 @@ vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'ad
 import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
 } from '../tournament-actions/results';
-import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
+import { finalizeEvent, applyPlacementBonuses, recomputeEventStandings } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
 import { updateTournamentEvent } from '../tournament-actions/events';
 // THE FORM'S OWN PAYLOAD BUILDER, not a hand-made patch. Whether an exec's
@@ -2339,6 +2339,40 @@ describe('finalizeEvent', () => {
     expect(participant('p-alice').final_position).toBeNull();
     expect(participant('p-alice').points).toBeNull();
     expect(participant('p-bob').final_position).toBe(1);
+  });
+
+  // THE OTHER CALLER of assignPositionsAndPoints, and the reason the clear above
+  // is not the whole fix. recomputeEventStandings redoes a COMPLETED event's
+  // standings after a result is corrected, so the clear fires there too -- but
+  // the `moved` list it reports was built from positionMap alone, and a cleared
+  // entry is absent from that map by construction. So the one case the caller's
+  // warning exists for was the one case it could not see.
+  it('reports a placing the recompute REMOVED, not just the ones it moved', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    // The bonuses landed on that finalisation. Nothing can take them back.
+    store.db.tournament_audit_log!.push({
+      tournament_id: 't1', event_id: 'e1', action: 'placement_bonuses_applied',
+      performed_by: 'admin-1', details: { rated_players: ['pl-alice'] },
+    });
+
+    // Now the champion is disqualified and the standings are redone.
+    participant('p-alice').status = 'disqualified';
+    const standings = await recomputeEventStandings('e1');
+
+    expect(participant('p-alice').final_position).toBeNull();
+    // THE ASSERTION. Built from positionMap alone, `moved` held only p-bob's
+    // 2 -> 1 and said nothing about the placing that vanished.
+    expect(standings.moved).toContainEqual({ id: 'p-alice', from: 1, to: null });
+    expect(standings.bonusesAlreadyPaid).toBe(true);
+
+    // And because it is in `moved`, the audit row records the removal too --
+    // results.ts reads nothing but moved.length, so this is also what makes the
+    // officer warning fire on an unreversible payment.
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'standings_recomputed').at(-1)!;
+    expect((audit.details as { moved: unknown[] }).moved).toContainEqual({ id: 'p-alice', from: 1, to: null });
   });
 
   // THE ASYMMETRY, and it is the reason the round-robin hole was argued away in

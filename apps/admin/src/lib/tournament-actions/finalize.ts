@@ -367,7 +367,7 @@ async function assignPositionsAndPoints(
   eventId: string,
   doubles: boolean,
   table: string,
-): Promise<{ positionMap: Map<string, number>; wonPositions: string[] }> {
+): Promise<{ positionMap: Map<string, number>; wonPositions: string[]; cleared: string[] }> {
   // Positions first: the full (id → position) map is built in memory, then
   // written as one parallel batch of UPDATEs.
   const positionMap = new Map<string, number>();
@@ -774,7 +774,7 @@ async function assignPositionsAndPoints(
     // Also absolute, also before the status flip, for the same reason.
     assertWritesSucceeded('Assigning tournament points', failures);
   }
-  return { positionMap, wonPositions: [...wonTheirPosition] };
+  return { positionMap, wonPositions: [...wonTheirPosition], cleared: toClear };
 }
 
 /**
@@ -790,7 +790,9 @@ async function assignPositionsAndPoints(
  * new champion (and not unpaying the old one) would be worse than saying so.
  */
 export async function recomputeEventStandings(eventId: string): Promise<{
-  moved: Array<{ id: string; from: number | null; to: number }>;
+  // A `to` of null means the recompute took the placing AWAY, not that it moved
+  // one -- see the build of this list below for why that has to be representable.
+  moved: Array<{ id: string; from: number | null; to: number | null }>;
   bonusesAlreadyPaid: boolean;
 }> {
   const adminClient = createAdminClient();
@@ -811,12 +813,27 @@ export async function recomputeEventStandings(eventId: string): Promise<{
     (before ?? []).map(r => [r.id as string, (r.final_position ?? null) as number | null]),
   );
 
-  const { positionMap } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+  const { positionMap, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
 
-  const moved: Array<{ id: string; from: number | null; to: number }> = [];
+  // `to: number | null` because a recompute can REMOVE a placing, not just move
+  // one. Built from positionMap alone this list could only ever grow or shuffle,
+  // so an entry the correction dropped out of the standings entirely produced no
+  // audit row and -- worse -- no `moved.length > 0` for the bonuses-already-paid
+  // warning at results.ts to fire on. That is precisely the case the warning is
+  // for: placement bonuses have no reversal, so an officer who clears a champion
+  // whose bonus already landed has to be told.
+  const moved: Array<{ id: string; from: number | null; to: number | null }> = [];
   for (const [id, to] of positionMap) {
     const from = previous.get(id) ?? null;
     if (from !== to) moved.push({ id, from, to });
+  }
+  for (const id of cleared) {
+    // A cleared id is absent from positionMap by construction, so this cannot
+    // duplicate the loop above. `previous` may hold null for it if the row had
+    // only stale points -- still a change worth logging, but not a MOVE, so it
+    // is filtered on the same from !== to rule.
+    const from = previous.get(id) ?? null;
+    if (from !== null) moved.push({ id, from, to: null });
   }
 
   const ledger = await readBonusLedger(adminClient, eventId);
