@@ -49,6 +49,24 @@
 -- marking zero rows there is the point -- it means adopting the unbounded rule
 -- moves no data, and changes only what the rule IS.
 
+-- WHEN IT IS CORRECT TO RUN THIS, WHICH IS NARROWER THAN IT LOOKS
+--
+-- Only in the drained cutover window: after the last pre-ledger admin container
+-- is gone and before draws are unlocked. That is the ONLY moment when "no
+-- per-subject grants" reliably means "paid by code that could not record it".
+--
+-- Afterwards the rule stops being safe, because a legitimate bonus pass that
+-- awards ZERO bonuses also writes no grant rows and is indistinguishable from a
+-- legacy payment. Running the sweep then permanently marks those events as
+-- already-paid and every later bonus pass on them is silently refused.
+--
+-- The function's whole safety argument is "nobody calls it except at cutover" --
+-- there is no scheduled caller and no application caller, and nothing in the
+-- database enforces that. So, for whoever finds this later and thinks it looks
+-- like a way to check bonus state: it is not a query. It writes, and what it
+-- writes is not meant to be undone by anything except a human deleting rows by
+-- hand. Read the state instead -- SELECT from tournament_bonus_grants.
+
 BEGIN;
 
 -- The sweep. No timestamp anywhere: an event that is completed, has bonuses
@@ -69,6 +87,10 @@ SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
 AS $fn$
 BEGIN
+  -- NOT A QUERY. This writes, and it is only correct inside the cutover window
+  -- when no pre-ledger container is still running. Outside that window it marks
+  -- legitimately zero-bonus events as already-paid, and every later bonus pass
+  -- on them is refused. See the migration header before invoking it by hand.
   RETURN QUERY
   WITH marked AS (
     INSERT INTO public.tournament_bonus_grants
@@ -100,6 +122,11 @@ $fn$;
 -- REVOKE FROM PUBLIC alone does NOT remove Supabase's default anon grant.
 REVOKE ALL ON FUNCTION public.sweep_unledgered_bonus_events() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sweep_unledgered_bonus_events() TO service_role;
+
+-- Visible from \df+ and \sf, so the warning reaches someone who found this
+-- function in the catalog rather than in the repository.
+COMMENT ON FUNCTION public.sweep_unledgered_bonus_events() IS
+  'Cutover-window only (F-003). Marks completed bonus-enabled events that carry no per-subject grant as legacy-paid. Correct ONLY after every pre-ledger admin container is gone; run at any other time it marks legitimately zero-bonus events as already-paid and silently refuses their future bonus passes. This is a mutation, not a state check.';
 
 -- ---------------------------------------------------------------------------
 -- Verify.
