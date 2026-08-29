@@ -24,6 +24,14 @@ export interface TournamentCheckInResult {
    * they think they are in, and nobody at the door knows.
    */
   refused: Array<{ event: string; detail: string }>;
+  /**
+   * Events whose check-in window has not OPENED yet. Reported separately from
+   * `refused` on purpose: a tournament runs its events in sequence, so a member
+   * entered in a morning and an afternoon event has one of each at the door,
+   * and calling the afternoon one a refusal turns the ordinary case into a
+   * partial failure. Nothing here needs acting on.
+   */
+  pending: Array<{ event: string }>;
 }
 
 export async function checkInToTournament(
@@ -103,6 +111,9 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   const checkedIn: string[] = [];
   const alreadyIn: string[] = [];
   const refused: Array<{ event: string; detail: string }> = [];
+  // Events whose check-in has not opened yet. Reported so nothing vanishes
+  // from the screen, but NOT as a failure -- see the prefilter below.
+  const pending: Array<{ event: string }> = [];
   const toClaim: string[] = [];
   // The label to report per participant row, so the response can be built from
   // the rows the UPDATE actually changed rather than from the rows we hoped it
@@ -127,8 +138,21 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     if (row.status === 'checked_in') { alreadyIn.push(label); continue; }
     // Only while the event is actually accepting check-in. Registration is too
     // early, and once the bracket exists the field is fixed.
+    //
+    // TWO UNLIKE THINGS, and collapsing them was an over-correction that
+    // codex's round-20 sequence and my own reading both landed on. Event
+    // status runs registration -> checkin -> bracket_generated -> live ->
+    // completed (00001:682) and a tournament runs its events in sequence, so
+    // at any moment most of a member's events are NOT in checkin. Reporting
+    // all of them as refusals headed almost every ordinary scan "Partly
+    // checked in" -- the same defect as the silent drop, pointed the other
+    // way: a screen that misdescribes what happened.
+    //
+    // `registration` is not open YET and there is nothing to act on; anything
+    // past checkin means the window has closed and the desk is the remedy.
     if (row.event?.status !== 'checkin') {
-      refused.push({ event: label, detail: refusalDetail('event_status') });
+      if (row.event?.status === 'registration') pending.push({ event: label });
+      else refused.push({ event: label, detail: refusalDetail('event_closed') });
       continue;
     }
     toClaim.push(row.id);
@@ -210,6 +234,7 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     checkedIn,
     alreadyIn,
     refused,
+    pending,
   };
 }
 
@@ -221,9 +246,13 @@ function refusalDetail(reason: string | undefined): string {
   switch (reason) {
     case 'entry_status':
       return 'you are no longer in this event — see the desk';
+    // NOT "not open for this event", which was true of two different
+    // situations and actionable in only one. An event that has not opened yet
+    // never reaches here -- it goes to `pending`.
+    case 'event_closed':
     case 'event_status':
     case 'event_completed':
-      return 'check-in is not open for this event';
+      return 'check-in has closed for this event — see the desk';
     case 'entry_not_found':
     case 'event_not_found':
       return 'this entry could not be found — see the desk';

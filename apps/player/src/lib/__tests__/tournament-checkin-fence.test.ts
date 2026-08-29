@@ -134,14 +134,18 @@ describe('the QR check-in scan goes through the field fence', () => {
 
   it('claims nothing when the fence refuses -- neither checked in nor already', async () => {
     // A draw published between the JS read and the write, or an officer
-    // withdrawing someone mid-queue. Reporting either list would be a lie, and
-    // the member at the door is told check-in is not open.
+    // withdrawing someone mid-queue. Reporting either list would be a lie.
+    //
+    // "CLOSED", not "not open yet", and the distinction is exact rather than a
+    // wording preference: an entry only reaches the RPC if the prefilter saw
+    // its event in `checkin`, so a fence refusal means the event moved FORWARD
+    // underneath the scan. There is no transition back to registration.
     store.rpcResults = [{ ok: false, reason: 'event_status' }];
 
     const r = await checkInToTournament(TOKEN);
 
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/not open/i);
+    if (!r.ok) expect(r.error).toMatch(/closed for this event/i);
   });
 
   it('REPORTS a partial refusal instead of calling the whole scan a success', async () => {
@@ -186,11 +190,11 @@ describe('the QR check-in scan goes through the field fence', () => {
   // an entry that never reached the RPC never reached `refused` either. The
   // partial-success screen came back for a member whose second event was
   // withdrawn or simply not open yet.
-  it('reports an entry the event-status prefilter skipped, not just an RPC refusal', async () => {
-    // Codex's sequence exactly: one already checked in, one whose event is
-    // still in registration. alreadyIn is non-empty, so the all-empty test
-    // below cannot fire and the second event used to vanish from the screen.
-    store.entries = [entry('pt1'), entry('pt2', 'registration')];
+  it('reports an entry whose check-in has CLOSED as a refusal', async () => {
+    // Codex's round-19 sequence, with the status that makes it a refusal.
+    // alreadyIn is non-empty, so the all-empty test below cannot fire and the
+    // second event used to vanish from the screen entirely.
+    store.entries = [entry('pt1'), entry('pt2', 'live')];
     store.rpcResults = [{ ok: true, already: true }];
 
     const r = await checkInToTournament(TOKEN);
@@ -199,10 +203,32 @@ describe('the QR check-in scan goes through the field fence', () => {
     if (r.ok) {
       expect(r.data.alreadyIn).toHaveLength(1);
       expect(r.data.refused).toHaveLength(1);
-      expect(r.data.refused[0]!.detail).toMatch(/not open/i);
+      expect(r.data.refused[0]!.detail).toMatch(/closed/i);
+      expect(r.data.pending).toHaveLength(0);
     }
     // And it really was the prefilter: only the first entry reached the fence.
     expect(store.rpc).toHaveLength(1);
+  });
+
+  // THE OVER-CORRECTION, which is its own defect and not a softening of the one
+  // above. Reporting every not-yet-open event as a refusal headed almost every
+  // ordinary scan "Partly checked in", because a tournament runs its events in
+  // sequence and the query fetches ALL of a member's entries.
+  it('does NOT call a later event a refusal, so an ordinary scan stays clean', async () => {
+    store.entries = [entry('pt1'), entry('pt2', 'registration')];
+    store.rpcResults = [{ ok: true, already: false }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.checkedIn).toHaveLength(1);
+      // Reported, so it does not vanish...
+      expect(r.data.pending).toHaveLength(1);
+      // ...but NOT as a failure. This empty list is what keeps the screen
+      // headed "Checked in".
+      expect(r.data.refused).toHaveLength(0);
+    }
   });
 
   it('reports an entry the withdrawn prefilter skipped', async () => {
@@ -217,6 +243,7 @@ describe('the QR check-in scan goes through the field fence', () => {
       expect(r.data.checkedIn).toHaveLength(1);
       expect(r.data.refused).toHaveLength(1);
       expect(r.data.refused[0]!.detail).toMatch(/no longer in this event/i);
+      expect(r.data.pending).toHaveLength(0);
     }
     expect(store.rpc).toHaveLength(1);
   });

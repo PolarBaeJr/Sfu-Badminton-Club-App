@@ -2313,6 +2313,34 @@ describe('finalizeEvent', () => {
     expect(event().status).toBe('live');
   });
 
+  // CODEX'S ROUND-20 SEQUENCE, and it runs THROUGH the guard rather than around
+  // it -- which is why the two tests above pass while the defect is live. The
+  // refusal is not the end state; the retry is.
+  it('clears the stale placing on the retry, so a refused finalisation cannot be laundered', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+
+    // 1-2. Positions are written, THEN the leader is disqualified. The status
+    // writer touches only `status` (00202:1010), so final_position survives.
+    store.beforeCompleteEvent = () => { participant('p-alice').status = 'disqualified'; };
+    await expect(finalizeEvent('e1')).rejects.toThrow(/won its place left the event/);
+
+    // 3. Refused, event still live -- and the stale placing is sitting there.
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    // 4. The retry. Standings now exclude p-alice, so they are absent from the
+    // new map -- and nothing used to rewrite their row.
+    store.beforeCompleteEvent = null;
+    await finalizeEvent('e1');
+
+    expect(event().status).toBe('completed');
+    // THE ASSERTION. Without the clear this is still 1, on a disqualified
+    // entry, in a completed event.
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-alice').points).toBeNull();
+    expect(participant('p-bob').final_position).toBe(1);
+  });
+
   // THE ASYMMETRY, and it is the reason the round-robin hole was argued away in
   // the first place. A DQ landing BEFORE finalisation is not the same defect: a
   // round-robin table can simply be recomputed without that entry, and
@@ -2509,6 +2537,25 @@ describe('placement bonuses', () => {
     expect(ratingOf('pl-bob')).toBe(1020);
     expect(participant('p-alice').elo_change).toBe(32);
     expect(participant('p-bob').elo_change).toBe(20);
+  });
+
+  // THE SECOND HALF OF CODEX'S ROUND-20 SEQUENCE, and the money end of it.
+  // This query asks only for a non-null final_position, with no filter on
+  // entry status -- so a stale placing left on a disqualified entry was paid a
+  // podium bonus. assignPositionsAndPoints now clears those placings, which is
+  // the real fix; this is the second lock on the door, and money is the one
+  // place worth having one.
+  it('pays no bonus to an entry that has left the event, whatever placing its row holds', async () => {
+    participant('p-alice').status = 'disqualified';
+
+    await applyPlacementBonuses('e1');
+
+    // Alice holds final_position = 1 and is disqualified. Nothing.
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(participant('p-alice').elo_change).toBeNull();
+    // And the event still pays everybody who IS in it, so this is a filter and
+    // not an outage.
+    expect(ratingOf('pl-bob')).toBe(1020);
   });
 
   it('refuses to award anything when the ledger cannot be read', async () => {

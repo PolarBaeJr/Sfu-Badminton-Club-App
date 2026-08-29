@@ -183,7 +183,7 @@ export async function applyPlacementBonuses(eventId: string) {
 
   if (doubles) {
     const { data: pairs, error: pairsErr } = await adminClient.from('tournament_pairs')
-      .select('id, player1_id, player2_id, final_position')
+      .select('id, player1_id, player2_id, final_position, status')
       .eq('event_id', eventId)
       .not('final_position', 'is', null);
     // A failed read arrives as `pairs == null`, which reads as "nobody placed"
@@ -193,6 +193,12 @@ export async function applyPlacementBonuses(eventId: string) {
     // Build playerId → bonus map (a player may appear in multiple pairs, sum bonuses).
     const playerBonus = new Map<string, number>();
     for (const pair of pairs ?? []) {
+      // BELT AND BRACES over the placing clear in assignPositionsAndPoints.
+      // This query asks only for a non-null final_position, so before that
+      // clear existed a stale placing left on a disqualified entry was paid a
+      // podium bonus. Money is the one place worth checking twice, and the
+      // check is a status the row already carries.
+      if (isOutOfEvent(pair.status as string | null)) continue;
       const bonus = bonusFor(pair.final_position);
       if (bonus <= 0) continue;
       for (const pid of [pair.player1_id, pair.player2_id]) {
@@ -228,7 +234,7 @@ export async function applyPlacementBonuses(eventId: string) {
     }
   } else {
     const { data: participants, error: participantsErr } = await adminClient.from('tournament_participants')
-      .select('id, player_id, final_position, elo_change, elo_after')
+      .select('id, player_id, final_position, elo_change, elo_after, status')
       .eq('event_id', eventId)
       .not('final_position', 'is', null);
     // Same as the doubles branch: a failed read looks exactly like an event
@@ -236,6 +242,8 @@ export async function applyPlacementBonuses(eventId: string) {
     if (participantsErr) throw new Error(`Could not read placements: ${participantsErr.message}`);
 
     const eligible = (participants ?? [])
+      // Same belt and braces as the pairs branch above.
+      .filter(p => !isOutOfEvent((p as { status?: string | null }).status))
       .map(p => ({ ...p, bonus: bonusFor(p.final_position) }))
       .filter(p => p.bonus > 0);
 
@@ -639,19 +647,56 @@ async function assignPositionsAndPoints(
     }
   }
 
-  if (positionMap.size > 0) {
-    const { failures } = await settleWrites(
-      [...positionMap.entries()].map(([id, pos]) => [
+  // ENTRIES THAT NO LONGER PLACE ARE CLEARED, and without this the write is not
+  // absolute at all -- it only overwrote rows that stayed in the map.
+  //
+  // Codex's round-20 sequence, and it runs straight through the guard above
+  // rather than around it. A round-robin leader is placed 1st and the positions
+  // are written; the leader is then disqualified; the fence correctly refuses,
+  // leaving the event live AND the stale final_position = 1 on the row, because
+  // disqualifying changes only `status` (00202:1010). The retry recomputes
+  // standings WITHOUT them, so they are absent from the new map, nothing
+  // rewrites their row, p_won no longer names them, shrinkage is allowed, and
+  // the event completes with a disqualified entry still holding first place.
+  //
+  // That is the residual I had written down as accepted and benign on the
+  // grounds that a refused finalisation pays nothing. It is not benign: the
+  // refusal is not the end state, the retry is, and applyPlacementBonuses reads
+  // placings by `final_position IS NOT NULL` with no status filter -- so the
+  // podium bonus lands on the disqualified entry.
+  const stale = await adminClient.from(table)
+    .select('id, final_position, points')
+    .eq('event_id', eventId);
+  if (stale.error) {
+    throw new Error(`Could not read existing placements: ${stale.error.message}`);
+  }
+  // Filtered here rather than in the query: the predicate is "holds a placing
+  // it should no longer hold", and half of that (`!positionMap.has`) is only
+  // known in memory. Splitting it across the wire and JS would read as two
+  // rules.
+  const toClear = (stale.data ?? [])
+    .map(r => r as { id: string; final_position: number | null; points: number | null })
+    .filter(r => !positionMap.has(r.id) && (r.final_position !== null || r.points !== null))
+    .map(r => r.id);
+
+  if (positionMap.size > 0 || toClear.length > 0) {
+    const positionWrites: LabelledWrite[] = [
+      ...[...positionMap.entries()].map(([id, pos]): LabelledWrite => [
         `${table}.final_position for ${id}`,
         adminClient.from(table).update({ final_position: pos }).eq('id', id),
-      ] as const)
-    );
+      ]),
+      ...toClear.map((id): LabelledWrite => [
+        `${table}.clearing the stale placing on ${id}`,
+        adminClient.from(table).update({ final_position: null, points: null }).eq('id', id),
+      ]),
+    ];
+    const { failures } = await settleWrites(positionWrites);
     // Raised BEFORE the event is flipped to completed. final_position is an
     // absolute write derived from the finished bracket, so re-running finalize
-    // recomputes the same map and overwrites the rows that did land — the
-    // retry is idempotent. Flipping the status first is what used to make a
-    // half-positioned event unfixable: finalizeEvent refuses anything that is
-    // not live, so there was no second attempt to be had.
+    // recomputes the same map and overwrites the rows that did land — and, now,
+    // clears the ones that no longer place. Flipping the status first is what
+    // used to make a half-positioned event unfixable: finalizeEvent refuses
+    // anything that is not live, so there was no second attempt to be had.
     assertWritesSucceeded('Assigning final positions', failures);
   }
 

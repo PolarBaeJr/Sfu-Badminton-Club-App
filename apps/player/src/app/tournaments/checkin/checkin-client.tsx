@@ -142,6 +142,19 @@ export function TournamentCheckInClient({ initialToken }: { initialToken?: strin
             </ul>
           </div>
         )}
+        {/*
+          MUTED, AND IT NEVER TOUCHES THE HEADING. These are events whose
+          check-in has not opened yet, which is the ordinary shape of a
+          multi-event tournament rather than anything that went wrong -- the
+          member simply scans again later. Rendering them alongside the
+          refusals, or letting them make the scan "Partly checked in", would
+          make almost every successful scan read as a failure.
+        */}
+        {result.pending.length > 0 && (
+          <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            Opens later: {result.pending.map((p) => p.event).join(', ')}
+          </p>
+        )}
         <Button style={{ marginTop: 16 }} onClick={() => router.push('/tournaments')}>
           Done
         </Button>
