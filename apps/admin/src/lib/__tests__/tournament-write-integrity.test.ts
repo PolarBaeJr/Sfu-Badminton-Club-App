@@ -1185,9 +1185,62 @@ const makeClient = vi.hoisted(() => () => {
       if (incomplete > 0) {
         return Promise.resolve({ data: { ok: false, reason: 'matches_incomplete', incomplete }, error: null });
       }
+      // 00212. THE PLACINGS LAND HERE, not before the call, and they land in
+      // the same transaction as the flip. Modelled row by row so the fault
+      // harness can still hit them: they are real UPDATEs against the same
+      // table in the real function, and a test that injects on
+      // `payload.final_position === 2` has to keep firing, or every write
+      // failure test below goes vacuously green.
+      //
+      // `undo` is the transaction. Anything that fails mid-write restores every
+      // row already touched and leaves the event live — which is what RAISE
+      // does inside the real function, and the property the migration exists
+      // for.
+      const undo: Array<() => void> = [];
+      const rollback = () => { for (const u of undo.reverse()) u(); };
+      const rowsOf = (id: string) =>
+        (store.db[table] ?? []).filter((r) => r.id === id && r.event_id === eventId);
+      const applyRow = (id: string, payload: Row): string | null => {
+        const rows = rowsOf(id);
+        // The real function counts affected rows and raises when an id matched
+        // nothing in THIS event. NO TEST HERE REACHES THIS BRANCH, deliberately:
+        // the ids all come from the event's own rows, so no application path can
+        // produce a foreign one -- which is exactly why the check belongs in the
+        // SECURITY DEFINER function rather than up here. Its coverage is the
+        // behavioural probe in 00212's verify block.
+        if (rows.length === 0) return `${id} matched no row in event ${eventId}`;
+        const fault = faultFor(table, 'update', { filters: [['id', id]], payload });
+        if (fault) return fault.message;
+        for (const r of rows) {
+          const before = { ...r };
+          undo.push(() => { for (const k of Object.keys(r)) delete r[k]; Object.assign(r, before); });
+          Object.assign(r, payload);
+        }
+        return null;
+      };
+
+      const positions = (args.p_positions as Record<string, number> | undefined) ?? {};
+      const points = (args.p_points as Record<string, number> | undefined) ?? {};
+      const toClear = (args.p_clear as string[] | undefined) ?? [];
+      for (const [id, pos] of Object.entries(positions)) {
+        const err = applyRow(id, { final_position: pos });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      for (const [id, pts] of Object.entries(points)) {
+        const err = applyRow(id, { points: pts });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      for (const id of toClear) {
+        // The clear is NOT existence-checked, matching the function: a row that
+        // is gone already holds no placing.
+        if (rowsOf(id).length === 0) continue;
+        const err = applyRow(id, { final_position: null, points: null });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+
       const payload: Row = { status: 'completed', updated_at: new Date().toISOString() };
       const f = faultFor('tournament_events', 'update', { filters: [['id', eventId]], payload });
-      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      if (f) { rollback(); return Promise.resolve({ data: null, error: { message: f.message } }); }
       Object.assign(ev, payload);
       return Promise.resolve({
         data: { ok: true, event_id: eventId, tournament_id: ev.tournament_id },
@@ -2201,18 +2254,37 @@ describe('finalizeEvent', () => {
   });
 
   it('leaves the event live when a final_position write fails, so it can be retried', async () => {
+    // FAULTS THE SECOND WRITE, NOT THE FIRST, and that is load-bearing. The
+    // placings go out runner-up first (position 2 is p-bob), so a fault on
+    // position 2 fails before anything has landed and the "nothing was written"
+    // assertion below holds whether or not the batch rolls back -- it was
+    // vacuous. Faulting position 1 means p-bob's row is already written when
+    // the failure hits, so only a real rollback can make both null.
     store.faults.push({
       table: 'tournament_participants', op: 'update', message: 'permission denied for table tournament_participants',
-      when: ({ payload }) => payload.final_position === 2,
+      when: ({ payload }) => payload.final_position === 1,
     });
 
-    await expect(finalizeEvent('e1')).rejects.toThrow(/final_position/);
+    // The message no longer names the COLUMN that failed. It cannot: the write
+    // happens inside the RPC now, so what comes back is the database's own
+    // error, not a label the caller attached to a PostgREST call it issued
+    // itself. The underlying cause is still carried through, which is the part
+    // an exec can act on.
+    await expect(finalizeEvent('e1')).rejects.toThrow(/nothing was saved.*permission denied/);
 
     // The old code flipped the event to completed regardless, and finalizeEvent
     // refuses anything that is not live — so a half-positioned event could not
     // be repaired from the console at all.
     expect(event().status).toBe('live');
-    expect(participant('p-alice').final_position).toBe(1);
+
+    // AND NOTHING AT ALL WAS WRITTEN (00212). This used to assert p-alice
+    // KEPT first place through the failure — the writes went out one PostgREST
+    // call at a time, so the one that succeeded stayed. The placings now travel
+    // with the flip and land in its transaction, so a failure anywhere in the
+    // batch takes the whole batch with it. That is a strictly stronger
+    // guarantee than the one this test used to encode, and it is what stops two
+    // concurrent finalisations leaving a ladder made of halves.
+    expect(participant('p-alice').final_position).toBeNull();
     expect(participant('p-bob').final_position).toBeNull();
   });
 
@@ -2319,14 +2391,24 @@ describe('finalizeEvent', () => {
   it('clears the stale placing on the retry, so a refused finalisation cannot be laundered', async () => {
     Object.assign(event(), { format: 'round_robin' });
 
-    // 1-2. Positions are written, THEN the leader is disqualified. The status
-    // writer touches only `status` (00202:1010), so final_position survives.
+    // 1-2. The leader is disqualified after the positions are computed. The
+    // status writer touches only `status` (00202:1010).
     store.beforeCompleteEvent = () => { participant('p-alice').status = 'disqualified'; };
     await expect(finalizeEvent('e1')).rejects.toThrow(/won its place left the event/);
 
-    // 3. Refused, event still live -- and the stale placing is sitting there.
+    // 3. Refused, event still live -- and since 00212 the refusal happens
+    // BEFORE any write, so this path no longer even creates the stale placing.
+    // That closes the sequence one step earlier than the clear does.
     expect(event().status).toBe('live');
-    expect(participant('p-alice').final_position).toBe(1);
+    expect(participant('p-alice').final_position).toBeNull();
+
+    // 3b. So the clear is exercised against a placing that got there some other
+    // way -- an earlier finalisation, or a recompute. Written directly here
+    // rather than manufactured by the refusal above, because relying on the
+    // refusal to produce it is what made this test depend on the bug it was
+    // covering. The retry must still take it away.
+    participant('p-alice').final_position = 1;
+    participant('p-alice').points = 3;
 
     // 4. The retry. Standings now exclude p-alice, so they are absent from the
     // new map -- and nothing used to rewrite their row.
@@ -2420,8 +2502,15 @@ describe('finalizeEvent', () => {
       when: ({ payload }) => 'points' in payload,
     });
 
-    await expect(finalizeEvent('e1')).rejects.toThrow(/points/);
+    // Same as the final_position case above: the column no longer appears in the
+    // message, the database's own error does.
+    await expect(finalizeEvent('e1')).rejects.toThrow(/nothing was saved.*permission denied/);
     expect(event().status).toBe('live');
+    // And the positions that were written BEFORE the points in the same call
+    // went back with them. Under the old one-call-per-write shape this event
+    // kept a full ladder with no points on it.
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-bob').final_position).toBeNull();
   });
 });
 

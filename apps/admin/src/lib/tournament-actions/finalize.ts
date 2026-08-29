@@ -938,7 +938,6 @@ export async function finalizeEvent(eventId: string) {
   const field = (fieldRows ?? []).map(r => r.id as string);
 
   const { positionMap, pointsMap, wonPositions, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
-  await writePlacements(adminClient, table, positionMap, pointsMap, cleared);
 
   // THE FLIP, UNDER THE FIELD FENCE (00209 — R1).
   //
@@ -957,15 +956,21 @@ export async function finalizeEvent(eventId: string) {
   // points, invisible to every results screen, and finalizeEvent refuses to run
   // again because the event is no longer live.
   //
-  // WHAT IS NOT DONE, AND WHY. Making the lock literally span the read and the
-  // write would mean moving assignPositionsAndPoints into plpgsql: bracket
-  // arithmetic, the third-place playoff split, pool standings and the
-  // slot-versus-result cross-check. That is a rewrite of the highest-risk
-  // function here, not a fence. So finalisation joins the protocol the way
-  // publish_event_draw already does — the caller passes the field it worked
-  // from, and the flip happens only if that is still the field. Growth is
-  // refused; a withdrawal in between is not, because a withdrawn entry needs
-  // no placing.
+  // So finalisation joins the protocol the way publish_event_draw already does
+  // — the caller passes the field it worked from, and the flip happens only if
+  // that is still the field. Growth is refused; a withdrawal in between is not,
+  // because a withdrawn entry needs no placing.
+  //
+  // WHAT IS NOT DONE, AND WHY. Making the lock span the READ would mean moving
+  // assignPositionsAndPoints into plpgsql: bracket arithmetic, the third-place
+  // playoff split, pool standings and the slot-versus-result cross-check. That
+  // is a rewrite of the highest-risk function here, not a fence, and it is
+  // still not done. Making it span the WRITE is a different proposition and IS
+  // done (00212): the computation stays here, its result travels as data, and
+  // the RPC performs the three writes in the transaction that flips the status.
+  // So two concurrent finalisations can no longer interleave into a ladder made
+  // of halves — either everything this call computed lands, or none of it
+  // does.
   const { data: fenced, error: completeError } = await adminClient.rpc('complete_event_under_field_lock', {
     p_event_id: eventId,
     p_is_pair: doubles,
@@ -978,16 +983,23 @@ export async function finalizeEvent(eventId: string) {
     // needs no placing — and that is exactly why it cannot catch this: the
     // entry that left is one that WON.
     p_won: wonPositions,
+    // THE PLACINGS THEMSELVES (00212). Sent as data rather than written from
+    // here, so they land inside the same lock as the flip. Object keys are
+    // entry ids; the RPC refuses any that does not belong to this event, and
+    // rolls the whole call back rather than completing a half-written ladder.
+    p_positions: Object.fromEntries(positionMap),
+    p_points: Object.fromEntries(pointsMap),
+    p_clear: cleared,
   });
   if (completeError) {
-    throw new Error(`Positions and points were saved but the event could not be marked completed: ${completeError.message}`);
+    throw new Error(`The event could not be finalised, and nothing was saved: ${completeError.message}`);
   }
   const completed = fenced as FencedFieldResult | null;
   if (!completed?.ok) {
-    // Positions and points were rewritten with the same values the winner of a
-    // finalisation race wrote, so nothing is damaged — but the bonus must not
-    // be paid twice, and an event that gained an entrant must be finalised
-    // again rather than half-placed.
+    // Nothing was written: the placings travel WITH this call now, so a refusal
+    // leaves the event exactly as it was rather than carrying the losing
+    // caller's ladder. The bonus must still not be paid twice, and an event
+    // that gained an entrant must be finalised again rather than half-placed.
     // The same defect the guard in assignPositionsAndPoints refuses, caught on
     // the other side of the window that guard cannot cover (00211).
     if (completed?.reason === 'winner_exited') {

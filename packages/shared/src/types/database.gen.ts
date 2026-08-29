@@ -3849,7 +3849,15 @@ export type Database = {
         Returns: string
       }
       complete_event_under_field_lock: {
-        Args: { p_event_id: string; p_field: string[]; p_is_pair: boolean }
+        Args: {
+          p_clear: string[]
+          p_event_id: string
+          p_field: string[]
+          p_is_pair: boolean
+          p_points: Json
+          p_positions: Json
+          p_won: string[]
+        }
         Returns: Json
       }
       consume_discord_link_token: {
