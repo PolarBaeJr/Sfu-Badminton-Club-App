@@ -10,6 +10,7 @@ import {
   isPoolToBracket,
   phaseValueFor,
   isRealIncompleteMatch,
+  isOutOfEvent,
 } from '@badminton/shared';
 import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings } from '../platform-settings';
@@ -443,10 +444,16 @@ async function assignPositionsAndPoints(
     // semi-final was a bye, so only one loser was ever routed in — has a winner
     // and no loser, and inventing a 4th place for nobody would be worse than
     // leaving the position unset.
+    // WHO HOLDS A PLACING BECAUSE THEY WON, as opposed to because they lost.
+    // The distinction is the whole of the check after this block: losing while
+    // withdrawn is ordinary (the forfeit cascade is exactly how a withdrawal
+    // ends a run), winning while disqualified is not.
+    const wonTheirPosition = new Set<string>();
+
     if (thirdPlace) {
       const w = (doubles ? thirdPlace.winner_pair_id : thirdPlace.winner_participant_id) as string | null;
       const l = (doubles ? thirdPlace.loser_pair_id : thirdPlace.loser_participant_id) as string | null;
-      if (w) positionMap.set(w, 3);
+      if (w) { positionMap.set(w, 3); wonTheirPosition.add(w); }
       if (l) positionMap.set(l, 4);
     }
 
@@ -466,7 +473,64 @@ async function assignPositionsAndPoints(
 
         // First-write-wins for losers (later rounds set position before earlier ones).
         if (loserId && !positionMap.has(loserId)) positionMap.set(loserId, loserPosition);
-        if (m.round_number === totalRounds && winnerId) positionMap.set(winnerId, 1);
+        if (m.round_number === totalRounds && winnerId) {
+          positionMap.set(winnerId, 1);
+          wonTheirPosition.add(winnerId);
+        }
+      }
+    }
+
+    // A WITHDRAWN OR DISQUALIFIED ENTRY CANNOT HAVE WON. Every position above
+    // is read off winner_*/loser_* and nothing had ever asked what the entry's
+    // own status is, so an entry disqualified after its final was recorded was
+    // still crowned: it takes final_position 1 a few lines below and 100 points
+    // in the knockout points query, which filters on event_id and a non-null
+    // final_position and on nothing else.
+    //
+    // NO RACE IS NEEDED FOR THIS, which is what makes it a placement defect
+    // rather than a gap in the field fence. The sequence is entirely ordinary:
+    // the final is played and recorded, an admin disqualifies the winner
+    // (conduct after the match, an eligibility breach discovered later), and
+    // the event is finalised. The disqualification cascade forfeits only the
+    // entry's OPEN matches -- a completed final is not open, so the recorded
+    // winner is left standing, correctly, and finalisation then reads it as a
+    // championship.
+    //
+    // REFUSING RATHER THAN REPAIRING, for the same reason as the slot check
+    // above: promoting the runner-up, leaving first place vacant and voiding
+    // the final are three different club decisions with three different
+    // outcomes, and picking one here would put a name on a trophy that nobody
+    // chose. The admin voids or replays the match, or reinstates the entry.
+    //
+    // Scoped to entries that won. A withdrawal in the first round holds a
+    // loser's placing from the forfeit cascade, which is the ordinary case and
+    // must keep finalising -- refusing on it would block most real events.
+    if (wonTheirPosition.size > 0) {
+      // isOutOfEvent rather than an inline status list, so this agrees with the
+      // round robin branch by construction. That branch already excludes these
+      // entries from its ordering (computeRoundRobinStandings' `out` flag), and
+      // it can: dropping an entry from a table just shifts everyone up. A
+      // knockout has no such move -- first place is held by winning the final,
+      // so removing the champion leaves the placing vacant rather than filled,
+      // which is the decision being handed back rather than taken.
+      const { data: entryRows, error: entryError } = await adminClient.from(table)
+        .select('id, status')
+        .in('id', [...wonTheirPosition]);
+      // Thrown, not swallowed: a failed read here would otherwise read as
+      // "nobody left the event" and finalise the very case this is guarding.
+      if (entryError) {
+        throw new Error(`Could not check the winners' entry status: ${entryError.message}`);
+      }
+      const exited = (entryRows ?? []).filter(e => isOutOfEvent((e as { status: string }).status));
+      if (exited.length > 0) {
+        const which = exited
+          .map(e => `${(e as { id: string }).id} (${(e as { status: string }).status})`)
+          .join(', ');
+        throw new ExpectedError(
+          `This draw records a match win for an entry that has left the event: ${which}. ` +
+          'Finalising would award it a placing and tournament points it cannot hold. ' +
+          'Void or replay that match, or reinstate the entry, before finalising.',
+        );
       }
     }
 

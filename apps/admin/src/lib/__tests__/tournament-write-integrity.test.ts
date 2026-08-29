@@ -2202,6 +2202,41 @@ describe('finalizeEvent', () => {
     expect(participant('p-bob').points).toBe(75);
   });
 
+  // NO FAULT IS INJECTED IN EITHER OF THESE. That is the point: the defect they
+  // cover needs no failed write, no concurrency and no interleaving -- just an
+  // ordinary disqualification after an ordinary final.
+  it('refuses to crown a champion who has been disqualified', async () => {
+    // The final is already recorded with p-alice as the winner (beforeEach).
+    // The disqualification lands afterwards, which is the ordinary case: the
+    // cascade forfeits only OPEN matches, so a completed final keeps its
+    // recorded winner and finalisation used to read that as a championship.
+    participant('p-alice').status = 'disqualified';
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/has left the event/);
+
+    // Nothing awarded, and the event still finalisable once a human decides
+    // whether to void the match or reinstate the entry.
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-alice').points).toBeNull();
+    expect(participant('p-bob').final_position).toBeNull();
+    expect(participant('p-bob').points).toBeNull();
+  });
+
+  it('still finalises when the entry that left is one that LOST', async () => {
+    // The guard is scoped to entries that won their placing. A withdrawal is
+    // most often exactly this -- the forfeit cascade ends the run with a
+    // loser's placing -- and refusing here would block most real events.
+    participant('p-bob').status = 'withdrawn';
+
+    await finalizeEvent('e1');
+
+    expect(event().status).toBe('completed');
+    expect(participant('p-alice').final_position).toBe(1);
+    expect(participant('p-alice').points).toBe(100);
+    expect(participant('p-bob').final_position).toBe(2);
+  });
+
   it('surfaces a failed points write without completing the event', async () => {
     store.faults.push({
       table: 'tournament_participants', op: 'update', message: 'permission denied',

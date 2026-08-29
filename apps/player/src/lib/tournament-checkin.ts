@@ -95,7 +95,6 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   // the rows the UPDATE actually changed rather than from the rows we hoped it
   // would change.
   const labelById = new Map<string, string>();
-  const lostRace: string[] = [];
 
   for (const row of rows) {
     const label = row.event?.event_type ?? 'Event';
@@ -110,53 +109,55 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     labelById.set(row.id, label);
   }
 
-  if (toClaim.length > 0) {
-    const { data: claimed, error } = await service
-      .from('tournament_participants')
-      // The TIMESTAMP as well as the status, because the console reads the
-      // timestamp. This wrote status alone, so a member who scanned the QR at
-      // the door was checked_in in the data and absent from the admin
-      // check-in board — the one screen an officer watches while a queue
-      // forms. `selfCheckIn` in tournament-actions.ts has always written both;
-      // this path was the outlier.
-      //
-      // No checked_in_by: nobody let them in. That column names the officer
-      // who did it, and a self-scan has none — filling it with the member's
-      // own id would read as an officer checking themselves in.
-      .update({ status: 'checked_in', checked_in_at: new Date().toISOString() })
-      .in('id', toClaim)
-      // Re-assert the precondition in the WHERE clause so two rapid scans
-      // cannot both claim the same row.
-      .eq('status', 'registered')
-      // The rows this UPDATE actually changed. `checkedIn` used to be built
-      // from the read a few lines above, so a participant withdrawn,
-      // disqualified, or checked in by an officer between the read and the
-      // write matched zero rows here — and the member was still told they were
-      // checked in. Zero rows changed is not success.
-      .select('id');
+  // FENCED -- 00201, and this path was the one that never got there. The
+  // sibling self-check-in in tournament-actions.ts was moved behind
+  // set_field_entry_status; this one kept a direct service-role UPDATE, so the
+  // fence had a hole in exactly the shape it was built to close.
+  //
+  // The direct write re-asserted the ENTRY status in its WHERE clause, which
+  // is why two rapid scans could not both claim a row. What it could not
+  // re-assert was the EVENT status: `row.event?.status !== 'checkin'` is read
+  // in JS, several awaits earlier -- the waiver assertion sits between that
+  // read and the write -- and no WHERE clause on tournament_participants can
+  // express a condition on tournament_events. The RPC re-reads both under the
+  // shared field key, so the decision is made from state that could not have
+  // moved in between.
+  //
+  // One call per entry rather than one batched UPDATE: the fence keys on the
+  // event, and a scan spans several events, so there is no single lock to take
+  // for all of them. Sequential rather than concurrent -- each call takes an
+  // advisory lock, and issuing them in a fixed order per scan keeps two
+  // simultaneous scanners from taking the same pair of event locks in opposite
+  // orders.
+  //
+  // p_actor is null for the same reason as selfCheckIn: nobody at a desk
+  // checked this person in, so checked_in_by must not name one.
+  for (const id of toClaim) {
+    const label = labelById.get(id) ?? 'Event';
+    const { data: outcome, error } = await service.rpc('set_field_entry_status', {
+      p_entry_id: id,
+      p_is_pair: false,
+      p_new_status: 'checked_in',
+      p_actor: null,
+    });
     if (error) throw new Error(error.message);
+    const result = outcome as { ok: boolean; already?: boolean; reason?: string } | null;
 
-    const landed = new Set((claimed ?? []).map((r) => r.id as string));
-    for (const id of toClaim) {
-      const label = labelById.get(id) ?? 'Event';
-      if (landed.has(id)) checkedIn.push(label);
-      else lostRace.push(id);
+    // `already` comes from the status the fence read under the lock, so a
+    // second scan racing this one reports "already checked in" from the write
+    // itself rather than from a follow-up read that could move again.
+    if (result?.ok) {
+      if (result.already) alreadyIn.push(label);
+      else checkedIn.push(label);
+      continue;
     }
 
-    // Something moved these rows underneath us. Report what they are now rather
-    // than guessing: a second scan should say "already checked in", while an
-    // officer withdrawing someone mid-queue should not.
-    if (lostRace.length > 0) {
-      const { data: nowRows } = await service
-        .from('tournament_participants')
-        .select('id, status')
-        .in('id', lostRace);
-      for (const r of nowRows ?? []) {
-        if ((r as { status: string }).status === 'checked_in') {
-          alreadyIn.push(labelById.get((r as { id: string }).id) ?? 'Event');
-        }
-      }
-    }
+    // Refused. Something moved underneath the scan -- an officer withdrawing
+    // someone mid-queue, or a draw published between the read above and here.
+    // It belongs in neither list: the member is not checked in and was not
+    // already, and saying either would be a lie. If every entry lands here the
+    // caller below reports check-in is not open, which is what they need to
+    // hear at the door.
   }
 
   if (checkedIn.length === 0 && alreadyIn.length === 0) {

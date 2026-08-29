@@ -177,6 +177,101 @@ function objectKeys(src: string): string[] {
   return keys;
 }
 
+// A FIXED LOOKAHEAD WINDOW UNDER-REPORTS, AND IT DID. The scan used to slice a
+// flat 600 characters after `.from()` and look for the verb inside it, so a long
+// explanatory comment between the two pushed the verb out of the window and the
+// writer was dropped from the census entirely — silently, because an unclassified
+// write is indistinguishable here from no write at all. Measured on the tree that
+// shipped it: all three `.from('tournament_participants')` sites in
+// apps/player/src/lib/tournament-checkin.ts sat 2226, 651 and -6718 characters
+// from their verb, so every one of them went unseen, including a live
+// `status: 'checked_in'` write. The guard was reporting coverage it did not have.
+//
+// Two fixes, because the window had two independent leaks. Comments are blanked
+// first — in place, preserving both length and newlines so every offset and line
+// number below stays valid — which removes the prose that pushed verbs out of
+// range and also stops a `;` inside a comment from reading as a statement end.
+// Then the lookahead is bounded by the statement itself rather than by a byte
+// count: scan to the `;` that closes the expression, tracking nesting, so a
+// builder chain is followed however long it runs and a verb in the NEXT
+// statement is still correctly refused.
+function blankComments(src: string): string {
+  const out = src.split('');
+  let state: 'code' | 'line' | 'block' | 'sq' | 'dq' | 'tpl' = 'code';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (state === 'code') {
+      if (c === '/' && d === '/') {
+        state = 'line';
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        i += 2;
+        continue;
+      }
+      if (c === '/' && d === '*') {
+        state = 'block';
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        i += 2;
+        continue;
+      }
+      if (c === "'") state = 'sq';
+      else if (c === '"') state = 'dq';
+      else if (c === '`') state = 'tpl';
+      i++;
+      continue;
+    }
+    if (state === 'line') {
+      if (c === '\n') state = 'code';
+      else out[i] = ' ';
+      i++;
+      continue;
+    }
+    if (state === 'block') {
+      if (c === '*' && d === '/') {
+        state = 'code';
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        i += 2;
+        continue;
+      }
+      // Newlines are kept so that reported line numbers survive the blanking.
+      if (c !== '\n') out[i] = ' ';
+      i++;
+      continue;
+    }
+    // Inside a string literal: only the matching quote (unescaped) ends it.
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
+    if ((state === 'sq' && c === "'") || (state === 'dq' && c === '"') || (state === 'tpl' && c === '`')) {
+      state = 'code';
+    }
+    i++;
+  }
+  return out.join('');
+}
+
+// Everything from `start` to the end of the statement that begins there. Depth
+// tracks (), [] and {} so a `;` inside an arrow body or an object literal does
+// not end the statement early, and a closing bracket that takes depth below zero
+// ends it — that is the enclosing call finishing, e.g. `await foo(sb.from(t))`.
+function statementTail(src: string, start: number): string {
+  let depth = 0;
+  for (let i = start; i < src.length; i++) {
+    const c = src[i];
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      depth--;
+      if (depth < 0) return src.slice(start, i);
+    } else if (c === ';' && depth === 0) return src.slice(start, i);
+  }
+  return src.slice(start);
+}
+
 interface Site {
   file: string;
   line: number;
@@ -184,7 +279,8 @@ interface Site {
   columns: string[];
 }
 
-function fieldWrites(file: string, src: string): Site[] {
+function fieldWrites(file: string, rawSrc: string): Site[] {
+  const src = blankComments(rawSrc);
   const aliases = tableAliases(src);
   const sites: Site[] = [];
 
@@ -199,13 +295,11 @@ function fieldWrites(file: string, src: string): Site[] {
     if (!namesField) continue;
 
     // The write verb, if any, before this statement ends. PostgREST builders
-    // chain, so the verb follows the .from() within the same expression.
-    const tail = src.slice(m.index! + m[0].length, m.index! + m[0].length + 600);
+    // chain, so the verb follows the .from() within the same expression — and
+    // the expression, not a byte count, is what bounds the search.
+    const tail = statementTail(src, m.index! + m[0].length);
     const verbMatch = tail.match(/^[\s\S]*?\.(update|delete|insert|upsert)\(/);
     if (!verbMatch) continue;
-    // A `;` before the verb means the verb belongs to a later statement.
-    const beforeVerb = tail.slice(0, verbMatch[0].length);
-    if (/;/.test(beforeVerb)) continue;
 
     const verb = verbMatch[1] ?? '';
     const afterVerb = tail.slice(verbMatch[0].length);
