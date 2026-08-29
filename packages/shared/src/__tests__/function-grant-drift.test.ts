@@ -120,12 +120,36 @@ function createdFunctions(sql: string): string[] {
 /**
  * A trigger function is never granted — it is invoked by the trigger, not by a
  * role — so it is not part of this rule. Detected by RETURNS TRIGGER.
+ *
+ * DETECTION IS PER STATEMENT, and it has to be. The obvious one-regex version
+ * — `CREATE FUNCTION (name) ( [\s\S]*? RETURNS TRIGGER` — lets the lazy middle
+ * run past the end of its own statement and pick up the RETURNS TRIGGER of a
+ * LATER function in the same file. That mislabels in both directions, and the
+ * dangerous direction is the quiet one: the earlier, ordinary function is
+ * exempted from the anon-revoke check below, while the actual trigger function
+ * is never reached by the scan and gets flagged instead. 00197 is exactly that
+ * shape (delete_phase_matches, then a trigger function), and the guard was
+ * silently not covering delete_phase_matches at all.
+ *
+ * So: split on the CREATE FUNCTION headers first, then ask each statement about
+ * its own return type. A body can contain anything, but only the header — the
+ * text before the AS $tag$ that opens the body — can carry the real RETURNS.
  */
 function triggerFunctions(sql: string): Set<string> {
   const names = new Set<string>();
-  const re = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z0-9_]+)\s*\([\s\S]*?RETURNS\s+TRIGGER/gi;
+  const head = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z0-9_]+)\s*\(/gi;
+  const starts: Array<{ name: string; at: number }> = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(sql)) !== null) names.add(m[1]!.toLowerCase());
+  while ((m = head.exec(sql)) !== null) starts.push({ name: m[1]!.toLowerCase(), at: m.index });
+
+  for (let i = 0; i < starts.length; i++) {
+    const stmt = sql.slice(starts[i]!.at, starts[i + 1]?.at ?? sql.length);
+    // Stop at the body opener so a `RETURNS TRIGGER` mentioned inside PL/pgSQL
+    // (a comment, a nested CREATE in a DO block) cannot vote.
+    const bodyAt = stmt.search(/\bAS\s+\$/i);
+    const header = bodyAt === -1 ? stmt : stmt.slice(0, bodyAt);
+    if (/\bRETURNS\s+TRIGGER\b/i.test(header)) names.add(starts[i]!.name);
+  }
   return names;
 }
 
