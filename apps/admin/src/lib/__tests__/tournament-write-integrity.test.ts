@@ -44,6 +44,15 @@ const store = vi.hoisted(() => ({
    */
   beforeMatchInsert: null as null | (() => void),
   /**
+   * Runs at the top of promote_pool_qualifier — after buildFieldFromPool has
+   * read the target field and passed assertNobodyLeftUnpaired, and before the
+   * promotion writes. That gap is where a member's own entry commits in
+   * production, and it is the only place the F-004 duplicate can be created:
+   * for a doubles bracket the `existing` map is built from tournament_pairs
+   * alone, so an unpaired participant row arriving here is invisible to it.
+   */
+  beforePromote: null as null | (() => void),
+  /**
    * "This database predates 00197" — ONE fact, honoured everywhere it shows.
    *
    * It has to be one switch rather than a hand-placed fault, because the two
@@ -694,6 +703,54 @@ const makeClient = vi.hoisted(() => () => {
       Object.assign(ev, payload);
       return Promise.resolve({ data: { ok: true, matches: built.length }, error: null });
     }
+    // Stand-in for promote_pool_qualifier (00198). The pool promotion used to be
+    // a direct insert into one of these two tables; it moved behind an RPC so the
+    // duplicate check and the write happen under the SAME field advisory lock the
+    // entry path takes. The fake cannot model a lock, but it can model the check
+    // the lock exists to make answerable — and the write still goes through the
+    // ordinary query() path, so every fault fixture aimed at a tournament_pairs
+    // or tournament_participants insert keeps firing exactly as before.
+    if (name === 'promote_pool_qualifier') {
+      store.beforePromote?.();
+      const eventId = args.p_event_id as string;
+      const doubles = args.p_doubles as boolean;
+      const p1 = args.p_player1_id as string;
+      const p2 = (args.p_player2_id as string | null) ?? null;
+      const ids = [p1, p2].filter((v): v is string => typeof v === 'string');
+      const live = (r: Row) => r.status !== 'withdrawn' && r.status !== 'disqualified';
+      const asParticipant = (store.db.tournament_participants ?? []).some(
+        (r) => r.event_id === eventId && ids.includes(r.player_id as string) && live(r),
+      );
+      const asPair = (store.db.tournament_pairs ?? []).some(
+        (r) =>
+          r.event_id === eventId &&
+          (ids.includes(r.player1_id as string) || ids.includes(r.player2_id as string)) &&
+          live(r),
+      );
+      if (asParticipant || asPair) {
+        return Promise.resolve({
+          data: { ok: false, reason: 'already_in_field', conflict: asParticipant ? 'participant' : 'pair' },
+          error: null,
+        });
+      }
+      const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+      const row: Row = doubles
+        ? {
+            event_id: eventId, player1_id: p1, player2_id: p2, pair_name: args.p_pair_name,
+            combined_elo: args.p_elo, status: 'checked_in', checked_in_at: args.p_checked_in_at,
+            checked_in_by: args.p_admin_id, seed_number: args.p_seed, added_by: args.p_admin_id,
+          }
+        : {
+            event_id: eventId, player_id: p1, elo_before: args.p_elo,
+            status: 'checked_in', checked_in_at: args.p_checked_in_at,
+            checked_in_by: args.p_admin_id, seed_number: args.p_seed, added_by: args.p_admin_id,
+          };
+      return query(table).insert(row).select('id').single().then((res) =>
+        res.error
+          ? { data: null, error: res.error }
+          : { data: { ok: true, id: (res.data as Row).id }, error: null },
+      );
+    }
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -768,6 +825,7 @@ beforeEach(() => {
   store.faults = [];
   store.beforeDeletePhase = null;
   store.beforeMatchInsert = null;
+  store.beforePromote = null;
   store.oldSchema = false;
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
@@ -3886,6 +3944,90 @@ describe('a knockout seeded from a group stage', () => {
     }
     expect(promoted.map((p) => p.pair_name).sort())
       .toEqual(['pair-g1-0', 'pair-g1-1', 'pair-g2-0', 'pair-g2-1']);
+  });
+
+  // ==========================================================
+  // F-004, the promotion half (00198)
+  // ==========================================================
+  //
+  // THE DUPLICATE THIS EXISTS TO PREVENT. buildFieldFromPool reads the target
+  // field once, passes assertNobodyLeftUnpaired, and then promotes over dozens
+  // of round trips. A member's own entry takes the field advisory lock, sees no
+  // pair, and writes an unpaired participant row. For a DOUBLES bracket the
+  // `existing` map is keyed on pairs only, so that row is invisible to the
+  // promotion, which then inserts the same member as half a pair — leaving them
+  // both a participant and half a pair, which is the original corruption.
+  //
+  // Before 00198 the promotion was a direct insert taking no lock, so nothing
+  // could refuse it. The check now happens inside the RPC, under the same lock
+  // the entry took, which is the only place the answer is stable.
+  it('refuses the generation when an entry lands between the field read and the promotion', async () => {
+    store.db.tournament_events!.push({
+      id: 'e0', tournament_id: 't1', status: 'completed', event_type: 'mens_doubles',
+      format: 'round_robin', match_format: 'best_of_3_to_21', elo_multiplier: 1,
+      placement_bonus_enabled: false, group_count: 2, qualifiers_per_group: 2,
+    });
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false, event_type: 'mens_doubles',
+      seeded_from_event_id: 'e0', seed_by: 'wins', max_participants: null,
+    });
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = [];
+    store.db.tournament_matches = [];
+    let n = 0;
+    for (const g of [1, 2]) {
+      const members = [0, 1, 2].map((i) => `pair-g${g}-${i}`);
+      members.forEach((id, i) => {
+        store.db.tournament_pairs!.push({
+          id, event_id: 'e0', player1_id: `${id}-a`, player2_id: `${id}-b`,
+          pair_name: id, combined_elo: 2400 - i * 10, seed_number: null,
+          group_number: g, final_position: null, points: null, status: 'checked_in',
+        });
+      });
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          store.db.tournament_matches.push({
+            id: `dm-${++n}`, event_id: 'e0', status: 'completed', is_bye: false,
+            is_third_place: false, round_number: 1, bracket_position: n,
+            pair_a_id: members[i], pair_b_id: members[j],
+            winner_pair_id: members[i], loser_pair_id: members[j],
+            winner_to_match_id: null, winner_to_position: null,
+            scores: [{ a: 21, b: 10 }, { a: 21, b: 12 }], elo_snapshot: null, notes: null,
+          });
+        }
+      }
+    }
+
+    // The other desk's entry, landing in the window — ONCE, so this is the
+    // interleaving and not a permanently dirty fixture. `pair-g1-0-a` is a
+    // member of the top qualifying pair, so the promotion is about to write him
+    // into a pair he is already entered against as an individual.
+    let landed = false;
+    store.beforePromote = () => {
+      if (landed) return;
+      landed = true;
+      store.db.tournament_participants!.push({
+        id: 'late-entry', event_id: 'e1', player_id: 'pair-g1-0-a',
+        elo_before: 1200, elo_after: null, elo_change: null, seed_number: null,
+        final_position: null, points: null, status: 'registered',
+      });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    // REFUSED, and told the exec what to do about it.
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/Press Generate again/i);
+
+    // AND THE FIELD IS NOT CORRUPT. The member is a participant OR half a pair,
+    // never both — no pair containing him was written.
+    const pairsHere = store.db.tournament_pairs!.filter((p) => p.event_id === 'e1');
+    expect(
+      pairsHere.some((p) => p.player1_id === 'pair-g1-0-a' || p.player2_id === 'pair-g1-0-a'),
+    ).toBe(false);
+    // No draw was advertised over the half-built field either.
+    expect(store.db.tournament_matches!.filter((m) => m.event_id === 'e1')).toHaveLength(0);
+    expect(event().status).toBe('checkin');
   });
 });
 

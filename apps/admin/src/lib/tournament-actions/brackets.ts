@@ -540,14 +540,13 @@ async function buildFieldFromPool(
     srcGroupCount >= 2 ? srcGroupCount * perGroup : standings.length,
   );
   // Promoted qualifiers arrive checked in: they have just finished playing the
-  // pool, so they are demonstrably present. checked_in_at is set alongside the
-  // status because the attendance list keys on the timestamp, not the enum —
-  // status is overwritten by a later withdrawal, the timestamp is not.
-  const promotedAttendance = {
-    status: 'checked_in',
-    checked_in_at: new Date().toISOString(),
-    checked_in_by: adminId,
-  };
+  // pool, so they are demonstrably present. The status and the checking-in
+  // admin are written by promote_pool_qualifier itself (00198); the TIMESTAMP
+  // is stamped here so one promotion run shares a single instant rather than
+  // drifting a few milliseconds per round trip. It is carried separately from
+  // the status because the attendance list keys on the timestamp, not the
+  // enum — status is overwritten by a later withdrawal, the timestamp is not.
+  const promotedCheckedInAt = new Date().toISOString();
   const entries: FieldEntry[] = [];
   let promoted = 0;
   let skipped = 0;
@@ -578,44 +577,52 @@ async function buildFieldFromPool(
       continue;
     }
 
-    // Split rather than one ternary insert. With both the table name AND the
-    // row shape chosen by the same condition, the client cannot narrow them
-    // together — it checks the union of shapes against whichever table it
-    // resolved, and rejects the pairs row for missing participant columns and
-    // vice versa. Two calls, each with one table and one shape, type cleanly.
-    const { data: created, error } = doubles
-      ? await adminClient
-          .from('tournament_pairs')
-          .insert({
-            event_id: eventId,
-            player1_id: src.players[0],
-            player2_id: src.players[1],
-            pair_name: src.name,
-            combined_elo: src.elo,
-            ...promotedAttendance,
-            seed_number: seed,
-            added_by: adminId,
-          })
-          .select('id')
-          .single()
-      : await adminClient
-          .from('tournament_participants')
-          .insert({
-            event_id: eventId,
-            player_id: src.players[0],
-            elo_before: src.elo,
-            ...promotedAttendance,
-            seed_number: seed,
-            added_by: adminId,
-          })
-          .select('id')
-          .single();
-    if (error || !created) {
+    // THE INSERT GOES THROUGH AN RPC (00198), not straight at the two tables.
+    // enter_tournament_event takes the field advisory lock before it decides
+    // that nobody here is spoken for; this promotion writes the SAME field, and
+    // until now it did so without taking that lock. The two could interleave
+    // and leave one member both a participant and half a pair — the original
+    // duplicate-entry corruption. pg_advisory_xact_lock lives for one
+    // transaction and a PostgREST call IS the transaction, so the check and the
+    // insert cannot be split across two round trips; they move into the RPC
+    // together. The RPC also picks the table and the row shape, which removes
+    // the two-call split this used to need to type cleanly.
+    const { data: promotedRow, error } = await adminClient.rpc('promote_pool_qualifier', {
+      p_event_id: eventId,
+      p_doubles: doubles,
+      p_player1_id: src.players[0],
+      p_player2_id: doubles ? src.players[1] : null,
+      p_pair_name: doubles ? src.name : null,
+      p_elo: src.elo,
+      p_seed: seed,
+      p_admin_id: adminId,
+      p_checked_in_at: promotedCheckedInAt,
+    });
+    if (error) {
       Sentry.captureException(error);
-      throw new Error(`Could not enter a pool qualifier into the bracket: ${error?.message ?? 'unknown error'}`);
+      throw new Error(`Could not enter a pool qualifier into the bracket: ${error.message}`);
+    }
+    const result = promotedRow as
+      | { ok: boolean; id?: string; reason?: string; conflict?: string }
+      | null;
+    if (!result?.ok) {
+      // A collision is NOT a skip. `skipped` means the exec withdrew somebody
+      // and the next finisher moves up, which is correct; this means the field
+      // changed underneath the promotion, and promoting around it would build a
+      // bracket that disagrees with the pool everyone just played. Refuse the
+      // generation — no matches exist yet at this point, so pressing Generate
+      // again re-reads the field and is the whole remedy.
+      if (result?.reason === 'already_in_field') {
+        throw new ExpectedError(
+          'Somebody was entered into this bracket while it was being built from the pool standings, so the draw was not created. Press Generate again to build it from the current field.'
+        );
+      }
+      throw new Error(
+        `Could not enter a pool qualifier into the bracket: ${result?.reason ?? 'unknown error'}`
+      );
     }
     promoted++;
-    entries.push({ id: created.id, seed, elo: src.elo, ...from });
+    entries.push({ id: result.id as string, seed, elo: src.elo, ...from });
   }
 
   if (entries.length < 2) {

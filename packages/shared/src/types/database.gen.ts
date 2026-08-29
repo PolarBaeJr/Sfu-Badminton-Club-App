@@ -4075,6 +4075,20 @@ export type Database = {
         Returns: number
       }
       points_cap: { Args: { p_target: number }; Returns: number }
+      promote_pool_qualifier: {
+        Args: {
+          p_admin_id: string
+          p_checked_in_at: string
+          p_doubles: boolean
+          p_elo: number
+          p_event_id: string
+          p_pair_name: string
+          p_player1_id: string
+          p_player2_id: string
+          p_seed: number
+        }
+        Returns: Json
+      }
       publish_event_draw: {
         Args: {
           p_doubles: boolean
