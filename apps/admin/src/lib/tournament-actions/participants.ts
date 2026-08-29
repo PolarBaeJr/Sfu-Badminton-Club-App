@@ -51,6 +51,64 @@ import {
   type DrawExitStatus,
 } from './_internal';
 
+// ---------------------------------------------------------------------------
+// THE FIELD FENCE (00199)
+// ---------------------------------------------------------------------------
+// Every check above an entry — already paired, event full, at the entry cap —
+// reads state in one round trip and writes in another, and an advisory lock
+// cannot be held across two PostgREST calls because each call IS the
+// transaction. So the last word belongs to add_participants_under_field_lock,
+// which takes the same lock the player's own entry and the pool promotion take
+// and asks the questions under it.
+//
+// The app's checks above are NOT redundant: they fail early, they fail per
+// player, and they produce the messages an exec can act on. What comes back
+// from the fence is always the same kind of answer — the field moved while you
+// were deciding — so the messages here say that rather than pretending to be a
+// fresh eligibility verdict.
+interface FieldFenceRefusal {
+  ok: false;
+  reason?: string;
+  cap?: number;
+  player_id?: string;
+  status?: string;
+  suspension_reason?: string;
+}
+type FieldFenceResult =
+  | { ok: true; participants: Array<Record<string, unknown>> }
+  | FieldFenceRefusal;
+
+function fenceRefusal(result: FieldFenceRefusal | null | undefined): string {
+  switch (result?.reason) {
+    case 'already_in_pair':
+      return 'Somebody put one of these players into a team while this was being submitted, so nothing was added. Try again.';
+    case 'already_registered':
+      return 'Someone was registered while this was being submitted, so nothing was added. Try again.';
+    case 'event_full':
+      return 'The event filled up while this was being submitted, so nothing was added.';
+    case 'entry_cap': {
+      const cap = result?.cap;
+      return cap
+        ? `One of these players reached their limit of ${cap} ${cap === 1 ? 'event' : 'events'} at this tournament while this was being submitted, so nothing was added.`
+        : 'One of these players reached their entry limit while this was being submitted, so nothing was added.';
+    }
+    case 'draw_locked':
+      return 'The draw was locked while this was being submitted, so nothing was added.';
+    case 'event_status':
+      return 'The event moved out of registration while this was being submitted, so nothing was added.';
+    case 'tournament_suspended':
+      return result?.suspension_reason
+        ? `The tournament was suspended while this was being submitted: ${result.suspension_reason}. Nothing was added.`
+        : 'The tournament was suspended while this was being submitted, so nothing was added.';
+    case 'tournament_closed':
+      return 'The tournament was closed while this was being submitted, so nothing was added.';
+    case 'event_not_found':
+      return 'That event no longer exists.';
+    default:
+      return 'The field changed while this was being submitted, so nothing was added. Try again.';
+  }
+}
+
 // Supabase returns a to-one embed as object-or-array depending on how it
 // inferred the relationship. Unwrap defensively — the whole reason this matters
 // is that a name is what the refusal message is FOR.
@@ -374,18 +432,33 @@ export async function addParticipantToEvent(
   // column shows, and the number the team they end up in would be built from.
   const eloBefore = (doubles ? rating?.doubles_elo : rating?.singles_elo) ?? 400;
 
-  const { data, error } = await adminClient.from('tournament_participants').insert({
-    event_id: eventId,
-    player_id: playerId,
-    elo_before: eloBefore,
-    added_by: admin.id,
-  }).select().single();
+  // Through the fence, not straight into the table. Every check above this line
+  // was answered a round trip ago; this is the one that cannot be overtaken.
+  const { data: fenced, error } = await adminClient.rpc('add_participants_under_field_lock', {
+    p_event_id: eventId,
+    p_admin_id: admin.id,
+    p_entries: [{ player_id: playerId, elo_before: eloBefore }],
+  });
 
   if (error) {
-    if (error.code === '23505') throw new ExpectedError('Player already registered for this event');
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+
+  const fence = fenced as FieldFenceResult | null;
+  if (!fence?.ok) {
+    // The duplicate keeps its own words. Every other refusal here means the
+    // field moved under an exec who had already been told this was allowed,
+    // but this path never pre-checked for an existing entry at all — it leaned
+    // on the unique violation coming back from its own insert — so the fence's
+    // answer is the FIRST answer, not a second one, and it says what it always
+    // said.
+    if (fence?.reason === 'already_registered') {
+      throw new ExpectedError('Player already registered for this event');
+    }
+    throw new ExpectedError(fenceRefusal(fence ?? null));
+  }
+  const data = fence.participants[0];
 
   // What this entry costs, on the club's fee ledger. One row per tournament
   // rather than per event, so adding somebody to a second event here finds the
@@ -667,29 +740,30 @@ export async function addParticipantsToEvent(
     );
   }
 
-  const { data: inserted, error } = await adminClient.from('tournament_participants').insert(
-    candidates.map((id) => ({
-      event_id: eventId,
+  // ONE call, through the fence. The partitioning above decided who is eligible
+  // and produced the per-player failures; this decides whether the field still
+  // agrees, and refuses the WHOLE batch if it does not. That is the behaviour
+  // the direct insert already had on a unique violation — nothing half-applies,
+  // because a partial success this cannot describe is worse than a refusal it
+  // can.
+  const { data: fenced, error } = await adminClient.rpc('add_participants_under_field_lock', {
+    p_event_id: eventId,
+    p_admin_id: admin.id,
+    p_entries: candidates.map((id) => ({
       player_id: id,
       elo_before: eloByPlayer.get(id) ?? 400,
-      added_by: admin.id,
     })),
-  ).select();
+  });
 
   if (error) {
-    // A duplicate here means somebody else registered one of these players
-    // between the read above and this insert. Nothing landed, so say so plainly
-    // rather than reporting a partial success that did not happen.
-    if (error.code === '23505') {
-      throw new ExpectedError(
-        'Someone was registered while this was being submitted, so nothing was added. Try again.',
-      );
-    }
     Sentry.captureException(error);
     throw new Error(error.message);
   }
 
-  const added = (inserted ?? []).map((r) => r.player_id as string);
+  const fence = fenced as FieldFenceResult | null;
+  if (!fence?.ok) throw new ExpectedError(fenceRefusal(fence ?? null));
+
+  const added = fence.participants.map((r) => r.player_id as string);
 
   // Entry fees for everyone who actually landed, in one call. Priced from each
   // player's own membership_type, so a batch of internal members and alumni

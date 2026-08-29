@@ -53,6 +53,14 @@ const store = vi.hoisted(() => ({
    */
   beforePromote: null as null | (() => void),
   /**
+   * Runs at the top of add_participants_under_field_lock — after
+   * addParticipantToEvent has asked playersAlreadyPaired and been told no, and
+   * before the entry is written. In production those are two PostgREST round
+   * trips and therefore two transactions, which is exactly why the check moved
+   * into the RPC: an advisory lock cannot span them.
+   */
+  beforeAdd: null as null | (() => void),
+  /**
    * "This database predates 00197" — ONE fact, honoured everywhere it shows.
    *
    * It has to be one switch rather than a hand-placed fault, because the two
@@ -751,6 +759,58 @@ const makeClient = vi.hoisted(() => () => {
           : { data: { ok: true, id: (res.data as Row).id }, error: null },
       );
     }
+    // Stand-in for add_participants_under_field_lock (00199). The exec's two
+    // entry paths used to insert into tournament_participants directly, asking
+    // "is this person already half of a pair?" one round trip earlier; the
+    // check and the write now happen under the same field lock everybody else
+    // takes. Modelled here are the two questions that lock exists to make
+    // answerable — an existing pair and an existing live entry. Capacity and
+    // the per-member cap are NOT modelled: the app decides those above this
+    // call and its own tests cover them there.
+    if (name === 'add_participants_under_field_lock') {
+      store.beforeAdd?.();
+      const eventId = args.p_event_id as string;
+      const entries = (args.p_entries as Array<{ player_id: string; elo_before: number }>) ?? [];
+      const ids = entries.map((e) => e.player_id);
+      const live = (r: Row) => r.status !== 'withdrawn' && r.status !== 'disqualified';
+      const inPair = (store.db.tournament_pairs ?? []).some(
+        (r) =>
+          r.event_id === eventId &&
+          (ids.includes(r.player1_id as string) || ids.includes(r.player2_id as string)) &&
+          live(r),
+      );
+      if (inPair) {
+        return Promise.resolve({ data: { ok: false, reason: 'already_in_pair' }, error: null });
+      }
+      const dupe = (store.db.tournament_participants ?? []).find(
+        (r) => r.event_id === eventId && ids.includes(r.player_id as string) && live(r),
+      );
+      if (dupe) {
+        return Promise.resolve({
+          data: { ok: false, reason: 'already_registered', player_id: dupe.player_id },
+          error: null,
+        });
+      }
+      // The write still goes through the ordinary query() path, so every fault
+      // fixture aimed at a tournament_participants insert keeps firing. One row
+      // at a time because this builder's insert() takes one — the real function
+      // writes the batch in a single statement, which matters for atomicity in
+      // Postgres and not at all for what these tests observe, since a refusal
+      // returns above this line and never reaches a partial write.
+      return (async () => {
+        const written: Row[] = [];
+        for (const e of entries) {
+          const row: Row = {
+            event_id: eventId, player_id: e.player_id, elo_before: e.elo_before,
+            added_by: args.p_admin_id, status: 'registered',
+          };
+          const res = await query('tournament_participants').insert(row).select('id').single();
+          if (res.error) return { data: null, error: res.error };
+          written.push({ ...row, id: (res.data as Row).id });
+        }
+        return { data: { ok: true, participants: written }, error: null };
+      })();
+    }
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -778,7 +838,7 @@ import { toFormatPayload, EMPTY_FORMAT_VALUES } from '@/app/tournaments/[id]/eve
 // refusal and these tests must all be reading the same arithmetic.
 import { maxFirstRoundByes, nextPowerOf2 } from '@badminton/shared';
 import { autoSeedEventByElo } from '../tournament-actions/seeding';
-import { withdrawParticipant } from '../tournament-actions/participants';
+import { addParticipantToEvent, withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
   FORFEIT_REASON, PUBLIC_WALKOVER_REASONS,
@@ -826,6 +886,7 @@ beforeEach(() => {
   store.beforeDeletePhase = null;
   store.beforeMatchInsert = null;
   store.beforePromote = null;
+  store.beforeAdd = null;
   store.oldSchema = false;
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
@@ -4028,6 +4089,58 @@ describe('a knockout seeded from a group stage', () => {
     // No draw was advertised over the half-built field either.
     expect(store.db.tournament_matches!.filter((m) => m.event_id === 'e1')).toHaveLength(0);
     expect(event().status).toBe('checkin');
+  });
+
+  // ==========================================================
+  // F-004, the exec's own entry paths (00199)
+  // ==========================================================
+  //
+  // 00196 fenced the PLAYER's entry and 00198 fenced the POOL PROMOTION, but
+  // the two doors an exec uses were still a check in one round trip and an
+  // insert in another. addParticipantToEvent asks playersAlreadyPaired whether
+  // this member is already half of a team, is told no, and inserts — and there
+  // is no cross-table unique constraint to catch a pair that landed in between,
+  // because the pair lives in tournament_pairs and the entry in
+  // tournament_participants. The member ends up in the event TWICE.
+  //
+  // The check now happens inside add_participants_under_field_lock, under the
+  // same advisory lock the pairing path holds while it decides that neither
+  // player is spoken for.
+  it('refuses an exec entry when a pair for that member lands between the check and the insert', async () => {
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false, event_type: 'mens_doubles',
+      max_participants: null,
+    });
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = [];
+    store.db.tournament_matches = [];
+    store.db.ratings!.push({
+      player_id: 'pl-carol', singles_elo: 1100, doubles_elo: 1150,
+      singles_provisional: false, doubles_provisional: false, singles_matches_played: 30,
+    });
+
+    // The other desk pairs Carol in the window — ONCE, so this is the
+    // interleaving and not a fixture that was dirty to begin with. The app's
+    // own playersAlreadyPaired ran before this and correctly saw nothing.
+    let landed = false;
+    store.beforeAdd = () => {
+      if (landed) return;
+      landed = true;
+      store.db.tournament_pairs!.push({
+        id: 'late-pair', event_id: 'e1', player1_id: 'pl-carol', player2_id: 'pl-dave',
+        pair_name: 'Carol / Dave', combined_elo: 2300, seed_number: null,
+        group_number: null, final_position: null, points: null, status: 'registered',
+      });
+    };
+
+    await expect(addParticipantToEvent('e1', 'pl-carol')).rejects.toThrow(
+      /into a team while this was being submitted/i,
+    );
+
+    // AND NOTHING LANDED. Carol is half of a pair and nothing else; the entry
+    // the exec was mid-way through is simply not there.
+    expect(store.db.tournament_participants!.filter((r) => r.player_id === 'pl-carol')).toHaveLength(0);
+    expect(store.db.tournament_pairs!.filter((r) => r.event_id === 'e1')).toHaveLength(1);
   });
 });
 

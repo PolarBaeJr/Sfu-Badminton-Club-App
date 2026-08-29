@@ -3729,6 +3729,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      add_participants_under_field_lock: {
+        Args: { p_admin_id: string; p_entries: Json; p_event_id: string }
+        Returns: Json
+      }
       admin_access_level: { Args: { p_user_id: string }; Returns: string }
       admin_console_access: { Args: { p_user_id: string }; Returns: Json }
       admins_with_passkeys: {
