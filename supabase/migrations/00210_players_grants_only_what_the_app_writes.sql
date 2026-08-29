@@ -10,7 +10,27 @@
 --
 -- plus column SELECT on fifteen columns and a now-redundant column UPDATE on
 -- competition_category. The SELECT half is already least-privilege and is left
--- exactly as it is. The `w` and the `d` are the problem.
+-- exactly as it is. The `w`, the `d` and the `m` are the problem.
+--
+--
+-- THE `m`, WHICH STAGING COULD NOT HAVE SHOWN ME
+-- ----------------------------------------------
+-- `m` is MAINTAIN, new in PostgreSQL 17. It is not a data privilege -- it
+-- carries VACUUM, ANALYZE, CLUSTER, REINDEX and REFRESH MATERIALIZED VIEW.
+-- It is on production and it is NOT on staging, because the 04:00 snapshot
+-- rebuilds staging's ACLs and never reproduced it. A REVOKE naming only UPDATE
+-- and DELETE would therefore have left `authenticated=m/postgres` on
+-- production while every check in this file passed, since has_table_privilege
+-- for UPDATE and DELETE cannot see MAINTAIN. That is the same shape of vacuous
+-- verification this audit exists to stop, so the `m` is named explicitly.
+--
+-- It is revoked rather than documented-and-kept. Nothing the app does needs it,
+-- and MAINTAIN reaches VACUUM FULL, which takes an ACCESS EXCLUSIVE lock and
+-- rewrites the table -- a whole-site stall on the hottest table in the schema.
+-- PostgREST only ever issues SELECT/INSERT/UPDATE/DELETE and function calls, so
+-- there is no reachable path to it today and this is defence in depth, not a
+-- live hole. The REVOKE is version-guarded because the keyword does not parse
+-- before 17 and this file should still replay on an older database.
 --
 --
 -- WHAT THE TABLE-WIDE `w` ACTUALLY REACHES
@@ -96,6 +116,15 @@ BEGIN;
 -- untouched.
 REVOKE UPDATE, DELETE ON TABLE public.players FROM authenticated;
 
+-- And MAINTAIN, which only exists to revoke from PostgreSQL 17 onwards.
+DO $maintain$
+BEGIN
+  IF current_setting('server_version_num')::INT >= 170000 THEN
+    EXECUTE 'REVOKE MAINTAIN ON TABLE public.players FROM authenticated';
+  END IF;
+END
+$maintain$;
+
 -- The eleven the app writes. competition_category is restated rather than left
 -- to the grant it already has, so the whole list is one statement somebody can
 -- read against the census above.
@@ -169,6 +198,21 @@ BEGIN
   -- 2. DELETE is gone.
   IF has_table_privilege('authenticated', 'public.players', 'DELETE') THEN
     RAISE EXCEPTION '00210: authenticated can still DELETE from players';
+  END IF;
+
+  -- 2b. MAINTAIN is gone too. Guarded the same way as the REVOKE, and read off
+  --     relacl rather than has_table_privilege so it reports what is actually
+  --     recorded on the table.
+  IF current_setting('server_version_num')::INT >= 170000 THEN
+    IF EXISTS (
+      SELECT 1 FROM pg_class c
+      CROSS JOIN LATERAL aclexplode(c.relacl) a
+      WHERE c.oid = 'public.players'::REGCLASS
+        AND a.grantee = 'authenticated'::REGROLE
+        AND a.privilege_type = 'MAINTAIN'
+    ) THEN
+      RAISE EXCEPTION '00210: authenticated still holds MAINTAIN on players';
+    END IF;
   END IF;
 
   -- 3. The service role is untouched. Every admin write and every SECURITY
