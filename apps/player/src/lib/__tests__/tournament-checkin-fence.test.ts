@@ -144,6 +144,43 @@ describe('the QR check-in scan goes through the field fence', () => {
     if (!r.ok) expect(r.error).toMatch(/not open/i);
   });
 
+  it('REPORTS a partial refusal instead of calling the whole scan a success', async () => {
+    // The round-18 finding. Two events on one scan: the first checks in, and
+    // an officer withdraws them from the second while the loop is still
+    // running. The all-empty test passes on the strength of the first, so the
+    // refusal used to be dropped on the floor and the member saw a screen
+    // headed "Checked in".
+    store.entries = [entry('pt1'), entry('pt2')];
+    store.rpcResults = [
+      { ok: true, already: false },
+      { ok: false, reason: 'entry_status' },
+    ];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.checkedIn).toHaveLength(1);
+      expect(r.data.refused).toHaveLength(1);
+      // Said in words the person at the door can act on, not a reason code.
+      expect(r.data.refused[0]!.detail).toMatch(/no longer in this event/i);
+      // And it is NOT quietly counted as a success anywhere.
+      expect(r.data.alreadyIn).toHaveLength(0);
+    }
+  });
+
+  it('leaves refused empty when every entry checked in', async () => {
+    // The other direction: a guard that reported a refusal on a clean scan
+    // would turn every ordinary check-in into "Partly checked in".
+    store.entries = [entry('pt1'), entry('pt2')];
+    store.rpcResults = [{ ok: true, already: false }, { ok: true, already: true }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.refused).toHaveLength(0);
+  });
+
   it('still refuses locally before the event is accepting check-in', async () => {
     // The JS pre-filter stays: it is a cheap early exit, and it keeps the
     // self-scan narrower than an officer's desk action, which 00201

@@ -44,6 +44,16 @@ const store = vi.hoisted(() => ({
    */
   beforeMatchInsert: null as null | (() => void),
   /**
+   * Runs at the top of complete_event_under_field_lock — after finalisation
+   * has read the winners' status and written their placings, and before the
+   * flip. That gap is precisely where an admin's disqualification commits in
+   * production, and it is the only place the round-18 crowned-DQ interleaving
+   * can be created: the guard in assignPositionsAndPoints has already run.
+   */
+  beforeCompleteEvent: null as null | (() => void),
+  /** Every RPC the code under test issued, so a test can assert what it PASSED. */
+  rpcCalls: [] as Array<{ name: string; args: Record<string, unknown> }>,
+  /**
    * Runs at the top of promote_pool_qualifier — after buildFieldFromPool has
    * read the target field and passed assertNobodyLeftUnpaired, and before the
    * promotion writes. That gap is where a member's own entry commits in
@@ -650,6 +660,7 @@ const makeClient = vi.hoisted(() => () => {
   }
 
   function rpc(name: string, args: Record<string, unknown>) {
+    store.rpcCalls.push({ name, args });
     if (name === 'apply_tournament_match_rating') return applyRpc(args);
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
     if (name === 'delete_phase_matches') return deletePhaseRpc(args);
@@ -1133,6 +1144,7 @@ const makeClient = vi.hoisted(() => () => {
     }
 
     if (name === 'complete_event_under_field_lock') {
+      store.beforeCompleteEvent?.();
       const eventId = args.p_event_id as string;
       const table = fieldTableFor(args.p_is_pair as boolean);
       const field = args.p_field as string[];
@@ -1147,6 +1159,23 @@ const makeClient = vi.hoisted(() => () => {
       ).length;
       if (arrived > 0) {
         return Promise.resolve({ data: { ok: false, reason: 'field_changed', arrived }, error: null });
+      }
+      // 00211. Mirrors the real function: the field check above deliberately
+      // allows SHRINKAGE, so it cannot see an entry that left AND had won.
+      const won = (args.p_won as string[] | undefined) ?? [];
+      const exitedWinners = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && won.includes(r.id as string)
+          && (r.status === 'withdrawn' || r.status === 'disqualified'),
+      );
+      if (exitedWinners.length > 0) {
+        return Promise.resolve({
+          data: {
+            ok: false,
+            reason: 'winner_exited',
+            winners: exitedWinners.map((r) => `${r.id} (${r.status})`).join(', '),
+          },
+          error: null,
+        });
       }
       const incomplete = (store.db.tournament_matches ?? []).filter(
         (m) => m.event_id === eventId
@@ -1240,6 +1269,8 @@ beforeEach(() => {
   store.faults = [];
   store.beforeDeletePhase = null;
   store.beforeMatchInsert = null;
+  store.beforeCompleteEvent = null;
+  store.rpcCalls = [];
   store.beforePromote = null;
   store.beforeAdd = null;
   store.oldSchema = false;
@@ -2214,13 +2245,42 @@ describe('finalizeEvent', () => {
 
     await expect(finalizeEvent('e1')).rejects.toThrow(/has left the event/);
 
-    // Nothing awarded, and the event still finalisable once a human decides
-    // whether to void the match or reinstate the entry.
+    // Nothing awarded, and the event still finalisable once a human voids or
+    // replays the match. Deliberately NOT "or reinstate the entry": there is no
+    // console path back from disqualified -- set_field_entry_status refuses
+    // check-in from an exited status (00201) and is the only status writer.
     expect(event().status).toBe('live');
     expect(participant('p-alice').final_position).toBeNull();
     expect(participant('p-alice').points).toBeNull();
     expect(participant('p-bob').final_position).toBeNull();
     expect(participant('p-bob').points).toBeNull();
+  });
+
+  it('hands the winners to the completion fence, so the DQ cannot slip in behind the guard', async () => {
+    // The round-18 finding. The guard above is a READ, and it holds no lock
+    // through to the status flip -- an admin can disqualify the champion in
+    // between, and the fence's own field check deliberately allows shrinkage,
+    // so nothing downstream would have caught it. 00211 closes that by
+    // re-reading these same entries under the lock, which only works if the
+    // app actually tells it who won.
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+
+    const call = store.rpcCalls.find((c) => c.name === 'complete_event_under_field_lock');
+    expect(call).toBeDefined();
+    // p-alice won the final. An empty array here would make the fence's check
+    // vacuous while every other test still passed.
+    expect(call!.args.p_won).toEqual(['p-alice']);
+  });
+
+  it('refuses at the fence when the champion is disqualified after the guard ran', async () => {
+    // The interleaving itself, driven through the mock, which mirrors 00211.
+    // The guard cannot see this -- the status changes after it read -- so if
+    // this passes it is the fence that caught it.
+    store.beforeCompleteEvent = () => { participant('p-alice').status = 'disqualified'; };
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/won its place left the event/);
+    expect(event().status).toBe('live');
   });
 
   it('still finalises when the entry that left is one that LOST', async () => {

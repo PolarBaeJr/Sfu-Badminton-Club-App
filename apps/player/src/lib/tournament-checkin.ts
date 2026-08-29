@@ -12,6 +12,18 @@ export interface TournamentCheckInResult {
   checkedIn: string[];
   /** Events they were already checked into — a second scan is not an error. */
   alreadyIn: string[];
+  /**
+   * Events the fence REFUSED, with the reason in plain words.
+   *
+   * This list exists because silence here reads as success. A scan spans
+   * several events and each one is a separate fenced call, so a partial
+   * refusal is normal: the first event checks in, an officer withdraws them
+   * from the second while the loop is still running, and the caller's
+   * "did anything land?" test passes on the strength of the first. The member
+   * walks away from a screen headed "Checked in" having been refused an event
+   * they think they are in, and nobody at the door knows.
+   */
+  refused: Array<{ event: string; detail: string }>;
 }
 
 export async function checkInToTournament(
@@ -90,6 +102,7 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
 
   const checkedIn: string[] = [];
   const alreadyIn: string[] = [];
+  const refused: Array<{ event: string; detail: string }> = [];
   const toClaim: string[] = [];
   // The label to report per participant row, so the response can be built from
   // the rows the UPDATE actually changed rather than from the rows we hoped it
@@ -155,9 +168,13 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     // Refused. Something moved underneath the scan -- an officer withdrawing
     // someone mid-queue, or a draw published between the read above and here.
     // It belongs in neither list: the member is not checked in and was not
-    // already, and saying either would be a lie. If every entry lands here the
-    // caller below reports check-in is not open, which is what they need to
-    // hear at the door.
+    // already, and saying either would be a lie.
+    //
+    // It goes in its OWN list rather than being dropped. Dropping it was only
+    // safe if every entry was refused -- then the all-empty test below fires --
+    // and a scan covers several events, so the common case is that one lands
+    // and one is refused and the all-empty test passes on the first.
+    refused.push({ event: label, detail: refusalDetail(result?.reason) });
   }
 
   if (checkedIn.length === 0 && alreadyIn.length === 0) {
@@ -170,5 +187,25 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     tournamentName: (tournament.name as string) ?? 'Tournament',
     checkedIn,
     alreadyIn,
+    refused,
   };
+}
+
+// The fence's reason codes, said the way somebody standing at a door needs to
+// hear them. Deliberately not a lookup that falls through to the raw code: a
+// member reading "entry_status" learns nothing, and the desk is who they will
+// ask either way.
+function refusalDetail(reason: string | undefined): string {
+  switch (reason) {
+    case 'entry_status':
+      return 'you are no longer in this event — see the desk';
+    case 'event_status':
+    case 'event_completed':
+      return 'check-in is not open for this event';
+    case 'entry_not_found':
+    case 'event_not_found':
+      return 'this entry could not be found — see the desk';
+    default:
+      return 'could not be checked in — see the desk';
+  }
 }

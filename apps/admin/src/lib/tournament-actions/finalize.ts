@@ -359,10 +359,21 @@ async function assignPositionsAndPoints(
   eventId: string,
   doubles: boolean,
   table: string,
-): Promise<Map<string, number>> {
+): Promise<{ positionMap: Map<string, number>; wonPositions: string[] }> {
   // Positions first: the full (id → position) map is built in memory, then
   // written as one parallel batch of UPDATEs.
   const positionMap = new Map<string, number>();
+
+  // WHO HOLDS A PLACING BECAUSE THEY WON, hoisted to function scope so it can
+  // be returned. The check below refuses if any of them has left the event —
+  // but that check is a read with no lock held through to the status flip, so
+  // it is the early, better-worded half of the guard. The authoritative half is
+  // complete_event_under_field_lock re-reading this same set under the fence
+  // (00211); an admin can disqualify between the two.
+  //
+  // Empty for round robin, which needs no such guard: computeRoundRobinStandings
+  // already excludes exited entries from its ordering.
+  const wonTheirPosition = new Set<string>();
 
   // WHICH RULE DECIDES THE PLACINGS. A pool_to_bracket event ends in a knockout
   // and is placed by it, exactly as a single_elimination event is — the pool
@@ -444,12 +455,9 @@ async function assignPositionsAndPoints(
     // semi-final was a bye, so only one loser was ever routed in — has a winner
     // and no loser, and inventing a 4th place for nobody would be worse than
     // leaving the position unset.
-    // WHO HOLDS A PLACING BECAUSE THEY WON, as opposed to because they lost.
-    // The distinction is the whole of the check after this block: losing while
-    // withdrawn is ordinary (the forfeit cascade is exactly how a withdrawal
-    // ends a run), winning while disqualified is not.
-    const wonTheirPosition = new Set<string>();
-
+    // The distinction this set draws is the whole of the check after this
+    // block: losing while withdrawn is ordinary (the forfeit cascade is exactly
+    // how a withdrawal ends a run), winning while disqualified is not.
     if (thirdPlace) {
       const w = (doubles ? thirdPlace.winner_pair_id : thirdPlace.winner_participant_id) as string | null;
       const l = (doubles ? thirdPlace.loser_pair_id : thirdPlace.loser_participant_id) as string | null;
@@ -679,7 +687,7 @@ async function assignPositionsAndPoints(
     // Also absolute, also before the status flip, for the same reason.
     assertWritesSucceeded('Assigning tournament points', failures);
   }
-  return positionMap;
+  return { positionMap, wonPositions: [...wonTheirPosition] };
 }
 
 /**
@@ -716,7 +724,7 @@ export async function recomputeEventStandings(eventId: string): Promise<{
     (before ?? []).map(r => [r.id as string, (r.final_position ?? null) as number | null]),
   );
 
-  const positionMap = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+  const { positionMap } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
 
   const moved: Array<{ id: string; from: number | null; to: number }> = [];
   for (const [id, to] of positionMap) {
@@ -796,7 +804,7 @@ export async function finalizeEvent(eventId: string) {
   }
   const field = (fieldRows ?? []).map(r => r.id as string);
 
-  const positionMap = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+  const { positionMap, wonPositions } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
 
   // THE FLIP, UNDER THE FIELD FENCE (00209 — R1).
   //
@@ -828,6 +836,14 @@ export async function finalizeEvent(eventId: string) {
     p_event_id: eventId,
     p_is_pair: doubles,
     p_field: field,
+    // THE WON PLACINGS, RE-CHECKED UNDER THE LOCK (00211). The JS guard inside
+    // assignPositionsAndPoints reads these entries' status, but holds no lock
+    // through to here, so an admin disqualifying a champion in between still
+    // landed a completed event with a disqualified winner. Shrinkage is
+    // deliberately allowed by the field check above it — a withdrawn entry
+    // needs no placing — and that is exactly why it cannot catch this: the
+    // entry that left is one that WON.
+    p_won: wonPositions,
   });
   if (completeError) {
     throw new Error(`Positions and points were saved but the event could not be marked completed: ${completeError.message}`);
@@ -838,6 +854,14 @@ export async function finalizeEvent(eventId: string) {
     // finalisation race wrote, so nothing is damaged — but the bonus must not
     // be paid twice, and an event that gained an entrant must be finalised
     // again rather than half-placed.
+    // The same defect the guard in assignPositionsAndPoints refuses, caught on
+    // the other side of the window that guard cannot cover (00211).
+    if (completed?.reason === 'winner_exited') {
+      throw new ExpectedError(
+        `An entry that won its place left the event while this was being finalised: ${completed.winners ?? 'see the draw'}. ` +
+        'Nothing was completed. Void or replay that match before finalising.',
+      );
+    }
     if (completed?.reason === 'event_status') {
       throw new ExpectedError(
         'This event was finalised while you were finalising it — most likely another desk got there first. Reload to see the results.',

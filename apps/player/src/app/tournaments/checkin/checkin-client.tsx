@@ -114,9 +114,13 @@ export function TournamentCheckInClient({ initialToken }: { initialToken?: strin
   }
 
   if (result) {
+    // The heading follows what actually happened. A scan that was refused an
+    // event is not a clean "Checked in", and a screen that says so anyway is
+    // how somebody walks away believing they are in a draw they are not in.
+    const anyRefused = result.refused.length > 0;
     return (
       <div className="card-base" role="status">
-        <h2 className="card-title">Checked in</h2>
+        <h2 className="card-title">{anyRefused ? 'Partly checked in' : 'Checked in'}</h2>
         <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>{result.tournamentName}</p>
         {result.checkedIn.length > 0 && (
           <ul style={{ marginTop: 12, paddingLeft: 18 }}>
@@ -127,6 +131,16 @@ export function TournamentCheckInClient({ initialToken }: { initialToken?: strin
           <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
             Already checked in: {result.alreadyIn.join(', ')}
           </p>
+        )}
+        {anyRefused && (
+          <div style={{ marginTop: 12 }}>
+            <p style={{ fontSize: 13, fontWeight: 600 }}>Not checked in:</p>
+            <ul style={{ marginTop: 4, paddingLeft: 18 }}>
+              {result.refused.map((r) => (
+                <li key={r.event} style={{ fontSize: 13 }}>{r.event} — {r.detail}</li>
+              ))}
+            </ul>
+          </div>
         )}
         <Button style={{ marginTop: 16 }} onClick={() => router.push('/tournaments')}>
           Done

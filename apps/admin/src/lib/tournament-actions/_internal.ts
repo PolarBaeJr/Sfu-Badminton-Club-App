@@ -2299,6 +2299,8 @@ export interface FencedFieldResult {
   matches?: number;
   /** complete_event_under_field_lock. */
   incomplete?: number;
+  /** Entries that held a placing they WON and had left the event (00211). */
+  winners?: string;
 }
 
 /**
