@@ -560,9 +560,9 @@ DECLARE
   v_rep  int;
   v_trn  int;
 BEGIN
-  SELECT pg_get_functiondef(p.oid) INTO v_def
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'public' AND p.proname = 'merge_players';
+  -- Signature-qualified: proname alone would silently pick an overload, and
+  -- the assertions below would then be about a function nothing calls.
+  v_def := pg_get_functiondef('public.merge_players(uuid,uuid,uuid)'::regprocedure);
 
   -- Strip whole-line and trailing -- comments. Crude, and it does not need to
   -- be better: it only has to stop prose from satisfying a code assertion.
@@ -592,16 +592,19 @@ BEGIN
     RAISE EXCEPTION '00205: merge_players takes no row lock on the players it merges';
   END IF;
 
-  IF v_code !~ 'PERFORM id FROM players[\s\S]{0,120}FOR UPDATE' THEN
-    RAISE EXCEPTION '00205: the players lock is not FOR UPDATE, so it does not conflict with the FK''s FOR KEY SHARE';
+  -- Exactly one, so the positional comparisons below cannot be reasoning about
+  -- a different occurrence than the one they located.
+  IF (length(v_code) - length(replace(v_code, 'PERFORM id FROM players', ''))) 
+       / length('PERFORM id FROM players') <> 1 THEN
+    RAISE EXCEPTION '00205: more than one players lock in the body, so placement cannot be checked by position';
   END IF;
 
-  IF v_code !~ 'id IN \(p_keep, p_remove\)' THEN
-    RAISE EXCEPTION '00205: the lock does not cover BOTH merged rows';
-  END IF;
-
-  IF v_code !~ 'PERFORM id FROM players[\s\S]{0,120}ORDER BY id' THEN
-    RAISE EXCEPTION '00205: the lock is not deterministically ordered, so two merges sharing a player can invert';
+  -- ONE anchored regex, not three independent ones. Checked separately, the
+  -- column list, the ordering and the lock mode could each be satisfied by a
+  -- different statement somewhere else in a 400-line function while the lock
+  -- itself had none of them.
+  IF v_code !~ 'PERFORM id FROM players\s+WHERE id IN \(p_keep, p_remove\)\s+ORDER BY id\s+FOR UPDATE' THEN
+    RAISE EXCEPTION '00205: the players lock is not the expected `IN (p_keep, p_remove) ORDER BY id FOR UPDATE` -- it may cover one row, be unordered, or not be FOR UPDATE (which is the only mode that conflicts with the FK''s FOR KEY SHARE)';
   END IF;
 
   -- Placement, both sides. The lock must come BEFORE the digest repoint, or
