@@ -34,8 +34,28 @@ const ENFORCED_FROM = '00176';
  *
  * These migrations pre-date the remediation and have the same defect: they
  * revoke only PUBLIC, so the functions they create are still executable by
- * `anon` on PRODUCTION TODAY. Measured on the live database 2026-08-28: 61
- * public functions are anon-executable, of which ~49 come from here.
+ * `anon` on PRODUCTION TODAY.
+ *
+ * RE-MEASURED on the live production database 2026-08-28, because the earlier
+ * figure recorded here (61 anon-executable, ~49 from these migrations) counted
+ * TRIGGER FUNCTIONS, and a trigger function is not reachable by anybody —
+ * Postgres refuses it with 0A000, "trigger functions can only be called as
+ * triggers", verified by calling one as `anon`. Counting them inflated the
+ * number by 17 and made the debt look worse than it is.
+ *
+ * The real shape, identical on prod and staging:
+ *
+ *   32  public functions anon can execute (excluding trigger functions)
+ *    9  of those are SECURITY DEFINER — the only ones that escape the caller's
+ *       own RLS and grants, and therefore the only ones that can be a hole
+ *   23  run as the caller, so RLS still applies to everything they touch
+ *
+ * The nine: consume_discord_link_token, get_active_season, get_executives,
+ * get_leaderboard, get_player_id, get_session_attendee_counts, is_admin,
+ * is_admin_or_coach, session_checkin_open. Eight are reads that back public or
+ * pre-login pages. consume_discord_link_token is the one mutator and was
+ * checked specifically: 256-bit token, atomic single-use claim, and it refuses
+ * a caller whose auth.uid() is NULL.
  *
  * They are NOT fixed by 00187, which is deliberately scoped to the twelve
  * functions the remediation itself created. Re-granting historical functions is
