@@ -765,8 +765,12 @@ const makeClient = vi.hoisted(() => () => {
     // check and the write now happen under the same field lock everybody else
     // takes. Modelled here are the two questions that lock exists to make
     // answerable — an existing pair and an existing live entry. Capacity and
-    // the per-member cap are NOT modelled: the app decides those above this
-    // call and its own tests cover them there.
+    // the per-member cap are NOT modelled here even though 00199 does enforce
+    // both (and refuses the whole call when either trips), because the app
+    // decides them above this call and its own tests cover them there. So a
+    // test that seeds a full event or an over-cap member and expects THIS to
+    // refuse is testing nothing — it would pass here and fail against the real
+    // database. Model them before writing one.
     if (name === 'add_participants_under_field_lock') {
       store.beforeAdd?.();
       const eventId = args.p_event_id as string;
