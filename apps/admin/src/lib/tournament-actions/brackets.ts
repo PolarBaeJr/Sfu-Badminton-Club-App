@@ -892,15 +892,26 @@ async function buildFieldFromOwnPool(
   }
 
   const capacity = Math.min(ownPoolCapacity(event), standings.length);
-  const entries: FieldEntry[] = standings.slice(0, capacity).map((standing, i) => ({
-    id: standing.id,
-    seed: i + 1,
-    elo: eloOf.get(standing.id) ?? 400,
-    identity: digestOf.get(standing.id)?.identity ?? {},
-    dbGroup: digestOf.get(standing.id)?.dbGroup ?? null,
-    group: (standing as { group?: number | null }).group ?? null,
-    groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
-  }));
+  const entries: FieldEntry[] = standings.slice(0, capacity).map((standing, i) => {
+    // A standing whose entry row is not in the read above cannot be given a
+    // digest, and an empty one would be refused by publish_event_draw every
+    // single time with 'entrant_changed' — a permanent, unexplained failure.
+    // Say what actually went wrong instead. Unlike elo, where 400 is a
+    // legitimate default, there is no honest fallback identity.
+    const digest = digestOf.get(standing.id);
+    if (!digest) {
+      throw new ExpectedError('A round-robin finisher no longer has an entry in this event. Reload and try again.');
+    }
+    return {
+      id: standing.id,
+      seed: i + 1,
+      elo: eloOf.get(standing.id) ?? 400,
+      identity: digest.identity,
+      dbGroup: digest.dbGroup,
+      group: (standing as { group?: number | null }).group ?? null,
+      groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
+    };
+  });
 
   if (entries.length < 2) {
     throw new ExpectedError('The round robin produced fewer than 2 available finishers, which is not a knockout.');
