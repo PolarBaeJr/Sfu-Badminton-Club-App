@@ -2283,6 +2283,61 @@ describe('finalizeEvent', () => {
     expect(event().status).toBe('live');
   });
 
+  // ROUND ROBIN, and the two above are not enough on their own. wonTheirPosition
+  // used to be filled only inside `if (knockout)`, so a round robin handed the
+  // fence an empty p_won and its winner check was skipped entirely -- the guard
+  // read as present in every knockout test while being absent on the other
+  // branch. Codex found this in round 19.
+  it('hands the fence a round robins placings too, not an empty set', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+
+    const call = store.rpcCalls.find((c) => c.name === 'complete_event_under_field_lock');
+    expect(call).toBeDefined();
+    // BOTH, not just the leader. A round-robin table is computed against the
+    // whole field, so one entry leaving moves every win count that was measured
+    // against them -- the table nobody would compute again.
+    expect((call!.args.p_won as string[]).slice().sort()).toEqual(['p-alice', 'p-bob']);
+  });
+
+  it('refuses a round robin whose leader is disqualified after the guard ran', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    store.beforeCompleteEvent = () => { participant('p-alice').status = 'disqualified'; };
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/won its place left the event/);
+
+    // The whole of codex's sequence: the leader kept final_position = 1 in a
+    // COMPLETED event, so the placement-bonus ledger would have paid it.
+    expect(event().status).toBe('live');
+  });
+
+  // THE ASYMMETRY, and it is the reason the round-robin hole was argued away in
+  // the first place. A DQ landing BEFORE finalisation is not the same defect: a
+  // round-robin table can simply be recomputed without that entry, and
+  // computeRoundRobinStandings does exactly that, so nobody holds a placing
+  // they cannot keep. A knockout has no such move -- the recorded final still
+  // names the champion -- which is why the sibling test above DOES refuse.
+  //
+  // What the original reasoning missed is that this only covers entries that
+  // left before the standings were computed. The two tests above are the case
+  // it does not cover.
+  it('places a round robins disqualified leader nowhere, rather than refusing', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    participant('p-alice').status = 'disqualified';
+
+    await finalizeEvent('e1');
+
+    expect(event().status).toBe('completed');
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-bob').final_position).toBe(1);
+    // And the fence was told about the entry that IS placed, not about the one
+    // that left -- so p_won stays a set of entries that must still be present.
+    const call = store.rpcCalls.find((c) => c.name === 'complete_event_under_field_lock');
+    expect(call!.args.p_won).toEqual(['p-bob']);
+  });
+
   it('still finalises when the entry that left is one that LOST', async () => {
     // The guard is scoped to entries that won their placing. A withdrawal is
     // most often exactly this -- the forfeit cascade ends the run with a

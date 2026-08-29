@@ -181,6 +181,57 @@ describe('the QR check-in scan goes through the field fence', () => {
     if (r.ok) expect(r.data.refused).toHaveLength(0);
   });
 
+  // ROUND 19. Fixing the RPC-refusal branch was not the whole of it: two JS
+  // PREFILTERS above the loop also dropped entries with a bare `continue`, so
+  // an entry that never reached the RPC never reached `refused` either. The
+  // partial-success screen came back for a member whose second event was
+  // withdrawn or simply not open yet.
+  it('reports an entry the event-status prefilter skipped, not just an RPC refusal', async () => {
+    // Codex's sequence exactly: one already checked in, one whose event is
+    // still in registration. alreadyIn is non-empty, so the all-empty test
+    // below cannot fire and the second event used to vanish from the screen.
+    store.entries = [entry('pt1'), entry('pt2', 'registration')];
+    store.rpcResults = [{ ok: true, already: true }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.alreadyIn).toHaveLength(1);
+      expect(r.data.refused).toHaveLength(1);
+      expect(r.data.refused[0]!.detail).toMatch(/not open/i);
+    }
+    // And it really was the prefilter: only the first entry reached the fence.
+    expect(store.rpc).toHaveLength(1);
+  });
+
+  it('reports an entry the withdrawn prefilter skipped', async () => {
+    const withdrawn = { ...entry('pt2'), status: 'withdrawn' };
+    store.entries = [entry('pt1'), withdrawn];
+    store.rpcResults = [{ ok: true, already: false }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.checkedIn).toHaveLength(1);
+      expect(r.data.refused).toHaveLength(1);
+      expect(r.data.refused[0]!.detail).toMatch(/no longer in this event/i);
+    }
+    expect(store.rpc).toHaveLength(1);
+  });
+
+  it('says WHY when a scan lands nothing at all, rather than "not open yet"', async () => {
+    // A member whose only entry was withdrawn used to be told check-in was not
+    // open yet -- true of nothing, and it sends them back to queue again.
+    store.entries = [{ ...entry('pt1'), status: 'withdrawn' }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/no longer in this event/i);
+  });
+
   it('still refuses locally before the event is accepting check-in', async () => {
     // The JS pre-filter stays: it is a cheap early exit, and it keeps the
     // self-scan narrower than an officer's desk action, which 00201

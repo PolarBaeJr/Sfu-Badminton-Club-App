@@ -113,11 +113,24 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     const label = row.event?.event_type ?? 'Event';
     // Withdrawn or disqualified entries are not re-openable by scanning a code
     // at the door — that is an admin decision.
-    if (row.status === 'withdrawn' || row.status === 'disqualified') continue;
+    //
+    // REPORTED, not skipped. Both of these prefilters used to `continue`
+    // silently, which is the same defect as dropping an RPC refusal and was
+    // missed when that one was fixed: a member with one event checked in and
+    // one withdrawn saw a screen headed "Checked in" that never mentioned the
+    // second. The all-empty test below cannot save it, because the first entry
+    // fills alreadyIn.
+    if (row.status === 'withdrawn' || row.status === 'disqualified') {
+      refused.push({ event: label, detail: refusalDetail('entry_status') });
+      continue;
+    }
     if (row.status === 'checked_in') { alreadyIn.push(label); continue; }
     // Only while the event is actually accepting check-in. Registration is too
     // early, and once the bracket exists the field is fixed.
-    if (row.event?.status !== 'checkin') continue;
+    if (row.event?.status !== 'checkin') {
+      refused.push({ event: label, detail: refusalDetail('event_status') });
+      continue;
+    }
     toClaim.push(row.id);
     labelById.set(row.id, label);
   }
@@ -178,6 +191,15 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   }
 
   if (checkedIn.length === 0 && alreadyIn.length === 0) {
+    // Nothing landed. Say WHY when the refusals know — the flat sentence below
+    // is right for a member who is simply early, and misleading for one whose
+    // only entry was withdrawn, which now reaches here rather than vanishing
+    // at the prefilter.
+    if (refused.length > 0) {
+      throw new ExpectedError(
+        `You were not checked in: ${refused.map(r => `${r.event} — ${r.detail}`).join('; ')}.`,
+      );
+    }
     throw new ExpectedError('Check-in is not open for your events yet.');
   }
 

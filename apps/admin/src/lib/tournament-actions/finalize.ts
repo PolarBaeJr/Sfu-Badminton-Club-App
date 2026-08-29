@@ -371,8 +371,20 @@ async function assignPositionsAndPoints(
   // complete_event_under_field_lock re-reading this same set under the fence
   // (00211); an admin can disqualify between the two.
   //
-  // Empty for round robin, which needs no such guard: computeRoundRobinStandings
-  // already excludes exited entries from its ordering.
+  // FILLED ON EVERY FORMAT, and the note that used to sit here saying "empty
+  // for round robin, which needs no such guard" was a wrong premise. It argued
+  // that computeRoundRobinStandings already excludes exited entries from its
+  // ordering -- true, and beside the point. The exclusion happens when the
+  // standings are COMPUTED; the sequence this guard exists for is an entry
+  // leaving AFTER that, while the positions are being written. Round robin was
+  // therefore passing an empty set, so the fence skipped its winner check
+  // altogether and a leader disqualified mid-finalise kept final_position = 1
+  // in a completed event.
+  //
+  // A round robin's whole table is stale once anybody in it leaves, not just
+  // first place: exclude one entry and every win count computed against them
+  // moves. So every placed entry goes in, and the fence refuses the
+  // finalisation rather than publishing a table nobody would compute again.
   const wonTheirPosition = new Set<string>();
 
   // WHICH RULE DECIDES THE PLACINGS. A pool_to_bracket event ends in a knockout
@@ -510,37 +522,6 @@ async function assignPositionsAndPoints(
     // outcomes, and picking one here would put a name on a trophy that nobody
     // chose. The admin voids or replays the match, or reinstates the entry.
     //
-    // Scoped to entries that won. A withdrawal in the first round holds a
-    // loser's placing from the forfeit cascade, which is the ordinary case and
-    // must keep finalising -- refusing on it would block most real events.
-    if (wonTheirPosition.size > 0) {
-      // isOutOfEvent rather than an inline status list, so this agrees with the
-      // round robin branch by construction. That branch already excludes these
-      // entries from its ordering (computeRoundRobinStandings' `out` flag), and
-      // it can: dropping an entry from a table just shifts everyone up. A
-      // knockout has no such move -- first place is held by winning the final,
-      // so removing the champion leaves the placing vacant rather than filled,
-      // which is the decision being handed back rather than taken.
-      const { data: entryRows, error: entryError } = await adminClient.from(table)
-        .select('id, status')
-        .in('id', [...wonTheirPosition]);
-      // Thrown, not swallowed: a failed read here would otherwise read as
-      // "nobody left the event" and finalise the very case this is guarding.
-      if (entryError) {
-        throw new Error(`Could not check the winners' entry status: ${entryError.message}`);
-      }
-      const exited = (entryRows ?? []).filter(e => isOutOfEvent((e as { status: string }).status));
-      if (exited.length > 0) {
-        const which = exited
-          .map(e => `${(e as { id: string }).id} (${(e as { status: string }).status})`)
-          .join(', ');
-        throw new ExpectedError(
-          `This draw records a match win for an entry that has left the event: ${which}. ` +
-          'Finalising would award it a placing and tournament points it cannot hold. ' +
-          'Void or replay that match, or reinstate the entry, before finalising.',
-        );
-      }
-    }
 
     // ------------------------------------------------------------
     // EVERYONE THE KNOCKOUT DID NOT CONTAIN (00107)
@@ -575,6 +556,11 @@ async function assignPositionsAndPoints(
       for (const s of poolStandings) {
         if (!s || positionMap.has(s.id)) continue;
         positionMap.set(s.id, next++);
+        // Non-qualifiers are ordered among themselves by the pool table, which
+        // is the same round-robin arithmetic -- so the same staleness applies.
+        // Not the sequence codex supplied, but the identical hole one branch
+        // over, and leaving it open would only be found later.
+        wonTheirPosition.add(s.id);
       }
     }
   } else {
@@ -594,7 +580,63 @@ async function assignPositionsAndPoints(
     // by) is the answer. The order a bracket seeds that pool by is a property of
     // the bracket's draw, not a second opinion about the pool's result.
     const standings = await computeRoundRobinStandings(eventId);
-    standings.forEach((s, i) => positionMap.set(s!.id, i + 1));
+    standings.forEach((s, i) => {
+      positionMap.set(s!.id, i + 1);
+      // Every one of them, for the reason given where wonTheirPosition is
+      // declared: a round-robin placing is earned against the whole field, so
+      // one departure invalidates all of it.
+      wonTheirPosition.add(s!.id);
+    });
+  }
+
+  // WHOEVER HOLDS A PLACING THEY EARNED MUST STILL BE IN THE EVENT.
+  //
+  // OUTSIDE the format branches, where it used to sit inside `if (knockout)`.
+  //
+  // MOVING IT IS NOT WHAT FIXES CODEX'S ROUND-19 SEQUENCE -- filling
+  // wonTheirPosition on every format is; this is defence in depth, and saying
+  // otherwise would be the same overclaim that hid the hole. On a round robin
+  // an entry that left BEFORE the standings were computed is already excluded
+  // from them (computeRoundRobinStandings' `out` flag), so it holds no placing
+  // for this to catch, and the test below pins that.
+  //
+  // It earns its place on the disagreement: this reads isOutOfEvent and that
+  // exclusion reads its own flag, so if the two status lists ever drift, one
+  // branch stops placing an entry the other still would.
+  //
+  // Scoped to entries that earned a placing. A withdrawal in the first round of
+  // a knockout holds a loser's placing from the forfeit cascade, which is the
+  // ordinary case and must keep finalising -- refusing on it would block most
+  // real events.
+  //
+  // This is the early, better-worded half. It is a READ, so it holds no lock
+  // through to the status flip; complete_event_under_field_lock re-checks the
+  // same set under the fence (00211) and is the half that is authoritative.
+  if (wonTheirPosition.size > 0) {
+    const { data: entryRows, error: entryError } = await adminClient.from(table)
+      .select('id, status')
+      .in('id', [...wonTheirPosition]);
+    // Thrown, not swallowed: a failed read here would otherwise read as
+    // "nobody left the event" and finalise the very case this is guarding.
+    if (entryError) {
+      throw new Error(`Could not check entry status before finalising: ${entryError.message}`);
+    }
+    const exited = (entryRows ?? []).filter(e => isOutOfEvent((e as { status: string }).status));
+    if (exited.length > 0) {
+      const which = exited
+        .map(e => `${(e as { id: string }).id} (${(e as { status: string }).status})`)
+        .join(', ');
+      throw new ExpectedError(
+        `An entry holding a placing it earned has left the event: ${which}. ` +
+        'Finalising would award it a placing and tournament points it cannot hold. ' +
+        // NOT "or reinstate the entry", which is what this used to offer.
+        // set_field_entry_status is the only writer of entry status and it
+        // refuses checked_in from an exited status (00201:1040), so there is no
+        // reinstatement to reach from the console. Naming a remedy that does not
+        // exist sends an officer looking for a control that was never built.
+        'Void or replay the affected match before finalising.',
+      );
+    }
   }
 
   if (positionMap.size > 0) {
