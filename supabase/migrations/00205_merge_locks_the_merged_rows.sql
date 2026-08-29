@@ -541,6 +541,16 @@ GRANT EXECUTE ON FUNCTION public.merge_players(uuid, uuid, uuid) TO service_role
 -- than the statement. It would have passed with no lock in the function at
 -- all. Codex round 13 caught it. Prose that describes a guard is not the
 -- guard, and any assertion that greps a function body has to say so.
+--
+-- What this block does NOT prove, stated plainly so nobody reads more into a
+-- green migration than is there: it establishes LEXICAL SHAPE only. It does
+-- not bind `id IN (p_keep, p_remove)` to the PERFORM it located, it positions
+-- on first occurrence, and it does not qualify the function by signature. The
+-- behavioural evidence is elsewhere and is what actually carries the claim --
+-- the staging measurement in the header, where a concurrent insert blocked on
+-- FOR KEY SHARE, and the merge probe showing the digest key surviving on the
+-- survivor. This block's only job is to stop a later edit from quietly
+-- removing or relocating the lock.
 -- ---------------------------------------------------------------------
 DO $verify$
 DECLARE
@@ -563,6 +573,18 @@ BEGIN
   -- by prose, and nothing else here would notice.
   IF v_code LIKE '%THE LOCK on the two players%' THEN
     RAISE EXCEPTION '00205: comment stripping failed, so these assertions can be satisfied by a comment';
+  END IF;
+
+  -- FAIL CLOSED on block comments rather than try to strip them. The sentinel
+  -- above only proves LINE comments were removed: put the lock statement
+  -- verbatim inside a /* ... */ and the sentinel disappears with the rest of
+  -- the line comments while every assertion below still matches text that
+  -- never executes. Codex round 14 found this. Stripping block comments
+  -- correctly means handling nesting and dollar-quoted strings, which is a
+  -- parser; refusing a body that contains the delimiters at all is one line
+  -- and cannot be wrong. The body has none today and has no reason to.
+  IF v_def LIKE '%/*%' OR v_def LIKE '%*/%' THEN
+    RAISE EXCEPTION '00205: merge_players contains a block comment, which these assertions cannot see past -- rewrite it with line comments';
   END IF;
 
   v_lock := position('PERFORM id FROM players' in v_code);
