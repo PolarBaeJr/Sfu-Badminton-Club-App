@@ -347,14 +347,29 @@ export async function POST(request: Request) {
         : outcome.sent
           ? { outcome: 'sent' as const, provider_message_id: outcome.providerMessageId }
           : { outcome: outcome.reason, provider_message_id: null };
-      const { error: closeErr } = await admin
+      const { error: closeErr, count: closedCount } = await admin
         .from(DIGEST_DELIVERIES)
-        .update({ completed_at: new Date().toISOString(), ...completion })
+        .update({ completed_at: new Date().toISOString(), ...completion }, { count: 'exact' })
         .eq('week_start', window)
         .eq('player_id', agg.playerId);
-      // Not fatal and not silent: the claim still holds, so the member cannot
-      // be mailed twice. What is lost is knowing what happened to them, which
-      // is what the stranded-claim sweep below reports.
+      // A zero-row close is reported, not shrugged off. It used to be neither
+      // requested nor checked, under a comment claiming "the claim still holds,
+      // so the member cannot be mailed twice" -- which is only true while the
+      // claim row still exists under THIS player_id. A merge running
+      // concurrently invalidates both halves: it repoints the row to the
+      // survivor (so this filter misses it) or, before 00205 took a row lock,
+      // let the cascade delete it outright (so there is no claim at all and
+      // the survivor can be mailed the same digest again). PostgREST reports
+      // an update that matched nothing as success, so without count:'exact'
+      // this is indistinguishable from a normal close.
+      if (!closeErr && closedCount === 0) {
+        Sentry.captureException(
+          new Error(
+            `Digest delivery close matched no row for ${agg.playerId} in week ${window}: ` +
+              'the claim was repointed or removed by a concurrent merge',
+          ),
+        );
+      }
       if (closeErr) {
         Sentry.captureException(
           new Error(`Digest delivery record not closed for ${agg.playerId}: ${closeErr.message}`),

@@ -68,12 +68,17 @@ vi.mock('@/lib/supabase-server', () => ({
               return { data: [{ player_id: rowIn.player_id }], error: null };
             },
           }),
+          // Reports a matched-row COUNT, because PostgREST does and the route
+          // now reads it. Modelling a miss as `{ error: null }` -- which this
+          // fake used to do -- made an update that matched nothing look exactly
+          // like a successful close, which is the condition the route has to be
+          // able to tell apart.
           update: (patch: Partial<Delivery>) => ({
             eq: (_c1: string, week: string) => ({
               eq: async (_c2: string, playerId: string) => {
                 const existing = deliveries.get(dkey(week, playerId));
                 if (existing) Object.assign(existing, patch);
-                return { error: null };
+                return { error: null, count: existing ? 1 : 0 };
               },
             }),
           }),
@@ -324,6 +329,33 @@ describe('weekly-digest — the per-recipient claim, not the cursor', () => {
     // run is the correct response, not sending anyway.
     expect(recipients()).toEqual([]);
     expect(res.status).toBe(500);
+  });
+
+  it('reports a close that matches no row, because a concurrent merge took the claim', async () => {
+    const Sentry = await import('@sentry/nextjs');
+    vi.mocked(Sentry.captureException).mockClear();
+    matchRows = [row('p-00')];
+
+    // A merge running at the same time as the digest. Before 00205 it could
+    // cascade the claim away between the claim and the close; after 00205 it
+    // can still REPOINT the row to the survivor, and either way this filter
+    // matches nothing. The send has already happened at that point, so the
+    // only thing left to get right is noticing.
+    sendWeeklyDigestEmail.mockImplementation(async () => {
+      deliveries.clear();
+      return { sent: true, providerMessageId: 'msg-1' };
+    });
+
+    await run();
+
+    // PostgREST calls an update that matched nothing a success. If this is not
+    // reported, the run finishes clean while the member has been mailed and
+    // nothing durable records it.
+    expect(vi.mocked(Sentry.captureException)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('Digest delivery close matched no row for p-00'),
+      }),
+    );
   });
 
   it('refuses to send when the delivery record cannot be read', async () => {
