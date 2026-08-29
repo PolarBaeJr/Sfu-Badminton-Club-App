@@ -919,12 +919,21 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
   // Mark both entries absent. This is the half that feeds reliability —
   // check_noshow_threshold auto-flags at 3 and auto-suspends at 5 — and it is
   // the half most easily forgotten when doing this by hand.
-  const entryTable = doubles ? 'tournament_pairs' : 'tournament_participants';
-  const { error: entryErr } = await adminClient
-    .from(entryTable)
-    .update({ status: 'no_show' })
-    .in('id', [aId, bId]);
+  // FENCED — 00201. Still ONE statement covering both entries: the RPC updates
+  // them together inside the field lock, so this cannot leave one side marked
+  // and the other not. That matters more here than it looks — the no-show count
+  // feeds check_noshow_threshold, which auto-flags at 3 and auto-suspends at 5.
+  const { data: marked, error: entryErr } = await adminClient.rpc('mark_field_entries_no_show', {
+    p_entry_ids: [aId, bId],
+    p_is_pair: doubles,
+  });
   if (entryErr) throw new Error(entryErr.message);
+  const markedResult = marked as { ok: boolean; reason?: string } | null;
+  if (!markedResult?.ok) {
+    throw new Error(
+      `Both entries could not be marked absent (${markedResult?.reason ?? 'unknown'}). The match was voided — reload and mark them from the draw.`,
+    );
+  }
 
 
   // After the match write, before the audit, and it does not throw. Same

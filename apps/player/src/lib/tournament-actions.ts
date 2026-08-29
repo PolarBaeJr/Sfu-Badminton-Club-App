@@ -530,10 +530,35 @@ async function selfCheckInImpl(eventId: string) {
   // through it, and an edited waiver un-signs somebody who did.
   await assertMyEventWaiverSigned(service, event.tournament_id, player.id);
 
-  const { error } = await service.from('tournament_participants')
-    .update({ status: 'checked_in', checked_in_at: new Date().toISOString() })
-    .eq('id', participant.id);
+  // FENCED — 00201. The member's own check-in took no lock and asked the
+  // event's status from a row read several awaits earlier, above: the waiver
+  // assertion sits between that read and this write, so the gap is real rather
+  // than theoretical. set_field_entry_status re-reads both the entry and the
+  // event under the shared field key, so a draw published in the meantime
+  // refuses the check-in instead of adding a member to a field it was not
+  // generated from.
+  //
+  // p_actor is null: nobody at a desk checked this person in, they checked
+  // themselves in, and writing their own id into checked_in_by would claim an
+  // exec was present.
+  const { data: checked, error } = await service.rpc('set_field_entry_status', {
+    p_entry_id: participant.id,
+    p_is_pair: false,
+    p_new_status: 'checked_in',
+    p_actor: null,
+  });
   if (error) throw new Error(error.message);
+  const checkedResult = checked as { ok: boolean; reason?: string; event_status?: string } | null;
+  if (!checkedResult?.ok) {
+    // The member sees the same sentence the pre-read guard above would have
+    // given them; only the moment it is decided has changed.
+    if (checkedResult?.reason === 'event_status' || checkedResult?.reason === 'event_completed') {
+      throw new ExpectedError('Check-in is not open');
+    }
+    if (checkedResult?.reason === 'entry_status') throw new ExpectedError('Cannot check in');
+    if (checkedResult?.reason === 'entry_not_found') throw new ExpectedError('Not registered');
+    throw new Error('Could not check you in. Try again.');
+  }
 
   revalidateTournamentPaths(event.tournament_id, eventId);
 }

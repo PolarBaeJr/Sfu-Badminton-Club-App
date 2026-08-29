@@ -803,6 +803,65 @@ export async function addParticipantsToEvent(
   return { added, failures };
 }
 
+/**
+ * WHAT THE FENCED FIELD RPCS RETURN.
+ *
+ * set_field_entry_status, remove_field_entry and bulk_check_in_field (00201)
+ * all answer in the same shape: `ok`, a machine-readable `reason` when it is
+ * false, and the event context they read UNDER the field lock. The context is
+ * not a convenience — a caller that revalidates from a row it read before the
+ * write is reading state the write may have moved.
+ */
+interface FencedFieldResult {
+  ok: boolean;
+  reason?: string;
+  already?: boolean;
+  entry_status?: string;
+  event_status?: string;
+  event_id?: string;
+  tournament_id?: string;
+  checked_in?: number;
+}
+
+/**
+ * Turn a fenced RPC's refusal into the sentence the exec should read.
+ *
+ * The refusals these RPCs make are the SAME refusals their callers make a
+ * moment earlier — that is the point of 00201: the caller's copy is a fast,
+ * friendly one made outside the lock, and this one is made under it. So a
+ * refusal arriving here is not normally a mistake by the exec; it is the race
+ * being caught. The messages say so where that helps, and stay identical to
+ * the caller's where the distinction would not mean anything to them.
+ *
+ * `notFound` is per-call because "Participant not found" and "Pair not found"
+ * are different sentences at the desk.
+ */
+function fencedRefusal(result: FencedFieldResult | null, notFound: string): never {
+  if (!result) {
+    throw new Error('Could not read this entry. Nothing was changed — try again.');
+  }
+  switch (result.reason) {
+    case 'entry_not_found':
+      throw new ExpectedError(notFound);
+    case 'event_not_found':
+      throw new ExpectedError('This entry is not attached to an event.');
+    case 'draw_locked':
+      throw new ExpectedError('Draw is locked. Unlock it before making changes.');
+    case 'event_completed':
+      throw new ExpectedError('This event is finished — void the affected matches instead.');
+    case 'event_status':
+      throw new ExpectedError(
+        `The event moved to "${result.event_status ?? 'another status'}" while this was being saved, so the change was not applied. Reload the page to see where it stands.`,
+      );
+    case 'entry_status':
+      throw new ExpectedError(
+        `This entry is "${result.entry_status ?? 'in another state'}" and cannot be checked in. Reload the page to see where it stands.`,
+      );
+    default:
+      throw new ExpectedError('That change could not be saved. Reload the page and try again.');
+  }
+}
+
 export async function removeParticipantFromEvent(participantId: string) {
   const admin = await requireCapability('tournaments.draw.participants.remove.write');
   const adminClient = createAdminClient();
@@ -832,11 +891,21 @@ export async function removeParticipantFromEvent(participantId: string) {
   }
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
 
-  const { error } = await adminClient.from('tournament_participants').delete().eq('id', participantId);
+  // FENCED — 00201. The two refusals above are read from a row fetched a round
+  // trip ago; this RPC re-reads them under the field lock and deletes in the
+  // same transaction, so a draw published in between refuses the removal
+  // instead of silently dropping an entrant out of a bracket that already
+  // contains them.
+  const { data: removed, error } = await adminClient.rpc('remove_field_entry', {
+    p_entry_id: participantId,
+    p_is_pair: false,
+  });
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const removedResult = removed as FencedFieldResult | null;
+  if (!removedResult?.ok) fencedRefusal(removedResult, 'Participant not found');
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
@@ -882,18 +951,22 @@ async function checkInParticipantImpl(participantId: string) {
     }],
   });
 
-  const { error } = await adminClient.from('tournament_participants')
-    .update({
-      status: 'checked_in',
-      checked_in_at: new Date().toISOString(),
-      checked_in_by: admin.id,
-    })
-    .eq('id', participantId);
-
+  // FENCED — 00201. Check-in used to be an unguarded direct write: it asked
+  // nothing about the event's status and took no lock, so it could check
+  // somebody in against an event that had just been completed, or against a
+  // withdrawal that landed a millisecond earlier.
+  const { data: checked, error } = await adminClient.rpc('set_field_entry_status', {
+    p_entry_id: participantId,
+    p_is_pair: false,
+    p_new_status: 'checked_in',
+    p_actor: admin.id,
+  });
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const checkedResult = checked as FencedFieldResult | null;
+  if (!checkedResult?.ok) fencedRefusal(checkedResult, 'Participant not found');
 
   revalidateEventPaths(participantCtx.tid, participantCtx.eventId);
 }
@@ -902,27 +975,41 @@ export async function markParticipantNoShow(participantId: string) {
   await requireCapability('tournaments.draw.noshow.write');
   const adminClient = createAdminClient();
 
-  const { data, error } = await adminClient.from('tournament_participants')
-    .update({ status: 'no_show' })
-    .eq('id', participantId)
-    .select(participantContextSelect)
-    .single();
+  // FENCED, AND GUARDED AT ALL FOR THE FIRST TIME — 00201.
+  //
+  // This was the most exposed write in the file: a bare status update with no
+  // event-status check of any kind, so an entrant could be marked no-show on a
+  // completed event, contradicting results and Elo that were already settled.
+  // The guard added in 00201 is deliberately narrow — 'registration' and
+  // 'completed' only — because the fence is what closes the races and a
+  // stricter rule invented here would refuse a desk workflow that is ordinary.
+  //
+  // The context now comes BACK from the RPC, read under the same lock as the
+  // write. It used to come from a RETURNING clause, which was already
+  // correct, but this way there is one source for it across all these actions.
+  const { data, error } = await adminClient.rpc('set_field_entry_status', {
+    p_entry_id: participantId,
+    p_is_pair: false,
+    p_new_status: 'no_show',
+    p_actor: null,
+  });
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
-  // The row is already updated, so this cannot report a failure — but it must
-  // not report a plain success either. Without the context there is nothing to
-  // revalidate, and since these screens stopped calling router.refresh() a
-  // silent skip leaves the desk looking at a board that still says the player is
-  // waiting. Say what happened and tell them to reload.
-  const ctx = extractEventContext(data);
-  if (!ctx) {
+  const noShowResult = data as FencedFieldResult | null;
+  if (!noShowResult?.ok) fencedRefusal(noShowResult, 'Participant not found');
+
+  // Without the context there is nothing to revalidate, and since these screens
+  // stopped calling router.refresh() a silent skip leaves the desk looking at a
+  // board that still says the player is waiting. Say what happened and tell
+  // them to reload.
+  if (!noShowResult.tournament_id || !noShowResult.event_id) {
     Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable — page not revalidated'));
     throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
   }
-  revalidateEventPaths(ctx.tid, ctx.eventId);
+  revalidateEventPaths(noShowResult.tournament_id, noShowResult.event_id);
 }
 
 // ============================================================
@@ -960,23 +1047,62 @@ async function exitDrawImpl(
   const admin = await requireCapability('tournaments.draw.exit.write');
   const adminClient = createAdminClient();
 
-  const table = isPair ? 'tournament_pairs' : 'tournament_participants';
-  const { data: entry } = await adminClient.from(table)
-    .select('id, status, event_id, event:tournament_events(id, status, event_type, tournament_id)')
-    .eq('id', entryId)
-    .maybeSingle();
-  if (!entry) throw new ExpectedError('Entry not found');
-
-  const event = (Array.isArray(entry.event) ? entry.event[0] : entry.event) as {
-    id: string; status: string; event_type: string; tournament_id: string;
-  } | null;
-  if (!event) throw new ExpectedError('Entry is not attached to an event');
-
-  // A finished event's results and Elo are already settled. Pulling someone out
-  // now would forfeit nothing and only contradict the standings.
-  if (event.status === 'completed') {
-    throw new ExpectedError('This event is finished — void the affected matches instead.');
+  // THE STATUS WRITE AND THE EVENT STATUS IT LANDED AGAINST, IN ONE FENCED CALL.
+  //
+  // This used to be a read, a decision, and then a separate PostgREST update —
+  // three round trips with no lock across them, which is the sequence the
+  // round-9 review reproduced: this function read `checkin`, publication
+  // committed a draw, and then this update committed anyway, because it took no
+  // lock and never touched the event row publication had locked. The draw was
+  // published containing an entrant who had just left it, and BOTH actions
+  // reported success.
+  //
+  // set_field_entry_status (00201) takes the shared field key, re-reads the
+  // entry and the event under it, and returns the event status it saw. What
+  // makes that sufficient is not the write being atomic — it always was — but
+  // the fact that EVERY OTHER field writer now takes the same key, so the
+  // status below cannot move between this call and the next one.
+  const { data: fenced, error: fenceError } = await adminClient.rpc('set_field_entry_status', {
+    p_entry_id: entryId,
+    p_is_pair: isPair,
+    p_new_status: status,
+    p_actor: admin.id,
+  });
+  if (fenceError) {
+    Sentry.captureException(fenceError);
+    throw new Error(fenceError.message);
   }
+  const fencedResult = fenced as {
+    ok: boolean; reason?: string; already?: boolean;
+    event_status?: string; event_id?: string; tournament_id?: string;
+  } | null;
+  if (!fencedResult) throw new Error('Could not read this entry. Nothing was changed — try again.');
+  if (!fencedResult.ok) {
+    if (fencedResult.reason === 'entry_not_found') throw new ExpectedError('Entry not found');
+    if (fencedResult.reason === 'event_not_found') throw new ExpectedError('Entry is not attached to an event');
+    // A finished event's results and Elo are already settled. Pulling someone
+    // out now would forfeit nothing and only contradict the standings.
+    if (fencedResult.reason === 'event_completed') {
+      throw new ExpectedError('This event is finished — void the affected matches instead.');
+    }
+    throw new ExpectedError('This entry could not be taken out of the draw. Reload the page and try again.');
+  }
+
+  const event = {
+    id: fencedResult.event_id as string,
+    // READ UNDER THE LOCK THE WRITE HAPPENED UNDER, which is the whole point:
+    // the forfeit cascade below branches on this, and a stale value here is
+    // exactly how a cascade got skipped on a live event.
+    status: fencedResult.event_status as string,
+    tournament_id: fencedResult.tournament_id as string,
+  };
+
+  // The 'completed' refusal that used to sit here has MOVED, not gone: it is
+  // made inside set_field_entry_status under the field lock and surfaces above
+  // as the `event_completed` reason. Repeating it here would be unreachable —
+  // the RPC returns before writing — and an unreachable guard is how a reader
+  // comes to believe a check runs when it does not.
+  //
   // A repeat press is normally nothing to do — but on a live event it is also
   // the only way to finish a forfeit cascade that stopped partway, and that is
   // now reachable: applyTournamentMatchElo raises a failed rating write instead
@@ -988,7 +1114,11 @@ async function exitDrawImpl(
   // Forfeiting only ever touches matches that are still open, so re-running it
   // is idempotent. If there was genuinely nothing left, the original refusal
   // still stands (below, once we know).
-  const alreadyOut = entry.status === status;
+  // Reported by the RPC rather than computed from a pre-read row: it is the
+  // comparison made under the lock, against the status the write actually saw.
+  // The RPC writes nothing when it is true, so this refusal still costs no
+  // update — it just happens after the fenced call instead of before it.
+  const alreadyOut = fencedResult.already === true;
   if (alreadyOut && event.status !== 'live') {
     throw new ExpectedError(status === 'withdrawn' ? 'Already withdrawn.' : 'Already disqualified.');
   }
@@ -1002,15 +1132,6 @@ async function exitDrawImpl(
   //
   // The note itself is written FURTHER DOWN, immediately before logAudit, and
   // the distance is deliberate — see there.
-  if (!alreadyOut) {
-    const { error } = await adminClient.from(table)
-      .update({ status })
-      .eq('id', entryId);
-    if (error) {
-      Sentry.captureException(error);
-      throw new Error(error.message);
-    }
-  }
 
   // Only a live event gets its matches forfeited. Between bracket generation
   // and the first serve nothing has been played: a walkover there could not be
@@ -1718,11 +1839,17 @@ export async function removePairFromEvent(pairId: string) {
   }
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
 
-  const { error } = await adminClient.from('tournament_pairs').delete().eq('id', pairId);
+  // FENCED — 00201, same reasoning as removeParticipantFromEvent.
+  const { data: removedPair, error } = await adminClient.rpc('remove_field_entry', {
+    p_entry_id: pairId,
+    p_is_pair: true,
+  });
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const removedPairResult = removedPair as FencedFieldResult | null;
+  if (!removedPairResult?.ok) fencedRefusal(removedPairResult, 'Pair not found');
 
   revalidateEventPaths(event.tournament_id as string, pair.event_id as string);
 }
@@ -1758,59 +1885,61 @@ async function checkInPairImpl(pairId: string) {
     members: pairWaiverMembers(pair as never),
   });
 
-  const { data, error } = await adminClient.from('tournament_pairs')
-    .update({
-      status: 'checked_in',
-      checked_in_at: new Date().toISOString(),
-      checked_in_by: admin.id,
-    })
-    .eq('id', pairId)
-    .select(pairContextSelect)
-    .single();
+  // FENCED — 00201, same reasoning as checkInParticipant.
+  const { data, error } = await adminClient.rpc('set_field_entry_status', {
+    p_entry_id: pairId,
+    p_is_pair: true,
+    p_new_status: 'checked_in',
+    p_actor: admin.id,
+  });
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const checkedPairResult = data as FencedFieldResult | null;
+  if (!checkedPairResult?.ok) fencedRefusal(checkedPairResult, 'Pair not found');
 
-  // The row is already updated, so this cannot report a failure — but it must
-  // not report a plain success either. Without the context there is nothing to
-  // revalidate, and since these screens stopped calling router.refresh() a
-  // silent skip leaves the desk looking at a board that still says the player is
-  // waiting. Say what happened and tell them to reload.
-  const ctx = extractEventContext(data);
-  if (!ctx) {
+  // Without the context there is nothing to revalidate, and since these screens
+  // stopped calling router.refresh() a silent skip leaves the desk looking at a
+  // board that still says the team is waiting. Say what happened and tell them
+  // to reload.
+  if (!checkedPairResult.tournament_id || !checkedPairResult.event_id) {
     Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable — page not revalidated'));
     throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
   }
-  revalidateEventPaths(ctx.tid, ctx.eventId);
+  revalidateEventPaths(checkedPairResult.tournament_id, checkedPairResult.event_id);
 }
 
 export async function markPairNoShow(pairId: string) {
   await requireCapability('tournaments.draw.noshow.write');
   const adminClient = createAdminClient();
 
-  const { data, error } = await adminClient.from('tournament_pairs')
-    .update({ status: 'no_show' })
-    .eq('id', pairId)
-    .select(pairContextSelect)
-    .single();
+  // FENCED, AND GUARDED AT ALL FOR THE FIRST TIME — 00201. See
+  // markParticipantNoShow for why the guard is narrow.
+  const { data, error } = await adminClient.rpc('set_field_entry_status', {
+    p_entry_id: pairId,
+    p_is_pair: true,
+    p_new_status: 'no_show',
+    p_actor: null,
+  });
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
-  // The row is already updated, so this cannot report a failure — but it must
-  // not report a plain success either. Without the context there is nothing to
-  // revalidate, and since these screens stopped calling router.refresh() a
-  // silent skip leaves the desk looking at a board that still says the player is
-  // waiting. Say what happened and tell them to reload.
-  const ctx = extractEventContext(data);
-  if (!ctx) {
+  const pairNoShowResult = data as FencedFieldResult | null;
+  if (!pairNoShowResult?.ok) fencedRefusal(pairNoShowResult, 'Pair not found');
+
+  // Without the context there is nothing to revalidate, and since these screens
+  // stopped calling router.refresh() a silent skip leaves the desk looking at a
+  // board that still says the team is waiting. Say what happened and tell them
+  // to reload.
+  if (!pairNoShowResult.tournament_id || !pairNoShowResult.event_id) {
     Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable — page not revalidated'));
     throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
   }
-  revalidateEventPaths(ctx.tid, ctx.eventId);
+  revalidateEventPaths(pairNoShowResult.tournament_id, pairNoShowResult.event_id);
 }
 
 // ============================================================
@@ -1896,27 +2025,34 @@ async function bulkCheckInImpl(
     }
   }
 
-  // No waiver on this tournament → the original single-statement update, over
-  // the whole field, exactly as before.
-  let query = adminClient.from(table)
-    .update({
-      status: 'checked_in',
-      checked_in_at: new Date().toISOString(),
-      checked_in_by: admin.id,
-    })
-    .eq('event_id', eventId)
-    .eq('status', 'registered');
-  if (idsToCheckIn) query = query.in('id', idsToCheckIn);
-
-  const { data: updated, error } = await query.select('id');
+  // FENCED — 00201. One statement as before, but inside the field lock.
+  //
+  // `status = 'registered'` HAS NOT MOVED INTO THE ID LIST, and that matters.
+  // The waiver screening above runs in this process, over a list read before
+  // the fence was taken, so by the time the write lands an entrant in
+  // `idsToCheckIn` may have withdrawn. The RPC repeats the predicate on its own
+  // side rather than trusting the list, so the worst case is that somebody is
+  // silently left out of a bulk check-in — not that a withdrawal is quietly
+  // overwritten with a check-in.
+  //
+  // A null id list means "everybody still waiting", which is the no-waiver
+  // path's original whole-field update.
+  const { data: bulk, error } = await adminClient.rpc('bulk_check_in_field', {
+    p_event_id: eventId,
+    p_is_pair: type === 'pairs',
+    p_ids: idsToCheckIn,
+    p_actor: admin.id,
+  });
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const bulkResult = bulk as FencedFieldResult | null;
+  if (!bulkResult?.ok) fencedRefusal(bulkResult, 'Event not found');
 
   revalidateEventPaths(event.tournament_id, eventId);
-  return { checkedIn: (updated ?? []).length, skippedForWaiver };
+  return { checkedIn: bulkResult.checked_in ?? 0, skippedForWaiver };
 }
 
 // ============================================================

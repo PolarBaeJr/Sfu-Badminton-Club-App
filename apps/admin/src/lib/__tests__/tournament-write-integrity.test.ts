@@ -842,6 +842,134 @@ const makeClient = vi.hoisted(() => () => {
         return { data: { ok: true, participants: written }, error: null };
       })();
     }
+    // ---- THE FENCED FIELD RPCS (00201) -----------------------------------
+    // These replaced nine direct PostgREST writes. Modelled against the same
+    // store rather than stubbed, and they still consult faultFor on the
+    // underlying table UPDATE, because the fault-injection tests that make a
+    // withdrawal fail are asserting on the entry not moving — not on which wire
+    // call carried it.
+    const fieldTableFor = (isPair: boolean) => (isPair ? 'tournament_pairs' : 'tournament_participants');
+
+    if (name === 'set_field_entry_status') {
+      const entryId = args.p_entry_id as string;
+      const isPair = args.p_is_pair as boolean;
+      const next = args.p_new_status as string;
+      const table = fieldTableFor(isPair);
+      const row = (store.db[table] ?? []).find((r) => r.id === entryId);
+      if (!row) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === row.event_id);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+
+      // The narrow guards, in the SQL's order: the check-in/no-show floor
+      // first, then the completed ceiling that applies to all four statuses.
+      if ((next === 'checked_in' || next === 'no_show') && ev.status === 'registration') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      if (ev.status === 'completed') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_completed', event_status: ev.status }, error: null });
+      }
+      if (next === 'checked_in' && row.status !== 'registered' && row.status !== 'checked_in') {
+        return Promise.resolve({
+          data: { ok: false, reason: 'entry_status', entry_status: row.status, event_status: ev.status },
+          error: null,
+        });
+      }
+
+      const already = row.status === next;
+      if (!already) {
+        const payload: Row = { status: next };
+        if (next === 'checked_in') {
+          payload.checked_in_at = new Date().toISOString();
+          payload.checked_in_by = (args.p_actor as string | null) ?? null;
+        }
+        const f = faultFor(table, 'update', { filters: [['id', entryId]], payload });
+        if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+        Object.assign(row, payload);
+      }
+      return Promise.resolve({
+        data: {
+          ok: true, already, entry_status_before: row.status, event_status: ev.status,
+          event_id: ev.id, tournament_id: ev.tournament_id, draw_locked: ev.draw_locked ?? false,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'remove_field_entry') {
+      const entryId = args.p_entry_id as string;
+      const isPair = args.p_is_pair as boolean;
+      const table = fieldTableFor(isPair);
+      const rows = store.db[table] ?? [];
+      const row = rows.find((r) => r.id === entryId);
+      if (!row) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === row.event_id);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status !== 'registration' && ev.status !== 'checkin') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      if (ev.draw_locked) return Promise.resolve({ data: { ok: false, reason: 'draw_locked' }, error: null });
+      const f = faultFor(table, 'delete', { filters: [['id', entryId]], payload: {} });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      store.db[table] = rows.filter((r) => r.id !== entryId);
+      return Promise.resolve({
+        data: { ok: true, event_id: ev.id, tournament_id: ev.tournament_id, event_status: ev.status },
+        error: null,
+      });
+    }
+
+    if (name === 'bulk_check_in_field') {
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const ids = args.p_ids as string[] | null;
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status === 'registration' || ev.status === 'completed') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      const payload: Row = {
+        status: 'checked_in', checked_in_at: new Date().toISOString(),
+        checked_in_by: (args.p_actor as string | null) ?? null,
+      };
+      const f = faultFor(table, 'update', { filters: [['event_id', eventId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      // `status === 'registered'` is re-checked here and NOT taken from the id
+      // list, exactly as the SQL does — the list was screened outside the fence.
+      const hit = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && r.status === 'registered' && (ids === null || ids.includes(r.id as string)),
+      );
+      for (const r of hit) Object.assign(r, payload);
+      return Promise.resolve({
+        data: {
+          ok: true, checked_in: hit.length, ids: hit.map((r) => r.id),
+          event_status: ev.status, tournament_id: ev.tournament_id,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'mark_field_entries_no_show') {
+      const ids = args.p_entry_ids as string[];
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const rows = (store.db[table] ?? []).filter((r) => ids.includes(r.id as string));
+      if (rows.length === 0) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const events = [...new Set(rows.map((r) => r.event_id))];
+      if (events.length !== 1) {
+        return Promise.resolve({ data: { ok: false, reason: 'entries_span_events', events: events.length }, error: null });
+      }
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === events[0]);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status === 'registration' || ev.status === 'completed') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      const f = faultFor(table, 'update', { filters: [['id', ids[0] as string]], payload: { status: 'no_show' } });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      for (const r of rows) r.status = 'no_show';
+      return Promise.resolve({
+        data: { ok: true, marked: rows.length, event_id: ev.id, tournament_id: ev.tournament_id, event_status: ev.status },
+        error: null,
+      });
+    }
+
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 

@@ -1,0 +1,198 @@
+// EVERY WRITE TO THE EVENT FIELD GOES THROUGH A FENCED RPC, OR IT IS NOT FENCED.
+//
+// Migration 00201 put every database function that writes tournament_participants
+// or tournament_pairs behind ONE advisory key. That closed nothing on its own,
+// because the apps were also writing those tables directly over PostgREST — nine
+// call sites taking no lock of any kind, which is why four rounds of review kept
+// finding the same class of race in functions that were individually correct.
+//
+// THIS TEST EXISTS BECAUSE A GREP DID NOT FIND THEM ALL. The worst of the nine
+// wrote through a VARIABLE table name:
+//
+//   const table = isPair ? 'tournament_pairs' : 'tournament_participants';
+//   await adminClient.from(table).update({ status })
+//
+// No search for either table name matches that line, so it survived four
+// reviews — and a tenth site in results.ts survived the per-file sweep that
+// found the other nine. A census that resolves the variable is the only shape
+// that catches them, so that is what this does, and it is the application-side
+// half of the pg_proc census in 00201's verification block.
+//
+// THE RULE
+//   - No DELETE or INSERT on a field table from application code. Membership is
+//     remove_field_entry's and the entry RPCs' business.
+//   - No UPDATE that writes `status`. That is set_field_entry_status,
+//     mark_field_entries_no_show, or one of the older fenced RPCs.
+//   - UPDATEs that write only ordering or scoring columns are allowed and are
+//     listed below. They do not add, remove, or move anybody in or out of the
+//     field, which is what the fence protects; they are the application-side
+//     counterpart of 00201's allowlist of rating-only database functions.
+//
+// A NEW write to these tables fails this test until somebody classifies it.
+// That is the point: the classification is the review.
+
+import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+
+const FIELD_TABLES = ['tournament_participants', 'tournament_pairs'];
+
+/**
+ * Columns an application write may set on a field table without a fence.
+ *
+ * Ordering and scoring only. Every one of these is written about a row whose
+ * membership and status the write does not touch, so publication's entrant and
+ * capacity checks cannot disagree with it.
+ */
+const UNFENCED_COLUMNS = new Set([
+  'seed_number',
+  'group_number',
+  'final_position',
+  'points',
+]);
+
+function sourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    // Other branches' checkouts live under .claude/worktrees and are not this
+    // branch's code; scanning them would fail on work that is not here.
+    if (['node_modules', '.next', '.claude', '.git', 'dist'].includes(entry)) continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) sourceFiles(full, out);
+    else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * Identifiers assigned a field-table name anywhere in this file.
+ *
+ * Deliberately file-wide and not scope-aware: over-collecting a name means a
+ * write gets CHECKED that might not have needed it, which fails safe. Missing
+ * one means a write goes unchecked, which is the bug this test is about.
+ */
+function tableAliases(src: string): Set<string> {
+  const aliases = new Set<string>();
+  const assign = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*?'(tournament_participants|tournament_pairs)'/g;
+  for (const m of src.matchAll(assign)) {
+    if (m[1]) aliases.add(m[1]);
+  }
+  return aliases;
+}
+
+/**
+ * Keys of the object literal starting at the head of `src`, and no further.
+ *
+ * Brace-counted rather than character-windowed: several of these writes are
+ * followed by a logAudit call whose own keys would otherwise be attributed to
+ * the table write. Nested objects are skipped — a nested key is not a column.
+ */
+function objectKeys(src: string): string[] {
+  if (!src.startsWith('{')) return [];
+  const keys: string[] = [];
+  let depth = 0;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) break;
+    } else if (depth === 1) {
+      const m = /^([A-Za-z_$][\w$]*)\s*:/.exec(src.slice(i));
+      // Only at a key position: preceded by the opening brace or a comma.
+      if (m?.[1] && /[{,]\s*$/.test(src.slice(0, i))) {
+        keys.push(m[1]);
+        i += m[0].length - 1;
+      }
+    }
+  }
+  return keys;
+}
+
+interface Site {
+  file: string;
+  line: number;
+  verb: string;
+  columns: string[];
+}
+
+function fieldWrites(file: string, src: string): Site[] {
+  const aliases = tableAliases(src);
+  const sites: Site[] = [];
+
+  // Every `.from(<arg>)` whose argument names a field table, directly or through
+  // a ternary, or through an identifier assigned one above.
+  const fromCall = /\.from\(\s*([^)]*)\)/g;
+  for (const m of src.matchAll(fromCall)) {
+    const arg = m[1] ?? '';
+    const namesField =
+      FIELD_TABLES.some((t) => arg.includes(`'${t}'`) || arg.includes(`"${t}"`)) ||
+      [...aliases].some((a) => new RegExp(`^\\s*${a}\\s*$`).test(arg));
+    if (!namesField) continue;
+
+    // The write verb, if any, before this statement ends. PostgREST builders
+    // chain, so the verb follows the .from() within the same expression.
+    const tail = src.slice(m.index! + m[0].length, m.index! + m[0].length + 600);
+    const verbMatch = tail.match(/^[\s\S]*?\.(update|delete|insert|upsert)\(/);
+    if (!verbMatch) continue;
+    // A `;` before the verb means the verb belongs to a later statement.
+    const beforeVerb = tail.slice(0, verbMatch[0].length);
+    if (/;/.test(beforeVerb)) continue;
+
+    const verb = verbMatch[1] ?? '';
+    const afterVerb = tail.slice(verbMatch[0].length);
+    // ONLY the update's own object literal. A fixed character window ran past
+    // the closing brace and collected field names from the logAudit call that
+    // follows several of these writes, which reported columns that are not
+    // written to this table at all.
+    const columns = objectKeys(afterVerb);
+
+    sites.push({
+      file: relative(repoRoot, file),
+      line: src.slice(0, m.index!).split('\n').length,
+      verb,
+      columns,
+    });
+  }
+  return sites;
+}
+
+describe('field writes are fenced', () => {
+  const files = [join(repoRoot, 'apps')].flatMap((d) => sourceFiles(d));
+
+  const sites = files.flatMap((f) => fieldWrites(f, readFileSync(f, 'utf8')));
+
+  it('finds the field writes at all (a census that matches nothing proves nothing)', () => {
+    // The allowed ordering/scoring writes are real and are not going away, so a
+    // census returning none of them has stopped working rather than passed.
+    expect(sites.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('never deletes or inserts a field row from application code', () => {
+    const bad = sites.filter((s) => s.verb === 'delete' || s.verb === 'insert' || s.verb === 'upsert');
+    expect(
+      bad.map((s) => `${s.file}:${s.line} ${s.verb}()`),
+      'Membership changes must go through remove_field_entry or an entry RPC (00201), which take the shared field key. A direct delete/insert takes no lock and can drop or add an entrant a draw was generated from.',
+    ).toEqual([]);
+  });
+
+  it('never writes an entry status from application code', () => {
+    const bad = sites.filter((s) => s.columns.includes('status'));
+    expect(
+      bad.map((s) => `${s.file}:${s.line} update({ status })`),
+      'Entry status must go through set_field_entry_status or mark_field_entries_no_show (00201). Writing it directly takes no lock, so a status can move between publication reading the field and publication committing the draw.',
+    ).toEqual([]);
+  });
+
+  it('writes only classified columns everywhere else', () => {
+    const bad = sites
+      .flatMap((s) => s.columns.map((c) => ({ ...s, column: c })))
+      .filter((s) => !UNFENCED_COLUMNS.has(s.column));
+    expect(
+      bad.map((s) => `${s.file}:${s.line} ${s.column}`),
+      'A new column written directly to a field table. Decide whether it can move the field: if it can, it belongs behind a fenced RPC; if it genuinely cannot, add it to UNFENCED_COLUMNS with the reason.',
+    ).toEqual([]);
+  });
+});

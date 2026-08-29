@@ -3786,6 +3786,15 @@ export type Database = {
         Returns: undefined
       }
       assign_member_code: { Args: { p_player_id: string }; Returns: string }
+      bulk_check_in_field: {
+        Args: {
+          p_actor: string
+          p_event_id: string
+          p_ids: string[]
+          p_is_pair: boolean
+        }
+        Returns: Json
+      }
       calculate_elo_update: {
         Args: {
           p_event_multiplier: number
@@ -4024,6 +4033,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      mark_field_entries_no_show: {
+        Args: { p_entry_ids: string[]; p_is_pair: boolean }
+        Returns: Json
+      }
       match_counts_toward_stats: {
         Args: {
           p_result_status: Database["public"]["Enums"]["result_status"]
@@ -4130,6 +4143,10 @@ export type Database = {
         Args: { p_admin_id: string; p_walkover_id: string }
         Returns: Json
       }
+      remove_field_entry: {
+        Args: { p_entry_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
       report_walkover_atomic: {
         Args: {
           p_challenge_id: string
@@ -4165,6 +4182,15 @@ export type Database = {
       }
       session_cap_for: { Args: { p_match_type: string }; Returns: number }
       session_checkin_open: { Args: { p_session_id: string }; Returns: boolean }
+      set_field_entry_status: {
+        Args: {
+          p_actor: string
+          p_entry_id: string
+          p_is_pair: boolean
+          p_new_status: string
+        }
+        Returns: Json
+      }
       set_match_ready: {
         Args: { p_match_id: string; p_player_id: string; p_ready: boolean }
         Returns: string[]
