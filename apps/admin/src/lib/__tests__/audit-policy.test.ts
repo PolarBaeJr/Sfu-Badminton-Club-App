@@ -107,8 +107,54 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+// THE THIRD TRAIL: SQL. Some audit rows are written by database functions, not
+// by this console — apply_match_result, reverse_match_result, merge_players and
+// others have always done so, and since 00203 the club Void and Convert do too,
+// because an audit row that commits with the mutation is the whole point of
+// folding them into one transaction.
+//
+// A scan that reads only TypeScript therefore reports an action as "no longer
+// existing" the moment it moves into SQL, which is precisely backwards: it has
+// just become MORE durable, not less. That blind spot predates 00203 — it is
+// the same shape as the `action:` one below, and it is closed the same way.
+//
+// Parsed POSITIONALLY rather than by grabbing every quoted word near the
+// INSERT: the tuples also carry target_type literals like 'match' and 'dispute',
+// and letting those into `used` would quietly weaken the classification test
+// two blocks down.
+function sqlAuditActions(migrationsDir: string): Set<string> {
+  const found = new Set<string>();
+  for (const name of readdirSync(migrationsDir)) {
+    if (!name.endsWith('.sql')) continue;
+    const src = readFileSync(join(migrationsDir, name), 'utf8');
+    for (const m of src.matchAll(/INSERT\s+INTO\s+(?:public\.)?audit_logs\s*\(([^)]*)\)([\s\S]{0,600}?)VALUES\s*\(/gi)) {
+      const cols = m[1]!.split(',').map((c) => c.trim().toLowerCase());
+      const idx = cols.indexOf('action_type');
+      if (idx < 0) continue;
+      // Walk the VALUES tuple to its matching paren, splitting on top-level
+      // commas only, so a nested call like jsonb_build_object(a, b) counts once.
+      const rest = src.slice(m.index! + m[0]!.length);
+      const args: string[] = [];
+      let depth = 0, cur = '', quoted = false;
+      for (const ch of rest) {
+        if (quoted) { cur += ch; if (ch === "'") quoted = false; continue; }
+        if (ch === "'") { quoted = true; cur += ch; continue; }
+        if (ch === '(') depth++;
+        if (ch === ')') { if (depth === 0) { args.push(cur); break; } depth--; }
+        if (ch === ',' && depth === 0) { args.push(cur); cur = ''; continue; }
+        cur += ch;
+      }
+      const lit = args[idx]?.trim().match(/^'([a-z0-9_]+)'$/);
+      if (lit) found.add(lit[1]!);
+    }
+  }
+  return found;
+}
+
 describe('audit policy drift', () => {
   const used = new Set<string>();
+  const fromSql = sqlAuditActions(join(__dirname, '..', '..', '..', '..', '..', 'supabase', 'migrations'));
+  for (const a of fromSql) used.add(a);
   for (const file of sourceFiles(join(__dirname, '..', '..'))) {
     const src = readFileSync(file, 'utf8');
     for (const m of src.matchAll(/action_type:\s*'([a-z0-9_]+)'/g)) used.add(m[1]!);
@@ -129,6 +175,15 @@ describe('audit policy drift', () => {
     // spelling fails here rather than passing a vacuous classification check.
     expect(used.has('event_finalized')).toBe(true);
     expect(used.has('match_voided')).toBe(true);
+    // The SQL trail, pinned the same way. Without these two a broken migration
+    // regex would silently reopen the blind spot and every SQL-written action
+    // would start reporting as stale.
+    expect(fromSql.has('match_converted_casual')).toBe(true);
+    expect(fromSql.has('match_reversed')).toBe(true);
+    // ...and it must not have swept up the target_type literals sitting beside
+    // the action name in the same tuple.
+    expect(fromSql.has('match')).toBe(false);
+    expect(fromSql.has('dispute')).toBe(false);
   });
 
   it('classifies every action whose name puts it in a risk class', () => {

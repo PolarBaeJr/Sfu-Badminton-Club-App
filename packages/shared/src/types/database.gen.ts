@@ -3851,6 +3851,10 @@ export type Database = {
         Args: { p_challenge_hash: string; p_purpose: string }
         Returns: boolean
       }
+      convert_club_match_to_casual: {
+        Args: { p_actor_id: string; p_match_id: string; p_reason: string }
+        Returns: Json
+      }
       create_challenge_atomic: {
         Args: {
           p_format: string
@@ -4168,6 +4172,15 @@ export type Database = {
         }
         Returns: Json
       }
+      resolve_dispute_unrated: {
+        Args: {
+          p_actor_id: string
+          p_dispute_id: string
+          p_resolution_note?: string
+          p_resolution_type: Database["public"]["Enums"]["dispute_resolution"]
+        }
+        Returns: Json
+      }
       respond_to_challenge: {
         Args: { p_challenge_id: string; p_response: string }
         Returns: Json
@@ -4234,6 +4247,10 @@ export type Database = {
           p_partner_id?: string
           p_type: string
         }
+        Returns: Json
+      }
+      void_club_match: {
+        Args: { p_actor_id: string; p_match_id: string; p_reason: string }
         Returns: Json
       }
       withdraw_from_tournament_event: {

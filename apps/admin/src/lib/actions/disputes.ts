@@ -4,9 +4,8 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, disputeResolveSchema, ExpectedError, type DisputeResolveInput } from '@badminton/shared';
+import { parseOrThrow, disputeResolveSchema, type DisputeResolveInput } from '@badminton/shared';
 import { requireCapability } from './_shared';
-import { voidMatch, convertMatchToCasual } from './matches';
 import { runAction, type ActionResult } from '../action-result';
 
 export async function resolveDispute(data: DisputeResolveInput): Promise<ActionResult<void>> {
@@ -58,105 +57,73 @@ async function resolveDisputeImpl(data: DisputeResolveInput) {
       revalidatePath('/matches');
       return;
     }
+
+    // THE AUDIT CALL LIVES INSIDE THE BRANCH, not after the if/else, and that
+    // placement is the safety property. The unrated branch below writes its
+    // dispute_resolved row inside resolve_dispute_unrated, in the same
+    // transaction as the resolution; a shared call down here would have to be
+    // suppressed for exactly one branch, and a boolean threaded back from SQL
+    // to decide it gets you two rows or zero the first time it is misread.
+    // Neither is visible from the console. Branch placement cannot be misread.
+    //
+    // This one stays in TypeScript. resolve_dispute_rated does not write it,
+    // and giving it one is a change to the rated path that this migration is
+    // not scoped to make — the asymmetry is deliberate and recorded.
+    await logAdminAudit(adminClient, {
+      actor_id: admin.id,
+      action_type: 'dispute_resolved',
+      target_type: 'dispute',
+      target_id: data.dispute_id,
+      new_value: { resolution_type: data.resolution_type },
+      reason: data.resolution_note,
+    }, { disputeId: data.dispute_id });
   } else {
-    // voided / converted_to_casual. Neither applies a rating, so neither can
-    // double-count one, but both must still be single-entry: claim the dispute
-    // before doing the work so a retry cannot run the reversal twice.
-    const { data: claim, error: claimErr } = await adminClient.rpc('claim_dispute_for_resolution', {
+    // voided / converted_to_casual. ONE TRANSACTION SINCE 00203, the way the
+    // rated pair has been since 00178.
+    //
+    // This branch used to be four steps the server drove in sequence: claim the
+    // dispute, mutate the match, close the dispute, audit it. The claim existed
+    // precisely because those steps were separable — it stopped a second admin
+    // starting the OTHER resolution while the first was mid-flight (00188), and
+    // then had to bind the resolution type as well, because a retry after a
+    // failed close could otherwise come back as the opposite one and push the
+    // match through the other branch (00192).
+    //
+    // resolve_dispute_unrated holds the dispute row FOR UPDATE from before it
+    // reads the status until it commits, so a second admin blocks and finds the
+    // work done rather than racing to claim it. claim_dispute_for_resolution is
+    // no longer called; it is deliberately left in the database, because
+    // dropping a signature the running image still references is what made
+    // 00200 order-fragile, and this migration must be applicable BEFORE the
+    // image that stops calling it.
+    //
+    // WHAT THE OPERATOR LOSES, STATED PLAINLY. The second admin used to be told
+    // "Another admin is resolving this dispute right now"; they are now told it
+    // is already resolved, because by the time they are told anything, it is.
+    // The type_conflict warning — "the match may already have been changed that
+    // way" — described a state this transaction makes unreachable.
+    const { data: outcome, error } = await adminClient.rpc('resolve_dispute_unrated', {
       p_dispute_id: data.dispute_id,
-      // WHO is claiming, because without it the claim excluded nobody (00188).
-      // The old one-argument form moved the dispute to under_review and
-      // returned claimed = true even when it was ALREADY under_review, so two
-      // admins pressing Void and Convert to casual at the same moment both got
-      // a claim and both went on to do their conflicting work.
       p_actor_id: admin.id,
-      // WHAT they are claiming it as (00192). The claim used to bind only the
-      // actor, so a retry after a failed close could come back as the opposite
-      // resolution and push the match through the other branch — voidMatch has
-      // no precondition on the match's classification, so a match already
-      // converted to casual was simply re-marked voided. Binding the intent to
-      // the claim costs nothing extra: it is the same statement.
       p_resolution_type: data.resolution_type,
+      p_resolution_note: data.resolution_note,
     });
-    if (claimErr) throw new Error(claimErr.message);
-    const claimed = claim as {
-      claimed?: boolean;
-      already_resolved?: boolean;
-      held_by_other?: boolean;
-      type_conflict?: boolean;
-      claimed_resolution_type?: string | null;
-      match_id?: string;
-    } | null;
-    if (claimed?.already_resolved) {
+    if (error) {
+      Sentry.getCurrentScope().setExtras({ disputeId: data.dispute_id, resolution: data.resolution_type });
+      throw new Error(error.message);
+    }
+    // Same shape and same meaning as the rated branch: somebody, possibly an
+    // earlier attempt by this same operator, already resolved it. Report that
+    // rather than a resolution that did not happen here. No audit row is
+    // written for a resolution this call did not perform — and none is written
+    // here at all, because resolve_dispute_unrated writes it in the same
+    // transaction as the resolution itself. That is the F-002 point.
+    if ((outcome as { already_resolved?: boolean } | null)?.already_resolved) {
       revalidatePath('/disputes');
       revalidatePath('/matches');
       return;
     }
-    // Somebody else is inside the claim window. Say so rather than proceeding:
-    // the two resolutions this branch serves are not commutative, and the
-    // second one to land would reverse or reclassify a match the first already
-    // dealt with.
-    if (claimed?.held_by_other) {
-      throw new ExpectedError(
-        'Another admin is resolving this dispute right now. Reload the page in a few minutes to see how it was settled.'
-      );
-    }
-    // An earlier attempt on this dispute already claimed it for a DIFFERENT
-    // resolution, and may well have applied that resolution's match mutation
-    // before failing to close. Going ahead would apply the opposite one on top.
-    // The recorded resolution is named because it is the actionable part: the
-    // operator retries as that, or looks at the match to see what landed.
-    if (claimed?.type_conflict) {
-      throw new ExpectedError(
-        `This dispute was already being resolved as "${claimed.claimed_resolution_type ?? 'another resolution'}", and the match may already have been changed that way. Check the match, then resolve the dispute as that same outcome — resolving it differently now would overwrite what was already applied.`
-      );
-    }
-
-    const matchId = claimed?.match_id;
-    if (!matchId) throw new Error('Dispute not found');
-
-    if (data.resolution_type === 'voided') {
-      const r = await voidMatch(matchId, data.resolution_note);
-      if (!r.ok) throw new Error(r.error);
-    } else {
-      const r = await convertMatchToCasual(matchId, data.resolution_note);
-      if (!r.ok) throw new Error(r.error);
-    }
-
-    // Fence the close on the claim we took above. The claim has a 15 minute
-    // TTL, so a slow void/convert can outlive it and let a second admin claim
-    // the same dispute; without this predicate the slow writer would then
-    // overwrite the outcome the second admin already recorded. Matching on
-    // claimed_by turns that race into a visible error instead of a silent
-    // last-writer-wins.
-    const { data: closed, error } = await adminClient
-      .from('disputes')
-      .update({
-        status: 'resolved',
-        resolution_type: data.resolution_type,
-        resolution_note: data.resolution_note,
-        resolved_by: admin.id,
-        resolved_at: new Date().toISOString(),
-      })
-      .eq('id', data.dispute_id)
-      .eq('claimed_by', admin.id)
-      .select('id');
-    if (error) throw new Error(error.message);
-    if (!closed || closed.length === 0) {
-      throw new ExpectedError(
-        'This dispute took too long to resolve and was picked up by another admin. The match change was applied — reload the page to see the current state before acting again.'
-      );
-    }
   }
-
-  await logAdminAudit(adminClient, {
-    actor_id: admin.id,
-    action_type: 'dispute_resolved',
-    target_type: 'dispute',
-    target_id: data.dispute_id,
-    new_value: { resolution_type: data.resolution_type },
-    reason: data.resolution_note,
-  }, { disputeId: data.dispute_id });
 
   revalidatePath('/disputes');
   revalidatePath('/matches');
