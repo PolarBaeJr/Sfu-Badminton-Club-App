@@ -4108,6 +4108,7 @@ export type Database = {
       }
       publish_event_draw: {
         Args: {
+          p_digests: Json
           p_doubles: boolean
           p_entrants: string[]
           p_event_id: string

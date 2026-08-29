@@ -100,11 +100,30 @@ function objectKeys(src: string): string[] {
       depth--;
       if (depth === 0) break;
     } else if (depth === 1) {
-      const m = /^([A-Za-z_$][\w$]*)\s*:/.exec(src.slice(i));
       // Only at a key position: preceded by the opening brace or a comma.
-      if (m?.[1] && /[{,]\s*$/.test(src.slice(0, i))) {
+      const atKey = /[{,]\s*$/.test(src.slice(0, i));
+      if (!atKey) continue;
+
+      // SHORTHAND COUNTS — the terminator is `:` OR `,` OR `}`. Requiring a
+      // colon meant `.update({ status })` yielded NO columns at all, so every
+      // column-based assertion below passed it vacuously: the status check at
+      // "no unfenced write touches status" is precisely the one it defeated,
+      // and that is the exact case this census exists to catch.
+      const m = /^([A-Za-z_$][\w$]*)\s*(:|,|\}|$)/.exec(src.slice(i));
+      if (m?.[1]) {
         keys.push(m[1]);
-        i += m[0].length - 1;
+        // Consume only the identifier: for shorthand the terminator is the next
+        // key's delimiter, and swallowing it would hide the key after it.
+        i += m[1].length - 1;
+        continue;
+      }
+
+      // A SPREAD MAKES THE COLUMN LIST UNKNOWABLE, and an unknowable list read
+      // as the empty list is the same vacuity in a different costume. Naming it
+      // fails the classified-columns assertion instead of passing silently.
+      if (/^\.\.\./.test(src.slice(i))) {
+        keys.push('...spread');
+        i += 2;
       }
     }
   }

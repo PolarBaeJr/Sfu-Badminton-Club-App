@@ -245,6 +245,11 @@ async function publishDraw(
   // bracket that has a fixture for somebody who left and none for somebody who
   // is in the event.
   entrants: string[],
+  // POSITIONALLY ALIGNED WITH `entrants` (00202). An id set cannot see a swap:
+  // swapping a pair's member keeps the pair id, so the set is unchanged while
+  // the team, and the combined_elo the draw was seeded by, are not. These carry
+  // what each entrant contained so publication can compare that too.
+  digests: Array<Record<string, string | number | null>>,
   // True when `entrants` is supposed to BE the field. False for a pool-seeded
   // draw, whose entrants are the qualifiers — the members who did not qualify
   // are still registered, so "somebody is in the event and not in the draw" is
@@ -262,6 +267,7 @@ async function publishDraw(
     p_whole_field: wholeField,
     p_phase: phase,
     p_generation: generation,
+    p_digests: digests,
   });
   if (error) throw new Error(`Publishing the draw failed: ${error.message}`);
   if (!data) throw new Error('Publishing the draw returned nothing.');
@@ -291,6 +297,18 @@ async function publishDraw(
     // SOMEBODY ELSE REBUILT THIS DRAW while this one was being built (00197).
     // Nothing of this generation's is in the table — the trigger refused it —
     // so there is nothing to undo and the remedy is to look at what is there.
+    // AN ENTRANT IS STILL HERE BUT IS NOT WHAT IT WAS (00202) — the usual cause
+    // is a pair whose member was swapped while the draw was being built, which
+    // leaves the pair id, and therefore the entrant set, completely unchanged.
+    // Same remedy as entrant_left, and the same reason it is acceptable.
+    if (data.reason === 'entrant_changed') {
+      const changed = Number(data.count ?? 0);
+      throw new ExpectedError(
+        `${changed === 1 ? 'An entry' : `${changed} entries`} in this draw changed while it was being built — `
+        + `${changed === 1 ? 'a team member was swapped, or a seed was edited' : 'team members were swapped, or seeds were edited'}. `
+        + 'Nothing was published — press Generate again to rebuild it as the event now stands.',
+      );
+    }
     if (data.reason === 'superseded') {
       throw new ExpectedError(
         'This draw was rebuilt by somebody else while it was being generated, so nothing here was saved. '
@@ -427,10 +445,60 @@ async function deletePhaseMatches(
 // Pool -> bracket seeding
 // ============================================================
 
+/**
+ * THE RAW COLUMNS PUBLICATION COMPARES, minus the two the generator writes
+ * itself (00202). Raw, not derived: the generators coalesce combined_elo to 400
+ * and choose between elo_after and elo_before depending on which path built the
+ * field, and putting that derived number here would oblige publish_event_draw
+ * to reproduce the same choice in SQL. A divergence between the two would be a
+ * silent false accept, so the comparison is column-to-column and the fallback
+ * logic stays in exactly one place.
+ *
+ * Keys are short because they travel per entrant and are matched by
+ * jsonb_build_object in publish_event_draw — they must stay in step with it.
+ */
+type EntrantIdentity = Record<string, string | number | null>;
+
+function doublesIdentity(
+  r: { player1_id: string; player2_id: string; combined_elo: number | null },
+): EntrantIdentity {
+  return { p1: r.player1_id, p2: r.player2_id, ce: r.combined_elo ?? null };
+}
+
+function singlesIdentity(
+  r: { player_id: string; elo_before: number | null; elo_after: number | null },
+): EntrantIdentity {
+  return { p: r.player_id, eb: r.elo_before ?? null, ea: r.elo_after ?? null };
+}
+
+/**
+ * What this generator asserts each entrant IS, at the moment it publishes.
+ *
+ * seed and grp are the generator's INTENDED values rather than snapshot ones,
+ * because the generator writes both columns itself — seed_number on all four
+ * draw paths and group_number on the round-robin one. The digest is therefore
+ * "the row as this draw requires it to be", and publication refuses if the
+ * table disagrees. That covers both a concurrent writer changing a seed and the
+ * generator's own seed write having silently failed to land.
+ */
+function entrantDigest(e: FieldEntry): Record<string, string | number | null> {
+  return { ...e.identity, seed: e.seed, grp: e.dbGroup };
+}
+
 type FieldEntry = {
   id: string;
   seed: number | null;
   elo: number;
+  /** The identity/rating columns as read when this entrant was snapshotted. */
+  identity: EntrantIdentity;
+  /**
+   * This event's own tournament_pairs/tournament_participants.group_number.
+   *
+   * NOT the same thing as `group` below, and the difference is why it exists:
+   * on a pool-seeded draw `group` is the group the entrant qualified OUT OF in
+   * the SOURCE event, which has nothing to do with this row's column.
+   */
+  dbGroup: number | null;
   /**
    * The group this entrant qualified out of, and where they finished in it.
    * Both null outside a group-seeded field — an ordinary or single-pool draw
@@ -543,17 +611,29 @@ async function buildFieldFromPool(
 
   // Anyone already entered here — including withdrawals, which must be seen so
   // a withdrawal is skipped rather than re-created by the promotion insert.
-  const existing = new Map<string, { id: string; status: string }>();
+  // group_number and the rating columns come back too — 00202. This read IS the
+  // snapshot for anyone already entered here, so it is where their digest has to
+  // be taken from; re-reading them later would reopen the window the digest
+  // exists to close.
+  const existing = new Map<string, {
+    id: string; status: string; identity: EntrantIdentity; dbGroup: number | null;
+  }>();
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, player1_id, player2_id, status')
+      .select('id, player1_id, player2_id, combined_elo, group_number, status')
       .eq('event_id', eventId);
-    for (const p of pairs ?? []) existing.set(pairKey(p.player1_id, p.player2_id), { id: p.id, status: p.status });
+    for (const p of pairs ?? []) existing.set(pairKey(p.player1_id, p.player2_id), {
+      id: p.id, status: p.status, identity: doublesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+    });
   } else {
     const { data: parts } = await adminClient.from('tournament_participants')
-      .select('id, player_id, status')
+      .select('id, player_id, elo_before, elo_after, group_number, status')
       .eq('event_id', eventId);
-    for (const p of parts ?? []) existing.set(p.player_id, { id: p.id, status: p.status });
+    for (const p of parts ?? []) existing.set(p.player_id, {
+      id: p.id, status: p.status, identity: singlesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+    });
   }
 
   const srcGroupCount = (source as { group_count?: number | null }).group_count ?? 1;
@@ -599,7 +679,10 @@ async function buildFieldFromPool(
       groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
     };
     if (already) {
-      entries.push({ id: already.id, seed, elo: src.elo, ...from });
+      entries.push({
+        id: already.id, seed, elo: src.elo,
+        identity: already.identity, dbGroup: already.dbGroup, ...from,
+      });
       continue;
     }
 
@@ -648,7 +731,18 @@ async function buildFieldFromPool(
       );
     }
     promoted++;
-    entries.push({ id: result.id as string, seed, elo: src.elo, ...from });
+    // THE DIGEST OF A ROW THIS GENERATOR JUST CREATED — 00202. Not a re-read:
+    // promote_pool_qualifier inserts exactly the arguments passed to it above,
+    // leaving group_number and (for singles) elo_after at their defaults, so
+    // the inserted row is known without asking for it back.
+    entries.push({
+      id: result.id as string, seed, elo: src.elo,
+      identity: doubles
+        ? { p1: src.players[0] ?? null, p2: src.players[1] ?? null, ce: src.elo }
+        : { p: src.players[0] ?? null, eb: src.elo, ea: null },
+      dbGroup: null,
+      ...from,
+    });
   }
 
   if (entries.length < 2) {
@@ -771,16 +865,30 @@ async function buildFieldFromOwnPool(
   // what an unseeded draw would sort by, and because the audit row is more
   // useful when the field it describes is the real one.
   const eloOf = new Map<string, number>();
+  // The same read produces the digest — 00202. See buildFieldFromPool.
+  const digestOf = new Map<string, { identity: EntrantIdentity; dbGroup: number | null }>();
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, combined_elo').eq('event_id', eventId);
-    for (const p of pairs ?? []) eloOf.set(p.id, p.combined_elo ?? 400);
+      .select('id, player1_id, player2_id, combined_elo, group_number').eq('event_id', eventId);
+    for (const p of pairs ?? []) {
+      eloOf.set(p.id, p.combined_elo ?? 400);
+      digestOf.set(p.id, {
+        identity: doublesIdentity(p),
+        dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+      });
+    }
   } else {
     const { data: parts } = await adminClient.from('tournament_participants')
-      .select('id, elo_before, elo_after').eq('event_id', eventId);
+      .select('id, player_id, elo_before, elo_after, group_number').eq('event_id', eventId);
     // elo_after is where the pool left them, with elo_before as the fallback for
     // an entry that somehow played nothing.
-    for (const p of parts ?? []) eloOf.set(p.id, p.elo_after ?? p.elo_before ?? 400);
+    for (const p of parts ?? []) {
+      eloOf.set(p.id, p.elo_after ?? p.elo_before ?? 400);
+      digestOf.set(p.id, {
+        identity: singlesIdentity(p),
+        dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+      });
+    }
   }
 
   const capacity = Math.min(ownPoolCapacity(event), standings.length);
@@ -788,6 +896,8 @@ async function buildFieldFromOwnPool(
     id: standing.id,
     seed: i + 1,
     elo: eloOf.get(standing.id) ?? 400,
+    identity: digestOf.get(standing.id)?.identity ?? {},
+    dbGroup: digestOf.get(standing.id)?.dbGroup ?? null,
     group: (standing as { group?: number | null }).group ?? null,
     groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
   }));
@@ -1000,19 +1110,30 @@ async function generateSingleEliminationBracketImpl(
     poolSkipped = field.skipped;
     poolGroupCount = field.groupCount;
   } else if (doubles) {
+    // The member and group columns come back for the digest — 00202. This read
+    // is the snapshot the draw is built from, so it is the only correct place
+    // to take it from.
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, seed_number, combined_elo, status')
+      .select('id, seed_number, combined_elo, group_number, player1_id, player2_id, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
-    entries = (pairs ?? []).map(p => ({ id: p.id, seed: p.seed_number, elo: p.combined_elo ?? 400 }));
+    entries = (pairs ?? []).map(p => ({
+      id: p.id, seed: p.seed_number, elo: p.combined_elo ?? 400,
+      identity: doublesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+    }));
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, seed_number, elo_before, status')
+      .select('id, seed_number, elo_before, elo_after, group_number, player_id, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
-    entries = (participants ?? []).map(p => ({ id: p.id, seed: p.seed_number, elo: p.elo_before ?? 400 }));
+    entries = (participants ?? []).map(p => ({
+      id: p.id, seed: p.seed_number, elo: p.elo_before ?? 400,
+      identity: singlesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+    }));
   }
 
   const N = entries.length;
@@ -1449,7 +1570,7 @@ async function generateSingleEliminationBracketImpl(
   // half a live count of the participant table could never express.
   await publishDraw(
     adminClient, eventId, statusAfterDraw(event, phase), doubles,
-    entries.map(e => e.id), !seededFromPool, phase, generation,
+    entries.map(e => e.id), entries.map(entrantDigest), !seededFromPool, phase, generation,
   );
 
   await logAudit(adminClient, {
@@ -1642,11 +1763,14 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   // group_number and the rating come back too, because a group stage assigns
   // any entry that does not yet have a group and needs the same ordering the
   // Assign Groups button uses to do it.
-  let entries: Array<{ id: string; seed: number | null; elo: number; group: number | null }> = [];
+  let entries: Array<{
+    id: string; seed: number | null; elo: number; group: number | null;
+    identity: EntrantIdentity; dbGroup: number | null;
+  }> = [];
 
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, seed_number, combined_elo, group_number, status')
+      .select('id, seed_number, combined_elo, group_number, player1_id, player2_id, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
@@ -1654,11 +1778,13 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       id: p.id,
       seed: p.seed_number,
       elo: p.combined_elo ?? 400,
+      identity: doublesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
       group: (p as { group_number?: number | null }).group_number ?? null,
     }));
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, seed_number, elo_before, group_number, status')
+      .select('id, seed_number, elo_before, elo_after, group_number, player_id, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
@@ -1666,6 +1792,8 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       id: p.id,
       seed: p.seed_number,
       elo: p.elo_before ?? 400,
+      identity: singlesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
       group: (p as { group_number?: number | null }).group_number ?? null,
     }));
   }
@@ -1732,7 +1860,13 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       // yet — the delete is still ahead — so refusing costs only a re-press.
       assertWritesSucceeded('Assigning the groups for this round robin', failures);
     }
-    for (const e of entries) e.group = plan.get(e.id)!;
+    // dbGroup MOVES WITH IT — 00202. This generator writes group_number itself,
+    // so the digest's grp has to be the value it just wrote; leaving it at the
+    // snapshot's would make publication refuse this draw's own legitimate write.
+    // On the round-robin path the two are the same number, which is exactly why
+    // they are kept as separate fields: on a pool-seeded knockout `group` is the
+    // group somebody qualified out of in ANOTHER event.
+    for (const e of entries) { e.group = plan.get(e.id)!; e.dbGroup = plan.get(e.id)!; }
   } else {
     for (const e of entries) e.group = 1;
   }
@@ -1830,7 +1964,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   // and this refuses, or this commits first and the entry is closed out.
   await publishDraw(
     adminClient, eventId, statusAfterDraw(event, phase), doubles,
-    entries.map(e => e.id), true, phase, generation,
+    entries.map(e => e.id), entries.map(entrantDigest), true, phase, generation,
   );
 
   await logAudit(adminClient, {
