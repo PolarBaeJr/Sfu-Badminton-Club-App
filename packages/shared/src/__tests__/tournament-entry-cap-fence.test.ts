@@ -60,7 +60,7 @@ const CAP_READERS = new Set(['enter_tournament_event', 'add_participants_under_f
  * `countsCap: true`; the list is the whole set, and the test fails if the
  * migrations grow a member it does not name.
  */
-const ENTRANT_WRITERS: Record<string, { countsCap: boolean; why: string }> = {
+const ENTRANT_WRITERS: Record<string, { countsCap: boolean; openGap?: true; why: string }> = {
   enter_tournament_event: {
     countsCap: true,
     why: 'A member entering an event themselves. The original cap subject.',
@@ -94,6 +94,12 @@ const ENTRANT_WRITERS: Record<string, { countsCap: boolean; why: string }> = {
   },
   promote_pool_qualifier: {
     countsCap: false,
+    // The flag, not the prose, is what makes this survive an edit. The `why`
+    // below is the strongest statement in this file -- one of the six writers
+    // has a live, verified over-admission -- and prose can be rewritten to
+    // something short and cheerful without any test noticing. OPEN_GAPS holds
+    // the same names, so softening one without the other fails the build.
+    openGap: true,
     why:
       'UNCLASSIFIED IN THE SAFE SENSE — this is a KNOWN OPEN GAP, not a cleared ' +
       'one, and it is the R2 residual the owner has not gated. Promotion writes ' +
@@ -143,7 +149,14 @@ function normaliseType(t: string): string {
     .replace(/^double precision$/, 'float8');
 }
 
-/** `p_event_id uuid` -> `uuid`; a bare `uuid` (as DROP writes it) stays `uuid`. */
+/**
+ * `p_event_id uuid` -> `uuid`; a bare `uuid` (as DROP writes it) stays `uuid`.
+ *
+ * ASSUMPTION: no argument type carries a parenthesised precision. `numeric(10,2)`
+ * would split on its own comma into two phantom arguments and report a false
+ * overload. None of the classified functions has one; if that changes, split on
+ * top-level commas instead of every comma.
+ */
 function argTypes(argText: string, named: boolean): string {
   if (!argText.trim()) return '';
   return argText
@@ -234,6 +247,14 @@ function soleBody(name: string): Resolved {
   expect(keys.length, `${name} has ${keys.length} live signatures: ${keys.join(', ')}`).toBe(1);
   return BODIES.get(keys[0]!)!;
 }
+
+/**
+ * The writers with a KNOWN, VERIFIED, UNFIXED hole. Asserted against
+ * ENTRANT_WRITERS below so the finding cannot be edited away in prose alone.
+ * A name leaves this list when the gap is closed in the database, not when
+ * somebody decides the paragraph reads too alarming.
+ */
+const OPEN_GAPS = new Set(['promote_pool_qualifier']);
 
 const CLASSIFIED = [...new Set([...CAP_READERS, ...Object.keys(ENTRANT_WRITERS)])].sort();
 
@@ -372,5 +393,19 @@ describe('cross-event entry cap — the entrant-writer census', () => {
       ).toBe(meta.countsCap);
       expect(meta.why.length, `${fn} needs a real reason, not a placeholder`).toBeGreaterThan(40);
     }
+  });
+
+  it('the writers with a known unfixed hole are still flagged as such', () => {
+    const flagged = Object.entries(ENTRANT_WRITERS)
+      .filter(([, m]) => m.openGap)
+      .map(([fn]) => fn)
+      .sort();
+    expect(
+      flagged,
+      'OPEN_GAPS and the openGap flags disagree. If a gap was actually closed ' +
+        'in the database, remove the name from BOTH and say which migration ' +
+        'closed it. If it was not, put the flag back — this is the one signal ' +
+        'in this file that a classified writer is not actually safe.',
+    ).toEqual([...OPEN_GAPS].sort());
   });
 });
