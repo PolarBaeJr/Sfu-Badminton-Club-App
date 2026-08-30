@@ -41,6 +41,15 @@ const ALLOWED = new Map<string, string>([
   // who sets hide_from_leaderboard is absent from the RPC and therefore absent
   // from Discord, with no second switch to remember.
   ['app/api/discord/leaderboard/route.ts', 'get_leaderboard() already excludes opted-out members'],
+  // The Discord profile card. Same source and the same reason as the ladder
+  // above -- it reads get_leaderboard() and nothing else for figures, so a
+  // member who opted out has no row and their card renders "Unranked".
+  //
+  // AND IT DOES NOT MAKE THE OWN-ROW CARVE-OUT the profile page makes. The card
+  // is a PNG posted into a shared channel and cached by Discord's CDN, so
+  // "the member is looking at their own numbers" is never true of it -- the
+  // channel is. See the header of lib/discord-profile.ts.
+  ['lib/discord-profile.ts', 'get_leaderboard() only; no own-row carve-out because the card is public'],
   // The viewer's OWN row. The flag governs what everyone else sees.
   ['app/layout.tsx', "the signed-in member's own rating, in their own header"],
   // The profile page — gated, and asserted below.

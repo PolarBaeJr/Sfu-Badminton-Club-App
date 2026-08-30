@@ -5,6 +5,7 @@ import {
   clearRevocations,
   deleteLink,
   fetchLeaderboard,
+  fetchProfile,
   fetchSelfRoles,
   fetchSessions,
   fetchTournaments,
@@ -113,6 +114,24 @@ export const COMMAND_DEFINITIONS = [
         description: 'Page number',
         required: false,
         min_value: 1,
+      },
+    ],
+  },
+  {
+    name: 'profile',
+    description: 'A member\u2019s club profile card',
+    options: [
+      {
+        type: 6, // USER
+        name: 'member',
+        description: 'Whose card (defaults to yours)',
+        required: false,
+      },
+      {
+        type: 3, // STRING
+        name: 'handle',
+        description: 'Club handle, for a member who has not linked Discord',
+        required: false,
       },
     ],
   },
@@ -442,6 +461,80 @@ export async function handleLeaderboard(options: CommandOption[] | undefined) {
         .filter(Boolean)
         .join(' · '),
     },
+  });
+}
+
+/**
+ * A member's profile card.
+ *
+ * PUBLIC, like /leaderboard and unlike /sessions. The card carries only what
+ * the club ladder already publishes about the member, and the point of the
+ * command is that somebody can post their card into a channel.
+ *
+ * THE CARD ITSELF IS A PNG THE APP RENDERS, reached through a signed URL the
+ * app minted for this reply. The bot does not draw it and does not know the
+ * numbers on it; it is handed a URL and puts it in an embed. That keeps the
+ * card's visibility rules in the same place as every other rule this bot
+ * renders — the app — rather than splitting them across two codebases.
+ *
+ * The four misses below are the app declining on purpose, and each one sends
+ * the member somewhere different. Collapsing them into "something went wrong"
+ * would leave someone who mistyped a handle waiting for an outage to end.
+ */
+export async function handleProfile(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+) {
+  const member = option(options, 'member');
+  const handle = option(options, 'handle');
+
+  const result = await fetchProfile(context.discordUserId, {
+    discordUserId: member ? String(member) : null,
+    handle: handle ? String(handle) : null,
+  });
+
+  if ('miss' in result) {
+    switch (result.miss) {
+      case 'not_linked':
+        return ephemeral(
+          "You haven't linked your Discord account to the club yet — run `/link` first, or look someone up with `/profile handle:their-handle`."
+        );
+      case 'target_unlinked':
+        return ephemeral(
+          "That Discord account isn't linked to a club member. If you know their club handle, try `/profile handle:their-handle`."
+        );
+      case 'no_such_handle':
+        // Deliberately does NOT say whether the handle exists. A member who is
+        // off the public ladder has no ladder row for a handle to find, and
+        // "that member is hidden" would be exactly the disclosure their setting
+        // exists to prevent -- so an unlisted member and a typo read the same.
+        return ephemeral(
+          "No member on the club ladder has that handle. Check the spelling — `/leaderboard` lists handles."
+        );
+      default:
+        return ephemeral("Couldn't find that member.");
+    }
+  }
+
+  const p = result.profile;
+  const provisional = !!(p.doubles?.provisional || p.singles?.provisional);
+
+  return reply({
+    color: CLUB_RED,
+    // The name is on the card. Repeating it as a title would print it twice in
+    // the same block; the embed carries only what the image cannot.
+    ...(p.bio
+      ? { description: p.bio.length > 240 ? `${p.bio.slice(0, 237)}...` : p.bio }
+      : {}),
+    image: { url: result.cardUrl },
+    ...(provisional
+      ? {
+          // Same footnote /leaderboard prints, for the same reason: a rating
+          // shown without it reads as settled when it is not, and in a channel
+          // that misreading outlives the message.
+          footer: { text: '* rating still provisional' },
+        }
+      : {}),
   });
 }
 
@@ -1350,6 +1443,8 @@ export async function dispatch(
     switch (name) {
       case 'leaderboard':
         return await handleLeaderboard(options);
+      case 'profile':
+        return await handleProfile(options, context);
       case 'sessions':
         return await handleSessions(context);
       case 'tournaments':
