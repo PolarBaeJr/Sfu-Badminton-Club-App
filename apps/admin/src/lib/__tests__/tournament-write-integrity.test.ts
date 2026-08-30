@@ -2599,6 +2599,31 @@ describe('finalizeEvent', () => {
     expect((audit.details as { moved: unknown[] }).moved).toContainEqual({ id: 'p-alice', from: 1, to: null });
   });
 
+  it('refuses to silently skip the clear when the placings cannot be read', async () => {
+    // THE SECOND FAIL-OPEN, and the more dangerous of the two: this read is not
+    // just where `previous` comes from, it IS the list the cleared branch
+    // clears. Discarded, the error cascades into a clean-looking success --
+    // empty list, so nothing written, so no `moved`, so
+    // recomputeStandingsAfterCorrection returns without a word, and the void
+    // lands while the stale champion keeps the trophy.
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    participant('p-alice').status = 'disqualified';
+    store.faults.push({
+      table: 'tournament_participants', op: 'select', message: 'connection reset',
+      when: ({ cols }) => cols === 'id, final_position, points',
+    });
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/placings could not be read.*connection reset/);
+
+    // AND THE STANDINGS ARE UNTOUCHED, which is the honest outcome: the caller
+    // is told, rather than shown a success over an event whose champion is
+    // still standing.
+    expect(participant('p-alice').final_position).toBe(1);
+  });
+
   // THE ASYMMETRY, and it is the reason the round-robin hole was argued away in
   // the first place. A DQ landing BEFORE finalisation is not the same defect: a
   // round-robin table can simply be recomputed without that entry, and

@@ -928,9 +928,24 @@ export async function recomputeEventStandings(eventId: string): Promise<{
   // `points` comes back too, because the undetermined-champion branch below
   // clears both columns and a row holding only stale points still has to be
   // cleared -- and still has to appear in `moved`.
-  const { data: before } = await adminClient.from(table)
+  const { data: before, error: beforeError } = await adminClient.from(table)
     .select('id, final_position, points')
     .eq('event_id', eventId);
+  // THE SECOND FAIL-OPEN, AND THE WORSE ONE. This read is not just the source
+  // of `previous` -- it is the list the undetermined-champion branch clears. A
+  // discarded error makes it empty, which makes `cleared` empty, which makes
+  // writePlacements' `positionMap.size > 0 || toClear.length > 0` guard skip
+  // the write entirely, which makes `moved` empty, which makes
+  // recomputeStandingsAfterCorrection return without a word. The void lands and
+  // the stale champion keeps the trophy, reported as a clean success.
+  //
+  // Throwing here is safe in a way it would not be further down: nothing has
+  // been written yet on this path, and the corrective action that preceded it
+  // has already committed, so the officer sees the action land and is told the
+  // standings did not.
+  if (beforeError) {
+    throw new Error(`This event's placings could not be read, so the standings were left as they are: ${beforeError.message}`);
+  }
   const previous = new Map<string, number | null>(
     (before ?? []).map(r => [r.id as string, (r.final_position ?? null) as number | null]),
   );
