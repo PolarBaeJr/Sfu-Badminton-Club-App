@@ -51,6 +51,14 @@ const store = vi.hoisted(() => ({
    * can be created: the guard in assignPositionsAndPoints has already run.
    */
   beforeCompleteEvent: null as null | (() => void),
+  /**
+   * Runs at the top of rewrite_event_placings_under_field_lock — after the
+   * recompute has taken its results snapshot and computed a ladder from it,
+   * and before that ladder is written. That gap is the whole of 00215: a
+   * second officer's void or correction commits there, and before the fence
+   * the first officer's stale ladder simply landed on top of it.
+   */
+  beforeRewritePlacings: null as null | (() => void),
   /** Every RPC the code under test issued, so a test can assert what it PASSED. */
   rpcCalls: [] as Array<{ name: string; args: Record<string, unknown> }>,
   /**
@@ -894,6 +902,13 @@ const makeClient = vi.hoisted(() => () => {
     };
 
     if (name === 'event_results_fingerprint') {
+      // The snapshot is a SECURITY DEFINER read of tournament_matches, so it is
+      // faultable on the same terms as the direct reads of that table -- keyed
+      // by the projection the function builds, which no direct read asks for.
+      const f = faultFor('tournament_matches', 'select', {
+        filters: [['event_id', args.p_event_id]], payload: {}, cols: 'event_results_fingerprint',
+      });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
       return Promise.resolve({ data: resultsFingerprintFor(args.p_event_id as string), error: null });
     }
 
@@ -1303,6 +1318,73 @@ const makeClient = vi.hoisted(() => () => {
       });
     }
 
+    // 00215. The corrective twin of complete_event_under_field_lock: the same
+    // snapshot fence and the same three writes in one transaction, but the
+    // event is already `completed` and the status is not touched. Deliberately
+    // has NO p_field and NO p_won check -- see the migration header for why
+    // refusing on a departed winner would be worse than writing here.
+    if (name === 'rewrite_event_placings_under_field_lock') {
+      store.beforeRewritePlacings?.();
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status !== 'completed') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      const nowResults = resultsFingerprintFor(eventId);
+      const sentResults = (args.p_results ?? null) as Record<string, unknown> | null;
+      if (sentResults === null) {
+        return Promise.resolve({ data: null, error: { message: 'p_results must be the object returned by event_results_fingerprint' } });
+      }
+      if (JSON.stringify(nowResults) !== JSON.stringify(sentResults)) {
+        const moved = Object.keys({ ...nowResults, ...sentResults }).filter(
+          (k) => JSON.stringify(nowResults[k]) !== JSON.stringify(sentResults[k]),
+        );
+        return Promise.resolve({
+          data: { ok: false, reason: 'results_changed', matches_moved: moved.sort().slice(0, 5).join(', ') },
+          error: null,
+        });
+      }
+      const undo: Array<() => void> = [];
+      const rollback = () => { for (const u of undo.reverse()) u(); };
+      const rowsOf = (id: string) =>
+        (store.db[table] ?? []).filter((r) => r.id === id && r.event_id === eventId);
+      const applyRow = (id: string, payload: Row): string | null => {
+        const rows = rowsOf(id);
+        if (rows.length === 0) return `${id} matched no row in event ${eventId}`;
+        const fault = faultFor(table, 'update', { filters: [['id', id]], payload });
+        if (fault) return fault.message;
+        for (const r of rows) {
+          const before = { ...r };
+          undo.push(() => { for (const k of Object.keys(r)) delete r[k]; Object.assign(r, before); });
+          Object.assign(r, payload);
+        }
+        return null;
+      };
+      const positions = (args.p_positions as Record<string, number> | undefined) ?? {};
+      const points = (args.p_points as Record<string, number> | undefined) ?? {};
+      const toClear = (args.p_clear as string[] | undefined) ?? [];
+      for (const [id, pos] of Object.entries(positions)) {
+        const err = applyRow(id, { final_position: pos });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      for (const [id, pts] of Object.entries(points)) {
+        const err = applyRow(id, { points: pts });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      for (const id of toClear) {
+        if (rowsOf(id).length === 0) continue;
+        const err = applyRow(id, { final_position: null, points: null });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      // The status is NOT flipped: this event was completed before the call.
+      return Promise.resolve({
+        data: { ok: true, event_id: eventId, tournament_id: ev.tournament_id },
+        error: null,
+      });
+    }
+
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -1387,6 +1469,7 @@ beforeEach(() => {
   store.beforeDeletePhase = null;
   store.beforeMatchInsert = null;
   store.beforeCompleteEvent = null;
+  store.beforeRewritePlacings = null;
   store.rpcCalls = [];
   store.beforePromote = null;
   store.beforeAdd = null;
@@ -2652,6 +2735,118 @@ describe('finalizeEvent', () => {
 
     await expect(recomputeEventStandings('e1')).rejects.toThrow(/do not have permission/);
 
+    expect(participant('p-alice').final_position).toBe(1);
+  });
+
+  // ---- 00215: the corrective path lands under the fence -------------------
+  //
+  // Finalisation was fenced three times over (00212 the placings, 00213 the
+  // snapshot, 00214 the row lock). The OTHER writer of final_position and
+  // points -- the recompute a correction triggers -- had no lock at any point:
+  // it read the matches, computed a ladder, and wrote it with three plain
+  // UPDATEs, while its caller ran it after its own mutation had committed.
+  it('refuses to write a ladder computed from a result that moved underneath it', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    // Officer A starts a recompute. Officer B voids a match in the window
+    // between A's snapshot and A's write -- which is exactly what the fence's
+    // re-read under the lock exists to catch. No entry moves and no match is
+    // left open, so every entry-side check still passes.
+    store.beforeRewritePlacings = () => { match(QF).status = 'voided'; };
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/Another result changed/);
+
+    // NOTHING WAS WRITTEN. Before the fence, A's ladder landed on top of
+    // whatever B had just done, restoring a champion the results no longer
+    // support -- and both officers were told their action succeeded.
+    expect(participant('p-alice').final_position).toBe(1);
+    expect(participant('p-bob').final_position).toBe(2);
+  });
+
+  it('carries the results snapshot it computed from into the write', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+
+    participant('p-alice').status = 'disqualified';
+    store.rpcCalls = [];
+    await recomputeEventStandings('e1');
+
+    // The snapshot is taken BEFORE anything is computed from it -- taking it
+    // afterwards would make it agree with a ladder built from data that had
+    // already moved, which is a false ACCEPT rather than a false refusal.
+    const snap = store.rpcCalls.findIndex((c) => c.name === 'event_results_fingerprint');
+    const write = store.rpcCalls.findIndex((c) => c.name === 'rewrite_event_placings_under_field_lock');
+    expect(snap).toBeGreaterThanOrEqual(0);
+    expect(write).toBeGreaterThan(snap);
+    // And it is that snapshot that travels, not a second read taken at write
+    // time -- the whole point is that the two can differ. A null here would
+    // make the fence opt-out by omission, which the RPC rejects outright.
+    expect(store.rpcCalls[write]!.args.p_results).not.toBeNull();
+    expect(store.rpcCalls[write]!.args.p_results).toBeTypeOf('object');
+    // The status is NOT among the arguments: a recompute restates a finished
+    // event's standings, it does not finish one.
+    expect(store.rpcCalls[write]!.args).not.toHaveProperty('p_field');
+    expect(store.rpcCalls[write]!.args).not.toHaveProperty('p_won');
+  });
+
+  it('leaves the standings alone when the results snapshot cannot be read', async () => {
+    // THE THIRD FAIL-OPEN ON THIS PATH, and it would be the quietest. Discarded,
+    // the snapshot arrives as null, and the fence rejects a null outright -- so
+    // the officer would get a raw argument-validation error from the database
+    // about a parameter they never supplied, instead of being told the results
+    // could not be read. Nothing is written either way; what changes is whether
+    // the sentence means anything at the desk.
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+
+    participant('p-alice').status = 'disqualified';
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'connection reset',
+      when: ({ cols }) => cols === 'event_results_fingerprint',
+    });
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/results could not be read.*connection reset/);
+    expect(participant('p-alice').final_position).toBe(1);
+  });
+
+  it('takes the results snapshot BEFORE the ladder is computed, not just before the write', async () => {
+    // THE ORDERING, DRIVEN RATHER THAN ASSERTED FROM THE CALL SEQUENCE. Both a
+    // snapshot taken at the top and one taken a line before the write come back
+    // as snapshot-then-write, so the index check above cannot separate them.
+    // The difference only shows on an edit that lands in the gap BETWEEN the
+    // snapshot and the compute.
+    //
+    // Snapshot first: it is stale by the time the fence re-reads, and the write
+    // is refused. Snapshot after the compute: it would be taken AFTER this
+    // mutation, agree with the database exactly, and write a ladder built from
+    // data that had already moved. A false refusal is a reload; a false accept
+    // restores the wrong champion on a completed event.
+    //
+    // Same shape as the finalisation-path test above, because it is the same
+    // ordering property one path over.
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    let fired = false;
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'unused -- this fault never fires',
+      // KEYED TO THE COMPUTE'S OWN PROJECTION, for the same reason as above:
+      // only assignPositionsAndPoints asks for the winner columns, so firing
+      // here is strictly after the snapshot and strictly before the write.
+      when: ({ cols }) => {
+        if (!fired && cols.includes('winner_participant_id')) {
+          fired = true;
+          match(QF).status = 'voided';
+        }
+        return false;
+      },
+    });
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/Another result changed/);
+    expect(fired).toBe(true);
     expect(participant('p-alice').final_position).toBe(1);
   });
 

@@ -75,8 +75,13 @@ const FIELD_TABLES = ['tournament_participants', 'tournament_pairs'];
 const UNFENCED_COLUMNS = new Map<string, readonly string[]>([
   ['seed_number', ['apps/admin/src/lib/tournament-actions/brackets.ts']],
   ['group_number', ['apps/admin/src/lib/tournament-actions/brackets.ts']],
-  ['final_position', ['apps/admin/src/lib/tournament-actions/finalize.ts']],
-  ['points', ['apps/admin/src/lib/tournament-actions/finalize.ts']],
+  // final_position and points USED TO BE CLASSIFIED HERE, for finalize.ts's
+  // writePlacements. 00215 was the last of the four fences and it removed that
+  // function: finalisation writes through complete_event_under_field_lock and
+  // the corrective recompute writes through
+  // rewrite_event_placings_under_field_lock, so finalize.ts now issues no
+  // `.update()` at all. A classification for a write that no longer exists is
+  // a standing permission for the next one, so it is gone rather than left.
 ]);
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
@@ -328,11 +333,12 @@ describe('field writes are fenced', () => {
     // The allowed ordering/scoring writes are real and are not going away, so a
     // census returning none of them has stopped working rather than passed.
     //
-    // The floor was 8 and is 6 because 00209 took seeding.ts's six sites behind
-    // fenced RPCs — deliberately lowered rather than left slack, so that the
-    // next unfenced write is a change to this number and therefore a decision
-    // somebody has to write down.
-    expect(sites.length).toBeGreaterThanOrEqual(6);
+    // The floor was 8, then 6 when 00209 took seeding.ts's six sites behind
+    // fenced RPCs, and is 4 now that 00215 took finalize.ts's placement writes
+    // behind the last one — deliberately lowered each time rather than left
+    // slack, so that the next unfenced write is a change to this number and
+    // therefore a decision somebody has to write down.
+    expect(sites.length).toBeGreaterThanOrEqual(4);
   });
 
   it('never deletes or inserts a field row from application code', () => {

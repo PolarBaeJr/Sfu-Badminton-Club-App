@@ -4212,6 +4212,17 @@ export type Database = {
         Args: { p_match_id: string }
         Returns: undefined
       }
+      rewrite_event_placings_under_field_lock: {
+        Args: {
+          p_clear: string[]
+          p_event_id: string
+          p_is_pair: boolean
+          p_points: Json
+          p_positions: Json
+          p_results: Json
+        }
+        Returns: Json
+      }
       scrub_deleted_identity: {
         Args: Record<PropertyKey, never>
         Returns: { audit_rows_scrubbed: number; auth_rows_scrubbed: number }[]

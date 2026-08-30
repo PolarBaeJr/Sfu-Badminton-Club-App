@@ -773,52 +773,6 @@ async function assignPositionsAndPoints(
 }
 
 /**
- * Write a computed set of placings straight to the table.
- *
- * The direct path, for a caller that does not need the writes fenced --
- * recomputeEventStandings, whose event is already completed. finalizeEvent
- * takes the RPC path instead, which performs these same three writes inside
- * the transaction that flips the status.
- */
-async function writePlacements(
-  adminClient: ReturnType<typeof createAdminClient>,
-  table: string,
-  positionMap: Map<string, number>,
-  pointsMap: Map<string, number>,
-  toClear: string[],
-): Promise<void> {
-  if (positionMap.size > 0 || toClear.length > 0) {
-    const positionWrites: LabelledWrite[] = [
-      ...[...positionMap.entries()].map(([id, pos]): LabelledWrite => [
-        `${table}.final_position for ${id}`,
-        adminClient.from(table).update({ final_position: pos }).eq('id', id),
-      ]),
-      ...toClear.map((id): LabelledWrite => [
-        `${table}.clearing the stale placing on ${id}`,
-        adminClient.from(table).update({ final_position: null, points: null }).eq('id', id),
-      ]),
-    ];
-    const { failures } = await settleWrites(positionWrites);
-    // final_position is an absolute write derived from the finished bracket, so
-    // a partial batch is recoverable: re-running recomputes the same map and
-    // overwrites the rows that did land -- and clears the ones that no longer
-    // place.
-    assertWritesSucceeded('Assigning final positions', failures);
-  }
-
-  if (pointsMap.size > 0) {
-    const { failures } = await settleWrites(
-      [...pointsMap.entries()].map(([id, pts]) => [
-        `${table}.points for ${id}`,
-        adminClient.from(table).update({ points: pts }).eq('id', id),
-      ] as const)
-    );
-    // Also absolute, for the same reason.
-    assertWritesSucceeded('Assigning tournament points', failures);
-  }
-}
-
-/**
  * Redo a finalised event's standings after its results were corrected.
  *
  * Called automatically by the corrective actions, so nobody has to remember.
@@ -979,6 +933,22 @@ export async function recomputeEventStandings(eventId: string): Promise<{
     (before ?? []).map(r => [r.id as string, (r.final_position ?? null) as number | null]),
   );
 
+  // THE RESULTS THIS RECOMPUTE IS ABOUT TO BE COMPUTED FROM (00215). Taken here,
+  // BEFORE championIsUndetermined and before assignPositionsAndPoints, because
+  // both branches below read the matches and both must be fenced against an
+  // edit landing underneath them. Taking it after either read would make the
+  // snapshot agree with a ladder built from data that had already moved -- a
+  // false ACCEPT, which is the direction that restores the wrong champion.
+  //
+  // Same function on both sides, so there is no digest format for this side to
+  // get wrong; it carries the snapshot and never inspects it.
+  const { data: resultsSnapshot, error: snapshotError } = await adminClient.rpc('event_results_fingerprint', {
+    p_event_id: eventId,
+  });
+  if (snapshotError) {
+    throw new Error(`This event's results could not be read, so the standings were left as they are: ${snapshotError.message}`);
+  }
+
   // The event no longer has a champion -- the standings are CLEARED rather
   // than recomputed, so nobody holds a placing until it is finalised again.
   // See championIsUndetermined for why this is not a computation.
@@ -997,7 +967,63 @@ export async function recomputeEventStandings(eventId: string): Promise<{
   } else {
     ({ positionMap, pointsMap, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table));
   }
-  await writePlacements(adminClient, table, positionMap, pointsMap, cleared);
+  // THE WRITE, UNDER THE FIELD FENCE (00215).
+  //
+  // This used to be three plain PostgREST UPDATEs, with no lock anywhere on the
+  // path -- not here, and not in recomputeStandingsAfterCorrection, which runs
+  // this AFTER its own corrective mutation has already committed. So two
+  // officers correcting the same completed event interleaved freely:
+  //
+  //   A reads the matches, computes a ladder crowning X
+  //     B voids the final and clears the whole field, correctly
+  //   A writes its ladder -- X is champion again, on an event whose deciding
+  //     match no longer has a result, and nobody is told
+  //
+  // and a later bonus run pays X, because applyPlacementBonuses reads placings
+  // by `final_position IS NOT NULL` with no status filter.
+  //
+  // The remedy is finalisation's, one path over: the caller passes what it
+  // computed FROM, the RPC re-reads that under the event's advisory lock with
+  // the match rows held, and writes only if it still matches. The three writes
+  // land in one transaction, so a refusal leaves the standings exactly as they
+  // were rather than half-rewritten.
+  //
+  // What this deliberately does NOT re-check under the lock is a placed winner
+  // who left -- see the migration header. Refusing there would strand a
+  // disqualified entry on first place with no console remedy, because the event
+  // is already completed; the read-side guard in assignPositionsAndPoints is
+  // where that case belongs and it throws.
+  const { data: fenced, error: fenceError } = await adminClient.rpc('rewrite_event_placings_under_field_lock', {
+    p_event_id: eventId,
+    p_is_pair: doubles,
+    p_positions: Object.fromEntries(positionMap),
+    p_points: Object.fromEntries(pointsMap),
+    p_clear: cleared,
+    p_results: resultsSnapshot,
+  });
+  if (fenceError) {
+    throw new Error(`The standings could not be rewritten, and nothing was saved: ${fenceError.message}`);
+  }
+  const written = fenced as FencedFieldResult | null;
+  // THROWN HERE, not folded into an empty `moved`. Returning quietly would put
+  // this back into the exact shape the fail-open above was fixed out of: the
+  // corrective action lands, the standings silently do not, and the officer is
+  // told nothing at all.
+  if (!written?.ok) {
+    if (written?.reason === 'results_changed') {
+      throw new ExpectedError(
+        'Another result changed while these standings were being recalculated' +
+        (written.matches_moved ? ` (match ${written.matches_moved})` : '') +
+        '. Nothing was rewritten, because they were worked out from the old result. Reload to see the current standings.',
+      );
+    }
+    if (written?.reason === 'event_status') {
+      throw new ExpectedError(
+        'This event is no longer completed, so its standings were not rewritten. Reload to see where it stands.',
+      );
+    }
+    fencedRefusal(written, 'Event not found');
+  }
 
   // `to: number | null` because a recompute can REMOVE a placing, not just move
   // one. Built from positionMap alone this list could only ever grow or shuffle,

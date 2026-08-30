@@ -303,9 +303,66 @@ const makeClient = vi.hoisted(() => () => {
     return Promise.resolve({ data: null, error: null });
   }
 
+  // The results snapshot (00213) and the corrective write fence (00215).
+  // recomputeEventStandings stopped writing placings through PostgREST when
+  // 00215 landed -- it snapshots the matches, computes, and hands both to the
+  // RPC, which re-reads the snapshot under the event lock before writing. This
+  // file's tests are about WHAT the recompute decides, not about contention,
+  // so the fence is modelled exactly but never made to refuse.
+  const resultsFingerprintFor = (eventId: string) => {
+    const out: Record<string, unknown> = {};
+    for (const m of (store.db.tournament_matches ?? []).filter((r) => r.event_id === eventId)) {
+      out[m.id as string] = {
+        st: m.status ?? null,
+        wp: m.winner_participant_id ?? null, wr: m.winner_pair_id ?? null,
+        lp: m.loser_participant_id ?? null, lr: m.loser_pair_id ?? null,
+        sc: m.scores ?? null, wo: m.walkover_winner ?? null, by: m.is_bye ?? null,
+        th: m.is_third_place ?? null, rn: m.round_number ?? null,
+        bp: m.bracket_position ?? null, ph: m.phase ?? null,
+        pa: m.participant_a_id ?? null, pb: m.participant_b_id ?? null,
+        ra: m.pair_a_id ?? null, rb: m.pair_b_id ?? null,
+        dg: m.draw_generation_id ?? null,
+      };
+    }
+    return out;
+  };
+
+  function rewritePlacingsRpc(args: Record<string, unknown>) {
+    const eventId = args.p_event_id as string;
+    const table = (args.p_is_pair as boolean) ? 'tournament_pairs' : 'tournament_participants';
+    const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+    if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+    if (ev.status !== 'completed') {
+      return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+    }
+    const sent = (args.p_results ?? null) as Record<string, unknown> | null;
+    if (sent === null) {
+      return Promise.resolve({ data: null, error: { message: 'p_results must be the object returned by event_results_fingerprint' } });
+    }
+    if (JSON.stringify(resultsFingerprintFor(eventId)) !== JSON.stringify(sent)) {
+      return Promise.resolve({ data: { ok: false, reason: 'results_changed', matches_moved: '' }, error: null });
+    }
+    const rowsOf = (id: string) => (store.db[table] ?? []).filter((r) => r.id === id && r.event_id === eventId);
+    for (const [id, pos] of Object.entries((args.p_positions as Record<string, number> | undefined) ?? {})) {
+      for (const r of rowsOf(id)) r.final_position = pos;
+    }
+    for (const [id, pts] of Object.entries((args.p_points as Record<string, number> | undefined) ?? {})) {
+      for (const r of rowsOf(id)) r.points = pts;
+    }
+    for (const id of ((args.p_clear as string[] | undefined) ?? [])) {
+      for (const r of rowsOf(id)) Object.assign(r, { final_position: null, points: null });
+    }
+    // The status is NOT flipped: the event was completed before the call.
+    return Promise.resolve({ data: { ok: true, event_id: eventId, tournament_id: ev.tournament_id }, error: null });
+  }
+
   function rpc(name: string, args: Record<string, unknown>) {
     if (name === 'apply_tournament_match_rating') return applyRpc(args);
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
+    if (name === 'event_results_fingerprint') {
+      return Promise.resolve({ data: resultsFingerprintFor(args.p_event_id as string), error: null });
+    }
+    if (name === 'rewrite_event_placings_under_field_lock') return rewritePlacingsRpc(args);
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
