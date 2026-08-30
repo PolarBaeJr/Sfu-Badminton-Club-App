@@ -817,6 +817,94 @@ async function writePlacements(
  * the players' ratings and there is no reversal for them, so quietly paying a
  * new champion (and not unpaying the old one) would be worse than saying so.
  */
+/**
+ * Has the match that decided this event lost its result?
+ *
+ * assignPositionsAndPoints reads the champion off `totalRounds =
+ * max(round_number)` over matches that STILL HAVE A RESULT. So a final that is
+ * voided or undone does not leave first place vacant -- it promotes the round
+ * below to "the final" and crowns its winner. The semi-final winner, who LOST
+ * the final, becomes the champion, silently, with points and a trophy.
+ *
+ * That is one of the three club decisions this file already refuses to make on
+ * the officers' behalf (see the disqualified-champion guard: "promoting the
+ * runner-up, leaving first place vacant and voiding the final are three
+ * different club decisions"). So both callers ask this question and neither
+ * computes an answer to it:
+ *
+ *   - recomputeEventStandings CLEARS the standings. The event is already
+ *     completed, so refusing would leave the stale champion up; nobody holds a
+ *     placing until an officer finalises it again.
+ *   - finalizeEvent REFUSES. Nothing has been written yet, so refusing leaves
+ *     no bad state at all and the officer is still at the desk.
+ *
+ * Two policies, one predicate, deliberately -- the two disagreed for as long as
+ * they were separate, and `finalizeEvent` is not a place to keep a second copy
+ * of this arithmetic.
+ *
+ * KNOCKOUT ONLY. A round robin has no deciding match: its table is computed
+ * from every result at once, and computeRoundRobinStandings copes with a
+ * missing one.
+ */
+async function championIsUndetermined(
+  adminClient: ReturnType<typeof createAdminClient>,
+  event: Record<string, unknown>,
+  eventId: string,
+): Promise<boolean> {
+  if (!endsInKnockout(event.format as string)) return false;
+
+  // THE SAME TWO FILTERS assignPositionsAndPoints applies before it takes its
+  // max: phase (a pool_to_bracket event's pool matches share the round
+  // numbering, 00107) and the third-place playoff (it shares the final's round
+  // by design, 00080, and that function splits it out in memory).
+  //
+  // BYES ARE NOT FILTERED, and that is the counterpart's rule rather than an
+  // omission: a bye is written `status: 'completed'` with a winner
+  // (brackets.ts), so assignPositionsAndPoints counts it as a result.
+  //
+  // This filter WAS here, and removing it changes no reachable answer -- byes
+  // are only ever created for round 1 (brackets.ts seeds them there and nowhere
+  // else), so a top round made only of byes implies a one-round draw, and then
+  // the filtered read returns nothing at all and this function returns false on
+  // the empty-bracket line below just as the unfiltered read returns false on a
+  // decided one. Mutation testing confirms it: restoring the filter fails no
+  // test. It is dropped anyway, because the ONLY thing that makes this
+  // predicate correct is that it asks the counterpart's question, and a filter
+  // the counterpart does not apply is a divergence waiting for the day byes are
+  // seeded somewhere other than round 1.
+  //
+  // STATUS IS NOT FILTERED EITHER, and that is the one deliberate difference.
+  // The counterpart takes its max over DECIDED matches only, which is exactly
+  // the bug: drop the final's result and its max silently drops a round. This
+  // takes the max over the whole bracket -- the real final round, decided or
+  // not -- and then asks whether anything there was decided.
+  let q = adminClient.from('tournament_matches')
+    .select('round_number, status')
+    .eq('event_id', eventId)
+    .not('is_third_place', 'is', true);
+  const bracketPhase = phaseValueFor(event.format as string, 'bracket');
+  if (bracketPhase) q = q.eq('phase', bracketPhase);
+
+  const { data: rows, error } = await q;
+  // NOT FAIL-OPEN. A failed PostgREST read arrives as `data: null` with an
+  // error, never as a rejection, so discarding `error` here would turn any
+  // transient failure into an empty bracket, an undetermined-champion of false,
+  // and the auto-crown this whole function exists to stop -- silently, and only
+  // under the conditions that make it hardest to notice.
+  if (error) {
+    throw new Error(`Could not read this event's bracket, so its champion could not be established: ${error.message}`);
+  }
+
+  const bracket = rows ?? [];
+  if (bracket.length === 0) return false;
+
+  const topRound = Math.max(...bracket.map(m => m.round_number as number));
+  return !bracket.some(
+    m => (m.round_number as number) === topRound
+      && ['completed', 'walkover'].includes(m.status as string),
+  );
+}
+
 export async function recomputeEventStandings(eventId: string): Promise<{
   // A `to` of null means the recompute took the placing AWAY, not that it moved
   // one -- see the build of this list below for why that has to be representable.
@@ -847,54 +935,10 @@ export async function recomputeEventStandings(eventId: string): Promise<{
     (before ?? []).map(r => [r.id as string, (r.final_position ?? null) as number | null]),
   );
 
-  // ------------------------------------------------------------------
-  // THE MATCH THAT DECIDED THE EVENT MAY HAVE LOST ITS RESULT
-  // ------------------------------------------------------------------
-  //
-  // assignPositionsAndPoints reads the champion off `totalRounds =
-  // max(round_number)` over matches that STILL HAVE A RESULT. So voiding or
-  // undoing the final of a completed event does not leave first place vacant --
-  // it promotes the round below to "the final" and crowns its winner. The
-  // semi-final winner, who LOST the final, becomes the champion, silently, with
-  // points and a trophy.
-  //
-  // That is one of the three club decisions this file already refuses to make
-  // on the officers' behalf (see the disqualified-champion guard above:
-  // "promoting the runner-up, leaving first place vacant and voiding the final
-  // are three different club decisions"). Recomputing here would pick one.
-  //
-  // So when the top of the bracket no longer has a result, the standings are
-  // CLEARED instead. Nobody holds a placing for this event until an officer
-  // finalises it again -- which is the honest state, and the one the owner
-  // chose over both leaving the stale champion up and inventing a new one.
-  //
-  // KNOCKOUT ONLY. A round robin has no deciding match: its table is computed
-  // from every result at once, and computeRoundRobinStandings already copes
-  // with a missing one.
-  const knockout = endsInKnockout(event.format as string);
-  const bracketPhase = phaseValueFor(event.format as string, 'bracket');
-  let championUndetermined = false;
-  if (knockout) {
-    // Same three filters assignPositionsAndPoints applies before it takes its
-    // max: phase (a pool_to_bracket event's pool matches share the round
-    // numbering, 00107), the third-place playoff (it shares the final's round
-    // by design, 00080), and byes (never played, so never a result).
-    let q = adminClient.from('tournament_matches')
-      .select('round_number, status')
-      .eq('event_id', eventId)
-      .not('is_third_place', 'is', true)
-      .not('is_bye', 'is', true);
-    if (bracketPhase) q = q.eq('phase', bracketPhase);
-    const { data: allBracketMatches } = await q;
-    const rows = allBracketMatches ?? [];
-    if (rows.length > 0) {
-      const topRound = Math.max(...rows.map(m => m.round_number as number));
-      championUndetermined = !rows.some(
-        m => (m.round_number as number) === topRound
-          && ['completed', 'walkover'].includes(m.status as string),
-      );
-    }
-  }
+  // The event no longer has a champion -- the standings are CLEARED rather
+  // than recomputed, so nobody holds a placing until it is finalised again.
+  // See championIsUndetermined for why this is not a computation.
+  const championUndetermined = await championIsUndetermined(adminClient, event, eventId);
 
   let positionMap = new Map<string, number>();
   let pointsMap = new Map<string, number>();
@@ -992,6 +1036,28 @@ export async function finalizeEvent(eventId: string) {
 
   if (realIncomplete.length > 0) {
     throw new Error(`${realIncomplete.length} match(es) still incomplete`);
+  }
+
+  // A VOIDED FINAL IS NOT AN INCOMPLETE ONE, and the query above says so
+  // explicitly -- "voided" is one of the four statuses it excludes. So an event
+  // whose final was voided passes the completeness check, and
+  // assignPositionsAndPoints below would then crown the semi-final winner,
+  // exactly as it did on the corrective paths before championIsUndetermined
+  // existed. Same defect, reached through finalisation rather than through a
+  // correction.
+  //
+  // REFUSING HERE RATHER THAN CLEARING. The corrective paths clear because the
+  // event is already completed and a refusal would leave a stale champion
+  // standing. Nothing has been written yet at this point, so there is no bad
+  // state for a refusal to leave -- and the officer is at the desk, able to
+  // replay or restore the match. This is the same shape as the two refusals
+  // above it.
+  if (await championIsUndetermined(adminClient, event, eventId)) {
+    throw new ExpectedError(
+      'The match that decides this event has no result — it was voided, and a voided match is not an incomplete one, so nothing above stopped this. ' +
+      'Finalising now would award first place to whoever won the round below. ' +
+      'Replay or restore that match before finalising.',
+    );
   }
 
   const table = doubles ? 'tournament_pairs' : 'tournament_participants';

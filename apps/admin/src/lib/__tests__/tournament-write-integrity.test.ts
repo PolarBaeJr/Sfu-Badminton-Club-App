@@ -2654,6 +2654,101 @@ describe('finalizeEvent', () => {
     expect(participant('p-alice').final_position).toBeNull();
     expect(participant('p-bob').final_position).toBeNull();
   });
+
+  // ----------------------------------------------------------------
+  // A VOIDED FINAL IS NOT AN INCOMPLETE ONE
+  // ----------------------------------------------------------------
+  //
+  // The completeness query excludes "voided" outright, so an event whose final
+  // was voided walks straight past it -- and assignPositionsAndPoints then takes
+  // its max(round_number) over matches that still HAVE a result, which is the
+  // round below. The winner of that round, who lost the final, was crowned.
+  //
+  // The corrective paths (voidMatch, undoMatchResult) hit the same defect from
+  // the other side and CLEAR the standings, because their event is already
+  // completed. Here nothing has been written yet, so this refuses instead.
+  describe('when the match that decides the event has no result', () => {
+    it('refuses rather than crowning the round below', async () => {
+      // The describe's beforeEach left a one-match draw, so QF IS the final.
+      Object.assign(match(QF), { status: 'voided', winner_participant_id: null, loser_participant_id: null });
+
+      await expect(finalizeEvent('e1')).rejects.toThrow(/decides this event has no result/);
+
+      // AND NOTHING MOVED. A refusal that half-finalised would be worse than the
+      // crowning it replaced.
+      expect(event().status).toBe('live');
+      expect(participant('p-alice').final_position).toBeNull();
+      expect(participant('p-bob').final_position).toBeNull();
+    });
+
+    it('still finalises when the voided match was NOT the deciding one', async () => {
+      // THE DISCRIMINATOR. Without it, "refuse whenever anything is voided"
+      // passes the test above and breaks every ordinary correction -- voiding a
+      // first-round match and replaying it is routine, and the event that
+      // follows still has a champion.
+      //
+      // Two rounds: round 1 voided, round 2 played. p-alice beat p-bob in the
+      // final, so the ladder is exactly the one-match case's.
+      store.db.tournament_matches = [
+        { ...match(QF), status: 'voided', winner_participant_id: null, loser_participant_id: null,
+          winner_to_match_id: null, winner_to_position: null, round_number: 1 },
+        {
+          id: SF, event_id: 'e1', status: 'completed', is_bye: false,
+          participant_a_id: 'p-alice', participant_b_id: 'p-bob',
+          winner_participant_id: 'p-alice', loser_participant_id: 'p-bob',
+          winner_to_match_id: null, winner_to_position: null,
+          round_number: 2, scores: [{ a: 21, b: 15 }, { a: 21, b: 17 }], elo_snapshot: null, notes: null,
+        },
+      ];
+
+      await finalizeEvent('e1');
+
+      expect(event().status).toBe('completed');
+      expect(participant('p-alice').final_position).toBe(1);
+      expect(participant('p-bob').final_position).toBe(2);
+    });
+
+    it('does not read a bye as a missing result', async () => {
+      // BYES ARE WRITTEN `status: 'completed'` WITH A WINNER (brackets.ts), so
+      // assignPositionsAndPoints counts one as a result and the guard must not
+      // read one as a missing result.
+      //
+      // WHAT THIS DOES NOT PIN, said plainly: the guard used to filter byes out
+      // of its read, and restoring that filter fails no test here -- including
+      // this one. It cannot be pinned, because byes are only ever seeded into
+      // round 1, so a top round made only of byes means a one-round draw and
+      // both readings then answer "not undetermined" by different routes. The
+      // filter was dropped to keep the guard's read identical to the one it is
+      // reasoning about, not to fix a reachable bug. This test pins the outcome
+      // that matters: a draw decided by a bye still finalises.
+      Object.assign(match(QF), { is_bye: true, participant_b_id: null, loser_participant_id: null });
+      store.db.tournament_participants = store.db.tournament_participants!.filter((r) => r.id !== 'p-bob');
+
+      await finalizeEvent('e1');
+
+      expect(event().status).toBe('completed');
+      expect(participant('p-alice').final_position).toBe(1);
+    });
+
+    it('refuses rather than assuming a champion when the bracket cannot be read', async () => {
+      // THE FAIL-OPEN THAT WAS THERE. supabase-js resolves rather than rejects
+      // on a Postgres error, so a discarded `error` turns any transient failure
+      // into an empty bracket, an "undetermined" of false, and the auto-crown
+      // this guard exists to stop -- silently, and only under the conditions
+      // that make it hardest to notice.
+      store.faults.push({
+        table: 'tournament_matches', op: 'select', message: 'connection reset',
+        // Keyed to the guard's own projection so the rest of finalisation --
+        // the completeness check, the placings read -- is untouched and the
+        // refusal can only have come from the guard.
+        when: ({ cols }) => cols === 'round_number, status',
+      });
+
+      await expect(finalizeEvent('e1')).rejects.toThrow(/champion could not be established.*connection reset/);
+      expect(event().status).toBe('live');
+      expect(participant('p-alice').final_position).toBeNull();
+    });
+  });
 });
 
 describe('late withdrawal cascade', () => {
