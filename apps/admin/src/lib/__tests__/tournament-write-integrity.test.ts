@@ -2679,9 +2679,15 @@ describe('finalizeEvent', () => {
     expect(participant('p-alice').final_position).toBe(1);
 
     // The bonuses landed on that finalisation. Nothing can take them back.
-    store.db.tournament_audit_log!.push({
-      tournament_id: 't1', event_id: 'e1', action: 'placement_bonuses_applied',
-      performed_by: 'admin-1', details: { rated_players: ['pl-alice'] },
+    //
+    // Recorded as a GRANT, because that is where the ledger lives now. The
+    // audit row this used to push is written after the payment commits and is
+    // best-effort, so a ledger read keyed on it reported "nothing paid" for
+    // the whole window between the two — on the one question where guessing
+    // wrong doubles a rating.
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'rating', subject_id: 'pl-alice',
+      discipline: 'singles', requested_bonus: 32, applied_delta: 32,
     });
 
     // Now the champion is disqualified and the standings are redone.
@@ -3203,7 +3209,7 @@ describe('placement bonuses', () => {
   });
 
   it('refuses to award anything when the ledger cannot be read', async () => {
-    store.faults.push({ table: 'tournament_audit_log', op: 'select', message: 'permission denied' });
+    store.faults.push({ table: 'tournament_bonus_grants', op: 'select', message: 'permission denied' });
 
     await expect(applyPlacementBonuses('e1')).rejects.toThrow(/would double every rating/);
     expect(ratingOf('pl-alice')).toBe(1000);
@@ -6730,5 +6736,111 @@ describe('computeRoundRobinStandings reads fail closed', () => {
     const table = await computeRoundRobinStandings('e1');
     expect(table.length).toBe(2);
     expect(table[0]!.id).toBe('p-alice');
+  });
+});
+
+// ============================================================
+// The ledger reads the grants, not the audit log
+// ============================================================
+// `tournament_bonus_grants` is claimed inside each payment's own transaction;
+// the audit row is written afterwards and is best-effort. Keyed on the audit
+// row, the ledger reported "nothing paid" for the whole window between the two
+// — and on a retry inside that window it is the only thing standing between a
+// player and a second bonus. The UNIQUE index still refuses the double pay, so
+// this was never a wrong PAYMENT; it was the hint being wrong on exactly the
+// question it exists to answer.
+describe('the bonus ledger reads what was actually paid', () => {
+  beforeEach(() => {
+    event().status = 'completed';
+    event().placement_bonus_enabled = true;
+    participant('p-alice').final_position = 1;
+    participant('p-bob').final_position = 2;
+  });
+
+  it('sees a grant whose audit row never landed', async () => {
+    // The payment committed; the audit insert did not. There is no
+    // `placement_bonuses_applied` row anywhere in this fixture.
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'rating', subject_id: 'pl-alice',
+      discipline: 'singles', requested_bonus: 32, applied_delta: 32,
+    });
+
+    await applyPlacementBonuses('e1');
+
+    // Alice is skipped because the ledger can see her grant. Read from the
+    // audit log this was invisible and she was paid a second time.
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(ratingOf('pl-bob')).toBe(1020);
+  });
+
+  it('does not mistake a legacy marker for a paid subject', async () => {
+    // A marker addresses its own EVENT — subject_id = event_id — so a reader
+    // that filed every row by subject would have put 'e1' into ratedPlayers
+    // and skipped nobody, which looks identical to working.
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'event_legacy_paid', subject_id: 'e1',
+      discipline: null, requested_bonus: 0, applied_delta: 0,
+    });
+
+    // applyPlacementBonuses refuses a marked event several checks earlier, so
+    // the observable is the refusal — not a payment that skipped everybody.
+    await expect(applyPlacementBonuses('e1')).rejects.toThrow(/already awarded placement bonuses/);
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(ratingOf('pl-bob')).toBe(1000);
+  });
+
+  it('warns on a correction to an event that only carries a legacy marker', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'event_legacy_paid', subject_id: 'e1',
+      discipline: null, requested_bonus: 0, applied_delta: 0,
+    });
+
+    participant('p-alice').status = 'disqualified';
+    const standings = await recomputeEventStandings('e1');
+
+    // THE HOLE THIS CLOSES. On an event paid by a version that kept no
+    // per-player record there are no `rating` rows at all, so counting only
+    // those said "nothing was paid" — silencing the officer warning on
+    // precisely the events where the payment provably happened and provably
+    // cannot be reversed.
+    expect(standings.bonusesAlreadyPaid).toBe(true);
+  });
+
+  it('says nothing was paid when nothing was', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    participant('p-alice').status = 'disqualified';
+    const standings = await recomputeEventStandings('e1');
+    expect(standings.bonusesAlreadyPaid).toBe(false);
+  });
+});
+
+// A DELIBERATELY MALFORMED MARKER, and the only way to observe the filing rule
+// directly. A well-formed marker addresses its own event, so a reader that
+// filed it as a paid SUBJECT would put a uuid nobody holds into ratedPlayers
+// and skip nobody — indistinguishable from working. The invariant
+// `subject_id = event_id` is asserted by 00189 and 00190 at migration time and
+// is NOT enforced by a constraint, so a row that breaks it is reachable; here
+// it names a real player, which is what makes the mis-filing visible as a
+// player who silently goes unpaid.
+describe('a non-grant kind is never a paid subject', () => {
+  it('pays a player whose id appears as a marker subject', async () => {
+    event().status = 'completed';
+    event().placement_bonus_enabled = true;
+    participant('p-alice').final_position = 1;
+    participant('p-bob').final_position = 2;
+
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'event_legacy_paid', subject_id: 'pl-alice',
+      discipline: null, requested_bonus: 0, applied_delta: 0,
+    });
+
+    // Not refused: the legacy check matches on subject_id = event_id, and this
+    // row does not. So the ledger read is reached, and it must file this row
+    // by its KIND rather than by its subject.
+    await applyPlacementBonuses('e1');
+
+    expect(ratingOf('pl-alice')).toBe(1032);
+    expect(ratingOf('pl-bob')).toBe(1020);
   });
 });

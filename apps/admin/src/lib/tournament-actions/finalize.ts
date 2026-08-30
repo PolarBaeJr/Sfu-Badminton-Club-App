@@ -31,9 +31,10 @@ import {
 // Placement Bonuses & Finalize
 // ============================================================
 
-// The audit action that doubles as the placement-bonus ledger. Rows carry, in
-// `details`, exactly which ratings and which participant rows a run managed to
-// write — see readBonusLedger.
+// The audit action for a bonus run. It USED to double as the ledger, and no
+// longer does — `tournament_bonus_grants` is the ledger, written inside each
+// payment's own transaction. This row is now what it always looked like: a
+// record for a human reading the history, written best-effort afterwards.
 const BONUS_APPLIED_ACTION = 'placement_bonuses_applied';
 
 interface BonusLedger {
@@ -41,6 +42,13 @@ interface BonusLedger {
   ratedPlayers: Set<string>;
   /** tournament_participants ids whose elo_change has already been credited. */
   creditedParticipants: Set<string>;
+  /**
+   * This event carries a legacy marker: it was paid by a version that kept no
+   * per-player record, so WHO was paid is unknowable but THAT it was paid is
+   * not. Separate from the two sets because it answers a different question,
+   * and the two callers want opposite things from it.
+   */
+  legacyPaid: boolean;
 }
 
 /**
@@ -53,10 +61,19 @@ interface BonusLedger {
  * raised rather than swallowed, a retry has to be able to finish the job
  * without redoing the part that landed.
  *
- * The ledger is append-only and lives in `tournament_audit_log.details`, which
- * is jsonb and already written on every successful run. That avoids inventing
- * a compensating write path (which can fail on its own, and can clobber a
- * concurrent rating change) and avoids a schema change.
+ * READ FROM THE GRANTS, NOT FROM THE AUDIT LOG. It used to select
+ * `tournament_audit_log.details`, which was the right call before `00188`
+ * existed and the wrong one after: the audit row is written AFTER the bonus
+ * RPCs commit, and it is best-effort, so the window between the payment
+ * landing and the log row appearing reported an empty ledger for a payment
+ * that had already happened. `tournament_bonus_grants` is written INSIDE the
+ * same transaction as each payment — claim-before-pay — so it cannot lag
+ * behind what was actually paid, and its UNIQUE (event_id, kind, subject_id)
+ * is the guarantee this read was only ever a hint about.
+ *
+ * The audit log also carries NULL `details` on every row written before
+ * `00188`, which is why `00189`/`00190`/`00191` had to mark those events
+ * separately — this read could not see them at all.
  *
  * Singles has TWO non-idempotent writes per player — ratings.singles_elo and
  * tournament_participants.elo_change — and they can fail independently, so the
@@ -66,10 +83,9 @@ async function readBonusLedger(
   adminClient: ReturnType<typeof createAdminClient>,
   eventId: string,
 ): Promise<BonusLedger> {
-  const { data, error } = await adminClient.from('tournament_audit_log')
-    .select('details')
-    .eq('event_id', eventId)
-    .eq('action', BONUS_APPLIED_ACTION);
+  const { data, error } = await adminClient.from('tournament_bonus_grants')
+    .select('kind, subject_id')
+    .eq('event_id', eventId);
   // Without the ledger there is no way to tell a first run from a second, and
   // guessing wrong doubles every bonus on the event. Refuse.
   if (error) {
@@ -79,15 +95,20 @@ async function readBonusLedger(
     );
   }
 
-  const ledger: BonusLedger = { ratedPlayers: new Set(), creditedParticipants: new Set() };
+  // THREE KINDS, AND `kind` IS THE ONLY DISCRIMINATOR. `discipline` does not
+  // separate them (it is NULL for participant credits as well as for
+  // markers), and neither does `applied_delta` (a rating grant clamped at the
+  // ceiling legitimately applies 0 — 00189:49-53). A marker addresses its own
+  // event, `subject_id = event_id`, which both marker migrations assert as a
+  // failure condition; that invariant is what makes the third branch safe to
+  // read as "this event", not "this subject".
+  const ledger: BonusLedger = { ratedPlayers: new Set(), creditedParticipants: new Set(), legacyPaid: false };
   for (const row of data ?? []) {
-    const details = (row.details ?? {}) as { rated_players?: unknown; credited_participants?: unknown };
-    for (const id of Array.isArray(details.rated_players) ? details.rated_players : []) {
-      if (typeof id === 'string') ledger.ratedPlayers.add(id);
-    }
-    for (const id of Array.isArray(details.credited_participants) ? details.credited_participants : []) {
-      if (typeof id === 'string') ledger.creditedParticipants.add(id);
-    }
+    const subject = row.subject_id as string | null;
+    if (typeof subject !== 'string') continue;
+    if (row.kind === 'rating') ledger.ratedPlayers.add(subject);
+    else if (row.kind === 'participant_credit') ledger.creditedParticipants.add(subject);
+    else if (row.kind === 'event_legacy_paid') ledger.legacyPaid = true;
   }
   return ledger;
 }
@@ -1062,8 +1083,19 @@ export async function recomputeEventStandings(eventId: string): Promise<{
     if (from !== null) moved.push({ id, from, to: null });
   }
 
+  // THE MARKER COUNTS HERE, AND ONLY HERE. This is the warning an officer
+  // gets when a correction moves a placing on an event whose bonuses have
+  // already been paid — there is no reversal for them, so the question is
+  // "was anything paid at all", not "which subjects". A legacy marker is a
+  // yes to that question: it exists precisely because an older version paid
+  // the event and kept no per-player record.
+  //
+  // applyPlacementBonuses wants the opposite and gets it, because it never
+  // reaches this read on a marked event — event_has_legacy_bonus_payment
+  // refuses it several checks earlier.
   const ledger = await readBonusLedger(adminClient, eventId);
-  const bonusesAlreadyPaid = ledger.ratedPlayers.size > 0 || ledger.creditedParticipants.size > 0;
+  const bonusesAlreadyPaid =
+    ledger.legacyPaid || ledger.ratedPlayers.size > 0 || ledger.creditedParticipants.size > 0;
 
   if (moved.length > 0) {
     await logAudit(adminClient, {
