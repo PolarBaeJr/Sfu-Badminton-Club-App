@@ -254,6 +254,46 @@ function assertEventResultsMutable(event: Record<string, unknown>, action: strin
   }
 }
 
+/**
+ * Redo the placings a post-finalisation edit just invalidated.
+ *
+ * The counterpart to the gate above. `assertEventResultsMutable` deliberately
+ * lets the corrective actions reach a COMPLETED event, and a completed event
+ * has standings — so any of them can leave `final_position` and `points`
+ * describing a bracket that no longer exists. Voiding the final is the sharp
+ * case: the void drops that match out of the bracket read
+ * (assignPositionsAndPoints selects `status in ('completed','walkover')`), so
+ * the champion it crowned is no longer derivable from anything, yet the placing
+ * sits there unless something recomputes.
+ *
+ * That is not hypothetical and needs no race: complete an event, void the
+ * final, and the voided winner keeps first place, the points and the trophy.
+ * The correction path (editMatchResultImpl) already learned this lesson and
+ * fixed it for itself; void, restore, undo and slot editing were left with the
+ * same hole. This is that fix, shared, so the set stays closed —
+ * results-recompute-coverage.test.ts asserts every caller of the gate is also a
+ * caller of this.
+ *
+ * No-ops on an event that is not completed: recomputeEventStandings returns an
+ * empty result unless `status === 'completed'`, so the live-event paths pay one
+ * cheap read and change nothing.
+ *
+ * Call it AFTER the audit row, never before, so the corrective action is on
+ * record even when this throws.
+ */
+async function recomputeStandingsAfterCorrection(eventId: string, lead: string): Promise<void> {
+  const standings = await recomputeEventStandings(eventId);
+  if (standings.moved.length > 0 && standings.bonusesAlreadyPaid) {
+    // Positions and points are already fixed at this point — this is not a
+    // failure, it is the one part a human still has to settle. Same policy the
+    // correction path has always had; deliberately NOT a second one.
+    throw new ExpectedError(
+      `${lead} and the final positions and points have been recalculated, but ${standings.moved.length} placing changed on an event whose placement bonuses were already paid. ` +
+      'Those bonuses went straight into the players\' ratings and nothing here can take them back — adjust them from Ratings if they matter.',
+    );
+  }
+}
+
 async function enterMatchResultImpl(
   matchId: string,
   scores: Array<{ a: number; b: number }>,
@@ -802,6 +842,10 @@ async function voidMatchImpl(matchId: string, reason: string) {
     },
   });
 
+
+  // Redo the placings this just invalidated. No-ops unless the event is
+  // completed; see recomputeStandingsAfterCorrection.
+  await recomputeStandingsAfterCorrection(match.event_id as string, 'The match was voided');
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
@@ -1108,6 +1152,10 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
     },
   });
 
+
+  // Redo the placings this just invalidated. No-ops unless the event is
+  // completed; see recomputeStandingsAfterCorrection.
+  await recomputeStandingsAfterCorrection(match.event_id as string, 'The match was restored');
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
@@ -1237,6 +1285,10 @@ async function setMatchEntryImpl(
     details: { side, previous_entry_id: current, entry_id: entryId, reason: reason || null },
   });
 
+
+  // Redo the placings this just invalidated. No-ops unless the event is
+  // completed; see recomputeStandingsAfterCorrection.
+  await recomputeStandingsAfterCorrection(match.event_id as string, 'The draw was edited');
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
@@ -1513,15 +1565,7 @@ async function editMatchResultImpl(
   //
   // No-ops on an event that is not completed. Deliberately AFTER the audit row,
   // so the correction is on record even if this throws.
-  const standings = await recomputeEventStandings(match.event_id as string);
-  if (standings.moved.length > 0 && standings.bonusesAlreadyPaid) {
-    // Positions and points are already fixed at this point — this is not a
-    // failure, it is the one part a human still has to settle.
-    throw new ExpectedError(
-      `The result was corrected and the final positions and points have been recalculated, but ${standings.moved.length} placing changed on an event whose placement bonuses were already paid. ` +
-      'Those bonuses went straight into the players\' ratings and nothing here can take them back — adjust them from Ratings if they matter.',
-    );
-  }
+  await recomputeStandingsAfterCorrection(match.event_id as string, 'The result was corrected');
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
@@ -1630,6 +1674,10 @@ async function undoMatchResultImpl(matchId: string) {
     details: { previous_scores: match.scores },
   });
 
+
+  // Redo the placings this just invalidated. No-ops unless the event is
+  // completed; see recomputeStandingsAfterCorrection.
+  await recomputeStandingsAfterCorrection(match.event_id as string, 'The result was undone');
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 

@@ -45,6 +45,10 @@ const makeClient = vi.hoisted(() => () => {
     // `.is(col, null)` — a seeded row may omit the column, which stands for SQL
     // NULL here.
     const isFilters: Array<[string, unknown]> = [];
+    // `.not(col, 'eq', v)` and `.not(col, 'in', '("a","b")')` — the negated
+    // filters the placings computation uses to drop byes and unplayed matches
+    // out of the bracket read. Stored separately because they invert, not add.
+    const notFilters: Array<[string, 'eq' | 'in', unknown]> = [];
     let cols = '*';
     let op: 'select' | 'update' | 'insert' | 'upsert' | 'delete' = 'select';
     let payload: Row = {};
@@ -56,7 +60,14 @@ const makeClient = vi.hoisted(() => () => {
         (r) =>
           filters.every(([c, v]) => r[c] === v) &&
           inFilters.every(([c, vs]) => vs.includes(r[c])) &&
-          isFilters.every(([c, v]) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)),
+          isFilters.every(([c, v]) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)) &&
+          notFilters.every(([c, o, v]) => (o === 'in'
+            // PostgREST spells the value list as the literal `("a","b")`.
+            ? !String(v).slice(1, -1).split(',').map((x) => x.replace(/^"|"$/g, '')).includes(String(r[c]))
+            // `not(c,'eq',true)` must also admit a row that simply omits the
+            // column: an absent boolean is SQL NULL, which `is_bye <> true`
+            // would drop but every caller here means to keep.
+            : r[c] !== v)),
       );
 
     // `select('*, event:tournament_events(*)')` — the only embed these actions
@@ -118,6 +129,7 @@ const makeClient = vi.hoisted(() => () => {
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },
       is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
+      not(c: string, o: 'eq' | 'in', v: unknown) { notFilters.push([c, o, v]); return api; },
       // The answer is decoded BEFORE the race fires, because the real client
       // decodes a row out of an HTTP response: the caller holds the row as it
       // was, which is the whole premise of a compare-and-swap.
@@ -833,5 +845,87 @@ describe('overtaken by another desk', () => {
       expect(match(QF).status).toBe('completed');
       expect(match(QF).winner_participant_id).toBe('p-alice');
     });
+  });
+});
+
+// A CORRECTIVE ACTION ON A FINISHED EVENT REDOES THE PLACINGS.
+//
+// The gate on all of these (assertEventResultsMutable) deliberately admits a
+// COMPLETED event, so an officer can still fix the day's mistakes after the
+// trophy has notionally been handed out. That is the right call, but it means
+// every one of them can leave final_position and points describing a bracket
+// that no longer exists — and only editMatchResultImpl ever did anything about
+// it. Voiding the final is the sharp case, and it needs no race at all: two
+// clicks by one admin used to leave the voided winner holding first place.
+//
+// These drive the real actions, so they fail if the recompute is removed from
+// any path rather than merely if a call site is renamed —
+// standings-recompute-coverage.test.ts is the structural half.
+describe('corrective actions on a finished event', () => {
+  // The seeded bracket, played out and finalised: alice beat bob in the final,
+  // and the placings say so.
+  function finishTheEvent() {
+    const ev = store.db.tournament_events!.find(e => e.id === 'e1')!;
+    Object.assign(match(QF), {
+      status: 'completed', round_number: 1,
+      winner_participant_id: 'p-alice', loser_participant_id: 'p-bob',
+      scores: [{ a: 21, b: 15 }],
+    });
+    // The final. Nothing feeds out of it, so max(round_number) makes it the
+    // round that crowns a champion.
+    Object.assign(match(SF), {
+      status: 'completed', round_number: 2,
+      participant_a_id: 'p-alice', participant_b_id: 'p-carol',
+      winner_participant_id: 'p-carol', loser_participant_id: 'p-alice',
+      scores: [{ a: 12, b: 21 }],
+    });
+    const entry = (id: string) => store.db.tournament_participants!.find(p => p.id === id)!;
+    entry('p-carol').final_position = 1;
+    entry('p-alice').final_position = 2;
+    entry('p-bob').final_position = 3;
+    ev.status = 'completed';
+  }
+
+  const placing = (id: string) =>
+    store.db.tournament_participants!.find(p => p.id === id)!.final_position ?? null;
+
+  it('takes the crown back when the final is voided', async () => {
+    finishTheEvent();
+    expect(placing('p-carol')).toBe(1);
+
+    expect((await voidMatch(SF, 'wrong court')).ok).toBe(true);
+    // The placings are now derived from what is left of the bracket rather
+    // than from the match that was just erased. NOTE what that means here:
+    // totalRounds is max(round_number) over the matches that still HAVE a
+    // result, so voiding the final promotes the round below it — alice takes
+    // first place by winning what is now the last decided round. That is a
+    // club decision this code is making on its own and it is flagged in the
+    // audit doc; this test pins the behaviour, it does not endorse it.
+    expect(placing('p-alice')).toBe(1);
+
+    // THE WHOLE POINT. The voided final is no longer in the bracket read
+    // (status in completed/walkover), so nothing derives a champion from it —
+    // and the placing it produced has to go with it. Before the fix this stayed
+    // at 1: the voided winner kept first place, the points and the trophy.
+    expect(placing('p-carol')).not.toBe(1);
+  });
+
+  it('takes it back when the final is undone rather than voided', async () => {
+    finishTheEvent();
+
+    expect((await undoMatchResult(SF)).ok).toBe(true);
+
+    // Same hole by another door — undo clears the result instead of voiding the
+    // match, and reaches the identical stale placing.
+    expect(placing('p-carol')).not.toBe(1);
+  });
+
+  it('leaves a live event alone', async () => {
+    // recomputeEventStandings no-ops unless the event is completed, so the
+    // corrective actions on a LIVE event must not touch placings at all — this
+    // is what makes the new call safe to put on every path.
+    expect((await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a')).ok).toBe(true);
+    expect((await voidMatch(QF, 'wrong court')).ok).toBe(true);
+    expect(placing('p-alice')).toBeNull();
   });
 });
