@@ -54,6 +54,20 @@ const MIGRATIONS_DIR = join(__dirname, '../../../../supabase/migrations');
 const CAP_READERS = new Set(['enter_tournament_event', 'add_participants_under_field_lock', 'pair_tournament_entrants']);
 
 /**
+ * WHO TAKES THE TOURNAMENT ROW WITHOUT COUNTING — 00218. A third category, and
+ * it is a real one rather than a bent version of either other: promotion adds
+ * an entrant and its own arithmetic is not a cap question (the member was
+ * already in this tournament), but it must not let a cap counter interleave
+ * with it, because the entry it is copying forward can be withdrawn underneath.
+ *
+ * So it holds the row every counter holds, and what it does under that row is
+ * re-read its SOURCE, not count. Bending CAP_READERS to fit it would have
+ * demanded a cross-event count this function has no business making; bending
+ * the cap-neutral category to fit it would have asserted nothing at all.
+ */
+const CAP_SERIALISERS = new Set(['promote_pool_qualifier']);
+
+/**
  * WHO WRITES AN ENTRANT ROW, and why each one is or is not a cap counter.
  *
  * The three above are omitted here only in the sense that they appear with
@@ -94,37 +108,37 @@ const ENTRANT_WRITERS: Record<string, { countsCap: boolean; openGap?: true; why:
   },
   promote_pool_qualifier: {
     countsCap: false,
-    // The flag, not the prose, is what makes this survive an edit. The `why`
-    // below is the strongest statement in this file -- one of the six writers
-    // has a live, verified over-admission -- and prose can be rewritten to
-    // something short and cheerful without any test noticing. OPEN_GAPS holds
-    // the same names, so softening one without the other fails the build.
-    openGap: true,
     why:
-      'UNCLASSIFIED IN THE SAFE SENSE — this is a KNOWN OPEN GAP, not a cleared ' +
-      'one, and it is the R2 residual the owner has not gated. Promotion writes ' +
-      'a bracket entry for a member who is already entered in the pool event ' +
-      'that fed it. It reads no cap, takes no tournament row, and has no source-' +
-      'event parameter, so it cannot re-ask whether the pool entry it is ' +
-      'promoting is still live.\n\n' +
-      'IT CAN OVER-ADMIT. seedBracketFromPool snapshots the standings and then ' +
-      'calls this function once per qualifier, holding no lock on the source ' +
-      'event across that gap (apps/admin/src/lib/tournament-actions/' +
-      'brackets.ts:583,602,699). A withdrawal landing in that gap frees the ' +
-      "member's pool slot; they spend it entering another event, whose count " +
-      'correctly sees the withdrawn pool row as gone; the promotion then re-adds ' +
-      'them to the bracket off the stale snapshot. Two live entries under a cap ' +
-      'of one. `rankableIds` (_internal.ts:2200) only excludes withdrawals ' +
-      'visible AT SNAPSHOT TIME, so it does not close this.\n\n' +
-      'What bounds the damage: it is admin-only — no member can reach it — and ' +
-      'it cannot double-charge, because the tournament fee is one row per member ' +
-      'per tournament, enforced by the partial unique index ' +
-      'club_fees_tournament_player_key on (tournament_id, player_id), not one row ' +
-      'per entry. The fees page builds a Set of player ids for the same reason.\n\n' +
-      'The fix is a redesign with an open product question (skip the qualifier ' +
-      'and move the next finisher up, or refuse the generation and leave a ' +
-      'half-built draw), so it is filed rather than built. countsCap stays false ' +
-      'because it describes what the body DOES, and the body reads no cap.',
+      'CAP-NEUTRAL BY RE-READING ITS SOURCE — 00218, and it is the ONE writer ' +
+      'here whose neutrality is a runtime check rather than arithmetic. It moves ' +
+      'a qualifier from a pool event into a bracket event of the SAME tournament, ' +
+      'so the member already held a live entry and the total does not move.\n\n' +
+      'That was false until 00218, and codex round 28 was right about it. ' +
+      'seedBracketFromPool snapshots the standings once and then calls this ' +
+      'function per qualifier holding no lock on the source event across the gap ' +
+      '(brackets.ts:583,602,706). A withdrawal landing in that gap freed the ' +
+      "member's pool slot; they spent it entering another event, whose count " +
+      'correctly saw the withdrawn pool row as gone; the promotion then re-added ' +
+      'them off the stale snapshot. Two live entries under a cap of one. Neither ' +
+      "guard caught it: the caller's `existing` map is built from the TARGET " +
+      "event (brackets.ts:625) so it cannot see a SOURCE-side withdrawal, and " +
+      '`rankableIds` (_internal.ts:2200) excludes only withdrawals visible AT ' +
+      'SNAPSHOT TIME.\n\n' +
+      'What closes it is BOTH halves, and the source re-check alone would not ' +
+      'have: read-at-T1, withdraw-at-T2, enter-elsewhere-at-T3, insert-at-T4 ' +
+      'still over-admits with every read true when it was made. The tournaments ' +
+      'row is held from before the source read until commit, and ' +
+      'enter_tournament_event takes that same row, so the sibling-event entry ' +
+      'can no longer interleave — it either goes first and is refused by the cap ' +
+      'it still counts, or it goes second and this function has already seen the ' +
+      'withdrawal. Verified on staging by a two-session test: a concurrent ' +
+      'enter_tournament_event blocks at its own cap SELECT while this function ' +
+      'holds the row.\n\n' +
+      'A missing source entry is a SKIP, not an error, and that is not a new ' +
+      'product call — brackets.ts:695 already answers it for the target side. ' +
+      'countsCap stays false because it describes what the body DOES, and the ' +
+      'body reads no cap; CAP_SERIALISERS is what asserts the discipline it does ' +
+      'follow.',
   },
 };
 
@@ -253,10 +267,16 @@ function soleBody(name: string): Resolved {
  * ENTRANT_WRITERS below so the finding cannot be edited away in prose alone.
  * A name leaves this list when the gap is closed in the database, not when
  * somebody decides the paragraph reads too alarming.
+ *
+ * EMPTY SINCE 00218, which closed the one entry it ever held. Kept, and kept
+ * asserted in both directions, because an empty list is the only state in which
+ * this is a live tripwire rather than a record: the next writer that arrives
+ * with a known hole has somewhere to be declared, and declaring it in the `why`
+ * prose alone now fails the build.
  */
-const OPEN_GAPS = new Set(['promote_pool_qualifier']);
+const OPEN_GAPS = new Set<string>([]);
 
-const CLASSIFIED = [...new Set([...CAP_READERS, ...Object.keys(ENTRANT_WRITERS)])].sort();
+const CLASSIFIED = [...new Set([...CAP_READERS, ...CAP_SERIALISERS, ...Object.keys(ENTRANT_WRITERS)])].sort();
 
 describe('cross-event entry cap — the lock discipline 00201 established', () => {
   it('resolves function bodies at all (a census that matches nothing proves nothing)', () => {
@@ -394,6 +414,74 @@ describe('cross-event entry cap — the entrant-writer census', () => {
       expect(meta.why.length, `${fn} needs a real reason, not a placeholder`).toBeGreaterThan(40);
     }
   });
+
+  for (const fn of [...CAP_SERIALISERS].sort()) {
+    it(`${fn} holds the tournament row across the read that decides, without counting`, () => {
+      const entry = soleBody(fn);
+      const body = stripComments(entry.body);
+      const where = `${fn} (${entry.file})`;
+
+      const fence = /pg_advisory_xact_lock\s*\(\s*hashtext\s*\(\s*'tournament_event_field'/i.exec(body);
+      expect(
+        fence,
+        `${where} writes an entrant without taking the event field advisory lock.`,
+      ).not.toBeNull();
+
+      const rowLock = /FROM\s+tournaments\b[\s\S]{0,400}?FOR\s+UPDATE/i.exec(body);
+      expect(
+        rowLock,
+        `${where} no longer takes the tournaments row FOR UPDATE. That row is the ` +
+          'only thing that stops enter_tournament_event counting a cap between ' +
+          "this function's source re-read and its insert — the two would then " +
+          'interleave and admit a member the cap should have refused. See 00218.',
+      ).not.toBeNull();
+
+      expect(
+        rowLock!.index > fence!.index,
+        `${where} takes the tournaments row BEFORE the event field key, reversing ` +
+          'the order 00196 fixed (advisory -> tournaments -> tournament_events).',
+      ).toBe(true);
+
+      // WHY THIS IS NOT A CAP_READER. It deliberately does not count; asserting
+      // a count here would demand arithmetic the function has no business doing.
+      expect(
+        /max_events_per_player/i.test(body),
+        `${where} started reading the cap. It is classified as a serialiser, not ` +
+          'a counter — if it now counts, move it to CAP_READERS so the count ' +
+          'order is asserted too.',
+      ).toBe(false);
+
+      // THE ASSERTION THAT MATTERS, and the same shape as the count order above:
+      // presence is not order. Every read of the SOURCE event is the read the
+      // row lock exists to make durable, so a body that keeps both lock
+      // statements and hoists the source read above them is the exact
+      // regression 00218 closed, and it must fail here.
+      const sourceReads = [...body.matchAll(/p_source_event_id/gi)];
+      expect(
+        sourceReads.length,
+        `${where} has no p_source_event_id at all. Without the source event it ` +
+          'cannot ask whether the entry it is promoting still exists, which is ' +
+          'half of what 00218 added.',
+      ).toBeGreaterThan(2);
+      const guarded = sourceReads.filter((m) => m.index! > rowLock!.index);
+      expect(
+        guarded.length,
+        `${where} reads the source event only in statements that complete before ` +
+          'the tournaments row is locked. Every read below that lock is a read ' +
+          'another transaction can still invalidate before the insert lands.',
+      ).toBeGreaterThan(1);
+
+      // And the writes themselves, for the same reason.
+      const inserts = [...body.matchAll(/INSERT\s+INTO\s+(?:public\.)?tournament_(?:participants|pairs)\b/gi)];
+      expect(inserts.length, `${where} no longer inserts an entrant row.`).toBeGreaterThan(0);
+      for (const ins of inserts) {
+        expect(
+          ins.index! > rowLock!.index,
+          `${where} inserts an entrant before it holds the tournaments row.`,
+        ).toBe(true);
+      }
+    });
+  }
 
   it('the writers with a known unfixed hole are still flagged as such', () => {
     const flagged = Object.entries(ENTRANT_WRITERS)

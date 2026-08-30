@@ -698,6 +698,13 @@ async function buildFieldFromPool(
     // the two-call split this used to need to type cleanly.
     const { data: promotedRow, error } = await adminClient.rpc('promote_pool_qualifier', {
       p_event_id: eventId,
+      // THE EVENT THIS QUALIFIER CAME FROM — 00218. `standings` is a snapshot
+      // taken once, before this loop, and nothing holds the pool event still
+      // afterwards; a member withdrawn from it after the snapshot frees a cap
+      // slot they may already have spent elsewhere. The RPC re-asks whether
+      // their pool entry is still there, under the tournament row lock that
+      // makes the answer hold until the insert commits.
+      p_source_event_id: sourceId,
       p_doubles: doubles,
       p_player1_id: src.players[0],
       p_player2_id: doubles ? src.players[1] : null,
@@ -715,6 +722,14 @@ async function buildFieldFromPool(
       | { ok: boolean; id?: string; reason?: string; conflict?: string }
       | null;
     if (!result?.ok) {
+      // THE POOL ENTRY WENT AWAY UNDER THE SNAPSHOT — 00218. This is the same
+      // answer as the withdrawal branch above, arrived at from the source side
+      // instead of the target side: they are not in the pool any more, so they
+      // do not take a bracket slot and the next finisher moves up.
+      if (result?.reason === 'source_entry_left') {
+        skipped++;
+        continue;
+      }
       // A collision is NOT a skip. `skipped` means the exec withdrew somebody
       // and the next finisher moves up, which is correct; this means the field
       // changed underneath the promotion, and promoting around it would build a

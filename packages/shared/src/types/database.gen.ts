@@ -4129,6 +4129,7 @@ export type Database = {
           p_player1_id: string
           p_player2_id: string
           p_seed: number
+          p_source_event_id: string
         }
         Returns: Json
       }
