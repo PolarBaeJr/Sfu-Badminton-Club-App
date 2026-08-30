@@ -27,6 +27,13 @@ const store = vi.hoisted(() => ({
   rpcResults: [] as Array<Record<string, unknown>>,
   tableWrites: [] as string[],
   entries: [] as Array<Record<string, unknown>>,
+  pairs: [] as Array<Record<string, unknown>>,
+  // Which tables were actually READ. The pairs half of this file exists
+  // because the scan read one table and the entries it needed were in the
+  // other, so "did it look?" is the assertion that catches a regression.
+  tableReads: [] as string[],
+  requiredHash: null as string | null,
+  acceptances: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock('../supabase-server', async (importOriginal) => ({
@@ -40,9 +47,18 @@ vi.mock('../supabase-server', async (importOriginal) => ({
       return Promise.resolve({ data: next, error: null });
     },
     from: (table: string) => {
+      store.tableReads.push(table);
+      // KEYED BY TABLE, and by the column each read filters on. The old mock
+      // answered every read with the same list, so a scan that queried the
+      // wrong table -- which is precisely what the pairs defect was -- came
+      // back green. The pairs read is TWO queries (player1_id, player2_id)
+      // rather than one `.or()`, and a mock that ignored the filter could not
+      // tell a fix that issues both from one that issues neither.
+      const filters: Array<[string, unknown]> = [];
       const chain: Record<string, unknown> = {};
       const self = () => chain;
-      chain.select = self; chain.eq = self; chain.in = self;
+      chain.select = self; chain.in = self;
+      chain.eq = (column: string, value: unknown) => { filters.push([column, value]); return chain; };
       chain.update = () => { store.tableWrites.push(table); return chain; };
       chain.maybeSingle = () => Promise.resolve({
         data: table === 'tournament_checkin_tokens'
@@ -50,10 +66,17 @@ vi.mock('../supabase-server', async (importOriginal) => ({
           : { name: 'Test Cup', suspended_at: null, suspension_reason: null },
         error: null,
       });
-      // The entries read is awaited directly rather than through maybeSingle,
+      // The list reads are awaited directly rather than through maybeSingle,
       // so the chain itself has to be thenable.
-      chain.then = (resolve: (v: unknown) => unknown) =>
-        Promise.resolve({ data: store.entries, error: null }).then(resolve);
+      chain.then = (resolve: (v: unknown) => unknown) => {
+        let data: Array<Record<string, unknown>> = [];
+        if (table === 'tournament_participants') data = store.entries;
+        else if (table === 'tournament_pairs') {
+          const on = filters.find(([c]) => c === 'player1_id' || c === 'player2_id');
+          data = on ? store.pairs.filter((row) => row[on[0]] === on[1]) : [];
+        }
+        return Promise.resolve({ data, error: null }).then(resolve);
+      };
       return chain;
     },
   }),
@@ -64,7 +87,11 @@ vi.mock('../actions/_shared', async (importOriginal) => ({
   requirePlayer: () => Promise.resolve({ id: 'p1', is_banned: false }),
   assertCurrentWaiver: () => Promise.resolve(),
 }));
-vi.mock('../event-waiver', () => ({ assertMyEventWaiverSigned: () => Promise.resolve() }));
+vi.mock('../event-waiver', () => ({
+  assertMyEventWaiverSigned: () => Promise.resolve(),
+  loadTournamentWaiverContext: () =>
+    Promise.resolve({ requiredHash: store.requiredHash, acceptances: store.acceptances }),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('next/headers', () => ({ headers: () => Promise.resolve(new Map()) }));
 
@@ -76,8 +103,23 @@ const entry = (id: string, eventStatus = 'checkin') => ({
   event: { id: `e-${id}`, event_type: 'mens_singles', status: eventStatus, tournament_id: 't1' },
 });
 
+// A formed team. `status` is the PAIR's status, and both halves are named so a
+// refusal can say whose signature is missing.
+const pair = (id: string, eventStatus = 'checkin') => ({
+  id, status: 'registered',
+  player1_id: 'p1', player2_id: 'p2',
+  player1: { full_name: 'Me' }, player2: { full_name: 'Sam Partner' },
+  event: { id: `e-${id}`, event_type: 'mixed_doubles', status: eventStatus, tournament_id: 't1' },
+});
+
+const signed = (playerId: string, hash: string) => ({
+  player_id: playerId, waiver_hash: hash, accepted_at: '2026-08-01T00:00:00Z',
+});
+
 beforeEach(() => {
   store.rpc = []; store.rpcResults = []; store.tableWrites = [];
+  store.tableReads = []; store.pairs = [];
+  store.requiredHash = null; store.acceptances = [];
   store.entries = [entry('pt1')];
 });
 
@@ -269,5 +311,169 @@ describe('the QR check-in scan goes through the field fence', () => {
 
     expect(r.ok).toBe(false);
     expect(store.rpc).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-029. THE SCAN COULD NOT SEE A DOUBLES TEAM AT ALL.
+// ---------------------------------------------------------------------------
+// Forming a pair is not an annotation on two participant rows -- it DELETES
+// them. `pair_tournament_entrants` removes both pool rows and inserts one
+// `tournament_pairs` row in the same statement (00102:169-173), which is what
+// makes the entry cap countable. The scan read only `tournament_participants`
+// and hardcoded `p_is_pair: false`, so a member in a formed team matched
+// nothing and was told, at the door, "You are not registered for anything in
+// this tournament."
+//
+// Pre-existing rather than introduced by the fencing work -- the read is
+// unchanged since before the remediation branch -- and reachable by every
+// doubles entrant, which is most of a club tournament.
+describe('the scan sees doubles pairs, not just singles entries', () => {
+  it('checks in a formed pair -- the entry that used to be invisible', async () => {
+    store.entries = [];
+    store.pairs = [pair('pr1')];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.checkedIn).toEqual(['mixed_doubles']);
+    // It looked in the right place...
+    expect(store.tableReads).toContain('tournament_pairs');
+    // ...and told the fence which table to re-read under the lock. Passing
+    // false here sends it to tournament_participants, where the pair id does
+    // not exist, and it returns entry_not_found.
+    expect(store.rpc).toHaveLength(1);
+    expect(store.rpc[0]!.args.p_is_pair).toBe(true);
+    expect(store.rpc[0]!.args.p_entry_id).toBe('pr1');
+  });
+
+  it('finds the member as EITHER half of the team', async () => {
+    // Two `.eq()` reads rather than one `.or()`, so both have to be issued.
+    // A fix that queried only player1_id would leave every second member of
+    // every team exactly as broken as before -- and a malformed PostgREST
+    // read comes back as an empty list, never an error, so nothing would say.
+    store.entries = [];
+    store.pairs = [{ ...pair('pr2'), player1_id: 'someone-else', player2_id: 'p1' }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.checkedIn).toHaveLength(1);
+    expect(store.rpc[0]!.args.p_entry_id).toBe('pr2');
+  });
+
+  it('carries singles and pairs through the same scan', async () => {
+    store.entries = [entry('pt1')];
+    store.pairs = [pair('pr1')];
+    store.rpcResults = [{ ok: true, already: false }, { ok: true, already: false }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.checkedIn).toHaveLength(2);
+    expect(store.rpc.map((c) => c.args.p_is_pair)).toEqual([false, true]);
+  });
+
+  it('applies the prefilters to a pair the same as to a singles entry', async () => {
+    store.entries = [];
+    store.pairs = [{ ...pair('pr1'), status: 'withdrawn' }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/no longer in this event/i);
+    expect(store.rpc).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AND THE PARTNER HAS TO HAVE SIGNED.
+// ---------------------------------------------------------------------------
+// Only the scanner's own waiver is asserted before the loop, and for a team
+// that is half the question. 00102 is explicit: check-in is the gate that
+// refuses an entrant with no current acceptance, and it is asked of the thing
+// that takes the court. `checkInPair` on the admin side already screens both
+// halves; making the pairs read work without this would have opened a way for
+// an unsigned member to reach a court that the desk cannot.
+describe('a pair needs BOTH signatures', () => {
+  const HASH = 'currentwording';
+
+  it('refuses the team when the partner has never signed, and names them', async () => {
+    store.entries = [];
+    store.pairs = [pair('pr1')];
+    store.requiredHash = HASH;
+    store.acceptances = [signed('p1', HASH)]; // the scanner only
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/Sam Partner/);
+      // Actionable by the person who reads it. Falling through to the generic
+      // "could not be checked in -- see the desk" would send them to a desk
+      // that is not allowed to record the signature for them.
+      expect(r.error).toMatch(/needs to accept/i);
+      expect(r.error).not.toMatch(/see the desk/i);
+    }
+    // And it never reached the fence: no write was attempted.
+    expect(store.rpc).toHaveLength(0);
+  });
+
+  it('says the WORDING moved when the partner signed an older version', async () => {
+    store.entries = [];
+    store.pairs = [pair('pr1')];
+    store.requiredHash = HASH;
+    store.acceptances = [signed('p1', HASH), signed('p2', 'oldwording')];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(false);
+    // They DID sign something. Telling them they never did is untrue to their
+    // face, and it is a different conversation at the door.
+    if (!r.ok) expect(r.error).toMatch(/wording has changed/i);
+  });
+
+  it('does NOT hold up the rest of the scan over one unsigned partner', async () => {
+    // The scanner's own waiver is a hard block because they can fix it where
+    // they stand. Their partner's phone is not in their hand, so refusing the
+    // whole scan would strand them out of their singles events too.
+    store.entries = [entry('pt1')];
+    store.pairs = [pair('pr1')];
+    store.requiredHash = HASH;
+    store.acceptances = [signed('p1', HASH)];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.checkedIn).toEqual(['mens_singles']);
+      expect(r.data.refused).toHaveLength(1);
+      expect(r.data.refused[0]!.event).toBe('mixed_doubles');
+    }
+    expect(store.rpc).toHaveLength(1);
+    expect(store.rpc[0]!.args.p_is_pair).toBe(false);
+  });
+
+  it('checks the team in once both halves have signed', async () => {
+    store.entries = [];
+    store.pairs = [pair('pr1')];
+    store.requiredHash = HASH;
+    store.acceptances = [signed('p1', HASH), signed('p2', HASH)];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.checkedIn).toHaveLength(1);
+  });
+
+  it('screens nothing when the tournament carries no waiver', async () => {
+    store.entries = [];
+    store.pairs = [pair('pr1')];
+    store.requiredHash = null;
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data.checkedIn).toHaveLength(1);
   });
 });

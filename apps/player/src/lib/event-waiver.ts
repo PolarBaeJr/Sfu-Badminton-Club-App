@@ -46,6 +46,44 @@ export interface MyEventWaiver {
 }
 
 /**
+ * The whole tournament's waiver state, unfiltered by member.
+ *
+ * `loadMyEventWaiver` below answers "may I check in", which is one player's
+ * question. A PAIR is not one player: 00102's own comment is explicit that
+ * check-in is asked of the thing that takes the court, so a team needs BOTH
+ * signatures and the scanning member's own is not enough. Screening the
+ * partner needs their acceptances, which the per-player read filters out.
+ *
+ * Same failure discipline as the per-player read: a failed read throws rather
+ * than returning "nothing required".
+ */
+export async function loadTournamentWaiverContext(
+  service: ServiceClient,
+  tournamentId: string,
+): Promise<{ requiredHash: string | null; acceptances: AcceptedEventWaiver[] }> {
+  const { data: tournament, error } = await service
+    .from('tournaments')
+    .select('waiver_text')
+    .eq('id', tournamentId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+
+  const text = resolveEventWaiverText(tournament);
+  if (!text) return { requiredHash: null, acceptances: [] };
+
+  const { data: rows, error: rowsError } = await service
+    .from('event_waiver_acceptances')
+    .select('player_id, waiver_hash, accepted_at')
+    .eq('tournament_id', tournamentId);
+  if (rowsError) throw new Error(rowsError.message);
+
+  return {
+    requiredHash: eventWaiverHash(text),
+    acceptances: (rows ?? []) as AcceptedEventWaiver[],
+  };
+}
+
+/**
  * Where the signed-in member stands against one tournament's event waiver.
  *
  * A failed read throws rather than returning "not required" — a gate that

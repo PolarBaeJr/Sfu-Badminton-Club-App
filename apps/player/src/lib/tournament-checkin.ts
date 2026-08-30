@@ -1,9 +1,15 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { CHECKIN_TOKEN_REGEX, ExpectedError } from '@badminton/shared';
+import {
+  CHECKIN_TOKEN_REGEX,
+  ExpectedError,
+  screenForEventWaiver,
+  type EventWaiverEntry,
+  type EventWaiverState,
+} from '@badminton/shared';
 import { createServiceRoleClient } from './supabase-server';
-import { assertMyEventWaiverSigned } from './event-waiver';
+import { assertMyEventWaiverSigned, loadTournamentWaiverContext } from './event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
 
 export interface TournamentCheckInResult {
@@ -91,18 +97,7 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   // next ten seconds. Nobody else is held up behind them.
   await assertMyEventWaiverSigned(service, tokenRow.tournament_id, player.id);
 
-  // Every entry this player holds in the tournament, with its event's status.
-  const { data: entries } = await service
-    .from('tournament_participants')
-    .select('id, status, event:tournament_events!inner(id, event_type, status, tournament_id)')
-    .eq('player_id', player.id)
-    .eq('tournament_events.tournament_id', tokenRow.tournament_id);
-
-  const rows = (entries ?? []) as unknown as {
-    id: string;
-    status: string;
-    event: { id: string; event_type: string; status: string } | null;
-  }[];
+  const rows = await loadMyEntries(service, tokenRow.tournament_id, player.id);
 
   if (rows.length === 0) {
     throw new ExpectedError('You are not registered for anything in this tournament.');
@@ -114,11 +109,7 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   // Events whose check-in has not opened yet. Reported so nothing vanishes
   // from the screen, but NOT as a failure -- see the prefilter below.
   const pending: Array<{ event: string }> = [];
-  const toClaim: string[] = [];
-  // The label to report per participant row, so the response can be built from
-  // the rows the UPDATE actually changed rather than from the rows we hoped it
-  // would change.
-  const labelById = new Map<string, string>();
+  const toClaim: ScanEntry[] = [];
 
   for (const row of rows) {
     const label = row.event?.event_type ?? 'Event';
@@ -155,9 +146,22 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
       else refused.push({ event: label, detail: refusalDetail('event_closed') });
       continue;
     }
-    toClaim.push(row.id);
-    labelById.set(row.id, label);
+    toClaim.push(row);
   }
+
+  // ---- THE PARTNER'S SIGNATURE ------------------------------------------
+  // Only the SCANNER's waiver was asserted above, and for a pair that is half
+  // the question. 00102 puts it plainly: check-in is the gate that refuses an
+  // entrant with no current acceptance, and it is asked of the thing that
+  // takes the court. A team whose partner never signed would be on court
+  // having passed the gate as one individual and never as a team — which is
+  // the exact hole `checkInPair` closes on the admin side.
+  //
+  // A REFUSAL, not a hard block, unlike the scanner's own. The scanner can do
+  // nothing about their partner's phone while standing at the door, and their
+  // singles events are unaffected: refusing the whole scan would turn one
+  // unsigned partner into a member who cannot check in to anything.
+  await screenPartnerWaivers(service, tokenRow.tournament_id, toClaim, refused);
 
   // FENCED -- 00201, and this path was the one that never got there. The
   // sibling self-check-in in tournament-actions.ts was moved behind
@@ -182,11 +186,17 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   //
   // p_actor is null for the same reason as selfCheckIn: nobody at a desk
   // checked this person in, so checked_in_by must not name one.
-  for (const id of toClaim) {
-    const label = labelById.get(id) ?? 'Event';
+  for (const claim of toClaim) {
+    const label = claim.event?.event_type ?? 'Event';
     const { data: outcome, error } = await service.rpc('set_field_entry_status', {
-      p_entry_id: id,
-      p_is_pair: false,
+      p_entry_id: claim.id,
+      // A DOUBLES ENTRY IS A PAIR ROW, and this was hardcoded false. The fence
+      // reads the wrong table for a pair id, finds nothing, and returns
+      // entry_not_found — but that was never reached, because the read above
+      // only looked at tournament_participants and pairing DELETES those rows
+      // (00102). A member in a formed team was told they were registered for
+      // nothing at all.
+      p_is_pair: claim.isPair,
       p_new_status: 'checked_in',
       p_actor: null,
     });
@@ -236,6 +246,172 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     refused,
     pending,
   };
+}
+
+/**
+ * One thing this member can be checked into: a singles entry, or a pair.
+ *
+ * `isPair` decides which table the fence reads, and `members` is who has to
+ * have signed — one person for a singles entry, both halves for a team.
+ */
+interface ScanEntry {
+  id: string;
+  isPair: boolean;
+  status: string;
+  event: { id: string; event_type: string; status: string } | null;
+  members: { id: string; name: string }[];
+}
+
+const EVENT_EMBED = 'event:tournament_events!inner(id, event_type, status, tournament_id)';
+
+/**
+ * EVERY entry this member holds in the tournament — BOTH tables.
+ *
+ * Reading only `tournament_participants` was the defect. A doubles entry stops
+ * being a participant row the moment a partner is assigned: `pair_tournament_entrants`
+ * DELETEs both pool rows and INSERTs one `tournament_pairs` row in the same
+ * statement (00102:169-173). So the read returned nothing for exactly the
+ * members most likely to be at a tournament — anyone in a formed team — and
+ * they were told "You are not registered for anything in this tournament."
+ *
+ * TWO QUERIES FOR THE PAIRS, not one `.or()`. A pair matches on either
+ * `player1_id` or `player2_id`, and whether a PostgREST `or` composes with the
+ * `!inner` filter on the embedded event is not something this codebase has
+ * proven. A read that comes back malformed arrives as an EMPTY LIST rather
+ * than an error, so getting it subtly wrong would ship a fix that reproduces
+ * the very bug it closes, silently. Two plain `.eq()` reads cannot.
+ */
+async function loadMyEntries(
+  service: ReturnType<typeof createServiceRoleClient>,
+  tournamentId: string,
+  playerId: string,
+): Promise<ScanEntry[]> {
+  // Errors are read on every one of these. A dropped error here reads as
+  // "registered for nothing", which is the same sentence the bug produced.
+  const { data: singles, error: singlesError } = await service
+    .from('tournament_participants')
+    .select(`id, status, ${EVENT_EMBED}`)
+    .eq('player_id', playerId)
+    .eq('tournament_events.tournament_id', tournamentId);
+  if (singlesError) throw new Error(singlesError.message);
+
+  const pairSelect =
+    `id, status, player1_id, player2_id, ${EVENT_EMBED}, ` +
+    'player1:players!tournament_pairs_player1_id_fkey(full_name), ' +
+    'player2:players!tournament_pairs_player2_id_fkey(full_name)';
+  const pairReads = await Promise.all(
+    (['player1_id', 'player2_id'] as const).map((column) =>
+      service
+        .from('tournament_pairs')
+        .select(pairSelect)
+        .eq(column, playerId)
+        .eq('tournament_events.tournament_id', tournamentId),
+    ),
+  );
+
+  const pairRows: Record<string, unknown>[] = [];
+  for (const { data, error } of pairReads) {
+    if (error) throw new Error(error.message);
+    pairRows.push(...((data ?? []) as unknown as Record<string, unknown>[]));
+  }
+
+  const entries: ScanEntry[] = ((singles ?? []) as unknown as {
+    id: string;
+    status: string;
+    event: ScanEntry['event'];
+  }[]).map((row) => ({
+    id: row.id,
+    isPair: false,
+    status: row.status,
+    event: row.event,
+    // The scanner is the only member of their own singles entry, and their
+    // signature is the hard block above — so this list is never blocking here.
+    // It is populated anyway so the two shapes screen through one function.
+    members: [{ id: playerId, name: 'You' }],
+  }));
+
+  for (const row of pairRows) {
+    entries.push({
+      id: row.id as string,
+      isPair: true,
+      status: row.status as string,
+      event: (row.event ?? null) as ScanEntry['event'],
+      members: [
+        { id: row.player1_id as string, name: embeddedName(row.player1) },
+        { id: row.player2_id as string, name: embeddedName(row.player2) },
+      ],
+    });
+  }
+
+  // No dedup needed: pairing removes the participant rows, so a member is in
+  // one table or the other for any given event, never both.
+  return entries;
+}
+
+/** PostgREST returns a to-one embed as an object or a one-element array. */
+function embeddedName(embed: unknown): string {
+  const one = Array.isArray(embed) ? embed[0] : embed;
+  return (one as { full_name?: string | null } | null)?.full_name || 'Your partner';
+}
+
+/**
+ * Move any pair whose partner has not signed out of `toClaim` and into
+ * `refused`, with a sentence that names them.
+ *
+ * MUTATES both lists, which is ugly and is the shape that keeps the refusal
+ * next to the other refusals rather than inventing a third outcome list the
+ * caller has to remember to render.
+ */
+async function screenPartnerWaivers(
+  service: ReturnType<typeof createServiceRoleClient>,
+  tournamentId: string,
+  toClaim: ScanEntry[],
+  refused: Array<{ event: string; detail: string }>,
+): Promise<void> {
+  const pairs = toClaim.filter((e) => e.isPair);
+  // Nothing to screen, and no reason to pay for the acceptances read on the
+  // overwhelmingly common singles-only scan.
+  if (pairs.length === 0) return;
+
+  const { requiredHash, acceptances } = await loadTournamentWaiverContext(service, tournamentId);
+  if (!requiredHash) return;
+
+  const entries: EventWaiverEntry[] = pairs.map((e) => ({ id: e.id, members: e.members }));
+  const { blocked } = screenForEventWaiver(entries, requiredHash, acceptances);
+  if (blocked.length === 0) return;
+
+  const byId = new Map(toClaim.map((e) => [e.id, e]));
+  for (const block of blocked) {
+    const entry = byId.get(block.id);
+    refused.push({
+      event: entry?.event?.event_type ?? 'Event',
+      detail: partnerWaiverDetail(block.unsigned),
+    });
+  }
+
+  const blockedIds = new Set(blocked.map((b) => b.id));
+  for (let i = toClaim.length - 1; i >= 0; i--) {
+    if (blockedIds.has(toClaim[i]!.id)) toClaim.splice(i, 1);
+  }
+}
+
+/**
+ * Said to the MEMBER, not to the exec — so it names the partner and says what
+ * the partner has to do, rather than sending the reader to the desk for
+ * something no one at the desk is allowed to fix. There is deliberately no way
+ * for anybody else to record that signature.
+ */
+function partnerWaiverDetail(
+  unsigned: readonly { name: string; state: EventWaiverState }[],
+): string {
+  const names = unsigned.map((u) => u.name).join(' and ');
+  // `stale` and `unsigned` block identically and read differently: one of them
+  // signed something and the club moved the text underneath them, and being
+  // told they "never signed" would be untrue to their face.
+  if (unsigned.every((u) => u.state === 'stale')) {
+    return `${names} accepted an earlier version of this tournament’s waiver — the wording has changed since, so it needs accepting again before your team can check in`;
+  }
+  return `${names} needs to accept this tournament’s event waiver before your team can check in — they can do it on their own phone, from the tournament page`;
 }
 
 // The fence's reason codes, said the way somebody standing at a door needs to
