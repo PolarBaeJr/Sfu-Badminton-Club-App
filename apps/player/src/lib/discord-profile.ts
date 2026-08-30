@@ -1,6 +1,7 @@
 import { createServiceRoleClient } from './supabase-server';
 import { statusForViewer, mayViewRow } from './public-profile';
 import type { PlayerStatus } from '@badminton/shared';
+import { HANDLE_MIN_LENGTH, HANDLE_MAX_LENGTH } from '@badminton/shared';
 
 /**
  * The profile card's data, and the one place that decides what a card may say.
@@ -185,10 +186,25 @@ export async function resolveProfile(
     if (!playerId) return { miss: 'not_linked' };
   }
 
+  // A HANDLE THAT CANNOT EXIST IS REFUSED BEFORE THE LADDER READ. The length
+  // bound is players_handle_shape_check's own (00092: `^[a-z][a-z0-9_]{2,19}$`),
+  // borrowed from shared rather than restated here, so nothing outside those
+  // bounds has a row to find. This matters because the option is free text a
+  // member types in Discord and the card route it feeds is anonymous: without
+  // it, a mistyped -- or 2000-character -- handle costs a full club read before
+  // missing. The miss is the SAME 'no_such_handle' either way; the caller
+  // cannot tell a refused shape from an absent member.
+  let wanted: string | null = null;
+  if (target.by === 'handle') {
+    wanted = target.value.trim().replace(/^@/, '').toLowerCase();
+    if (wanted.length < HANDLE_MIN_LENGTH || wanted.length > HANDLE_MAX_LENGTH) {
+      return { miss: 'no_such_handle' };
+    }
+  }
+
   const ladder = await loadLadder();
 
-  if (target.by === 'handle') {
-    const wanted = target.value.trim().replace(/^@/, '').toLowerCase();
+  if (wanted !== null) {
     const hit = ladder.find((r) => (r.handle ?? '').toLowerCase() === wanted);
     if (!hit) return { miss: 'no_such_handle' };
     playerId = hit.id;

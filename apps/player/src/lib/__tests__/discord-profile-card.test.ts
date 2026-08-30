@@ -175,6 +175,20 @@ describe('handle lookup cannot reach somebody who is off the ladder', () => {
       miss: 'no_such_handle',
     });
   });
+
+  it('refuses a handle no row could hold WITHOUT reading the ladder', async () => {
+    // The bound is players_handle_shape_check's (00092), so anything outside it
+    // has nothing to find. The assertion that matters is the second one: this
+    // option is free text typed in Discord and it feeds an anonymous route, so
+    // a 2000-character miss must not cost a full club read first.
+    const { resolveProfile } = await import('../discord-profile');
+    for (const typed of ['ab', 'x'.repeat(2000)]) {
+      expect(await resolveProfile({ by: 'handle', value: typed })).toEqual({
+        miss: 'no_such_handle',
+      });
+    }
+    expect(rpc).not.toHaveBeenCalled();
+  });
 });
 
 describe('the two ways the card route fails silently in the container', () => {
