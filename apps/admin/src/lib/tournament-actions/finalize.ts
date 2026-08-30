@@ -822,6 +822,9 @@ export async function recomputeEventStandings(eventId: string): Promise<{
   // one -- see the build of this list below for why that has to be representable.
   moved: Array<{ id: string; from: number | null; to: number | null }>;
   bonusesAlreadyPaid: boolean;
+  // The match that decided the event no longer has a result, so the standings
+  // were CLEARED rather than recomputed. See the block that sets it.
+  championUndetermined: boolean;
 }> {
   const adminClient = createAdminClient();
 
@@ -829,19 +832,83 @@ export async function recomputeEventStandings(eventId: string): Promise<{
   if (!event) throw new Error('Event not found');
   // Only a finished event has standings to redo. A live one gets them when it
   // is finalised.
-  if (event.status !== 'completed') return { moved: [], bonusesAlreadyPaid: false };
+  if (event.status !== 'completed') return { moved: [], bonusesAlreadyPaid: false, championUndetermined: false };
 
   const doubles = isDoublesEvent(event.event_type);
   const table = doubles ? 'tournament_pairs' : 'tournament_participants';
 
+  // `points` comes back too, because the undetermined-champion branch below
+  // clears both columns and a row holding only stale points still has to be
+  // cleared -- and still has to appear in `moved`.
   const { data: before } = await adminClient.from(table)
-    .select('id, final_position')
+    .select('id, final_position, points')
     .eq('event_id', eventId);
   const previous = new Map<string, number | null>(
     (before ?? []).map(r => [r.id as string, (r.final_position ?? null) as number | null]),
   );
 
-  const { positionMap, pointsMap, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+  // ------------------------------------------------------------------
+  // THE MATCH THAT DECIDED THE EVENT MAY HAVE LOST ITS RESULT
+  // ------------------------------------------------------------------
+  //
+  // assignPositionsAndPoints reads the champion off `totalRounds =
+  // max(round_number)` over matches that STILL HAVE A RESULT. So voiding or
+  // undoing the final of a completed event does not leave first place vacant --
+  // it promotes the round below to "the final" and crowns its winner. The
+  // semi-final winner, who LOST the final, becomes the champion, silently, with
+  // points and a trophy.
+  //
+  // That is one of the three club decisions this file already refuses to make
+  // on the officers' behalf (see the disqualified-champion guard above:
+  // "promoting the runner-up, leaving first place vacant and voiding the final
+  // are three different club decisions"). Recomputing here would pick one.
+  //
+  // So when the top of the bracket no longer has a result, the standings are
+  // CLEARED instead. Nobody holds a placing for this event until an officer
+  // finalises it again -- which is the honest state, and the one the owner
+  // chose over both leaving the stale champion up and inventing a new one.
+  //
+  // KNOCKOUT ONLY. A round robin has no deciding match: its table is computed
+  // from every result at once, and computeRoundRobinStandings already copes
+  // with a missing one.
+  const knockout = endsInKnockout(event.format as string);
+  const bracketPhase = phaseValueFor(event.format as string, 'bracket');
+  let championUndetermined = false;
+  if (knockout) {
+    // Same three filters assignPositionsAndPoints applies before it takes its
+    // max: phase (a pool_to_bracket event's pool matches share the round
+    // numbering, 00107), the third-place playoff (it shares the final's round
+    // by design, 00080), and byes (never played, so never a result).
+    let q = adminClient.from('tournament_matches')
+      .select('round_number, status')
+      .eq('event_id', eventId)
+      .not('is_third_place', 'is', true)
+      .not('is_bye', 'is', true);
+    if (bracketPhase) q = q.eq('phase', bracketPhase);
+    const { data: allBracketMatches } = await q;
+    const rows = allBracketMatches ?? [];
+    if (rows.length > 0) {
+      const topRound = Math.max(...rows.map(m => m.round_number as number));
+      championUndetermined = !rows.some(
+        m => (m.round_number as number) === topRound
+          && ['completed', 'walkover'].includes(m.status as string),
+      );
+    }
+  }
+
+  let positionMap = new Map<string, number>();
+  let pointsMap = new Map<string, number>();
+  let cleared: string[];
+  if (championUndetermined) {
+    // Every row that currently holds anything. writePlacements nulls
+    // final_position AND points for each, and an empty positionMap means
+    // nothing is written back.
+    cleared = (before ?? [])
+      .filter(r => r.final_position !== null || r.points !== null)
+      .map(r => r.id as string);
+  } else {
+    ({ positionMap, pointsMap, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table));
+  }
   await writePlacements(adminClient, table, positionMap, pointsMap, cleared);
 
   // `to: number | null` because a recompute can REMOVE a placing, not just move
@@ -872,14 +939,18 @@ export async function recomputeEventStandings(eventId: string): Promise<{
     await logAudit(adminClient, {
       tournament_id: event.tournament_id,
       event_id: eventId,
-      action: 'standings_recomputed',
+      // A DISTINCT ACTION for the cleared case. Both write the same `moved`
+      // shape, but "the standings were recomputed" and "the event no longer has
+      // a champion" are different things to read back off the log a season
+      // later, and the second one is the one an officer has to act on.
+      action: championUndetermined ? 'standings_cleared' : 'standings_recomputed',
       performed_by: (await requireCapability('tournaments.results.standings.write')).id,
-      details: { moved, bonuses_already_paid: bonusesAlreadyPaid },
+      details: { moved, bonuses_already_paid: bonusesAlreadyPaid, champion_undetermined: championUndetermined },
     });
   }
 
   revalidateEventPaths(event.tournament_id, eventId);
-  return { moved, bonusesAlreadyPaid };
+  return { moved, bonusesAlreadyPaid, championUndetermined };
 }
 
 export async function finalizeEvent(eventId: string) {

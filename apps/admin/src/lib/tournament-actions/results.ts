@@ -268,6 +268,11 @@ function assertEventResultsMutable(event: Record<string, unknown>, action: strin
  *
  * That is not hypothetical and needs no race: complete an event, void the
  * final, and the voided winner keeps first place, the points and the trophy.
+ * Recomputing is only HALF the answer there, though, and the sharper half is
+ * inside recomputeEventStandings: with the final's result gone, the champion is
+ * read off the round BELOW it, so a plain recompute would crown the semi-final
+ * winner. It clears the event's standings instead and says so, which is what
+ * `championUndetermined` reports back here.
  * The correction path (editMatchResultImpl) already learned this lesson and
  * fixed it for itself; void, restore, undo and slot editing were left with the
  * same hole. This is that fix, shared, so the set stays closed —
@@ -283,7 +288,24 @@ function assertEventResultsMutable(event: Record<string, unknown>, action: strin
  */
 async function recomputeStandingsAfterCorrection(eventId: string, lead: string): Promise<void> {
   const standings = await recomputeEventStandings(eventId);
-  if (standings.moved.length > 0 && standings.bonusesAlreadyPaid) {
+  if (standings.moved.length === 0) return;
+
+  // ONE THROW, NOT TWO. Both of these are reports, not failures — the
+  // corrective action and the placement writes have already landed — so a
+  // second ExpectedError after the first would simply never be seen. The two
+  // sentences are composed instead.
+  const bonusNote = standings.bonusesAlreadyPaid
+    ? ' Placement bonuses for this event were already paid; they went straight into the players\' ratings and nothing here can take them back — adjust them from Ratings if they matter.'
+    : '';
+
+  if (standings.championUndetermined) {
+    throw new ExpectedError(
+      `${lead}, and it was the match that decided this event — so the final positions and points have been cleared. ` +
+      'Nobody holds a placing for this event until it is finalised again.' + bonusNote,
+    );
+  }
+
+  if (standings.bonusesAlreadyPaid) {
     // Positions and points are already fixed at this point — this is not a
     // failure, it is the one part a human still has to settle. Same policy the
     // correction path has always had; deliberately NOT a second one.

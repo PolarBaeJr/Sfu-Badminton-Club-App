@@ -129,10 +129,15 @@ describe('standings recompute coverage', () => {
     expect(undo!.body).toContain(RECOMPUTE);
   });
 
-  it('the recompute helper is the only caller of recomputeEventStandings', () => {
+  it('the recompute helper is the only caller of recomputeEventStandings IN results.ts', () => {
     // One policy, not five. The bonuses-already-paid warning lives in the
     // helper; a path calling recomputeEventStandings directly would silently
     // skip it, which is how the correction path's own fix failed to generalise.
+    //
+    // SCOPED TO results.ts ON PURPOSE, and the name says so. finalize.ts calls
+    // recomputeEventStandings legitimately (it declares it), so a repo-wide
+    // assertion would have to carve that out; a caller appearing somewhere
+    // else entirely is not covered here and would need its own census.
     const direct = fns
       .filter(f => f.name !== 'recomputeStandingsAfterCorrection')
       .filter(f => f.body.includes('recomputeEventStandings('))
