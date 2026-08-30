@@ -3856,6 +3856,7 @@ export type Database = {
           p_is_pair: boolean
           p_points: Json
           p_positions: Json
+          p_results: Json
           p_won: string[]
         }
         Returns: Json
@@ -3956,6 +3957,7 @@ export type Database = {
         Args: { p_event_id: string }
         Returns: boolean
       }
+      event_results_fingerprint: { Args: { p_event_id: string }; Returns: Json }
       format_best_of: {
         Args: { p_format: Database["public"]["Enums"]["match_format"] }
         Returns: number

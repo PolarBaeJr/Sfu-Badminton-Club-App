@@ -937,6 +937,24 @@ export async function finalizeEvent(eventId: string) {
   }
   const field = (fieldRows ?? []).map(r => r.id as string);
 
+  // THE RESULTS THE PLACINGS ARE ABOUT TO BE COMPUTED FROM (00213). Taken
+  // BEFORE the computation, not after, and that ordering is the whole safety
+  // margin: a correction landing between this snapshot and the compute makes
+  // the snapshot stale, so the fence refuses a finalisation that was in fact
+  // fine. Taking it afterwards would make the snapshot agree with a ladder
+  // computed from data that had already moved — a false ACCEPT rather than a
+  // false refusal, which is the direction that crowns the wrong player.
+  //
+  // The digest is built by the database, and the same function rebuilds it
+  // under the lock, so there is no format for this side to get wrong. This
+  // carries it; it never inspects it.
+  const { data: results, error: resultsError } = await adminClient.rpc('event_results_fingerprint', {
+    p_event_id: eventId,
+  });
+  if (resultsError) {
+    throw new Error(`Could not read this event's results, so it was not finalised: ${resultsError.message}`);
+  }
+
   const { positionMap, pointsMap, wonPositions, cleared } = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
 
   // THE FLIP, UNDER THE FIELD FENCE (00209 — R1).
@@ -990,6 +1008,13 @@ export async function finalizeEvent(eventId: string) {
     p_positions: Object.fromEntries(positionMap),
     p_points: Object.fromEntries(pointsMap),
     p_clear: cleared,
+    // THE RESULTS, RE-READ UNDER THE LOCK (00213). Every check above this one
+    // asks about the ENTRIES — who is in the field, who won and is still here.
+    // The placings come from the MATCHES, and a match can be corrected or
+    // voided without any entry moving at all. A corrected match stays
+    // 'completed' and a voided one counts as settled, so neither the field
+    // check nor the open-match count can see it.
+    p_results: results,
   });
   if (completeError) {
     throw new Error(`The event could not be finalised, and nothing was saved: ${completeError.message}`);
@@ -1006,6 +1031,13 @@ export async function finalizeEvent(eventId: string) {
       throw new ExpectedError(
         `An entry that won its place left the event while this was being finalised: ${completed.winners ?? 'see the draw'}. ` +
         'Nothing was completed. Void or replay that match before finalising.',
+      );
+    }
+    if (completed?.reason === 'results_changed') {
+      throw new ExpectedError(
+        'A match result changed while this event was being finalised' +
+        (completed.matches_moved ? ` (match ${completed.matches_moved})` : '') +
+        '. Nothing was completed, because the standings were worked out from the old result. Reload and finalise again.',
       );
     }
     if (completed?.reason === 'event_status') {

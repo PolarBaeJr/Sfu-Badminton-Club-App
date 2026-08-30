@@ -861,6 +861,42 @@ const makeClient = vi.hoisted(() => () => {
     // call carried it.
     const fieldTableFor = (isPair: boolean) => (isPair ? 'tournament_pairs' : 'tournament_participants');
 
+    // 00213. The snapshot the finalisation fence compares. Modelled as the same
+    // narrow column set the SQL function builds, because the point of the fence
+    // is that a match can move WITHOUT any entry moving — so a harness that
+    // hashed the whole row would refuse on `court` and prove nothing about the
+    // columns a placing is actually computed from.
+    const resultsFingerprintFor = (eventId: string): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      for (const m of store.db.tournament_matches ?? []) {
+        if (m.event_id !== eventId) continue;
+        out[m.id as string] = {
+          st: m.status ?? null,
+          wp: m.winner_participant_id ?? null,
+          wr: m.winner_pair_id ?? null,
+          lp: m.loser_participant_id ?? null,
+          lr: m.loser_pair_id ?? null,
+          sc: m.scores ?? null,
+          wo: m.walkover_winner ?? null,
+          by: m.is_bye ?? null,
+          th: m.is_third_place ?? null,
+          rn: m.round_number ?? null,
+          bp: m.bracket_position ?? null,
+          ph: m.phase ?? null,
+          pa: m.participant_a_id ?? null,
+          pb: m.participant_b_id ?? null,
+          ra: m.pair_a_id ?? null,
+          rb: m.pair_b_id ?? null,
+          dg: m.draw_generation_id ?? null,
+        };
+      }
+      return out;
+    };
+
+    if (name === 'event_results_fingerprint') {
+      return Promise.resolve({ data: resultsFingerprintFor(args.p_event_id as string), error: null });
+    }
+
     if (name === 'set_field_entry_status') {
       const entryId = args.p_entry_id as string;
       const isPair = args.p_is_pair as boolean;
@@ -1184,6 +1220,25 @@ const makeClient = vi.hoisted(() => () => {
       ).length;
       if (incomplete > 0) {
         return Promise.resolve({ data: { ok: false, reason: 'matches_incomplete', incomplete }, error: null });
+      }
+      // 00213. Mirrors the real function: rebuild the snapshot HERE, under the
+      // lock, and refuse if it is not the one the caller placed from. The check
+      // above asks whether the matches are finished; this asks whether they
+      // still say what the ladder was computed from. A corrected result stays
+      // 'completed' and a void counts as settled, so neither is visible to it.
+      const nowResults = resultsFingerprintFor(eventId);
+      const sentResults = (args.p_results ?? null) as Record<string, unknown> | null;
+      if (sentResults === null) {
+        return Promise.resolve({ data: null, error: { message: 'p_results must be the object returned by event_results_fingerprint' } });
+      }
+      if (JSON.stringify(nowResults) !== JSON.stringify(sentResults)) {
+        const moved = Object.keys({ ...nowResults, ...sentResults }).filter(
+          (k) => JSON.stringify(nowResults[k]) !== JSON.stringify(sentResults[k]),
+        );
+        return Promise.resolve({
+          data: { ok: false, reason: 'results_changed', matches_moved: moved.sort().slice(0, 5).join(', ') },
+          error: null,
+        });
       }
       // 00212. THE PLACINGS LAND HERE, not before the call, and they land in
       // the same transaction as the flip. Modelled row by row so the fault
@@ -2352,6 +2407,93 @@ describe('finalizeEvent', () => {
     store.beforeCompleteEvent = () => { participant('p-alice').status = 'disqualified'; };
 
     await expect(finalizeEvent('e1')).rejects.toThrow(/won its place left the event/);
+    expect(event().status).toBe('live');
+  });
+
+  // ---- 00213: THE RESULTS, NOT ONLY THE ENTRIES -------------------------
+  // Every fence above this asks about the FIELD -- who is entered, who won and
+  // is still here. The placings are computed from the MATCHES, and a match can
+  // be corrected or voided without a single entry moving, so none of them can
+  // see it. These four are the other half.
+
+  it('hands the fence the results it placed from, not just the field', async () => {
+    await finalizeEvent('e1');
+
+    const snap = store.rpcCalls.find((c) => c.name === 'event_results_fingerprint');
+    expect(snap).toBeDefined();
+    expect(snap!.args.p_event_id).toBe('e1');
+
+    const call = store.rpcCalls.find((c) => c.name === 'complete_event_under_field_lock');
+    // An absent or empty p_results would leave the fence comparing nothing
+    // against nothing while every other test here still passed -- the exact
+    // vacuous shape this suite exists to catch.
+    expect(call!.args.p_results).toBeDefined();
+    expect(Object.keys(call!.args.p_results as Record<string, unknown>)).toEqual([QF]);
+  });
+
+  it('refuses when the final is corrected while the ladder is being computed', async () => {
+    // THE FINDING. The score was entered backwards and a desk fixes it after
+    // this finalisation read the draw. The match stays 'completed', nobody
+    // withdraws, nobody is disqualified -- so the field check, the winner
+    // re-check and the open-match count all pass, and the old code crowned the
+    // loser off a result the database no longer held.
+    store.beforeCompleteEvent = () => {
+      Object.assign(match(QF), { winner_participant_id: 'p-bob', loser_participant_id: 'p-alice' });
+    };
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/match result changed/);
+
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-alice').points).toBeNull();
+    expect(participant('p-bob').final_position).toBeNull();
+    expect(participant('p-bob').points).toBeNull();
+  });
+
+  it('refuses when a settled match is voided in that same window', async () => {
+    // SEPARATE FROM THE ABOVE, because 'voided' is one of the four statuses the
+    // open-match count treats as SETTLED. Voiding the final mid-finalisation
+    // therefore leaves that count at zero and is invisible to it -- the ladder
+    // would still be crowned from a match the club has struck out.
+    store.beforeCompleteEvent = () => { match(QF).status = 'voided'; };
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/match result changed/);
+
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+  });
+
+  it('takes the snapshot BEFORE computing, so a change during the compute still refuses', async () => {
+    // THE ORDERING, driven rather than asserted from the source. The hook fires
+    // on the match read inside assignPositionsAndPoints -- i.e. strictly after
+    // the snapshot and strictly before the flip.
+    //
+    // This is what discriminates the two orderings. Snapshot first: the
+    // snapshot is stale by the time the flip re-reads, and the call refuses.
+    // Snapshot after the compute: it would be taken AFTER this mutation, match
+    // the database exactly, and the call would complete a ladder computed from
+    // data that had already moved. A false refusal is a reload; a false accept
+    // is the wrong player in the club's records.
+    let fired = false;
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'unused -- this fault never fires',
+      // KEYED TO THE COMPUTE'S OWN PROJECTION. finalizeEvent reads
+      // tournament_matches twice, and the FIRST read -- the incomplete-match
+      // count -- happens before the snapshot is taken. Firing on that one would
+      // put the change ahead of the snapshot, which is a different scenario
+      // entirely and passes under either ordering. Only assignPositionsAndPoints
+      // asks for the winner columns.
+      when: ({ cols }) => {
+        if (!fired && cols.includes('winner_participant_id')) {
+          fired = true;
+          Object.assign(match(QF), { winner_participant_id: 'p-bob', loser_participant_id: 'p-alice' });
+        }
+        return false;
+      },
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/match result changed/);
+    expect(fired).toBe(true);
     expect(event().status).toBe('live');
   });
 

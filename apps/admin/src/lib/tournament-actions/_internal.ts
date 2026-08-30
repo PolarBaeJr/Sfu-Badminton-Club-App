@@ -2301,6 +2301,8 @@ export interface FencedFieldResult {
   incomplete?: number;
   /** Entries that held a placing they WON and had left the event (00211). */
   winners?: string;
+  /** Matches whose recorded result moved while the ladder was being computed (00213). */
+  matches_moved?: string;
 }
 
 /**
