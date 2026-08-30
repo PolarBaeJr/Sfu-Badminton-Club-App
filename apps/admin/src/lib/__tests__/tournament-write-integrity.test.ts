@@ -1312,7 +1312,15 @@ const makeClient = vi.hoisted(() => () => {
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
-vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'admin-1' }) }));
+// SWITCHABLE, because one of the things under test is what happens when the
+// gate REFUSES. Hoisted so the vi.mock factory below can close over it.
+const capabilityGate = vi.hoisted(() => ({ refuse: null as string | null }));
+vi.mock('../actions/_shared', () => ({
+  requireCapability: async () => {
+    if (capabilityGate.refuse) throw new Error(capabilityGate.refuse);
+    return { id: 'admin-1' };
+  },
+}));
 
 import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
@@ -1375,6 +1383,7 @@ const LIVE_RATING_DEFAULTS = {
 
 beforeEach(() => {
   store.faults = [];
+  capabilityGate.refuse = null;
   store.beforeDeletePhase = null;
   store.beforeMatchInsert = null;
   store.beforeCompleteEvent = null;
@@ -2624,6 +2633,28 @@ describe('finalizeEvent', () => {
     expect(participant('p-alice').final_position).toBe(1);
   });
 
+  it('writes nothing when the caller may not write standings', async () => {
+    // AN AUTHORISATION-ORDER DEFECT, not a missing check. finalize.ts is
+    // `'use server'`, so recomputeEventStandings is a Server Action taking a
+    // caller-supplied eventId. The gate used to sit at the BOTTOM, inside the
+    // audit block -- so the service-role clear had already committed by the time
+    // it ran, and the `moved.length > 0` guard around that block meant it did
+    // not run at all when the clear moved nothing.
+    //
+    // The assertion that matters is the second one: the refusal has to arrive
+    // with the standings still intact, not after they are gone.
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    participant('p-alice').status = 'disqualified';
+    capabilityGate.refuse = 'You do not have permission to rewrite standings.';
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/do not have permission/);
+
+    expect(participant('p-alice').final_position).toBe(1);
+  });
+
   // THE ASYMMETRY, and it is the reason the round-robin hole was argued away in
   // the first place. A DQ landing BEFORE finalisation is not the same defect: a
   // round-robin table can simply be recomputed without that entry, and
@@ -2773,6 +2804,29 @@ describe('finalizeEvent', () => {
       expect(event().status).toBe('live');
       expect(participant('p-alice').final_position).toBeNull();
     });
+  });
+
+  it('refuses rather than completing an event with no champion, positions or points', async () => {
+    // THE SAME FAIL-OPEN ONE FUNCTION DOWN, and the worst of the family. The
+    // read this fault hits is the one every position, point and placement bonus
+    // in a knockout is computed from. Discarded, the error became an empty
+    // bracket, which produced an empty position map and an empty points map --
+    // and the completion RPC accepts empty JSON and still flips the event to
+    // `completed`. The event finishes with nobody placed anywhere and not one
+    // line of error.
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'connection reset',
+      // Keyed to that read's own projection -- the guard above selects
+      // `round_number, status` and the completeness check selects the slot
+      // columns, so neither can be the source of this refusal.
+      when: ({ cols }) => !!cols && cols.includes('winner_pair_id'),
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/bracket could not be read.*connection reset/);
+
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-alice').points ?? null).toBeNull();
   });
 });
 

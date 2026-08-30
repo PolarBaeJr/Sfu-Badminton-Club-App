@@ -427,7 +427,20 @@ async function assignPositionsAndPoints(
       .in('status', ['completed', 'walkover'])
       .order('round_number', { ascending: false });
     if (bracketPhase) matchQuery = matchQuery.eq('phase', bracketPhase);
-    const { data: matches } = await matchQuery;
+    const { data: matches, error: matchesError } = await matchQuery;
+    // THE WHOLE EVENT IS COMPUTED FROM THIS ONE READ. Discarded, an error
+    // becomes `matches ?? []` an empty bracket, which produces an empty
+    // positionMap and an empty pointsMap, which the completion RPC accepts as
+    // valid JSON (00214) and still flips the event to `completed`. The result is
+    // a finished event with no champion, no positions and no points, and not one
+    // line of error anywhere -- the same silent-wrong-answer shape as the two
+    // reads above.
+    //
+    // Throwing is safe here: this runs before writePlacements and before the
+    // completion RPC, so nothing has been committed yet.
+    if (matchesError) {
+      throw new Error(`This event's bracket could not be read, so its final positions were not computed: ${matchesError.message}`);
+    }
 
     // Every position, point and placement bonus below is read off winner_* and
     // loser_*, and nothing had ever checked that those two are the players who
@@ -914,6 +927,22 @@ export async function recomputeEventStandings(eventId: string): Promise<{
   // were CLEARED rather than recomputed. See the block that sets it.
   championUndetermined: boolean;
 }> {
+  // AUTHORISE BEFORE READING OR WRITING ANYTHING. This module is `'use server'`,
+  // so every exported function in it is a Server Action -- a POST endpoint whose
+  // one parameter is supplied by the caller. This one is only ever called from
+  // recomputeStandingsAfterCorrection, but being un-called is not being
+  // unreachable.
+  //
+  // The check used to live at the bottom, inside the audit block, which made it
+  // wrong twice over: it ran AFTER writePlacements had already committed the
+  // service-role clear, and the `moved.length > 0` guard around that block meant
+  // it did not run at all when the clear moved nothing. So an uncapable caller
+  // could wipe a completed event's standings and be told "forbidden" afterwards
+  // -- or never be told at all.
+  //
+  // finalizeEvent below has always had this shape; this is the same shape. Its
+  // result is held for the audit row rather than fetched a second time.
+  const admin = await requireCapability('tournaments.results.standings.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -1003,7 +1032,7 @@ export async function recomputeEventStandings(eventId: string): Promise<{
       // a champion" are different things to read back off the log a season
       // later, and the second one is the one an officer has to act on.
       action: championUndetermined ? 'standings_cleared' : 'standings_recomputed',
-      performed_by: (await requireCapability('tournaments.results.standings.write')).id,
+      performed_by: admin.id,
       details: { moved, bonuses_already_paid: bonusesAlreadyPaid, champion_undetermined: championUndetermined },
     });
   }
