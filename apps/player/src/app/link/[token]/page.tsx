@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { DISCORD_LINK_TOKEN_REGEX, getAccountStanding } from '@badminton/shared';
 import { getCurrentPlayer } from '@/lib/supabase-server';
 import { LinkClient } from './link-client';
+import { ConsentShell } from './consent-shell';
 
 // Consumes a single-use token against whoever is signed in. Never cached.
 export const dynamic = 'force-dynamic';
@@ -18,7 +19,7 @@ export default async function LinkPage({ params }: { params: Promise<{ token: st
   // Shape-checked before anything else uses it, including the redirect below.
   if (!DISCORD_LINK_TOKEN_REGEX.test(token)) {
     return (
-      <Shell title="That link isn&apos;t valid">
+      <Shell eyebrow="DISCORD" title="That link isn&apos;t valid">
         Run <code>/link</code> in Discord to get a new one.
       </Shell>
     );
@@ -38,17 +39,31 @@ export default async function LinkPage({ params }: { params: Promise<{ token: st
   // arrival rather than after they press the button.
   const standing = getAccountStanding(player);
   if (!standing.ok) {
-    return <Shell title="Can&apos;t connect your account">{standing.detail}</Shell>;
+    return (
+      <Shell eyebrow="DISCORD" title="Can&apos;t connect your account">
+        {standing.detail}
+      </Shell>
+    );
   }
 
   return <LinkClient token={token} playerName={player.first_name ?? 'your account'} />;
 }
 
-function Shell({ title, children }: { title: string; children: React.ReactNode }) {
+// The refusals wear the same card as the grant itself — same width, same marks,
+// same rhythm. A member who is turned away should be able to see they reached
+// the right page and were told no, not wonder whether the link was broken.
+function Shell({
+  eyebrow,
+  title,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="max-w-md mx-auto py-16 px-4 text-center">
-      <h1 style={{ fontFamily: 'var(--display)', fontSize: 28, fontWeight: 700 }}>{title}</h1>
-      <p className="page-sub" style={{ marginTop: 8 }}>{children}</p>
-    </div>
+    <ConsentShell eyebrow={eyebrow} title={title}>
+      <p className="page-sub" style={{ margin: 0 }}>{children}</p>
+    </ConsentShell>
   );
 }
