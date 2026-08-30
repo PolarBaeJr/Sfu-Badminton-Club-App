@@ -5,7 +5,7 @@ import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 import type { AuthenticationResponseJSON, AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
-import { rateLimit, getClientIp, parseOrThrow, AUTH_COOKIE_NAME } from '@badminton/shared';
+import { parseOrThrow, AUTH_COOKIE_NAME } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
 import { createAdminClient } from '@/lib/supabase-server';
 import { accessLevelFor } from '@/lib/permissions';
@@ -67,20 +67,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
 
-  // 20/min, matching the player app. 5/min put five console users behind one
-  // per-IP bucket — an exec team on shared campus NAT could lock itself out of
-  // its own console with correct credentials.
+  // NOT RATE LIMITED HERE. The throttle is at the edge on the /admin/api/passkey
+  // prefix (60/min per client IP, routes.json on the proxy). A tight per-IP
+  // number is actively harmful here: an exec team on shared campus NAT sits in
+  // one bucket and could lock itself out of its own console with correct
+  // credentials.
   //
-  // What makes this safe is the same argument the player route documents: an
-  // attempt needs a valid single-use challenge cookie minted by /login/options
-  // AND a signature over it; the cookie is cleared on every outcome including
-  // failure, so an attempt cannot be retried against the same challenge; and
-  // every failure is uniform, so there is no oracle to grind. The options
-  // limiter is the real ceiling on how fast challenges can be minted at all.
-  const ip = getClientIp(request);
-  const rl = rateLimit(`admin-pk-login-verify:${ip}`, 20, 60_000);
-  if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
-
+  // What makes this safe is the same argument the player route documents, and
+  // it never depended on the limit: an attempt needs a valid single-use
+  // challenge cookie minted by /login/options AND a signature over it; the
+  // cookie is cleared on every outcome including failure, so an attempt cannot
+  // be retried against the same challenge; and every failure is uniform, so
+  // there is no oracle to grind.
   let body: z.infer<typeof bodySchema>;
   try {
     body = parseOrThrow(bodySchema, await request.json());

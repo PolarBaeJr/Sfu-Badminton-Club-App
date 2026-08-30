@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { getClientIp, rateLimit } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { getServerSupabaseUrl } from '@badminton/shared';
 import {
@@ -232,12 +231,6 @@ const KIND_LABELS: Record<string, string> = {
 
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:feedback-relay:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const guildId = new URL(request.url).searchParams.get('guildId');
   if (!guildId) return NextResponse.json({ error: 'guild_id_required' }, { status: 400 });
@@ -562,12 +555,6 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
 
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:feedback-relay:write:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
-
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -624,12 +611,6 @@ export async function POST(request: Request) {
 // Forget a mapping, after the Discord message is gone.
 export async function DELETE(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:feedback-relay:write:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const params = new URL(request.url).searchParams;
   const source = params.get('source');

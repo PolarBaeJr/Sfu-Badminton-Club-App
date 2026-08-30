@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateRegistrationOptions } from '@simplewebauthn/server';
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
-import { rateLimit, getClientIp } from '@badminton/shared';
 import { getCurrentPlayer, createServiceRoleClient } from '@/lib/supabase-server';
 import { signPayload } from '@/lib/passkey/cookie';
 import { recordChallenge } from '@/lib/passkey/challenge-store';
@@ -17,10 +16,6 @@ export async function POST(request: Request) {
   if (!isPasskeyConfigured()) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
-
-  const ip = getClientIp(request);
-  const rl = rateLimit(`pk-reg-options:${ip}`, 10, 60_000);
-  if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   // Enrolment requires an existing session — you prove who you are with an
   // emailed code or Google first, then bind a passkey to that account.

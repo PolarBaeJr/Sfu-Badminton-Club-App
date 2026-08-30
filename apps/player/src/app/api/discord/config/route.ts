@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { getClientIp, rateLimit } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -29,14 +28,6 @@ interface GuildConfig {
 // business.
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  // Looser than the members limit: the bot reads this before every operation,
-  // including each interaction, where members is only read by a sweep.
-  const limited = rateLimit(`discord:config:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const supabase = createServiceRoleClient();
 
@@ -118,14 +109,6 @@ const SNOWFLAKE = /^[0-9]{5,25}$/;
 // yesterday. Removing one is a deliberate DELETE by a human.
 export async function POST(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  // Far tighter than the read: this is a configuration write driven by a human
-  // running a command, not something any loop should be doing.
-  const limited = rateLimit(`discord:config:write:${ip}`, 10, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   let body: unknown;
   try {

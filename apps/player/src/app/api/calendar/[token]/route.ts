@@ -1,10 +1,5 @@
 import { NextResponse } from 'next/server';
-import {
-  buildICSCalendar,
-  getClientIp,
-  rateLimit,
-  clubToday,
-} from '@badminton/shared';
+import { buildICSCalendar, clubToday } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { getCheckinSettings } from '@/lib/checkin-settings';
@@ -32,13 +27,6 @@ export async function GET(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  // Rate limit: 30 feed fetches per IP per minute (calendar apps poll hourly;
-  // this only throttles token enumeration).
-  const rl = rateLimit(`cal-feed:${getClientIp(request)}`, 30, 60_000);
-  if (!rl.success) {
-    return new NextResponse('Too many requests', { status: 429 });
-  }
-
   // 48 hex chars = randomBytes(24).toString('hex') from the token actions.
   if (!/^[0-9a-f]{48}$/.test(token)) {
     return new NextResponse('Not found', { status: 404 });

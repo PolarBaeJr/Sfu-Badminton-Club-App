@@ -27,12 +27,6 @@ vi.mock('@/lib/supabase-server', () => ({
   }),
 }));
 
-const rateLimit = vi.fn();
-vi.mock('@badminton/shared', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@badminton/shared')>()),
-  rateLimit: (...args: unknown[]) => rateLimit(...args),
-}));
-
 import { POST } from '../route';
 
 const GUILD = '123456789012345678';
@@ -50,7 +44,6 @@ const VALID = { guildId: GUILD, roles: { linked: ROLE } };
 
 beforeEach(() => {
   process.env.DISCORD_SERVICE_SECRET = 'test-secret';
-  rateLimit.mockReset().mockReturnValue({ success: true });
   upsertGuilds.mockReset().mockResolvedValue({ error: null });
   upsertRoles.mockReset().mockResolvedValue({ error: null });
   upsertSettings.mockReset().mockResolvedValue({ error: null });
@@ -160,13 +153,6 @@ describe('writes', () => {
     upsertGuilds.mockResolvedValue({ error: { message: 'nope' } });
     const res = await POST(post(VALID));
     expect(res.status).toBe(503);
-    expect(upsertRoles).not.toHaveBeenCalled();
-  });
-
-  it('is rate limited', async () => {
-    rateLimit.mockReturnValue({ success: false });
-    const res = await POST(post(VALID));
-    expect(res.status).toBe(429);
     expect(upsertRoles).not.toHaveBeenCalled();
   });
 });

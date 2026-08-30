@@ -1,9 +1,37 @@
 /**
- * Lightweight in-memory rate limiter.
+ * ONE remaining in-memory rate limiter. It has exactly one caller, and new
+ * code should not reach for it.
  *
- * NOTE: This is per-instance only. On serverless (Vercel) it provides basic
- * abuse protection but is not a hard guarantee — for strict global limits
- * swap the backing store with Upstash Redis (`@upstash/ratelimit`).
+ * This module used to also export `getClientIp`. Every call site went with the
+ * limiters, which left it with zero callers, so it was deleted rather than kept
+ * "just in case". Nothing in this app needs to key on a client IP any more --
+ * that job moved to the edge, which sees the real peer address directly instead
+ * of having to reconstruct it from forwarded headers.
+ *
+ * WHY IT IS ALMOST GONE. The limiter is a module-scope Map, so it is per Node
+ * PROCESS, so the real allowance is the written number times the number of
+ * processes serving the route. That multiplier is not a constant and has
+ * already moved once: it was 2 when this was measured (an 80-request burst
+ * against a limit of 30 let 60 through, on two player replicas), and as of
+ * 2026-08-26 production runs FIVE player replicas across two hosts. Nobody
+ * edited a limit when that happened, because nothing connects the two. That is tolerable for
+ * anti-spam and is not tolerable for an auth gate, so every IP-keyed call site
+ * was deleted and replaced with a per-path limit at the edge, where the bucket
+ * is shared across replicas via Redis. See docs/ops/rate-limits.md.
+ *
+ * WHY ONE CALLER SURVIVES. /api/discord/feedback keys on the reporting Discord
+ * user, not on an IP. Every request to it arrives from the single bot process,
+ * so an IP-keyed edge limit would put the entire club in one bucket and the
+ * first member to file a few reports would silence everyone else. There is no
+ * way to express "per Discord user" at the edge, and a per-process bucket is
+ * strictly better than nothing for that one anti-spam job. The multiplier is
+ * harmless there: the limit is volume control on a feature that writes a row,
+ * not a gate on anything privileged. It is exactly why the same slop was not
+ * acceptable on the auth routes.
+ *
+ * Do not "fix" the multiplier with a database-backed store. That was built, evaluated,
+ * and rejected by the owner on 2026-08-24; the per-process behaviour is the
+ * accepted trade for this one call site.
  */
 
 type Bucket = { count: number; resetAt: number };
@@ -40,33 +68,6 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
   return { success: true, remaining: limit - existing.count, resetAt: existing.resetAt };
 }
 
-/**
- * Best-effort client IP extraction from a Request.
- *
- * Never trust the LEFTMOST X-Forwarded-For entry: anything to the left of the
- * hop our own proxy appended is attacker-supplied, so a rotating
- * `X-Forwarded-For` header would mint a fresh rate-limit bucket per request and
- * defeat throttling entirely.
- *
- * Order of trust:
- *  1. `cf-connecting-ip` — set by Cloudflare, which overwrites any
- *     client-supplied copy, so it is authoritative when we sit behind it.
- *  2. the RIGHTMOST `x-forwarded-for` entry — appended by the closest proxy;
- *     a client can prepend entries but cannot append past our edge.
- *  3. `x-real-ip`, then 'unknown'.
- */
-export function getClientIp(request: Request): string {
-  const cf = request.headers.get('cf-connecting-ip')?.trim();
-  if (cf) return cf;
-
-  const fwd = request.headers.get('x-forwarded-for');
-  if (fwd) {
-    const hops = fwd.split(',').map((h) => h.trim()).filter(Boolean);
-    const rightmost = hops[hops.length - 1];
-    if (rightmost) return rightmost;
-  }
-  return request.headers.get('x-real-ip')?.trim() || 'unknown';
-}
 
 // Periodic cleanup to prevent unbounded growth (no-op in short-lived envs).
 if (typeof setInterval !== 'undefined') {
