@@ -13,7 +13,7 @@ import {
   isOutOfEvent,
 } from '@badminton/shared';
 import type { SeedBy } from '@badminton/shared';
-import { getTournamentBonusSettings } from '../platform-settings';
+import { getTournamentBonusSettings, type TournamentBonusSettings } from '../platform-settings';
 import {
   requireCapability,
   revalidateEventPaths,
@@ -760,6 +760,22 @@ async function assignPositionsAndPoints(
         .eq('event_id', eventId)
         .not('status', 'in', '("withdrawn","disqualified")'),
     ]);
+    // THROWN, NOT `?? []`. Both of these feed pointsMap directly, and this
+    // runs BEFORE anything is written — so a refusal here costs a reload and
+    // nothing else. Swallowed, they were the quiet way to finalise a round
+    // robin in which everybody scored zero: a failed entries read gives an
+    // empty pointsMap, a failed matches read drops every win, and the ladder
+    // that lands is arithmetically consistent with itself and wrong.
+    if (allEntriesRes.error) {
+      throw new Error(
+        `The round-robin entrants could not be read, so no standings were worked out: ${allEntriesRes.error.message}`
+      );
+    }
+    if (rrMatchesRes.error) {
+      throw new Error(
+        `The round-robin results could not be read, so no standings were worked out: ${rrMatchesRes.error.message}`
+      );
+    }
     for (const e of allEntriesRes.data ?? []) pointsMap.set(e.id, 1); // 1 participation point
     for (const m of rrMatchesRes.data ?? []) {
       const winnerId = (doubles ? m.winner_pair_id : m.winner_participant_id) as string | null;
@@ -1255,25 +1271,43 @@ export async function finalizeEvent(eventId: string) {
     fencedRefusal(completed, 'Event not found');
   }
 
+  // WHY EVERY FAILURE BELOW IS HELD RATHER THAN THROWN. From here down the
+  // event is already `completed` in the database. Throwing at the first
+  // problem would skip the audit row and the "results are up" notification,
+  // which are owed to everyone regardless of what else went wrong — that is
+  // how a finalise which actually succeeded comes to look broken. So each
+  // step records its failure and the whole set is raised at the end, where
+  // the exec sees all of them rather than only the first.
+  //
+  // Held is not swallowed, and it is not fail-open either: a step that
+  // cannot read what it needs does not then proceed on a guess. An
+  // unreadable bonus setting pays no bonus; an unreadable recipient list
+  // sends no notification.
+  const deferred: Array<{ label: string; err: unknown }> = [];
+
   // Apply placement bonuses only if BOTH the global master switch and the
   // per-event column allow it. The global check has to happen here rather than
   // being left to applyPlacementBonuses' throw: by this point the event is
   // already marked completed, and throwing would skip the audit log and the
-  // participant notifications below, leaving a finalise that looks broken.
-  // Disabled bonuses are a configuration, not an error.
+  // participant notifications below.
   //
-  // A bonus FAILURE is a different matter from bonuses being switched off, and
-  // it is held rather than thrown immediately: the event is already completed,
-  // so the audit row and the "results are up" notification below are owed to
-  // everyone regardless. The error is re-raised at the end so the exec still
-  // sees that the ratings are short.
-  const bonusSettings = await getTournamentBonusSettings(adminClient);
-  let bonusError: unknown = null;
-  if (event.placement_bonus_enabled && bonusSettings.enabled) {
+  // Disabled bonuses are a configuration, not an error. An UNREADABLE setting
+  // is neither: it is an unknown, and the only safe reading of an unknown
+  // master switch is "do not pay". A placement bonus goes straight into a
+  // rating and there is no unpay, so the read that failed used to be the
+  // cheapest way in the codebase to award a tournament's worth of bonuses
+  // nobody had switched on.
+  let bonusSettings: TournamentBonusSettings | null = null;
+  try {
+    bonusSettings = await getTournamentBonusSettings(adminClient);
+  } catch (err) {
+    deferred.push({ label: 'the placement bonuses were not applied', err });
+  }
+  if (bonusSettings && event.placement_bonus_enabled && bonusSettings.enabled) {
     try {
       await applyPlacementBonuses(eventId);
     } catch (err) {
-      bonusError = err;
+      deferred.push({ label: 'the placement bonuses were not applied', err });
     }
   }
 
@@ -1284,34 +1318,84 @@ export async function finalizeEvent(eventId: string) {
     performed_by: admin.id,
   });
 
-  // Notify all participants that event is completed
+  // Notify all participants that the event is completed.
+  //
+  // A FAILED RECIPIENT READ NOW SENDS NOTHING, AND SAYS SO. It used to end in
+  // `?? []`, which turned "the roster could not be read" into "this event has
+  // no entrants" — the completion notice went to nobody and the finalise
+  // reported success. Nothing is unwound for it, because the event really is
+  // finished; it is reported instead, since the alternative is a club that
+  // never hears its results are up and an exec who was told it all went
+  // through.
   const finalPlayerIds: string[] = [];
+  let recipientsRead = true;
   if (doubles) {
-    const { data: allPairs } = await adminClient.from('tournament_pairs')
+    const { data: allPairs, error: pairsError } = await adminClient.from('tournament_pairs')
       .select('player1_id, player2_id')
       .eq('event_id', eventId)
       .not('status', 'in', '("withdrawn","disqualified")');
-    for (const pair of allPairs ?? []) {
-      finalPlayerIds.push(pair.player1_id, pair.player2_id);
+    if (pairsError) {
+      recipientsRead = false;
+      deferred.push({
+        label: 'the completion notification was not sent',
+        err: new Error(`the entrant list could not be read: ${pairsError.message}`),
+      });
+    } else {
+      for (const pair of allPairs ?? []) {
+        finalPlayerIds.push(pair.player1_id, pair.player2_id);
+      }
     }
   } else {
-    const { data: allParts } = await adminClient.from('tournament_participants')
+    const { data: allParts, error: partsError } = await adminClient.from('tournament_participants')
       .select('player_id')
       .eq('event_id', eventId)
       .not('status', 'in', '("withdrawn","disqualified")');
-    for (const p of allParts ?? []) {
-      finalPlayerIds.push(p.player_id);
+    if (partsError) {
+      recipientsRead = false;
+      deferred.push({
+        label: 'the completion notification was not sent',
+        err: new Error(`the entrant list could not be read: ${partsError.message}`),
+      });
+    } else {
+      for (const p of allParts ?? []) {
+        finalPlayerIds.push(p.player_id);
+      }
     }
   }
-  const { data: tInfo } = await adminClient.from('tournaments').select('name').eq('id', event.tournament_id).single();
-  await notifyPlayers(adminClient, finalPlayerIds,
-    'Tournament Completed',
-    `${tInfo?.name ?? 'Tournament'} has been finalized. Check the results and your updated Elo rating!`,
-    { event_id: eventId, tournament_id: event.tournament_id },
-    'tournament_event_completed'
-  );
+
+  if (recipientsRead) {
+    // The tournament's NAME is cosmetic, so this one degrades rather than
+    // cancelling — a completion notice without the name still tells the club
+    // the results are up. It is still reported, because `?? 'Tournament'` on
+    // its own is indistinguishable from a read that worked.
+    const { data: tInfo, error: tInfoError } = await adminClient
+      .from('tournaments').select('name').eq('id', event.tournament_id).single();
+    if (tInfoError) {
+      deferred.push({
+        label: 'the completion notification went out without the tournament name',
+        err: new Error(tInfoError.message),
+      });
+    }
+    await notifyPlayers(adminClient, finalPlayerIds,
+      'Tournament Completed',
+      `${tInfo?.name ?? 'Tournament'} has been finalized. Check the results and your updated Elo rating!`,
+      { event_id: eventId, tournament_id: event.tournament_id },
+      'tournament_event_completed'
+    );
+  }
 
   revalidateEventPaths(event.tournament_id, eventId);
 
-  if (bonusError) throw bonusError;
+  // One failure is re-raised AS ITSELF, so an ExpectedError from the bonus
+  // path still reaches the UI as the tidy message it was written to be. Only
+  // a genuine pile-up gets flattened into a summary, and then it names every
+  // part rather than picking one.
+  const only = deferred.length === 1 ? deferred[0] : undefined;
+  if (only) throw only.err;
+  if (deferred.length > 1) {
+    throw new Error(
+      `The event was finalised, but ${deferred.length} follow-up steps did not complete: ` +
+      deferred.map(d => `${d.label} (${d.err instanceof Error ? d.err.message : String(d.err)})`).join('; ')
+    );
+  }
 }

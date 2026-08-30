@@ -16,6 +16,15 @@ interface Fault {
   op: Op;
   message: string;
   /**
+   * The PostgREST error code. Only supplied where a caller distinguishes one
+   * code from another — `PGRST116` ("no rows") is the case that matters here,
+   * because a `.single()` that finds nothing is not a failure and the code is
+   * the only thing that says so. Without it a test cannot tell "throw on any
+   * error" from "throw on everything except an empty result", and the
+   * over-correction passes.
+   */
+  code?: string;
+  /**
    * Narrow the fault to one row: gets the filters and the payload of the write,
    * and the column list it asked for. `cols` is what lets a fault stand for a
    * MISSING COLUMN rather than a broken table — PostgREST answers 42703 only to
@@ -275,7 +284,7 @@ const makeClient = vi.hoisted(() => () => {
       order(c: string, opts?: { ascending?: boolean }) { orderBy = [c, opts?.ascending !== false]; return api; },
       async single() {
         const f = fault();
-        if (f) return { data: null, error: { message: f.message } };
+        if (f) return { data: null, error: { message: f.message, code: f.code } };
         // `.insert(x).select('id').single()` is a WRITE that returns what it
         // wrote. Reading the table instead — which is what this did — meant an
         // insert issued that way never happened at all, and any code path built
@@ -291,7 +300,7 @@ const makeClient = vi.hoisted(() => () => {
       },
       async maybeSingle() {
         const f = fault();
-        if (f) return { data: null, error: { message: f.message } };
+        if (f) return { data: null, error: { message: f.message, code: f.code } };
         const r = matching()[0];
         return { data: r ? embed(r) : null, error: null };
       },
@@ -1423,6 +1432,7 @@ import { autoSeedEventByElo } from '../tournament-actions/seeding';
 import { addParticipantToEvent, withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
+  computeRoundRobinStandings,
   FORFEIT_REASON, PUBLIC_WALKOVER_REASONS,
 } from '../tournament-actions/_internal';
 import { createAdminClient } from '../supabase-server';
@@ -6470,5 +6480,255 @@ describe('auto-seeding by rating', () => {
     Object.assign(event(), { status: 'live' });
     await expect(autoSeedEventByElo('e1')).rejects.toThrow(/moved to "live"/);
     expect(seeds()).toEqual([['p-0', null], ['p-1', null], ['p-2', null]]);
+  });
+});
+
+// ============================================================
+// The reads that used to fail OPEN
+// ============================================================
+// Five reads on the finalisation path discarded their error and carried on
+// with a default. Each had its own flavour of wrong answer, and none of them
+// was detectable from the outside: the finalise reported success every time.
+//
+// The split these tests encode is between reads taken BEFORE anything is
+// written — where a refusal costs a reload and nothing else, so they throw —
+// and reads taken AFTER the event is already `completed`, where throwing
+// would skip the audit row and the notification that are owed regardless. The
+// second kind are HELD and raised at the end. Held is not swallowed: the step
+// that could not read does not then proceed on a guess.
+describe('finalisation reads fail closed', () => {
+  beforeEach(async () => {
+    store.db.tournament_matches = [match(QF)];
+    match(QF).winner_to_match_id = null;
+    match(QF).winner_to_position = null;
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    event().placement_bonus_enabled = true;
+    store.db.platform_settings!.push({ key: 'tournament_bonuses', value: { enabled: true } });
+  });
+
+  const auditActions = () =>
+    (store.db.tournament_audit_log ?? []).map((r) => r.action as string);
+
+  it('pays no bonus when the master switch cannot be read, and still finalises', async () => {
+    store.faults.push({
+      table: 'platform_settings', op: 'select', message: 'permission denied for table platform_settings',
+      when: ({ filters }) => filters.some(([c, v]) => c === 'key' && v === 'tournament_bonuses'),
+    });
+
+    // THE DIRECTION THAT MATTERS. The old fallback object was the CONSTANTS,
+    // which carry `enabled: true` — so this exact failure used to authorise a
+    // payment on the strength of a read that did not happen.
+    const before = ratingOf('pl-alice');
+    const notifiedBefore = (store.db.notifications ?? []).length;
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/bonus settings could not be read/);
+
+    // Measured as a DELTA against the rating the match itself already moved,
+    // so this cannot pass by the bonus and the match cancelling out.
+    expect(ratingOf('pl-alice')).toBe(before);
+
+    // ...and the finalise itself went through. The event is completed, the
+    // placings landed, and the two things owed to everybody regardless of the
+    // bonus were both done. A throw at the read would have skipped both.
+    expect(event().status).toBe('completed');
+    expect(participant('p-alice').final_position).toBe(1);
+    expect(auditActions()).toContain('event_finalized');
+    expect((store.db.notifications ?? []).length).toBeGreaterThan(notifiedBefore);
+  });
+
+  it('sends no completion notification when the entrant list cannot be read', async () => {
+    // The recipient read, not the placings read: this fires only on the
+    // trailing select, after the event is already completed.
+    let finalised = false;
+    store.faults.push({
+      table: 'tournament_participants', op: 'select', message: 'permission denied for table tournament_participants',
+      when: () => finalised,
+    });
+    store.beforeCompleteEvent = () => { finalised = true; };
+    const notifiedBefore = (store.db.notifications ?? []).length;
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/entrant list could not be read/);
+
+    // NOBODY, RATHER THAN NOBODY-BY-ACCIDENT. `?? []` used to turn the failed
+    // read into an empty recipient list, so notifyPlayers was called with no
+    // one and the finalise reported success.
+    expect((store.db.notifications ?? []).length).toBe(notifiedBefore);
+    expect(event().status).toBe('completed');
+    expect(auditActions()).toContain('event_finalized');
+  });
+
+  it('reports every follow-up failure rather than only the first', async () => {
+    let finalised = false;
+    store.beforeCompleteEvent = () => { finalised = true; };
+    store.faults.push({
+      table: 'platform_settings', op: 'select', message: 'settings unreadable',
+      when: ({ filters }) => filters.some(([c, v]) => c === 'key' && v === 'tournament_bonuses'),
+    });
+    store.faults.push({
+      table: 'tournament_participants', op: 'select', message: 'roster unreadable',
+      when: () => finalised,
+    });
+
+    const err = await finalizeEvent('e1').then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(err).not.toBeNull();
+    expect(err!.message).toMatch(/2 follow-up steps/);
+    expect(err!.message).toMatch(/bonuses were not applied/);
+    expect(err!.message).toMatch(/notification was not sent/);
+  });
+
+  it('finalises silently when nothing fails, so the collector adds no noise', async () => {
+    const before = ratingOf('pl-alice');
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+    // The champion bonus is 32, and it DID land — which is what makes the
+    // three refusals above assertions about the guard rather than about a
+    // fixture in which no bonus was ever payable.
+    expect(ratingOf('pl-alice')).toBe(before + 32);
+  });
+});
+
+describe('round-robin standings reads fail closed', () => {
+  beforeEach(() => {
+    event().format = 'round_robin';
+    store.db.tournament_matches = [match(QF)];
+    match(QF).winner_to_match_id = null;
+    match(QF).winner_to_position = null;
+  });
+
+  it('refuses rather than handing back a table where everyone scored zero', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    // BEFORE ANY WRITE, so this throws outright. Swallowed, a failed entrants
+    // read produced an empty pointsMap and a failed results read dropped every
+    // win — either way the ladder that landed was internally consistent and
+    // wrong, and final_position is assigned straight off it.
+    // KEYED ON ORDER, BECAUSE THE TWO READS ARE TEXTUALLY IDENTICAL.
+    // finalizeEvent's field read (finalize.ts:1153) and the round-robin points
+    // read (finalize.ts:757) issue the same select on the same table with the
+    // same filters, and the field read runs first. Anything narrower than
+    // "the second one" would have faulted the wrong guard — which is exactly
+    // what the first version of this test did, and it passed against a
+    // message no part of this change produces.
+    let seen = 0;
+    store.faults.push({
+      table: 'tournament_participants', op: 'select', message: 'permission denied for table tournament_participants',
+      when: ({ cols }) => cols.replace(/\s/g, '') === 'id' && ++seen === 2,
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/round-robin entrants could not be read/);
+    expect(seen).toBe(2);
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+  });
+
+  it('refuses when the results themselves cannot be read', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    let armed = false;
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'permission denied for table tournament_matches',
+      when: ({ cols }) => {
+        if (cols.includes('winner_pair_id')) { armed = true; return true; }
+        return false;
+      },
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/round-robin results could not be read/);
+    expect(armed).toBe(true);
+    expect(event().status).toBe('live');
+  });
+});
+
+// ============================================================
+// The emergency stop that opened when it could not read itself
+// ============================================================
+// assertTournamentNotSuspended discarded its error, so `data` came back null
+// and `data?.suspended_at` was undefined — the one gate that stops writes on a
+// suspended tournament read "I could not find out" as "carry on". Nothing in
+// the repo exercised its failure path before these two tests.
+describe('the suspension gate fails closed', () => {
+  beforeEach(async () => {
+    store.db.tournament_matches = [match(QF)];
+    match(QF).winner_to_match_id = null;
+    match(QF).winner_to_position = null;
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+  });
+
+  it('refuses to finalise when the suspension state cannot be read', async () => {
+    store.faults.push({
+      table: 'tournaments', op: 'select', message: 'permission denied for table tournaments',
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/whether this tournament is suspended/);
+
+    // Nothing moved. The gate runs before the first write, so a refusal here
+    // costs a reload — which is the whole argument for making it refuse.
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+  });
+
+  it('still refuses on an actual suspension, and says which', async () => {
+    store.db.tournaments![0]!.suspended_at = '2026-08-29T00:00:00Z';
+    store.db.tournaments![0]!.suspension_reason = 'hall flooded';
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/suspended: hall flooded/);
+    expect(event().status).toBe('live');
+  });
+
+  it('lets an unsuspended tournament through, so the gate is not simply stuck shut', async () => {
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+  });
+});
+
+// ============================================================
+// The two reads computeRoundRobinStandings opened with
+// ============================================================
+// Driven directly rather than through finalizeEvent, because both queries are
+// textually identical to reads its callers issue earlier in the same request,
+// and an order-keyed fault would be asserting about the wrong one. The first
+// version of the round-robin tests above made exactly that mistake and passed
+// against a message no part of this change produces.
+describe('computeRoundRobinStandings reads fail closed', () => {
+  it('refuses when the event itself cannot be read', async () => {
+    store.faults.push({
+      table: 'tournament_events', op: 'select', message: 'permission denied for table tournament_events',
+    });
+    await expect(computeRoundRobinStandings('e1')).rejects.toThrow(/Could not read this event/);
+  });
+
+  it('refuses when the results cannot be read', async () => {
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'permission denied for table tournament_matches',
+    });
+    await expect(computeRoundRobinStandings('e1')).rejects.toThrow(/Could not read this event's results/);
+  });
+
+  // AN ABSENT EVENT IS STILL `[]`, and that is deliberate: the event being
+  // gone is a real state the callers already handle, and only the error case
+  // changed. Without this the fix could have been written as "throw on
+  // anything falsy" and no test would have noticed.
+  it('still returns an empty table for an event that is genuinely gone', async () => {
+    // PGRST116 IS THE WHOLE TEST. `.single()` reports "no rows" as an error,
+    // so a guard written as "throw on any error" would turn a deleted event
+    // into a refusal for every caller that already copes with `[]`. Asserting
+    // this without the code was vacuous: the harness answers an unmatched
+    // read with `{ data: null, error: null }`, which passes either way.
+    store.faults.push({
+      table: 'tournament_events', op: 'select',
+      message: 'JSON object requested, multiple (or no) rows returned',
+      code: 'PGRST116',
+    });
+    await expect(computeRoundRobinStandings('e1')).resolves.toEqual([]);
+  });
+
+  it('returns a real table when both reads work, so the guards are not stuck shut', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    const table = await computeRoundRobinStandings('e1');
+    expect(table.length).toBe(2);
+    expect(table[0]!.id).toBe('p-alice');
   });
 });

@@ -207,15 +207,50 @@ export function revalidateEventPaths(tournamentId: string, eventId?: string) {
 // Throws when the tournament is suspended. Called by mutating tournament
 // actions before they touch data; corrective actions (void/edit/undo,
 // lock/unlock draw) intentionally skip this gate.
+//
+// A FAILED READ IS A REFUSAL, NOT A PASS. This discarded its error, so
+// `data` came back null and `data?.suspended_at` was undefined — meaning the
+// one thing that could stop a write on a suspended tournament treated "I
+// could not find out" as "carry on". Suspension is the club's emergency
+// stop; a gate that opens whenever the database hiccups is not a gate.
+//
+// TWO THINGS THIS DOES NOT MEAN, both checked against the call sites rather
+// than assumed:
+//
+//   * It is not a new failure mode for a missing tournament.
+//     `tournament_events.tournament_id` is NOT NULL REFERENCES tournaments
+//     ON DELETE CASCADE (00001:667), and all twenty call sites derive the id
+//     from a row they already read — none takes it from user input. A row
+//     that is genuinely absent here is a corrupted read, and refusing is the
+//     right answer to that too.
+//
+//   * The header comment above is accurate per call site and NOT accurate
+//     under composition, which is worth stating because it changes what a
+//     throw costs. Three paths reach a guarded action after committing:
+//     finalizeEvent -> applyPlacementBonuses (held and reported, the event
+//     stays finalised), autoPairWaitingEntrants' loop (earlier pairs stay
+//     paired, that pair is refused by name), and completeTournamentWithEvents
+//     (aborts part-way through the tournament). All three are the intended
+//     behaviour of an emergency stop that cannot confirm itself, and none
+//     leaves a half-written row — they leave a completed step and a
+//     refused one.
 export async function assertTournamentNotSuspended(
   adminClient: ReturnType<typeof createAdminClient>,
   tournamentId: string
 ) {
-  const { data } = await adminClient.from('tournaments')
+  const { data, error } = await adminClient.from('tournaments')
     .select('suspended_at, suspension_reason')
     .eq('id', tournamentId)
     .single();
-  if (data?.suspended_at) {
+  if (error) {
+    throw new Error(
+      `Could not check whether this tournament is suspended (${error.message}), so nothing was changed.`
+    );
+  }
+  if (!data) {
+    throw new Error('Could not check whether this tournament is suspended: it no longer exists.');
+  }
+  if (data.suspended_at) {
     const reason = data.suspension_reason;
     throw new Error(`Tournament is suspended${reason ? `: ${reason}` : ''}. Resume it to continue.`);
   }
@@ -2066,7 +2101,22 @@ export async function forfeitOutOfEventEntries(
 export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy = 'wins') {
   const adminClient = createAdminClient();
 
-  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  // THE SAME RULE AS THE PAIRS READ BELOW, applied to the two reads this
+  // function opens with. Both used to discard their error, and both feed the
+  // tally: an unreadable event returned `[]`, and unreadable matches left
+  // every entry on zero. Either way the caller was handed a standings table
+  // that looked settled and said the wrong thing — finalize.ts assigns
+  // final_position straight off this list, so "no finishers" and "everybody
+  // drew" are both writable outcomes.
+  //
+  // A genuinely absent event still returns `[]`. That is a real state (the
+  // event was deleted underneath the caller) and it is what the callers
+  // already handle; only the error case changes.
+  const { data: event, error: eventError } = await adminClient
+    .from('tournament_events').select('*').eq('id', eventId).single();
+  if (eventError && eventError.code !== 'PGRST116') {
+    throw new Error(`Could not read this event: ${eventError.message}`);
+  }
   if (!event) return [];
 
   const doubles = isDoublesEvent(event.event_type);
@@ -2088,7 +2138,10 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
     .eq('event_id', eventId)
     .in('status', ['completed', 'walkover']);
   if (poolPhase) matchQuery = matchQuery.eq('phase', poolPhase);
-  const { data: matches } = await matchQuery;
+  const { data: matches, error: matchesError } = await matchQuery;
+  if (matchesError) {
+    throw new Error(`Could not read this event's results: ${matchesError.message}`);
+  }
 
   // EVERY entry, including the ones that left. They are filtered out of the
   // final ordering further down, not out of the tally.

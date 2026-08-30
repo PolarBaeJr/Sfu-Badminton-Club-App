@@ -7,7 +7,6 @@
 // matches and not others.
 import {
   parseTournamentBonusSettings,
-  FALLBACK_TOURNAMENT_BONUS_SETTINGS,
   type TournamentBonusSettings,
 } from '@badminton/shared';
 
@@ -24,22 +23,56 @@ export type { TournamentBonusSettings };
  * authenticated`, and these callers are server actions / server components
  * already holding an admin client.
  *
- * On a query error we return the constants rather than the parser's
- * missing-row result, because a failed read tells us nothing about what is
- * configured, and guessing "disabled" would silently stop awarding bonuses.
+ * THROWS ON A FAILED READ. A missing row and a failed read are different
+ * facts and this draws the line between them: no row means nobody has
+ * configured the section, which is a real state with a real answer (the
+ * constants), whereas an error means the configuration is simply unknown.
+ *
+ * It used to return the constants for BOTH, and the constants have
+ * `enabled: true`. So a permission error, a dropped connection or a
+ * PostgREST schema-cache miss read as "bonuses are on" and paid every
+ * placement bonus on the event. Ratings are irreversible here — there is no
+ * unpay — so the direction that costs nothing is refusing. An officer who
+ * sees "could not read the bonus settings" reloads; a club that finds out
+ * six weeks later that a settings blip awarded a tournament's worth of
+ * bonuses has nothing to undo it with.
+ *
+ * Callers that only DISPLAY the settings want the opposite of this — see
+ * readTournamentBonusSettingsForDisplay below.
  */
 export async function getTournamentBonusSettings(
   client: SettingsReader
 ): Promise<TournamentBonusSettings> {
+  const { data, error } = await client
+    .from('platform_settings')
+    .select('value')
+    .eq('key', 'tournament_bonuses')
+    .maybeSingle();
+  if (error) {
+    throw new Error(
+      `The platform bonus settings could not be read (${error.message}), ` +
+      `so there is no way to tell whether placement bonuses are switched on.`
+    );
+  }
+  return parseTournamentBonusSettings(data?.value ?? null);
+}
+
+/**
+ * The same read for a caller that is rendering the settings rather than
+ * enforcing them, which returns null instead of throwing.
+ *
+ * A failed read must not take down the page that merely wants to SHOW the
+ * figures. Its consumer's contract is already "null when not fetched, and
+ * never a default object" — handing back the constants on a failed read is
+ * precisely the lie the enforcement path above refuses to tell, so absent is
+ * the honest answer here too, and the tab it feeds simply does not render.
+ */
+export async function readTournamentBonusSettingsForDisplay(
+  client: SettingsReader
+): Promise<TournamentBonusSettings | null> {
   try {
-    const { data, error } = await client
-      .from('platform_settings')
-      .select('value')
-      .eq('key', 'tournament_bonuses')
-      .maybeSingle();
-    if (error) return FALLBACK_TOURNAMENT_BONUS_SETTINGS;
-    return parseTournamentBonusSettings(data?.value ?? null);
+    return await getTournamentBonusSettings(client);
   } catch {
-    return FALLBACK_TOURNAMENT_BONUS_SETTINGS;
+    return null;
   }
 }
