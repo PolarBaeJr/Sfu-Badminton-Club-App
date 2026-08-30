@@ -43,7 +43,7 @@ const ENFORCED_FROM = '00176';
  * triggers", verified by calling one as `anon`. Counting them inflated the
  * number by 17 and made the debt look worse than it is.
  *
- * The real shape, identical on prod and staging:
+ * The shape as measured, BEFORE 00208 and 00217:
  *
  *   32  public functions anon can execute (excluding trigger functions)
  *    9  of those are SECURITY DEFINER — the only ones that escape the caller's
@@ -63,8 +63,30 @@ const ENFORCED_FROM = '00176';
  * (get_leaderboard, get_active_season, get_executives back public pages) and
  * telling them apart needs a per-function decision, not a sweep.
  *
- * The one that most deserves that decision is `consume_discord_link_token`
- * (00165): SECURITY DEFINER, anon-reachable, and it consumes a link token.
+ * THREE OF THE NINE HAVE NOW HAD THAT DECISION, and this comment is the record
+ * of it so nobody re-litigates it from the stale count above:
+ *
+ *   is_admin(uuid), get_player_id(uuid)  — revoked by 00208. Both answered a
+ *     question about an arbitrary user id to a caller with no session.
+ *   consume_discord_link_token(text)     — revoked by 00217. The only mutator
+ *     in the set. Not a live hole (its first statement refuses a NULL
+ *     auth.uid(), and its sole call site is behind getUser()), but a
+ *     SECURITY DEFINER writer should not be reachable by an unauthenticated
+ *     role on the strength of a line in a function body.
+ *
+ * The remaining six KEEP their anon grant on purpose. get_active_season,
+ * get_executives, get_leaderboard and get_session_attendee_counts back pages
+ * that render before login (including the two health routes, which the
+ * middleware matcher excludes and which therefore really do execute as anon).
+ * is_admin_or_coach and session_checkin_open are named inside RLS policies
+ * (00005_rls.sql:319-327, 00008_richer_attendance.sql:91) — RLS is evaluated
+ * against the CALLER, so revoking those breaks the policy, not merely the
+ * direct call, and 00140:270-288 raises if either loses EXECUTE.
+ *
+ * BEWARE THE COUNT WHEN PROBING A LIVE DATABASE: 00208 and 00217 are applied
+ * on staging and PENDING on production until the cutover runs, so a grant probe
+ * against staging reads six while production still reads nine. Neither number
+ * is drift.
  *
  * Do not add to this list. A new entry means a new migration reintroduced the
  * bug; fix the migration instead.
