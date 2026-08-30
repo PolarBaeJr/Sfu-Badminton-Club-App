@@ -1,25 +1,33 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
-import { selectInChunks } from '@badminton/shared';
+import { selectInChunks, clubToday, wallClockToUtc } from '@badminton/shared';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
 import { AuditActivityChart } from './activity-chart';
+import { countDegraded } from '@/lib/audit-log-view';
 import { SeasonSelect } from '@/components/season-select';
 import { resolveSeasonScope } from '@/components/season-scope';
 
 /**
- * The day AFTER a season's last day, as a timestamp.
+ * Club-local midnight opening `date`, as a UTC instant.
  *
- * end_date is a DATE and means "this day inclusive", but created_at is a
- * timestamptz — so filtering `<= end_date` compares against midnight and drops
- * everything that happened during the season's final day. Half-open interval
- * instead: >= start, < the next morning.
+ * BOTH ENDS OF THIS FILTER WERE IN THE WRONG ZONE (F-022). The season's
+ * start_date and end_date are DATE columns and mean club-local calendar days,
+ * but created_at is a timestamptz: the start bound was pinned to UTC midnight
+ * and the end bound was `new Date('YYYY-MM-DDT00:00:00')`, which parses in
+ * whatever timezone the container happens to run in — UTC in production. Both
+ * therefore sat 7 hours ahead of the club's own midnight, so every season's
+ * window opened and closed at 17:00 the previous afternoon. Actions taken on
+ * the last evening of a season were filed under the next one.
+ *
+ * `offset` shifts by whole calendar days before the conversion, which is what
+ * makes the end bound half-open: end_date means "this day inclusive", so the
+ * filter runs up to (but not including) club-local midnight the morning after.
  */
-function dayAfter(date: string): string {
-  const d = new Date(`${date}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString();
+function clubDayStart(date: string, offset = 0): string {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  return wallClockToUtc(y, m, d + offset, 0, 0).toISOString();
 }
 
 export default async function AuditPage({
@@ -62,7 +70,11 @@ export default async function AuditPage({
   // explicit ?season= is still honoured either way. Picking a season that has
   // not started and being shown nothing is a correct answer to a question
   // somebody asked; being shown nothing on arrival is not.
-  const today = new Date().toLocaleDateString('en-CA');
+  // The club's today — toLocaleDateString with no timeZone reads the HOST
+  // zone, and the containers run UTC. On a club evening it would call a
+  // season that starts tomorrow 'already started' and stop defaulting to
+  // full history.
+  const today = clubToday();
   const impliedAndUnstarted =
     !season && !!scopeSeason?.start_date && scopeSeason.start_date > today;
   const selectedSeason = fullHistory || impliedAndUnstarted ? null : scopeSeason;
@@ -78,10 +90,16 @@ export default async function AuditPage({
   if (fullHistory) {
     scopeLabel = 'Full history';
   } else if (selectedSeason) {
-    query = query.gte('created_at', `${selectedSeason.start_date}T00:00:00Z`);
+    // start_date is nullable, and the string-template form this replaced hid
+    // that: a null interpolated to the literal `nullT00:00:00Z`, which
+    // PostgREST rejects — so the filter silently became "no rows" rather than
+    // "no lower bound". A season without a start simply has no lower bound.
+    if (selectedSeason.start_date) {
+      query = query.gte('created_at', clubDayStart(selectedSeason.start_date));
+    }
     // An unfinished season has no end: everything since it started, up to now.
     if (selectedSeason.end_date) {
-      query = query.lt('created_at', dayAfter(selectedSeason.end_date));
+      query = query.lt('created_at', clubDayStart(selectedSeason.end_date, 1));
     }
     scopeLabel = selectedSeason.name;
   } else {
@@ -145,6 +163,8 @@ export default async function AuditPage({
     subject: (log.target_id && subjects.get(log.target_id)) || null,
   }));
 
+  const degraded = countDegraded(rows);
+
   return (
     <div className="space-y-6">
       {/* ACCOUNTABILITY, not "audit": the eyebrow says what the page is FOR.
@@ -156,6 +176,37 @@ export default async function AuditPage({
         sub="Who did what, when, and the reason they typed."
         watermark="A"
       />
+
+      {/* AUDIT HEALTH, stated on the page rather than only in a policy document.
+          This trail is best effort: a write that the database refuses is
+          reported to Sentry and retried without its payload, never thrown,
+          because throwing after the mutation has already landed makes an
+          officer repeat an action that in fact succeeded. The club accepted
+          that trade on 2026-08-29 — see docs/ops/audit-policy.md.
+
+          What the reader is owed in exchange is knowing when it has bitten. A
+          degraded entry is a real fact with its detail missing, and it is
+          counted here and badged in the list.
+
+          The honest limit, which is why this line is unconditional: an entry
+          lost ENTIRELY leaves no row, so no screen can count it. Zero degraded
+          entries means none were degraded, not that none were lost. */}
+      <p className="text-xs leading-relaxed text-[var(--text-muted)]">
+        This log is best effort. A refused write is retried without its detail
+        rather than blocking the action it records, so an entry can be real and
+        incomplete at once
+        {degraded > 0 ? (
+          <>
+            {' — '}
+            <strong className="text-[var(--color-warning)]">
+              {degraded} {degraded === 1 ? 'entry' : 'entries'}
+            </strong>{' '}
+            in this view {degraded === 1 ? 'is' : 'are'} marked{' '}
+            <span className="whitespace-nowrap">&ldquo;Detail lost&rdquo;</span>
+          </>
+        ) : null}
+        . An entry lost outright leaves no row at all, so it cannot appear here.
+      </p>
 
       {/* Above the list and outside it: the shape of the whole scope is what
           makes it navigation, and a chart sitting UNDER the tab filter while

@@ -103,12 +103,60 @@ describe('logAdminAudit (general trail)', () => {
 
     await expect(logAdminAudit(client, entry, { playerId: 'player-1' })).resolves.toBeUndefined();
 
-    expect(state.sentry).toHaveLength(1);
     expect(state.sentry[0]!.message).toMatch(/audit log write failed/i);
     // The caller's own context is merged in, so the report names the subject as
     // well as the action.
     expect(state.sentry[0]!.extra.playerId).toBe('player-1');
     expect(state.sentry[0]!.extra.action).toBe('player_approved');
+  });
+
+  it('retries a required action without its payload, and a routine one not at all', async () => {
+    // player_approved is moderation, so audit-policy.ts puts it in the class
+    // whose FACT may not be silently lost (F-023). Both attempts fail here
+    // because the stub fails every insert, which is what makes the count the
+    // whole assertion.
+    // The stub records only SUCCESSFUL inserts, so the attempt count is read
+    // off the reports: a second one, saying the fact itself was lost, exists
+    // only if the degraded retry ran and also failed.
+    state.failWith = 'null value in column "action_type"';
+    await logAdminAudit(client, entry);
+    expect(state.sentry).toHaveLength(2);
+    expect(state.sentry[1]!.message).toMatch(/FACT lost/);
+
+    state.sentry.length = 0;
+    await logAdminAudit(client, { ...entry, action_type: 'session_updated' });
+    expect(state.sentry).toHaveLength(1);
+    expect(state.sentry[0]!.message).not.toMatch(/FACT lost/);
+  });
+
+  it('keeps the actor, target and typed reason when it drops the payload', async () => {
+    // Only the SECOND insert succeeds — the shape a refused payload actually
+    // has, and the one that shows what survives.
+    let n = 0;
+    const flaky = {
+      from: (table: string) => ({
+        insert: async (row: Row) => {
+          if (n++ === 0) return { error: { message: 'value too long' } };
+          state.inserted.push({ table, row });
+          return { error: null };
+        },
+      }),
+    } as never;
+
+    await logAdminAudit(flaky, {
+      ...entry,
+      new_value: { huge: 'x'.repeat(10) },
+      reason: 'Approved after they showed the receipt',
+    });
+
+    expect(state.inserted).toHaveLength(1);
+    const row = state.inserted[0]!.row;
+    expect(row.actor_id).toBe('exec-1');
+    expect(row.action_type).toBe('player_approved');
+    expect(row.target_id).toBe('player-1');
+    expect(row).not.toHaveProperty('new_value');
+    expect(row.reason).toContain('Approved after they showed the receipt');
+    expect(row.reason).toContain('value too long');
   });
 
   it('is silent when the row goes in', async () => {

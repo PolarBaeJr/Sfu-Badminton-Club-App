@@ -15,7 +15,7 @@ import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
 import { LiveTournament } from '../../../live-tournament';
-import { getTournamentBonusSettings } from '@/lib/platform-settings';
+import { readTournamentBonusSettingsForDisplay } from '@/lib/platform-settings';
 import { TOURNAMENT_MATCH_NOTES, fetchPrivateNotes } from '@/lib/private-notes';
 import { hasResultsTab } from '@/lib/event-tabs';
 import type { DrawCapabilities } from '@/lib/participant-controls';
@@ -199,13 +199,15 @@ export default async function EventPage({
     // `platform.page` — no exec holds that key, and gating on it would blank the
     // Results tab for every exec in the club.
     //
-    // `null` when not fetched, and never a default object. getTournamentBonusSettings
-    // falls back to the CONSTANTS on a failed read precisely so a broken read
-    // cannot silently read as "bonuses off"; handing the same constants to a tab
-    // that was simply never asked for would reintroduce that lie by the back
-    // door. Absent means absent, and the tab it feeds is not rendered.
+    // `null` when not fetched, and never a default object — and now `null` on
+    // a failed read as well, which is the same answer for the same reason.
+    // Handing back the default constants would say "bonuses are on" on the
+    // strength of a read that did not happen; the enforcement path refuses
+    // outright for that, and a page that only RENDERS the figures has no
+    // business taking itself down over it. Absent means absent either way,
+    // and the tab it feeds is not rendered.
     hasResultsTab(event.status)
-      ? getTournamentBonusSettings(supabase)
+      ? readTournamentBonusSettingsForDisplay(supabase)
       : Promise.resolve(null),
     // Everyone the participant picker may offer (includes admins). Skipped
     // outright, not hidden, for a viewer who cannot add an entry: this is the

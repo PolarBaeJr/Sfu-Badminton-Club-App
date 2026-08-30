@@ -1,6 +1,7 @@
 'use server';
 
 import { headers } from 'next/headers';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import {
@@ -8,13 +9,8 @@ import {
   isDoublesEvent,
   isMembershipAllowed,
   membershipRefusalMessage,
-  eventHasDraw,
-  loadTournamentEntryCounts,
-  isAtEntryCap,
-  countDoublesField,
-  doublesDrawSlots,
-  wouldExceedCapacity,
   screenSelfEntry,
+  categoryRefusalMessage,
   toCompetitionCategory,
   ExpectedError,
   type TournamentEventType,
@@ -59,13 +55,6 @@ function pickAllowedMemberships(embed: unknown): string[] | null {
   return Array.isArray(value) ? value : null;
 }
 
-// Same object-or-array unwrap again, for the per-member event cap (00098).
-function pickEntryCap(embed: unknown): number | null {
-  const row = Array.isArray(embed) ? embed[0] : embed;
-  const value = (row as { max_events_per_player?: number | null } | null)?.max_events_per_player;
-  return typeof value === 'number' ? value : null;
-}
-
 /**
  * What the member has to have been TOLD before this runs.
  *
@@ -103,7 +92,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, existingPairRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships, max_events_per_player)')
+      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -120,6 +109,24 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
     // and the number the team they end up in would be built from.
     service.from('ratings').select('singles_elo, doubles_elo').eq('player_id', player.id).maybeSingle(),
   ]);
+
+  // FAIL CLOSED ON EVERY PREREQUISITE. All four of these reads answer a
+  // question whose failure mode is silently permissive: a failed pair read is
+  // "not in a pair", a failed participant read is "not registered", a failed
+  // rating read is Elo 400. Awaiting a Supabase call is not error handling —
+  // PostgREST failures resolve, they do not reject — so each one has to be
+  // inspected or the guards below are decided by an outage.
+  for (const [what, res] of [
+    ['event', eventRes],
+    ['existing entry', existingRes],
+    ['existing pair', existingPairRes],
+    ['rating', ratingRes],
+  ] as const) {
+    if (res.error) {
+      Sentry.captureException(res.error, { tags: { action: 'registerForEvent', read: what } });
+      throw new ExpectedError('Cannot process your entry right now — please try again shortly');
+    }
+  }
 
   const event = eventRes.data;
   if (!event) throw new Error('Event not found');
@@ -223,74 +230,128 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
     throw new ExpectedError('You must accept the event waiver to register');
   }
 
-  // Capacity check is the only thing that has to wait — it depends on a fresh count.
-  //
-  // FOR DOUBLES IT IS COUNTED IN DRAW SLOTS: formed pairs, plus one slot per two
-  // people still waiting for a partner. max_participants has always meant "how
-  // many entries fit" and a doubles entry is a TEAM, so counting participant
-  // rows would let forty loose entrants into an event with room for eight teams.
-  // The same arithmetic the admin app enforces and the same the /tournaments
-  // card shows — one implementation, in @badminton/shared, so the screen cannot
-  // promise a place this action then refuses.
-  if (event.max_participants) {
-    if (doubles) {
-      const [unpairedRes, pairsRes] = await Promise.all([
-        service.from('tournament_participants').select('player_id, status').eq('event_id', eventId),
-        service.from('tournament_pairs').select('player1_id, player2_id, status').eq('event_id', eventId),
-      ]);
-      // A failed read must not read as "the event is empty" and wave somebody
-      // past a full event.
-      if (unpairedRes.error || pairsRes.error) {
-        throw new Error('Could not check how full this event is. Nothing was changed — try again.');
-      }
-      const field = countDoublesField(unpairedRes.data ?? [], pairsRes.data ?? []);
-      const after = doublesDrawSlots(field.pairs, field.unpaired + 1);
-      if (wouldExceedCapacity(field.slots, after, event.max_participants)) {
-        throw new ExpectedError('Event is full');
-      }
-    } else {
-      const { count } = await service.from('tournament_participants')
-        .select('id', { count: 'exact', head: true })
-        .eq('event_id', eventId)
-        .not('status', 'in', '("withdrawn","disqualified")');
-      if (count && count >= event.max_participants) throw new ExpectedError('Event is full');
-    }
+  // NO 400 FALLBACK. elo_before is a snapshot that seeding, the pool display
+  // and the legacy undo path all read back as fact, so inventing 400 for a
+  // member whose rating row simply failed to load contaminates all three and
+  // leaves no trace that it was a guess. A member with no rating row at all is
+  // an integrity problem to repair, not a number to make up.
+  const eloBefore = doubles ? ratingRes.data?.doubles_elo : ratingRes.data?.singles_elo;
+  if (eloBefore == null) {
+    Sentry.captureMessage('registerForEvent: no rating row for player', {
+      level: 'error',
+      tags: { action: 'registerForEvent', playerId: player.id, discipline: doubles ? 'doubles' : 'singles' },
+    });
+    throw new ExpectedError('Your club rating is not set up yet — contact an exec before entering.');
   }
 
-  // THE PER-MEMBER EVENT CAP (00098). The tournament may limit how many of its
-  // events any one member takes; the capacity check above asks whether the
-  // EVENT has room, this asks whether the MEMBER has an entry left.
+  // THE THREE COUNTS AND THE INSERT, IN ONE TRANSACTION — audit F-004.
   //
-  // The cap rides along on the tournament embed already being read above, so an
-  // uncapped tournament — which is every tournament that exists today — pays
-  // for nothing extra and does not reach the counting queries at all.
+  // Capacity, the per-member cap and the event's own status used to be read
+  // here and acted on hundreds of milliseconds later, under the SERVICE ROLE,
+  // so RLS was not in the picture and nothing held any of it still. Two members
+  // entering a 16-slot event with 15 entries both counted 15 and both inserted;
+  // an exec generating the draw in that window got a bracket built from a field
+  // that gained somebody afterwards, leaving an entrant in the event and in no
+  // match.
   //
-  // Counted across BOTH tables, because this member may already be half of a
-  // doubles pair and that pair is not a tournament_participants row. An
-  // unpaired doubles entrant DOES have one, and counts once through it — the
-  // same single slot they keep when an exec later pairs them.
-  const entryCap = pickEntryCap(event.tournament);
-  if (entryCap !== null) {
-    const counts = await loadTournamentEntryCounts(service, event.tournament_id);
-    if (isAtEntryCap(counts.get(player.id) ?? 0, entryCap)) {
-      throw new ExpectedError(
-        `You are already entered in ${entryCap} ${entryCap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
-        // "Withdraw from one" is not advice a member in a formed doubles pair
-        // can act on — leaving a pair is an exec action, because it takes
-        // somebody else's team away from them. Don't tell them to do something
-        // the app will refuse.
-        'Withdraw from one to enter another, or ask a tournament admin if one of them is a doubles pair.',
-      );
-    }
-  }
-
-  const { error: insertErr } = await service.from('tournament_participants').insert({
-    event_id: eventId,
-    player_id: player.id,
-    elo_before: (doubles ? ratingRes.data?.doubles_elo : ratingRes.data?.singles_elo) ?? 400,
-    status: 'registered',
+  // 00185 takes the event row FOR UPDATE and does all three inside it. The
+  // counting now has ONE implementation and it is that function — the reads
+  // that used to live here are gone rather than kept as a fast path, because
+  // two copies of "is this event full" is how the screen ends up promising a
+  // place this action refuses.
+  // The waiver travels WITH the entry now (00193). It used to be written after
+  // this call returned, with its result discarded, so a member could end up
+  // registered with no acceptance record at all — best-effort storage for the
+  // one artefact whose entire purpose is to be evidence. The function refuses an
+  // entry that brings no hash when the tournament has a waiver, so this is also
+  // the gate rather than a copy of it.
+  const enterWaiverHash = eventWaiverText ? eventWaiverHash(eventWaiverText) : null;
+  const { data: entered, error: enterErr } = await service.rpc('enter_tournament_event', {
+    p_event_id: eventId,
+    p_player_id: player.id,
+    p_elo_before: eloBefore,
+    p_doubles: doubles,
+    p_waiver_hash: enterWaiverHash,
+    p_user_agent: eventWaiverText ? (await headers()).get('user-agent') : null,
   });
-  if (insertErr) throw new Error(insertErr.message);
+  if (enterErr) throw new Error(enterErr.message);
+  if (!entered) throw new Error('Could not complete your entry — please try again shortly.');
+  if (!entered.ok) {
+    switch (entered.reason) {
+      case 'event_full':
+        throw new ExpectedError('Event is full');
+      case 'registration_closed':
+        throw new ExpectedError('Registration is closed');
+      case 'entry_cap':
+        throw new ExpectedError(
+          `You are already entered in ${entered.cap} ${entered.cap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
+          // "Withdraw from one" is not advice a member in a formed doubles pair
+          // can act on — leaving a pair is an exec action, because it takes
+          // somebody else's team away from them. Don't tell them to do
+          // something the app will refuse.
+          'Withdraw from one to enter another, or ask a tournament admin if one of them is a doubles pair.',
+        );
+      case 'already_registered':
+        throw new ExpectedError('Already registered');
+      // The application checked this above; reaching it here means the two
+      // disagreed, which is worth a distinct sentence rather than the generic
+      // retry message.
+      case 'waiver_required':
+        throw new ExpectedError('You must accept the event waiver to register');
+      // THE FIVE ELIGIBILITY REFUSALS 00196 MOVED INSIDE THE LOCK. Every one of
+      // them is also checked above, so reaching one here means the check and the
+      // function disagreed — which is precisely the race 00196 closes, and is a
+      // permanent refusal rather than something to retry. Telling a member whose
+      // tournament was archived mid-dialog to "try again shortly" is an
+      // instruction they can follow forever.
+      case 'tournament_suspended':
+        throw new ExpectedError(
+          `This tournament is currently suspended${entered.suspension_reason ? `: ${entered.suspension_reason}` : ''}`,
+        );
+      case 'tournament_closed':
+        // Same sentence the app-side gate produces, from the same helper, so the
+        // member cannot get two different answers to the same question.
+        throw new ExpectedError(
+          refuseClosedTournament(entered.status, 'enter this event')
+          ?? 'This tournament has ended.',
+        );
+      case 'membership_not_allowed':
+        throw new ExpectedError(
+          membershipRefusalMessage(Array.isArray(entered.allowed) ? entered.allowed : null),
+        );
+      case 'player_suspended':
+        throw new ExpectedError(
+          'Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.',
+        );
+      case 'already_in_pair':
+        throw new ExpectedError('You are already in a pair in this event.');
+      // THE COMPETITION CATEGORY, RE-ASKED UNDER THE LOCK (00200). screenSelfEntry
+      // ran above, so reaching either of these means an exec changed this
+      // member's Gender in the window between that screen and the insert — the
+      // one race the app-side gate could never win, because competition_category
+      // is only writable from the console and the console does not wait for us.
+      //
+      // The sentence comes from the same helper screenSelfEntry uses, built from
+      // the event type this action already holds. The function returns a reason
+      // and never the member's category, so this is the only place the wording
+      // exists and a member who loses the race reads what one who never entered
+      // it would have read.
+      case 'category_undeclared':
+        throw new ExpectedError(
+          categoryRefusalMessage(event.event_type as TournamentEventType, 'undeclared'),
+        );
+      case 'category_mismatch':
+        throw new ExpectedError(
+          categoryRefusalMessage(event.event_type as TournamentEventType, 'mismatch'),
+        );
+      case 'player_not_found':
+        throw new Error('Player not found');
+      case 'event_not_found':
+        throw new Error('Event not found');
+      default:
+        throw new Error('Could not complete your entry — please try again shortly.');
+    }
+  }
 
   // What this entry costs, on the club's fee ledger, priced from the member's
   // membership_type. Deliberately AFTER the participant row and deliberately
@@ -298,19 +359,6 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // ensureEntryFees never throws for exactly that reason. Per tournament, not
   // per event, so entering a second event here finds the existing row.
   await ensureEntryFees(service, event.tournament_id, [player.id]);
-
-  // Record immutable acceptance evidence keyed by the text hash. onConflict
-  // ignore keeps it idempotent if the same text is accepted twice.
-  if (eventWaiverText) {
-    const waiverHash = eventWaiverHash(eventWaiverText);
-    const userAgent = (await headers()).get('user-agent');
-    await service.from('event_waiver_acceptances').upsert({
-      player_id: player.id,
-      tournament_id: event.tournament_id,
-      waiver_hash: waiverHash,
-      user_agent: userAgent,
-    }, { onConflict: 'player_id,tournament_id,waiver_hash', ignoreDuplicates: true });
-  }
 
   revalidateTournamentPaths(event.tournament_id, eventId);
 }
@@ -388,62 +436,51 @@ async function withdrawFromEventImpl(eventId: string) {
   const player = await requirePlayer();
   const service = createServiceRoleClient();
 
-  const { data: participant } = await service.from('tournament_participants')
-    .select('id, status, event:tournament_events(tournament_id, status)')
-    .eq('event_id', eventId).eq('player_id', player.id).maybeSingle();
-
-  // NO PARTICIPANT ROW IS NOT THE SAME AS NOT ENTERED, since 00102. A member in
-  // a formed doubles pair is entered and has no row here, and 'Not registered'
-  // is flatly wrong for them.
+  // ONE STATEMENT, NOT READ-THEN-UPDATE (00193). This used to read the
+  // participant row and the event status, reason about them, and then issue an
+  // UPDATE keyed on the participant id alone — so a draw published in the gap
+  // turned a refusal that had already been decided into a withdrawal from an
+  // event that now has a bracket. The entry stays seeded, its match stays
+  // playable, the bye it was handed stays on the record, and the forfeit
+  // cascade that makes a late withdrawal coherent never runs.
   //
-  // LEAVING A FORMED PAIR IS AN EXEC ACTION, deliberately. It is not a solo act:
-  // it takes another member's team away from them and puts them back in the
-  // pool, and that person has to be told. Nothing on the player side can tell
-  // them. The exec's withdrawPairMember does the whole thing properly — the
-  // partner keeps their fee, their event waiver and their entry-cap slot — and
-  // this is the same line the app already draws once a draw is published.
-  //
-  // Entering alone and changing your mind BEFORE being paired needs none of
-  // that, and falls straight through to the ordinary withdrawal below.
-  if (!participant) {
-    const { data: pair } = await service.from('tournament_pairs')
-      .select('id').eq('event_id', eventId)
-      .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
-      .limit(1);
-    if ((pair?.length ?? 0) > 0) {
-      throw new ExpectedError(
-        'You have been paired with a partner, so leaving is not something you can do on your own — ' +
-        'it puts them back in the pool too. Ask a tournament admin to withdraw you.',
-      );
-    }
-    throw new ExpectedError('Not registered');
-  }
-  if (participant.status !== 'registered' && participant.status !== 'checked_in') {
-    throw new ExpectedError('Cannot withdraw at this stage');
-  }
-
-  const event = (Array.isArray(participant.event) ? participant.event[0] : participant.event) as
-    { tournament_id: string; status: string } | null;
-
-  // Self-withdrawal stops the moment the draw is published. Up to that point
-  // leaving only affects you; afterwards it hands your opponent a rated
-  // walkover, shifts the round above, and can strand a slot at TBD. That is a
-  // tournament-desk decision, and the machinery that makes it coherent (the
-  // forfeit cascade and its Elo snapshots) lives in the admin app — reachable
-  // only by an exec. Letting the button through here would leave the bracket
-  // exactly as broken as doing nothing.
-  if (eventHasDraw(event?.status)) {
-    throw new ExpectedError(
-      'The draw is already published — ask a tournament admin to withdraw you so your matches can be forfeited properly.',
-    );
-  }
-
-  const { error } = await service.from('tournament_participants')
-    .update({ status: 'withdrawn' })
-    .eq('id', participant.id);
+  // Every rule below still lives in exactly one place; the function is that
+  // place, and it holds the event row while it decides.
+  const { data: result, error } = await service.rpc('withdraw_from_tournament_event', {
+    p_event_id: eventId,
+    p_player_id: player.id,
+  });
   if (error) throw new Error(error.message);
+  if (!result) throw new Error('Could not withdraw you — please try again shortly.');
 
-  if (event?.tournament_id) revalidateTournamentPaths(event.tournament_id, eventId);
+  if (!result.ok) {
+    switch (result.reason) {
+      // No participant row is not the same as not entered: half of a formed
+      // pair is entered and has no row. Leaving a pair puts the partner back in
+      // the pool and they have to be told, which nothing on the player side can
+      // do — so it stays an exec action, the same line drawn once a draw exists.
+      case 'in_pair':
+        throw new ExpectedError(
+          'You have been paired with a partner, so leaving is not something you can do on your own — ' +
+          'it puts them back in the pool too. Ask a tournament admin to withdraw you.',
+        );
+      case 'not_registered':
+        throw new ExpectedError('Not registered');
+      case 'not_withdrawable':
+        throw new ExpectedError('Cannot withdraw at this stage');
+      case 'draw_published':
+        throw new ExpectedError(
+          'The draw is already published — ask a tournament admin to withdraw you so your matches can be forfeited properly.',
+        );
+      case 'event_not_found':
+        throw new Error('Event not found');
+      default:
+        throw new Error('Could not withdraw you — please try again shortly.');
+    }
+  }
+
+  const tournamentId = result.tournament_id as string | undefined;
+  if (tournamentId) revalidateTournamentPaths(tournamentId, eventId);
   else revalidatePath('/tournaments');
 }
 
@@ -493,10 +530,35 @@ async function selfCheckInImpl(eventId: string) {
   // through it, and an edited waiver un-signs somebody who did.
   await assertMyEventWaiverSigned(service, event.tournament_id, player.id);
 
-  const { error } = await service.from('tournament_participants')
-    .update({ status: 'checked_in', checked_in_at: new Date().toISOString() })
-    .eq('id', participant.id);
+  // FENCED — 00201. The member's own check-in took no lock and asked the
+  // event's status from a row read several awaits earlier, above: the waiver
+  // assertion sits between that read and this write, so the gap is real rather
+  // than theoretical. set_field_entry_status re-reads both the entry and the
+  // event under the shared field key, so a draw published in the meantime
+  // refuses the check-in instead of adding a member to a field it was not
+  // generated from.
+  //
+  // p_actor is null: nobody at a desk checked this person in, they checked
+  // themselves in, and writing their own id into checked_in_by would claim an
+  // exec was present.
+  const { data: checked, error } = await service.rpc('set_field_entry_status', {
+    p_entry_id: participant.id,
+    p_is_pair: false,
+    p_new_status: 'checked_in',
+    p_actor: null,
+  });
   if (error) throw new Error(error.message);
+  const checkedResult = checked as { ok: boolean; reason?: string; event_status?: string } | null;
+  if (!checkedResult?.ok) {
+    // The member sees the same sentence the pre-read guard above would have
+    // given them; only the moment it is decided has changed.
+    if (checkedResult?.reason === 'event_status' || checkedResult?.reason === 'event_completed') {
+      throw new ExpectedError('Check-in is not open');
+    }
+    if (checkedResult?.reason === 'entry_status') throw new ExpectedError('Cannot check in');
+    if (checkedResult?.reason === 'entry_not_found') throw new ExpectedError('Not registered');
+    throw new Error('Could not check you in. Try again.');
+  }
 
   revalidateTournamentPaths(event.tournament_id, eventId);
 }

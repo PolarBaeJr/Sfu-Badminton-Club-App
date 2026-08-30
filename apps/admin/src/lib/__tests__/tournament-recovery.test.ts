@@ -45,6 +45,17 @@ const makeClient = vi.hoisted(() => () => {
     // `.is(col, null)` — a seeded row may omit the column, which stands for SQL
     // NULL here.
     const isFilters: Array<[string, unknown]> = [];
+    // `.not(col, 'eq', v)`, `.not(col, 'is', true)` and
+    // `.not(col, 'in', '("a","b")')` — the negated filters the placings
+    // computation uses to drop byes, playoffs and unplayed matches out of the
+    // bracket read. Stored separately because they invert, not add. `is` and
+    // `eq` collapse to the same test here: an absent column is NULL either way.
+    const notFilters: Array<[string, 'eq' | 'is' | 'in', unknown]> = [];
+    // `.order(col, { ascending })`. NOT cosmetic: the placings computation reads
+    // the bracket ordered by round descending and relies on first-write-wins to
+    // give a loser the position of the LAST round they reached. Returned in
+    // seed order instead, an early-round loss would overwrite a later one.
+    const sorts: Array<[string, boolean]> = [];
     let cols = '*';
     let op: 'select' | 'update' | 'insert' | 'upsert' | 'delete' = 'select';
     let payload: Row = {};
@@ -56,8 +67,29 @@ const makeClient = vi.hoisted(() => () => {
         (r) =>
           filters.every(([c, v]) => r[c] === v) &&
           inFilters.every(([c, vs]) => vs.includes(r[c])) &&
-          isFilters.every(([c, v]) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)),
-      );
+          isFilters.every(([c, v]) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)) &&
+          notFilters.every(([c, o, v]) => (o === 'in'
+            // PostgREST spells the value list as the literal `("a","b")`.
+            ? !String(v).slice(1, -1).split(',').map((x) => x.replace(/^"|"$/g, '')).includes(String(r[c]))
+            // `not(c,'eq',true)` / `not(c,'is',true)` must also admit a row
+            // that simply omits the column: an absent boolean is SQL NULL,
+            // which `is_bye <> true` would drop but every caller here means to
+            // keep. (PostgREST needs the `is` spelling against a nullable
+            // boolean for exactly that reason.)
+            //
+            // SEED EVERY `status` YOU CARE ABOUT. The 'in' branch above admits
+            // a row whose column is absent too (the list cannot contain
+            // "undefined"), so a match seeded without a status counts as OPEN
+            // in finalizeEvent's open-match query rather than being skipped.
+            : r[c] !== v)),
+      ).sort((a, b) => {
+        for (const [c, asc] of sorts) {
+          const x = a[c] as number | string, y = b[c] as number | string;
+          if (x === y) continue;
+          return (x < y ? -1 : 1) * (asc ? 1 : -1);
+        }
+        return 0;
+      });
 
     // `select('*, event:tournament_events(*)')` — the only embed these actions
     // use. Always a COPY, because the real client decodes a row out of an HTTP
@@ -118,6 +150,8 @@ const makeClient = vi.hoisted(() => () => {
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },
       is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
+      not(c: string, o: 'eq' | 'is' | 'in', v: unknown) { notFilters.push([c, o, v]); return api; },
+      order(c: string, opts?: { ascending?: boolean }) { sorts.push([c, opts?.ascending !== false]); return api; },
       // The answer is decoded BEFORE the race fires, because the real client
       // decodes a row out of an HTTP response: the caller holds the row as it
       // was, which is the whole premise of a compare-and-swap.
@@ -269,9 +303,66 @@ const makeClient = vi.hoisted(() => () => {
     return Promise.resolve({ data: null, error: null });
   }
 
+  // The results snapshot (00213) and the corrective write fence (00215).
+  // recomputeEventStandings stopped writing placings through PostgREST when
+  // 00215 landed -- it snapshots the matches, computes, and hands both to the
+  // RPC, which re-reads the snapshot under the event lock before writing. This
+  // file's tests are about WHAT the recompute decides, not about contention,
+  // so the fence is modelled exactly but never made to refuse.
+  const resultsFingerprintFor = (eventId: string) => {
+    const out: Record<string, unknown> = {};
+    for (const m of (store.db.tournament_matches ?? []).filter((r) => r.event_id === eventId)) {
+      out[m.id as string] = {
+        st: m.status ?? null,
+        wp: m.winner_participant_id ?? null, wr: m.winner_pair_id ?? null,
+        lp: m.loser_participant_id ?? null, lr: m.loser_pair_id ?? null,
+        sc: m.scores ?? null, wo: m.walkover_winner ?? null, by: m.is_bye ?? null,
+        th: m.is_third_place ?? null, rn: m.round_number ?? null,
+        bp: m.bracket_position ?? null, ph: m.phase ?? null,
+        pa: m.participant_a_id ?? null, pb: m.participant_b_id ?? null,
+        ra: m.pair_a_id ?? null, rb: m.pair_b_id ?? null,
+        dg: m.draw_generation_id ?? null,
+      };
+    }
+    return out;
+  };
+
+  function rewritePlacingsRpc(args: Record<string, unknown>) {
+    const eventId = args.p_event_id as string;
+    const table = (args.p_is_pair as boolean) ? 'tournament_pairs' : 'tournament_participants';
+    const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+    if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+    if (ev.status !== 'completed') {
+      return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+    }
+    const sent = (args.p_results ?? null) as Record<string, unknown> | null;
+    if (sent === null) {
+      return Promise.resolve({ data: null, error: { message: 'p_results must be the object returned by event_results_fingerprint' } });
+    }
+    if (JSON.stringify(resultsFingerprintFor(eventId)) !== JSON.stringify(sent)) {
+      return Promise.resolve({ data: { ok: false, reason: 'results_changed', matches_moved: '' }, error: null });
+    }
+    const rowsOf = (id: string) => (store.db[table] ?? []).filter((r) => r.id === id && r.event_id === eventId);
+    for (const [id, pos] of Object.entries((args.p_positions as Record<string, number> | undefined) ?? {})) {
+      for (const r of rowsOf(id)) r.final_position = pos;
+    }
+    for (const [id, pts] of Object.entries((args.p_points as Record<string, number> | undefined) ?? {})) {
+      for (const r of rowsOf(id)) r.points = pts;
+    }
+    for (const id of ((args.p_clear as string[] | undefined) ?? [])) {
+      for (const r of rowsOf(id)) Object.assign(r, { final_position: null, points: null });
+    }
+    // The status is NOT flipped: the event was completed before the call.
+    return Promise.resolve({ data: { ok: true, event_id: eventId, tournament_id: ev.tournament_id }, error: null });
+  }
+
   function rpc(name: string, args: Record<string, unknown>) {
     if (name === 'apply_tournament_match_rating') return applyRpc(args);
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
+    if (name === 'event_results_fingerprint') {
+      return Promise.resolve({ data: resultsFingerprintFor(args.p_event_id as string), error: null });
+    }
+    if (name === 'rewrite_event_placings_under_field_lock') return rewritePlacingsRpc(args);
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -289,6 +380,8 @@ import { createAdminClient } from '../supabase-server';
 
 const QF = 'match-qf';
 const SF = 'match-sf';
+// Seeded only by the finished-event scenario below, not by the shared fixture.
+const PLAYOFF = 'match-3p';
 
 function ratingOf(playerId: string) {
   return store.db.ratings!.find((r) => r.player_id === playerId)!.singles_elo as number;
@@ -458,21 +551,39 @@ describe('void / restore / replay', () => {
     expect(match(QF).status).toBe('ready');
   });
 
-  it('still rewinds a genuinely pre-snapshot match, where elo_after is stamped', async () => {
-    // The other half of that guard: a match rated before the snapshot column
-    // existed has no snapshot but DOES carry elo_after, and must still reverse.
+  // F-010. The above used to have a mirror-image partner asserting that a
+  // snapshot-less match with elo_after stamped "still rewinds" to elo_before.
+  // That behaviour is gone, and this is the test that pins its absence.
+  //
+  // elo_before is a REGISTRATION-time figure, so rewinding to it undoes the
+  // player's whole event rather than this match — here Alice arrives at the
+  // semi on 1030 having won the quarter, and the old branch would have put her
+  // back on 1000 and thrown away the quarter with it. The branch could not
+  // distinguish that from the case it was written for, because no per-match
+  // evidence survives without a snapshot.
+  //
+  // Nothing is lost by removing it: apply_tournament_match_rating writes the
+  // snapshot in the same transaction as the ladder move, so "decided, no
+  // snapshot" means "never rated" and leaving the ladder alone is correct.
+  it('leaves the ladder alone when a decided match carries no snapshot', async () => {
     Object.assign(match(QF), {
       status: 'completed', winner_participant_id: 'p-alice', loser_participant_id: 'p-bob',
       scores: [{ a: 21, b: 15 }], elo_snapshot: null,
     });
+    // Stamped by a DIFFERENT, genuinely rated match in the same event — which is
+    // exactly why their presence was never evidence about this one.
     store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after = 1030;
     store.db.tournament_participants!.find((p) => p.id === 'p-bob')!.elo_after = 970;
     store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_elo = 1030;
 
     expect((await undoMatchResult(QF)).ok).toBe(true);
 
-    expect(ratingOf('pl-alice')).toBe(1000); // back to elo_before
-    expect(store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after).toBeNull();
+    // Her rating and the event's accumulated record both survive the undo.
+    expect(ratingOf('pl-alice')).toBe(1030);
+    expect(store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after).toBe(1030);
+    // The match itself is still undone.
+    expect(match(QF).status).toBe('ready');
+    expect(match(QF).scores).toBeNull();
   });
 
   it('only restores a voided match', async () => {
@@ -815,5 +926,142 @@ describe('overtaken by another desk', () => {
       expect(match(QF).status).toBe('completed');
       expect(match(QF).winner_participant_id).toBe('p-alice');
     });
+  });
+});
+
+// A CORRECTIVE ACTION ON A FINISHED EVENT REDOES THE PLACINGS.
+//
+// The gate on all of these (assertEventResultsMutable) deliberately admits a
+// COMPLETED event, so an officer can still fix the day's mistakes after the
+// trophy has notionally been handed out. That is the right call, but it means
+// every one of them can leave final_position and points describing a bracket
+// that no longer exists — and only editMatchResultImpl ever did anything about
+// it. Voiding the final is the sharp case, and it needs no race at all: two
+// clicks by one admin used to leave the voided winner holding first place.
+//
+// These drive the real actions, so they fail if the recompute is removed from
+// any path rather than merely if a call site is renamed —
+// standings-recompute-coverage.test.ts is the structural half.
+describe('corrective actions on a finished event', () => {
+  // The seeded bracket, played out and finalised: alice beat bob in the final,
+  // and the placings say so.
+  function finishTheEvent() {
+    const ev = store.db.tournament_events!.find(e => e.id === 'e1')!;
+    // SET HERE, NOT IN THE SHARED FIXTURE, and that omission is load-bearing:
+    // the fixture has no `format`, so endsInKnockout() is false for every other
+    // test in this file and the placings run through computeRoundRobinStandings
+    // — even though the seeded rows are a quarter-final feeding a semi-final.
+    // These three tests are about the BRACKET rule (max(round_number) decides
+    // who is champion), which that path never reaches, so they declare the
+    // format they mean. Left unset, they pass or fail for reasons that have
+    // nothing to do with what they claim to test.
+    ev.format = 'single_elimination';
+    Object.assign(match(QF), {
+      status: 'completed', round_number: 1,
+      winner_participant_id: 'p-alice', loser_participant_id: 'p-bob',
+      scores: [{ a: 21, b: 15 }],
+    });
+    // The final. Nothing feeds out of it, so max(round_number) makes it the
+    // round that crowns a champion.
+    Object.assign(match(SF), {
+      status: 'completed', round_number: 2,
+      participant_a_id: 'p-alice', participant_b_id: 'p-carol',
+      winner_participant_id: 'p-carol', loser_participant_id: 'p-alice',
+      scores: [{ a: 12, b: 21 }],
+    });
+    // The third-place playoff. It shares the final's round_number by design
+    // (00080) and the placings computation holds it out of the bracket read, so
+    // it is the one match in a finished knockout that can be corrected without
+    // the downstream guard refusing — every other match feeds one that already
+    // has a result. That makes it the only way to exercise "a correction that
+    // did NOT decide the event", which is what the third test needs.
+    store.db.tournament_matches!.push({
+      id: PLAYOFF, event_id: 'e1', status: 'completed', is_bye: false,
+      is_third_place: true, round_number: 2,
+      participant_a_id: 'p-bob', participant_b_id: 'p-dan',
+      winner_participant_id: 'p-bob', loser_participant_id: 'p-dan',
+      winner_to_match_id: null, winner_to_position: null,
+      scores: [{ a: 21, b: 17 }], elo_snapshot: null, notes: null,
+    });
+    const entry = (id: string) => store.db.tournament_participants!.find(p => p.id === id)!;
+    // Dan is seeded WITHDRAWN in the shared fixture; he played the playoff here,
+    // so he is in the event. Left withdrawn, the finalisation guard would refuse
+    // the recompute for holding a placing while out of the event.
+    entry('p-dan').status = 'checked_in';
+    entry('p-carol').final_position = 1;
+    entry('p-alice').final_position = 2;
+    entry('p-bob').final_position = 3;
+    entry('p-dan').final_position = 4;
+    ev.status = 'completed';
+  }
+
+  const placing = (id: string) =>
+    store.db.tournament_participants!.find(p => p.id === id)!.final_position ?? null;
+
+  it('clears the standings when the match that decided the event is voided', async () => {
+    finishTheEvent();
+    expect(placing('p-carol')).toBe(1);
+
+    const res = await voidMatch(SF, 'wrong court');
+
+    // The void LANDS — the officer's correction is never blocked. What it
+    // reports is that the event no longer has a champion.
+    expect(match(SF).status).toBe('voided');
+    expect(res.ok === false && res.error).toMatch(/decided this event/i);
+
+    // The voided final is out of the bracket read (status in
+    // completed/walkover), so the placing it produced goes with it. Before the
+    // fix this stayed at 1: the voided winner kept first place, the points and
+    // the trophy.
+    expect(placing('p-carol')).toBeNull();
+
+    // AND NOBODY ELSE IS CROWNED. This is the second half, and the sharper
+    // one: totalRounds is max(round_number) over matches that still HAVE a
+    // result, so a plain recompute would promote the round below the final and
+    // hand first place to alice — who LOST the final. Three club decisions
+    // exist here (promote the runner-up, leave first vacant, void the final)
+    // and the code picks none of them; it clears and says so.
+    expect(placing('p-alice')).toBeNull();
+    expect(placing('p-bob')).toBeNull();
+  });
+
+  it('clears them when the final is undone rather than voided', async () => {
+    finishTheEvent();
+
+    const res = await undoMatchResult(SF);
+
+    // Same hole by another door — undo clears the result instead of voiding the
+    // match, and reaches the identical stale placing.
+    expect(res.ok === false && res.error).toMatch(/decided this event/i);
+    expect(placing('p-carol')).toBeNull();
+    expect(placing('p-alice')).toBeNull();
+  });
+
+  it('recomputes rather than clears when the corrected match did NOT decide the event', async () => {
+    // THE DISCRIMINATOR. Clearing is scoped to the top of the bracket losing
+    // its result; a correction elsewhere still has a derivable champion and
+    // must get the recompute, not the wipe. Without this test a fix that
+    // cleared on EVERY correction would pass the two above.
+    finishTheEvent();
+
+    expect((await voidMatch(PLAYOFF, 'wrong court')).ok).toBe(true);
+
+    // The final still stands, so carol is still the champion and alice is still
+    // the runner-up she was beaten into. Bob keeps 3rd — not off the playoff,
+    // which no longer has a result, but off losing the round before the final.
+    expect(placing('p-carol')).toBe(1);
+    expect(placing('p-alice')).toBe(2);
+    expect(placing('p-bob')).toBe(3);
+    // Fourth place came from the playoff alone and goes with it.
+    expect(placing('p-dan')).toBeNull();
+  });
+
+  it('leaves a live event alone', async () => {
+    // recomputeEventStandings no-ops unless the event is completed, so the
+    // corrective actions on a LIVE event must not touch placings at all — this
+    // is what makes the new call safe to put on every path.
+    expect((await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a')).ok).toBe(true);
+    expect((await voidMatch(QF, 'wrong court')).ok).toBe(true);
+    expect(placing('p-alice')).toBeNull();
   });
 });

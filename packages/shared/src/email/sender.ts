@@ -56,7 +56,7 @@ export async function sendEmail(
   subject: string,
   html: string,
   headers?: Record<string, string>,
-): Promise<void> {
+): Promise<{ providerMessageId: string | null }> {
   // Throws on failure so callers can decide whether to swallow + log.
   // We deliberately don't catch internally — earlier behaviour double-swallowed
   // errors (here and at every call site), making delivery failures invisible.
@@ -64,14 +64,21 @@ export async function sendEmail(
     throw new Error('RESEND_API_KEY not set');
   }
   const r = getResend();
-  const { error } = await r.emails.send({ from: FROM, to, subject, html, headers });
+  const { data, error } = await r.emails.send({ from: FROM, to, subject, html, headers });
   if (error) {
     throw new Error(`Resend send failed: ${error.message}`);
   }
+  // Returned, not discarded. It is the only durable link between a member who
+  // says the mail never arrived and the provider's own log of what happened to
+  // it, and the weekly digest now writes it down per recipient. Callers that do
+  // not care simply ignore it; nothing about the throw-on-failure contract
+  // changes. `null` rather than undefined so a caller storing it has one shape
+  // to handle whether or not the provider named the message.
+  return { providerMessageId: data?.id ?? null };
 }
 
 export type SendOutcome =
-  | { sent: true }
+  | { sent: true; providerMessageId: string | null }
   | { sent: false; reason: 'suppressed' | 'opted_out' };
 
 /**
@@ -156,7 +163,14 @@ async function sendCategoryEmail(
         .select('notification_preferences')
         .eq('email', address)
         .maybeSingle();
-      void preferenceError;
+      // The POLICY does not change — a failed preference read still sends, for
+      // the reason above. What changes is that it stops being silent. One
+      // member's lookup failing is noise; the read failing for EVERY recipient
+      // of a digest run means the club just mailed everyone who opted out, and
+      // the old `void preferenceError` left exactly nothing to notice that by.
+      // Same lesson as the suppression gate above, one severity down: fail open
+      // if you must, but never fail open quietly.
+      if (preferenceError) warnPreferenceCheckFailed(preferenceError.message);
       if (player && !isEmailCategoryEnabled(player.notification_preferences, category)) {
         return { sent: false, reason: 'opted_out' };
       }
@@ -182,8 +196,9 @@ async function sendCategoryEmail(
     headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
   }
 
-  await sendEmail(to, subject, withUnsubscribeFooter(html, oneUrl, allUrl), headers);
-  return { sent: true };
+  const { providerMessageId } = await sendEmail(
+    to, subject, withUnsubscribeFooter(html, oneUrl, allUrl), headers);
+  return { sent: true, providerMessageId };
 }
 
 // ONCE PER PROCESS, TO THE CONTAINER LOG, AND NOT TO THE RECIPIENT.
@@ -226,6 +241,22 @@ function warnUnsubscribeUnavailable(base: string | undefined): void {
     'Every notification email from this container leaves "Report spam" as the recipient\'s only ' +
     'option, which costs sender reputation for the whole club. Set it in .env and restart. ' +
     'Reported once per process.',
+  );
+}
+
+// ONCE PER PROCESS, like the unsubscribe warning above and for the same reason:
+// this sits inside the per-recipient loop of every bulk send, so reporting each
+// occurrence would turn one broken read into thousands of identical lines.
+let preferenceWarningIssued = false;
+
+function warnPreferenceCheckFailed(message: string): void {
+  if (preferenceWarningIssued) return;
+  preferenceWarningIssued = true;
+
+  console.warn(
+    `email: the notification-preference lookup failed (${message}). Mail is still being sent — ` +
+    'a failed lookup is not evidence the member said no — but while this persists, category ' +
+    'opt-outs are NOT being honoured. Reported once per process.',
   );
 }
 

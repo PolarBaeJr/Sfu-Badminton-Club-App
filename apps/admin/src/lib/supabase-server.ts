@@ -82,11 +82,21 @@ async function assertPasskeyVerified(
   // here (00051). Without the enrolled_via filter this duplicate count let the
   // middleware wave a request through and then threw from the server side,
   // which is how an exec lost the panel with the migration already applied.
-  const { count } = await adminClient
+  const { count, error } = await adminClient
     .from('passkey_credentials')
     .select('id', { count: 'exact', head: true })
     .eq('player_id', playerId)
     .eq('enrolled_via', 'admin');
+  // FAIL CLOSED. `count ?? 0` treated a failed query as "no enrolled passkey",
+  // which is the grace-period case — so a missing migration, a permission
+  // blip or any transient error silently switched the second factor OFF for
+  // every privileged server action, exactly when the database is least
+  // healthy. Not knowing whether step-up is required is not the same as
+  // knowing it is not, and only one of those readings is safe.
+  if (error) {
+    Sentry.captureException(error, { tags: { gate: 'assertPasskeyVerified' } });
+    throw new ExpectedError('Cannot verify your passkey enrolment right now — please try again shortly');
+  }
   if ((count ?? 0) >= 1) {
     Sentry.setUser(null);
     throw new ExpectedError('Passkey verification required');

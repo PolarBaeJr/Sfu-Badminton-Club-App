@@ -125,9 +125,26 @@ export async function settleWrites(writes: readonly LabelledWrite[]): Promise<Se
       failures.push({ label, message: writeErrorMessage(result.reason) });
       return false;
     }
-    const error = (result.value as { error?: unknown } | null)?.error;
+    const value = result.value as { error?: unknown; data?: unknown } | null;
+    const error = value?.error;
     if (error) {
       failures.push({ label, message: writeErrorMessage(error) });
+      return false;
+    }
+    // A CONDITIONAL UPDATE THAT MATCHED NOTHING IS NOT A SUCCESS.
+    //
+    // PostgREST reports "no error" for an UPDATE whose WHERE clause selected
+    // zero rows, so a write racing against a status change, a withdrawal or a
+    // concurrent edit came back clean and was recorded as landed — which for
+    // the placement-bonus ledger means the player is marked paid and skipped by
+    // every future retry.
+    //
+    // Only writes that asked for their rows back can be checked, which is why
+    // this looks at `data` rather than assuming it. A builder without .select()
+    // returns data: null and keeps the old behaviour, so the ~40 call sites
+    // that do not care are unaffected; the ones that do opt in by selecting.
+    if (Array.isArray(value?.data) && value.data.length === 0) {
+      failures.push({ label, message: 'matched no rows' });
       return false;
     }
     return true;
@@ -143,6 +160,35 @@ export async function settleWrites(writes: readonly LabelledWrite[]): Promise<Se
  * runAction (which captures it), so capturing here as well would file every
  * one of these twice.
  */
+/**
+ * Await one write and throw unless it landed.
+ *
+ * The batched settleWrites path above covers writes that are independent of one
+ * another. Draw generation is full of writes that are NOT — seed a match, read
+ * back where its winner routes, advance the bye into that slot, mark the next
+ * match ready — and those were written as bare `await`s with no destructuring
+ * at all. A PostgrestBuilder RESOLVES on a Postgres error, so `await` on its own
+ * is not error handling: an RLS denial, a constraint violation or a missing
+ * column sailed straight past, generation carried on, the event was marked
+ * generated, and the admin was told the draw was published. The bracket had a
+ * hole in it and nothing said so.
+ */
+export async function mustWrite(
+  label: string,
+  write: PromiseLike<{ error?: unknown; data?: unknown }>,
+): Promise<void> {
+  const result = await write;
+  if (result?.error) {
+    throw new Error(`${label} failed: ${writeErrorMessage(result.error)}`);
+  }
+  // Only meaningful when the caller asked for its rows back with .select();
+  // without it PostgREST returns data: null and this cannot distinguish a
+  // conditional update that matched nothing from one that worked.
+  if (Array.isArray(result?.data) && result.data.length === 0) {
+    throw new Error(`${label} failed: matched no rows`);
+  }
+}
+
 export function assertWritesSucceeded(action: string, failures: readonly WriteFailure[]): void {
   if (failures.length === 0) return;
   const detail = failures.map(f => `${f.label} (${f.message})`).join('; ');
@@ -161,15 +207,50 @@ export function revalidateEventPaths(tournamentId: string, eventId?: string) {
 // Throws when the tournament is suspended. Called by mutating tournament
 // actions before they touch data; corrective actions (void/edit/undo,
 // lock/unlock draw) intentionally skip this gate.
+//
+// A FAILED READ IS A REFUSAL, NOT A PASS. This discarded its error, so
+// `data` came back null and `data?.suspended_at` was undefined — meaning the
+// one thing that could stop a write on a suspended tournament treated "I
+// could not find out" as "carry on". Suspension is the club's emergency
+// stop; a gate that opens whenever the database hiccups is not a gate.
+//
+// TWO THINGS THIS DOES NOT MEAN, both checked against the call sites rather
+// than assumed:
+//
+//   * It is not a new failure mode for a missing tournament.
+//     `tournament_events.tournament_id` is NOT NULL REFERENCES tournaments
+//     ON DELETE CASCADE (00001:667), and all twenty call sites derive the id
+//     from a row they already read — none takes it from user input. A row
+//     that is genuinely absent here is a corrupted read, and refusing is the
+//     right answer to that too.
+//
+//   * The header comment above is accurate per call site and NOT accurate
+//     under composition, which is worth stating because it changes what a
+//     throw costs. Three paths reach a guarded action after committing:
+//     finalizeEvent -> applyPlacementBonuses (held and reported, the event
+//     stays finalised), autoPairWaitingEntrants' loop (earlier pairs stay
+//     paired, that pair is refused by name), and completeTournamentWithEvents
+//     (aborts part-way through the tournament). All three are the intended
+//     behaviour of an emergency stop that cannot confirm itself, and none
+//     leaves a half-written row — they leave a completed step and a
+//     refused one.
 export async function assertTournamentNotSuspended(
   adminClient: ReturnType<typeof createAdminClient>,
   tournamentId: string
 ) {
-  const { data } = await adminClient.from('tournaments')
+  const { data, error } = await adminClient.from('tournaments')
     .select('suspended_at, suspension_reason')
     .eq('id', tournamentId)
     .single();
-  if (data?.suspended_at) {
+  if (error) {
+    throw new Error(
+      `Could not check whether this tournament is suspended (${error.message}), so nothing was changed.`
+    );
+  }
+  if (!data) {
+    throw new Error('Could not check whether this tournament is suspended: it no longer exists.');
+  }
+  if (data.suspended_at) {
     const reason = data.suspension_reason;
     throw new Error(`Tournament is suspended${reason ? `: ${reason}` : ''}. Resume it to continue.`);
   }
@@ -2020,7 +2101,22 @@ export async function forfeitOutOfEventEntries(
 export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy = 'wins') {
   const adminClient = createAdminClient();
 
-  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  // THE SAME RULE AS THE PAIRS READ BELOW, applied to the two reads this
+  // function opens with. Both used to discard their error, and both feed the
+  // tally: an unreadable event returned `[]`, and unreadable matches left
+  // every entry on zero. Either way the caller was handed a standings table
+  // that looked settled and said the wrong thing — finalize.ts assigns
+  // final_position straight off this list, so "no finishers" and "everybody
+  // drew" are both writable outcomes.
+  //
+  // A genuinely absent event still returns `[]`. That is a real state (the
+  // event was deleted underneath the caller) and it is what the callers
+  // already handle; only the error case changes.
+  const { data: event, error: eventError } = await adminClient
+    .from('tournament_events').select('*').eq('id', eventId).single();
+  if (eventError && eventError.code !== 'PGRST116') {
+    throw new Error(`Could not read this event: ${eventError.message}`);
+  }
   if (!event) return [];
 
   const doubles = isDoublesEvent(event.event_type);
@@ -2042,7 +2138,10 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
     .eq('event_id', eventId)
     .in('status', ['completed', 'walkover']);
   if (poolPhase) matchQuery = matchQuery.eq('phase', poolPhase);
-  const { data: matches } = await matchQuery;
+  const { data: matches, error: matchesError } = await matchQuery;
+  if (matchesError) {
+    throw new Error(`Could not read this event's results: ${matchesError.message}`);
+  }
 
   // EVERY entry, including the ones that left. They are filtered out of the
   // final ordering further down, not out of the tally.
@@ -2168,4 +2267,155 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   // groupRank is just the finishing place — which is what it means.
   if (grouped) return qualificationOrder(rankable, seedBy);
   return sortStandings(rankable, seedBy).map((s, i) => ({ ...s, groupRank: i + 1 }));
+}
+
+/**
+ * Refuse to publish a draw that a late entry has already made wrong.
+ *
+ * Audit F-004, the draw half. A generator reads the field, spends 40+ sequential
+ * round trips seeding and inserting matches, and only then moves the event out
+ * of `registration`. A member entering anywhere in that window is admitted —
+ * enter_tournament_event (00185) sees a status that is still open, and is
+ * right to — and then does not appear in the bracket. The result is an entrant
+ * who is in the event and in no match, which the draw page has no way to render
+ * and the exec no way to repair except by hand.
+ *
+ * The entry side cannot fix this alone: the two operations are separate
+ * transactions, and the lock the RPC takes on the event row is released long
+ * before the generator gets to the end.
+ *
+ * SO THIS IS A FENCE, NOT A LOCK. Count the field again just before the publish
+ * and refuse if it grew. Nothing has been published at that point, the matches
+ * that were inserted are replaceable (that is what Generate already does on an
+ * event that has a draw), and the exec is told the one thing they need to know
+ * instead of finding out from a member on the day.
+ *
+ * `expected` is the size the draw was actually built from. Pool-seeded events
+ * pass their own subset and are exempted by the caller — their field comes from
+ * another event's standings, so a new entry here was never going to be in it.
+ */
+export async function assertFieldDidNotGrow(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  doubles: boolean,
+  expected: number,
+): Promise<void> {
+  const { data, error } = await adminClient
+    .from(doubles ? 'tournament_pairs' : 'tournament_participants')
+    .select('id')
+    .eq('event_id', eventId)
+    .in('status', ['registered', 'checked_in']);
+
+  // A failed re-count must not read as "nobody arrived". It is the same
+  // silently-permissive shape as every other discarded read in this audit.
+  if (error) throw new Error(`Could not re-check the field before publishing: ${writeErrorMessage(error)}`);
+
+  const now = (data ?? []).length;
+  if (now > expected) {
+    const arrived = now - expected;
+    throw new ExpectedError(
+      `${arrived} ${arrived === 1 ? 'entry' : 'entries'} arrived while this draw was being built, so it would have left `
+      + `${arrived === 1 ? 'somebody' : 'people'} out. Nothing was published — press Generate again to include `
+      + `${arrived === 1 ? 'them' : 'everyone'}.`,
+    );
+  }
+}
+
+/**
+ * WHAT THE FENCED FIELD RPCS RETURN.
+ *
+ * The fenced field RPCs — set_field_entry_status, remove_field_entry and
+ * bulk_check_in_field (00201), the six seeding, grouping and finalisation
+ * writers added by 00209 — all answer in the same shape: `ok`, a machine-readable `reason` when it is
+ * false, and the event context they read UNDER the field lock. The context is
+ * not a convenience — a caller that revalidates from a row it read before the
+ * write is reading state the write may have moved.
+ */
+export interface FencedFieldResult {
+  ok: boolean;
+  reason?: string;
+  already?: boolean;
+  entry_status?: string;
+  event_status?: string;
+  event_id?: string;
+  tournament_id?: string;
+  checked_in?: number;
+  /** auto_seed_field_by_rating, clear_field_seeds, set_field_groups. */
+  seeded?: number;
+  cleared?: number;
+  assigned?: number;
+  group_count?: number;
+  /** How many entries arrived or left between the caller's read and the fence. */
+  arrived?: number;
+  left?: number;
+  /** set_field_groups / set_field_entry_group, when fixtures already exist. */
+  matches?: number;
+  /** complete_event_under_field_lock. */
+  incomplete?: number;
+  /** Entries that held a placing they WON and had left the event (00211). */
+  winners?: string;
+  /** Matches whose recorded result moved while the ladder was being computed (00213). */
+  matches_moved?: string;
+}
+
+/**
+ * Turn a fenced RPC's refusal into the sentence the exec should read.
+ *
+ * The refusals these RPCs make are the SAME refusals their callers make a
+ * moment earlier — that is the point of 00201: the caller's copy is a fast,
+ * friendly one made outside the lock, and this one is made under it. So a
+ * refusal arriving here is not normally a mistake by the exec; it is the race
+ * being caught. The messages say so where that helps, and stay identical to
+ * the caller's where the distinction would not mean anything to them.
+ *
+ * `notFound` is per-call because "Participant not found" and "Pair not found"
+ * are different sentences at the desk.
+ */
+export function fencedRefusal(result: FencedFieldResult | null, notFound: string): never {
+  if (!result) {
+    throw new Error('Could not read this entry. Nothing was changed — try again.');
+  }
+  switch (result.reason) {
+    case 'entry_not_found':
+      throw new ExpectedError(notFound);
+    case 'event_not_found':
+      throw new ExpectedError('This entry is not attached to an event.');
+    case 'draw_locked':
+      throw new ExpectedError('Draw is locked. Unlock it before making changes.');
+    case 'event_completed':
+      throw new ExpectedError('This event is finished — void the affected matches instead.');
+    case 'event_status':
+      throw new ExpectedError(
+        `The event moved to "${result.event_status ?? 'another status'}" while this was being saved, so the change was not applied. Reload the page to see where it stands.`,
+      );
+    case 'entry_status':
+      throw new ExpectedError(
+        `This entry is "${result.entry_status ?? 'in another state'}" and cannot be checked in. Reload the page to see where it stands.`,
+      );
+    // ---- 00209: the seeding, grouping and finalisation fences ----------
+    case 'not_a_group_stage':
+      throw new ExpectedError('This event is not split into groups. Set a group count on the event first.');
+    case 'group_out_of_range':
+      throw new ExpectedError(`Group must be between 1 and ${result.group_count ?? 1}.`);
+    case 'fixtures_exist':
+      throw new ExpectedError(
+        'The fixtures for this event have already been generated, so its groups are fixed. Regenerate the round robin if the groups really have to change.',
+      );
+    // The two arrival races. Both say what happened and what to press, because
+    // the exec did nothing wrong — somebody else's write landed first.
+    case 'field_changed':
+      throw new ExpectedError(
+        result.arrived
+          ? `${result.arrived} ${result.arrived === 1 ? 'entry' : 'entries'} arrived while this was being prepared, so it would have left `
+            + `${result.arrived === 1 ? 'somebody' : 'people'} out. Nothing was changed — press it again to include `
+            + `${result.arrived === 1 ? 'them' : 'everyone'}.`
+          : 'The entry list changed while this was being prepared, so nothing was changed. Reload the page and try again.',
+      );
+    case 'matches_incomplete':
+      throw new ExpectedError(
+        `${result.incomplete ?? 'Some'} match(es) were still incomplete when this event was about to be finalised, so it was left live. Reload to see which.`,
+      );
+    default:
+      throw new ExpectedError('That change could not be saved. Reload the page and try again.');
+  }
 }

@@ -1,3 +1,4 @@
+import { clubToday } from '@badminton/shared';
 /**
  * What a season IS, derived from the only four columns that describe one.
  *
@@ -15,12 +16,15 @@ const MS_DAY = 86_400_000;
 /**
  * Today as a plain calendar date, for comparing against DATE columns.
  *
- * en-CA rather than toISOString(): the latter converts to UTC first, so from
- * 5pm Pacific onwards it reports tomorrow's date and a season would be called
- * "started" the evening before it does.
+ * Delegates to clubToday(). It used to be `new Date().toLocaleDateString('en-CA')`
+ * with a comment saying en-CA avoided the UTC problem — which was wrong, and
+ * wrong in the direction that looks right. Without a `timeZone` option Intl
+ * uses the HOST zone, and the app containers run with TZ unset: measured, they
+ * report UTC. So it had exactly the defect the comment said it had fixed, and a
+ * season really was called "started" the evening before it did.
  */
 export function today(): string {
-  return new Date().toLocaleDateString('en-CA');
+  return clubToday();
 }
 
 /**

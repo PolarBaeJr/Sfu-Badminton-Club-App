@@ -4,6 +4,7 @@ import {
   getCheckinWindow,
   isCheckinOpen,
   CLUB_PERMANENT_OFFSET_FROM,
+  clubToday,
 } from '../session-window';
 
 // ============================================================
@@ -178,5 +179,66 @@ describe('isCheckinOpen on the far side of the pin', () => {
     // The hour the old rule wrongly kept the gate open for.
     expect(isCheckinOpen(session, new Date('2026-11-04T04:30:00Z'), SETTINGS)).toBe(false);
     expect(isCheckinOpen(session, new Date('2026-11-04T05:29:00Z'), SETTINGS)).toBe(false);
+  });
+});
+
+// ============================================================
+// clubToday — F-022.
+//
+// Two wrong ways to ask "what day is it" were both in production, and the
+// second was written as the fix for the first:
+//
+//   new Date().toISOString().slice(0, 10)     the UTC date
+//   new Date().toLocaleDateString('en-CA')    the RUNTIME's date
+//
+// Without a `timeZone` option Intl uses the host zone, and every app container
+// runs TZ unset — measured on both hosts, `date` prints UTC. So the "fix" had
+// exactly the bug it claimed to remove, on the one machine that matters.
+//
+// These fixtures are UTC instants that fall on a DIFFERENT calendar day in
+// Vancouver, which is the only case that can distinguish the three.
+// ============================================================
+
+describe('clubToday', () => {
+  const at = (iso: string) => clubToday(new Date(iso));
+
+  it('reports the club day, not the UTC day, on a club evening', () => {
+    // 2026-08-28T02:30Z is 2026-08-27 19:30 in Vancouver.
+    expect(at('2026-08-28T02:30:00Z')).toBe('2026-08-27');
+    // The two forms it replaced, for contrast.
+    expect(new Date('2026-08-28T02:30:00Z').toISOString().slice(0, 10)).toBe('2026-08-28');
+  });
+
+  it('agrees with the UTC day when the club is not behind the boundary', () => {
+    // 14:00Z is 07:00 Vancouver — same date either way.
+    expect(at('2026-08-27T14:00:00Z')).toBe('2026-08-27');
+  });
+
+  it('needs no tzdata past the permanent-offset cutover', () => {
+    // BC stops changing its clocks on CLUB_PERMANENT_OFFSET_FROM, so a Node
+    // whose tzdata predates 2026b would answer UTC-8 here and put this instant
+    // on the previous day. The pin makes it UTC-7 without asking.
+    //
+    // 2026-12-15T07:30Z is 2026-12-15 00:30 at UTC-7 and 2026-12-14 23:30 at
+    // UTC-8, so the two rules give different DAYS and this cannot pass by
+    // accident on a stale runtime. Verified non-vacuous: the machine this was
+    // written on reports process.versions.tz === '2026a', and asking its Intl
+    // directly returns 2026-12-14 — the wrong answer the pin exists to avoid.
+    expect(at('2026-12-15T07:30:00Z')).toBe('2026-12-15');
+    expect('2026-12-15' >= CLUB_PERMANENT_OFFSET_FROM).toBe(true);
+  });
+
+  it('still uses real timezone data before the cutover, where every release agrees', () => {
+    // 2026-02-15 is inside the old PST half of the year: UTC-8, so
+    // 2026-02-16T07:30Z is 2026-02-15 23:30 club-local.
+    expect(at('2026-02-16T07:30:00Z')).toBe('2026-02-15');
+    expect('2026-02-15' < CLUB_PERMANENT_OFFSET_FROM).toBe(true);
+  });
+
+  it('is stable across the cutover day itself', () => {
+    // CLUB_PERMANENT_OFFSET_FROM is a whole-day boundary under both rules, so
+    // the era test cannot disagree with the answer it gates.
+    expect(at('2026-11-01T12:00:00Z')).toBe('2026-11-01');
+    expect(at('2026-10-31T12:00:00Z')).toBe('2026-10-31');
   });
 });

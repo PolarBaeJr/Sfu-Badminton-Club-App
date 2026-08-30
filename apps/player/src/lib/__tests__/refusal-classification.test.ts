@@ -37,13 +37,19 @@ const REFUSALS = [
 ];
 
 // Faults, and each one has a specific reason to stay loud.
+//
+// 'Could not check how full this event is' used to be here — a failed COUNT
+// rather than a full event. 00185 moved the counting into
+// enter_tournament_event, so there is no read left to fail: a broken count is
+// now an RPC error, which registerForEvent already rethrows as a plain Error.
 const FAULTS = [
-  // A failed COUNT, not a full event.
-  'Could not check how full this event is. Nothing was changed — try again.',
   // Under RLS a row the caller cannot see is not an error at all, so an
   // RLS regression looks exactly like a genuinely absent event. See
   // expected-error.ts on why 'Challenge not found' is off the guard allowlist.
   'Event not found',
+  // The RPC came back with a refusal nobody has written a sentence for yet, or
+  // with no payload at all. Not a rule saying no — something is wrong.
+  'Could not complete your entry — please try again shortly.',
 ];
 
 describe('player refusal classification', () => {

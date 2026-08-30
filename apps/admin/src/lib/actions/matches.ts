@@ -24,16 +24,20 @@ import { MATCH_ADMIN_NOTE_TABLE, isMissingNoteTableError } from '../match-note';
 /**
  * Record an exec's free text about a match, in the private table that holds it.
  *
- * A SEPARATE STATEMENT, NEVER FOLDED INTO THE MATCH WRITE, and that is the
- * whole reason this function exists rather than an `admin_note:` line in each
- * of the three updates it replaces. `match_admin_notes` arrives with migration
- * 00117, which the owner applies by hand — so this console can be, and
- * routinely is, deployed against a database that has never heard of the table.
- * Written as part of the `matches` update, an absent table would fail the WHOLE
- * statement and `if (error) throw` would turn voiding a match into a red toast
- * for the sake of an annotation nobody asked about. Isolated here, a
- * pre-migration void still voids and the note is a silent no-op until the SQL
- * lands.
+ * ONE CALLER LEFT: adminCreateMatch. Void and Convert used to come through
+ * here too; since 00203 they are single transactions in SQL that write their
+ * own note, because in one transaction a failed note write can take the whole
+ * mutation with it and there is no partial state to report. What follows is
+ * why this shape is still right for the caller that remains.
+ *
+ * A SEPARATE STATEMENT, NEVER FOLDED INTO THE MATCH WRITE. `match_admin_notes`
+ * arrives with migration 00117, which the owner applies by hand — so this
+ * console can be, and routinely is, deployed against a database that has never
+ * heard of the table. Written as part of the `matches` insert, an absent table
+ * would fail the WHOLE statement and `if (error) throw` would turn recording a
+ * match into a red toast for the sake of an annotation nobody asked about.
+ * Isolated here, the match is still recorded and the note is a silent no-op
+ * until the SQL lands.
  *
  * This is the same shape as the `require_scan_to_check_in` write in
  * lib/actions/sessions.ts (00116), with one difference worth naming: there the
@@ -43,24 +47,22 @@ import { MATCH_ADMIN_NOTE_TABLE, isMissingNoteTableError } from '../match-note';
  *
  * IT NEVER THROWS, AND IT DISTINGUISHES THREE OUTCOMES rather than two. The
  * two-way version — "null means fine" — collapses "written" and "the table is
- * not there yet" into one answer, and the callers need them apart: the audit
+ * not there yet" into one answer, and the caller needs them apart: the audit
  * row must not claim a note it does not have, and the exec must not be nagged
  * about a migration they cannot run from the console.
  *
  *   recorded: true            the row is in the database.
  *   recorded: false, no error 00117 has not been applied here. Silent: the
  *                             reason is not LOST — logAdminAudit writes the
- *                             same text to audit_logs.reason on both of the
- *                             paths that have one — and there is nothing the
- *                             person clicking Confirm could do about it.
+ *                             same text to audit_logs.reason — and there is
+ *                             nothing the person clicking Confirm could do
+ *                             about it.
  *   error                     a real failure. Loud, always, because after
  *                             00117 is applied a swallowed failure would end
  *                             in a green toast and the exec would walk away
  *                             believing a reason was recorded that was not.
  *
- * UPSERT, because one match has one note — `match_id` is the primary key. A
- * void reason overwrites whatever the entry form wrote, which is exactly what
- * the old single column did.
+ * UPSERT, because one match has one note — `match_id` is the primary key.
  */
 async function writeMatchNote(
   adminClient: ReturnType<typeof createAdminClient>,
@@ -88,10 +90,16 @@ async function writeMatchNote(
 }
 
 /**
- * `noteRecorded` is how the caller learns the reason reached
- * `match_admin_notes`. It is FALSE and not an error when 00117 has not been
- * applied to this database yet — see writeMatchNote, and MatchActions, which
- * turns it into a quieter toast rather than a red one.
+ * `noteRecorded` is kept in the payload, and is now always true.
+ *
+ * It used to carry a real distinction: the note went to `match_admin_notes`
+ * (00117) in a statement of its own, so on a database the owner had not yet
+ * migrated the void succeeded and the note silently did not. Since 00203 the
+ * whole void is one `void_club_match` transaction — the match mutation, the
+ * note and the audit row commit together or not at all — so there is no state
+ * in which this returns and the note is missing. The field stays because
+ * MatchActions and the walkover pair still read it and the shape should not
+ * fork; the quieter-toast branch there is now unreachable rather than wrong.
  */
 export async function voidMatch(
   matchId: string,
@@ -101,73 +109,40 @@ export async function voidMatch(
 }
 
 async function voidMatchImpl(matchId: string, reason: string) {
+  // The authorisation boundary stays HERE. void_club_match is service_role-only
+  // and enforces no capability of its own — it takes the actor as a parameter
+  // and trusts it, exactly as reverse_match_result always did.
   const admin = await requireCapability('matches.void.write');
   const adminClient = createAdminClient();
 
-  // Only a confirmed match has Elo applied, so reverse it only then. A disputed
-  // or pending match never applied Elo, and reverse_match_result requires a
-  // confirmed match (it would raise otherwise) — just mark it voided.
-  const { data: m } = await adminClient.from('matches').select('result_status').eq('id', matchId).single();
-  if (m?.result_status === 'confirmed') {
-    const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
-    if (reverseError) {
-      Sentry.captureException(new Error(`Elo reversal failed: ${reverseError.message}`), {
-        extra: { matchId, action: 'void_match' },
-      });
-      throw new Error(reverseError.message);
-    }
-  }
-
-  // `admin_note` is deliberately NOT set here any more — it moved to
-  // match_admin_notes (00117) because every signed-in member could read it off
-  // this row and, since 00114, receive it over Realtime. The column still
-  // exists and still holds its history; it is simply no longer written.
-  const { error } = await adminClient
-    .from('matches')
-    .update({ result_status: 'voided' })
-    .eq('id', matchId);
-
-  if (error) throw new Error(error.message);
-
-  // AFTER THE VOID, BEFORE THE AUDIT, AND IT DOES NOT THROW. The order is the
-  // point. The match is already voided and the Elo already reversed by the time
-  // this runs; there is no discard path here the way there is in
-  // adminCreateMatch, so throwing on a note failure would skip logAdminAudit
-  // and revalidatePath and leave the club with an UNAUDITED VOID — no record of
-  // who did it or why, and a ledger still showing the match as it was. That is
-  // strictly worse than the green-toast-lie this file is otherwise careful
-  // about, because an audit row for every destructive act is the one thing the
-  // console cannot reconstruct afterwards.
+  // ONE ROUND TRIP, AND THAT IS THE POINT. This used to be four: read the
+  // status, reverse the Elo, mark the match voided, write the note, write the
+  // audit row. Every gap between them was a place the request could die, and
+  // the worst of those left a match voided with NO audit row saying who did it
+  // or why — the one thing the console cannot reconstruct afterwards. That is
+  // why the note write here could not throw, and why the audit row had to
+  // report honestly whether it had landed.
   //
-  // So the outcome is threaded through instead, the same way 00116's
-  // `scanPolicyWritten` is: Sentry hears about a real failure, the audit row
-  // says honestly whether the note landed, and the exec is told in the toast.
-  const note = await writeMatchNote(adminClient, matchId, reason, admin.id);
-  if (note.error) {
-    Sentry.captureException(new Error(`Match note not recorded on void: ${note.error}`), {
-      extra: { matchId, action: 'void_match' },
-    });
+  // Inside a single transaction that reasoning inverts. There is no partial
+  // state left to be honest about: a failure anywhere takes the void with it.
+  const { error } = await adminClient.rpc('void_club_match', {
+    p_match_id: matchId,
+    p_actor_id: admin.id,
+    p_reason: reason,
+  });
+  if (error) {
+    // Context on the scope, not a second captureException — runAction already
+    // reports whatever this throws, and capturing here filed every failure
+    // twice. Same convention as resolveDispute.
+    Sentry.getCurrentScope().setExtras({ matchId, action: 'void_match' });
+    throw new Error(error.message);
   }
-
-  await logAdminAudit(adminClient, {
-    actor_id: admin.id,
-    action_type: 'match_voided',
-    target_type: 'match',
-    target_id: matchId,
-    // WHAT ACTUALLY HAPPENED, not what was asked for — 00116's rule, applied to
-    // the other kind of pre-migration gap. If the note did not land the audit
-    // row must not imply it did.
-    new_value: { note_recorded: note.recorded },
-    // The reason itself is recorded HERE regardless, which is why a note that
-    // did not land is a degraded outcome rather than a lost one.
-    reason,
-  }, { matchId });
 
   revalidatePath('/matches');
-  return { noteRecorded: note.recorded };
+  return { noteRecorded: true };
 }
 
-/** See voidMatch for what `noteRecorded` means and why it is not an error. */
+/** See voidMatch for what `noteRecorded` means and why it is always true. */
 export async function convertMatchToCasual(
   matchId: string,
   reason: string,
@@ -179,70 +154,30 @@ async function convertMatchToCasualImpl(matchId: string, reason: string) {
   const admin = await requireCapability('matches.convert.write');
   const adminClient = createAdminClient();
 
-  const { data: m } = await adminClient.from('matches').select('result_status').eq('id', matchId).single();
-
-  if (m?.result_status === 'confirmed') {
-    // Elo was applied — reverse it (this also marks the match voided). We keep
-    // the existing "voided + casual flags" outcome for an already-confirmed
-    // match to avoid re-firing the on_match_confirmed stats trigger.
-    const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
-    if (reverseError) {
-      Sentry.captureException(new Error(`Elo reversal failed: ${reverseError.message}`), {
-        extra: { matchId, action: 'convert_to_casual' },
-      });
-      throw new Error(reverseError.message);
-    }
-    // See voidMatch: the reason no longer rides along on the row. It is written
-    // once, below, after both branches converge.
-    const { error } = await adminClient
-      .from('matches')
-      .update({ rated_flag: false, event_type: 'casual' })
-      .eq('id', matchId);
-    if (error) throw new Error(error.message);
-  } else {
-    // Never confirmed (disputed / pending) -> no Elo yet. Record it as a
-    // completed casual match: apply_match_result skips Elo for event_type
-    // 'casual' but still confirms the result and updates head-to-head once.
-    const { error: upErr } = await adminClient
-      .from('matches')
-      .update({ rated_flag: false, event_type: 'casual', result_status: 'pending_confirmation' })
-      .eq('id', matchId);
-    if (upErr) throw new Error(upErr.message);
-    const { error: applyErr } = await adminClient.rpc('apply_match_result', {
-      p_match_id: matchId,
-      p_confirmed_by: admin.id,
-    });
-    if (applyErr) {
-      Sentry.captureException(new Error(`Casual confirm failed: ${applyErr.message}`), {
-        extra: { matchId, action: 'convert_to_casual' },
-      });
-      throw new Error(applyErr.message);
-    }
+  // THE FOUR ARMS MOVED, THEY DID NOT GO AWAY. convert_club_match_to_casual
+  // still branches on how much of the conversion has already landed rather
+  // than on `result_status` alone — fully converted, voided-but-unclassified,
+  // confirmed-and-still-rated, never-confirmed — because prod holds rows in
+  // every one of those states and this transaction cannot retroactively fix
+  // them. What the transaction removes is the ability to create NEW ones.
+  //
+  // The arms are covered by a staging harness that walks a real match through
+  // each of the four, including the two a rewrite silently collapses: a fully
+  // converted match must fall through to the note and audit row rather than
+  // return early, and a match that was ALWAYS casual and is only now disputed
+  // must reach the confirming arm rather than be mistaken for a finished one.
+  const { error } = await adminClient.rpc('convert_club_match_to_casual', {
+    p_match_id: matchId,
+    p_actor_id: admin.id,
+    p_reason: reason,
+  });
+  if (error) {
+    Sentry.getCurrentScope().setExtras({ matchId, action: 'convert_to_casual' });
+    throw new Error(error.message);
   }
-
-  // One write for both branches — whichever path the match took, the exec typed
-  // one reason and there is one place it belongs. It does NOT throw, for the
-  // reason spelled out in voidMatch: the conversion is already committed and
-  // the Elo already reversed, so throwing here would skip the audit row and
-  // leave an unaudited change to a rated result.
-  const note = await writeMatchNote(adminClient, matchId, reason, admin.id);
-  if (note.error) {
-    Sentry.captureException(new Error(`Match note not recorded on convert: ${note.error}`), {
-      extra: { matchId, action: 'convert_to_casual' },
-    });
-  }
-
-  await logAdminAudit(adminClient, {
-    actor_id: admin.id,
-    action_type: 'match_converted_casual',
-    target_type: 'match',
-    target_id: matchId,
-    new_value: { note_recorded: note.recorded },
-    reason,
-  }, { matchId });
 
   revalidatePath('/matches');
-  return { noteRecorded: note.recorded };
+  return { noteRecorded: true };
 }
 
 // ============================================================

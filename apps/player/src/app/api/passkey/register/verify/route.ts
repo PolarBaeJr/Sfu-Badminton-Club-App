@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { rateLimit, getClientIp, parseOrThrow } from '@badminton/shared';
 import { getCurrentPlayer, createServiceRoleClient } from '@/lib/supabase-server';
 import { verifyPayload } from '@/lib/passkey/cookie';
+import { consumeChallenge } from '@/lib/passkey/challenge-store';
 import {
   getRpId,
   getExpectedOrigin,
@@ -51,6 +52,23 @@ export async function POST(request: Request) {
   const token = cookieStore.get(PASSKEY_CHALLENGE_COOKIE)?.value;
   const challenge = token ? await verifyPayload(token) : null;
   if (!challenge || challenge.type !== 'reg' || challenge.sub !== player.user_id) {
+    const response = NextResponse.json({ error: 'Registration challenge expired' }, { status: 400 });
+    clearChallengeCookie(response);
+    return response;
+  }
+
+  // CLAIM THE CHALLENGE, SERVER SIDE (00181).
+  //
+  // The cookie above proves the challenge was issued to this browser and is
+  // unexpired. It cannot prove it has not already been spent: clearing a cookie
+  // is a response header, so two requests carrying the same cookie and the same
+  // assertion, sent before either response lands, both got this far and both
+  // verified. The signature counter cannot catch that either — synced passkeys
+  // report 0 every time, so there is no regression to detect.
+  //
+  // One atomic UPDATE, bound to THIS flow's purpose so a challenge minted
+  // elsewhere cannot be redeemed here.
+  if (!(await consumeChallenge(createServiceRoleClient(), challenge.challenge as string, 'player_register'))) {
     const response = NextResponse.json({ error: 'Registration challenge expired' }, { status: 400 });
     clearChallengeCookie(response);
     return response;

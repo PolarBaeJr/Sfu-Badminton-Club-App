@@ -2,7 +2,7 @@
 
 A members' web app (installable PWA) for running a university badminton club: a live **ELO ladder** (singles + doubles), **seasons & fees**, **sessions with attendance**, a full **tournament system**, and a private **admin console** — plus a public landing page, leaderboard, and exec roster.
 
-**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin) · **Status:** executive beta (August 2026) · **Version:** 1.1.0
+**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin) · **Status:** executive beta (August 2026) · **Version:** see `version` in the root `package.json` (also shown in the app under Settings → About)
 
 > New here? Start with the plain-language overview in **[docs/project/](docs/project/README.md)**.
 
@@ -41,7 +41,7 @@ Full breakdown: **[docs/project/06-tech-stack.md](docs/project/06-tech-stack.md)
 
 ## Quick start (local development)
 
-**Prerequisites:** Node 20, npm 10.
+**Prerequisites:** Node 24 (`engines.node` is `>=24.0.0 <25`, enforced by `engine-strict` in `.npmrc`), npm 10.
 
 ```sh
 # 1. Install
@@ -73,6 +73,8 @@ npm run dev:admin    # http://localhost:3001
 Push to the `deploy/docker-prod` branch → GitHub Actions builds ARM64 images to GHCR (tagged `latest` + `sha-<commit>`) → the self-hosted proxy auto-deploys within ~10 minutes.
 
 **Apply migrations BEFORE pushing.** An image deploy is DB-safe, but app code that expects a new column breaks the moment the containers roll.
+
+**The exception is a migration that changes an existing function's signature or tightens what it accepts.** Migrations-first assumes the old image keeps working against the new schema. That assumption fails when the old image still calls the function the migration just changed, and it fails for the whole rolling window — the old containers keep serving until the last one is replaced. Draw generation is the live case: an old generator can commit an unstamped match after the new one has already checked for foreign matches, and nothing later removes it. Those migrations need the affected feature drained first. See the draw-generation drain step in `docs/sensitive/PROD-CUTOVER-00177-00205.md`.
 
 **Never** run `docker compose --build`, `docker compose up -d`, or a manual `docker pull` for the player/admin containers on the Pi — they are owned by the proxy, not compose, and doing so detaches them from auto-update. See **[docs/ops/RUNBOOK.md](docs/ops/RUNBOOK.md)**.
 

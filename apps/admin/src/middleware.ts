@@ -227,9 +227,19 @@ export async function middleware(request: NextRequest) {
       // Passkey gate: once a user has enrolled a passkey, every page needs a
       // valid signed verified-cookie (zero passkeys = grace period). The
       // /api/passkey handlers are exempt — they're how you GET verified.
-      // Wrapped in its own try so an RPC failure (e.g. migration 00011 not
-      // yet applied) fails OPEN and logs, instead of falling into the outer
-      // catch's redirect-to-/login (which would loop forever).
+      //
+      // IT USED TO FAIL OPEN. The reasoning was sound as far as it went — the
+      // outer catch redirects to /login, and a gate failure there loops for
+      // ever — but the conclusion did not follow. "Cannot determine whether
+      // this admin has a passkey" was resolved as "they do not", which is the
+      // grace-period answer, so any RPC failure switched the console's second
+      // factor off for everyone at once and logged it to a console nobody
+      // reads.
+      //
+      // /unavailable is the answer to both problems: it is already exempt from
+      // this gate, so there is no loop, and it already exists to say "the
+      // console cannot make a decision about you right now" for the
+      // permissions outage a few lines up. Same shape, same page, new reason.
       const pathname = request.nextUrl.pathname;
       if (!pathname.startsWith('/unavailable') && !pathname.startsWith('/api/passkey')) {
         try {
@@ -248,7 +258,17 @@ export async function middleware(request: NextRequest) {
             // No enrolled passkeys → grace period, proceed.
           }
         } catch (err) {
-          console.error('Passkey gate check failed (failing open):', err);
+          // console, not Sentry: this file runs in the edge runtime and has no
+          // Sentry client. The redirect is what makes the failure visible now —
+          // an admin who is sent to /unavailable reports it, which is more than
+          // the log line alone ever achieved.
+          console.error('Passkey gate check failed (holding the door):', err);
+          const url = request.nextUrl.clone();
+          url.pathname = '/unavailable';
+          url.search = '';
+          url.searchParams.set('reason', 'passkey-unavailable');
+          url.searchParams.set('next', pathname + request.nextUrl.search);
+          return finish(NextResponse.redirect(url));
         }
       }
     }

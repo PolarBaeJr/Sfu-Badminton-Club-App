@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CLUB_TIMEZONE, getClientIp, rateLimit } from '@badminton/shared';
+import { CLUB_TIMEZONE, getClientIp, rateLimit, clubToday } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -54,7 +54,11 @@ interface Row {
 }
 
 function clubLocalToday(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: CLUB_TIMEZONE });
+  // clubToday rather than asking Intl here: from 2026-11-01 BC is UTC-7
+  // year-round (tzdata 2026b) and production Node predates that release, so
+  // the answer would be an hour off — enough to cross midnight — for every
+  // date past the cutover. One implementation, pinned.
+  return clubToday();
 }
 
 export async function GET(request: Request) {

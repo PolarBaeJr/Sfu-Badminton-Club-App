@@ -242,6 +242,42 @@ async function disputeMatchResultImpl(matchId: string, reason: string, category:
   revalidatePath('/challenges');
 }
 
+/**
+ * Turn a refusal from report_walkover_atomic (00184) into the sentence the
+ * member used to get from the equivalent read-then-check in this file.
+ *
+ * `not_found` stays a plain Error for the reason expected-error.ts gives: under
+ * RLS an invisible challenge looks exactly like a deleted one.
+ */
+function walkoverReportError(result: { reason?: string; result_status?: string }): Error {
+  switch (result.reason) {
+    case 'not_found':
+      return new Error('Challenge not found');
+    case 'not_forfeitable':
+      return new ExpectedError('Challenge is not in a state that can be forfeited');
+    case 'result_exists':
+      return new ExpectedError(
+        result.result_status === 'pending_confirmation'
+          ? 'A result has already been submitted for this match — confirm or dispute it instead'
+          : 'This match already has a result and cannot be forfeited',
+      );
+    case 'not_participant':
+      return new ExpectedError('Not a participant');
+    case 'forfeit_not_in_challenge':
+      return new ExpectedError('Forfeit player is not in this challenge');
+    case 'withdrawal_wrong_side':
+      return new ExpectedError('Withdrawal must name a teammate (or yourself)');
+    case 'no_show_wrong_side':
+      return new ExpectedError('No-show must name a player on the opposing team');
+    // The partial unique index refusing a second pending walkover. Reached by a
+    // double-tap or an action replay, so it is a sentence, not a fault.
+    case 'already_reported':
+      return new ExpectedError('A walkover has already been reported for this challenge');
+    default:
+      return new Error('Could not file this walkover — please try again.');
+  }
+}
+
 export async function reportWalkover(input: WalkoverReportInput): Promise<ActionResult> {
   return runAction(() => reportWalkoverImpl(input));
 }
@@ -251,68 +287,36 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: challenge, error: challengeError } = await supabase
-    .from('challenges')
-    .select('status, challenge_participants(player_id, team_side)')
-    .eq('id', input.challenge_id)
-    .single();
-  if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  if (!challenge) throw new Error('Challenge not found');
-  if (!['accepted', 'partially_confirmed'].includes(challenge.status)) {
-    throw new ExpectedError('Challenge is not in a state that can be forfeited');
-  }
-
-  // A challenge keeps status 'accepted' while a submitted result waits to be
-  // confirmed, so the status check above passes and a walkover could be filed
-  // on a match that had already been played and reported — flipping the
-  // challenge to walkover_pending and burying the pending result. Someone who
-  // disagrees with a submitted result has the dispute flow; forfeiting is for
-  // a match that did not happen.
+  // ONE STATEMENT, and it is the fix for F-009. This used to be four reads and
+  // then two writes with two different clients: INSERT INTO walkovers, then
+  // UPDATE challenges SET status='walkover_pending'. A failure at the second
+  // left the walkover filed with the challenge still reading 'accepted', so the
+  // member could file the same forfeit again and an exec saw two rows in the
+  // queue for one match. A plain retry did the same with both writes landing.
   //
-  // Service-role read: the answer must be authoritative. Under RLS a row the
-  // caller cannot see would look like no match at all, and the guard would fail
-  // open exactly when it matters.
-  const { data: existingMatch } = await createServiceRoleClient()
-    .from('matches')
-    .select('id, result_status')
-    .eq('challenge_id', input.challenge_id)
-    .maybeSingle();
-  if (existingMatch) {
-    throw new ExpectedError(
-      existingMatch.result_status === 'pending_confirmation'
-        ? 'A result has already been submitted for this match — confirm or dispute it instead'
-        : 'This match already has a result and cannot be forfeited'
-    );
-  }
-  const cps = (challenge.challenge_participants as { player_id: string; team_side: string }[] | null) ?? [];
-  const reporter = cps.find((cp) => cp.player_id === player.id);
-  if (!reporter) throw new ExpectedError('Not a participant');
-  const forfeit = cps.find((cp) => cp.player_id === input.forfeit_player_id);
-  if (!forfeit) throw new ExpectedError('Forfeit player is not in this challenge');
-
-  // For withdrawal the reporter forfeits (their team); for no_show the reporter
-  // accuses the opposing team. Either way the forfeit player must be on the
-  // opposite team from whomever is staying in the match.
-  const reporterIsForfeiting = input.walkover_type === 'withdrawal';
-  if (reporterIsForfeiting && forfeit.team_side !== reporter.team_side) {
-    throw new ExpectedError('Withdrawal must name a teammate (or yourself)');
-  }
-  if (!reporterIsForfeiting && forfeit.team_side === reporter.team_side) {
-    throw new ExpectedError('No-show must name a player on the opposing team');
-  }
-
-  const { error } = await supabase.from('walkovers').insert({
-    challenge_id: input.challenge_id,
-    reported_by: player.id,
-    forfeit_player_id: input.forfeit_player_id,
-    walkover_type: input.walkover_type,
-    notice_hours: input.notice_hours,
+  // Every check was also a read taken milliseconds before the insert. The
+  // sharpest was the existing-result check: a result submitted in that window
+  // was buried under the walkover, which is precisely what that check exists to
+  // prevent. 00184 takes the challenge row FOR UPDATE and does the lot inside
+  // it, and a partial unique index makes a second pending walkover per
+  // challenge not exist at all, whoever asks for it.
+  const { data: reported, error: reportError } = await supabase.rpc('report_walkover_atomic', {
+    p_challenge_id: input.challenge_id,
+    p_forfeit_player_id: input.forfeit_player_id,
+    p_walkover_type: input.walkover_type,
+    p_notice_hours: input.notice_hours ?? null,
   });
-  if (error) throw dbError(error);
+  if (reportError) throw dbError(reportError);
+  if (!reported) throw new Error('Could not file this walkover — please try again.');
+  if (!reported.ok) throw walkoverReportError(reported);
 
-  // Service-role for the same RLS reason as acceptChallenge.
-  const adminClient = createServiceRoleClient();
-  await adminClient.from('challenges').update({ status: 'walkover_pending' }).eq('id', input.challenge_id);
+  // Read back for the notifications only — the decision is already made and
+  // committed above, so a failure here costs an email, not correctness.
+  const { data: participantRows } = await createServiceRoleClient()
+    .from('challenge_participants')
+    .select('player_id')
+    .eq('challenge_id', input.challenge_id);
+  const cps = (participantRows as { player_id: string }[] | null) ?? [];
 
   const otherParticipants = cps.filter((cp) => cp.player_id !== player.id);
   await notifyPlayers(

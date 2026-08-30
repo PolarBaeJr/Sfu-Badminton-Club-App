@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import {
   verifyUnsubscribeToken,
   allEmailCategoriesOff,
@@ -58,54 +59,58 @@ async function apply(token: string | null): Promise<{ ok: boolean; message: stri
     // lead time. Under the opt-in model (00058) erasing them means turning them
     // OFF — so unsubscribing from email would silently kill this member's push
     // notifications as well. An email link may only ever change email keys.
-    const { data: current } = await db
-      .from('players')
-      .select('notification_preferences')
-      .eq('email', claim.email)
-      .maybeSingle();
-    if (current) {
-      await db
-        .from('players')
-        .update({
-          notification_preferences: {
-            ...((current.notification_preferences as Record<string, unknown> | null) ?? {}),
-            ...allEmailCategoriesOff(),
-          },
-        })
-        .eq('email', claim.email);
-    }
+    // One statement (00180): read-merge-write here had a window in which a
+    // concurrent settings save was overwritten, and a failed read merged onto
+    // {} and replaced the whole blob.
+    await db.rpc('merge_notification_preferences_by_email', {
+      p_email: claim.email,
+      p_patch: allEmailCategoriesOff(),
+    });
 
     return { ok: true, message: 'You will no longer receive any emails from SFU Badminton Club.' };
   }
 
   // Single category: merge into the existing blob rather than replacing it, or
   // this would wipe their push preferences and session reminder lead time.
-  const { data: player } = await db
+  const { data: player, error: playerError } = await db
     .from('players')
     .select('notification_preferences')
     .eq('email', claim.email)
     .maybeSingle();
 
+  // A failed read and a genuine no-such-member both arrive as `player == null`,
+  // so without splitting them a database fault fell into the suppression
+  // fallback below — and if that write failed too, the page still promised the
+  // mail would stop. Telling someone their unsubscribe worked when nothing was
+  // written is the one outcome this route must never produce.
+  if (playerError) {
+    Sentry.captureException(playerError, { tags: { route: 'unsubscribe' } });
+    return { ok: false, message: 'Something went wrong. Please try again shortly.' };
+  }
+
   if (!player) {
     // No player row to store a per-category preference against. Suppressing
     // outright is the honest fallback — better to over-honour the request than
     // to report success and keep sending.
-    await db.from('email_suppressions').upsert(
+    const { error: suppressError } = await db.from('email_suppressions').upsert(
       { email: claim.email, reason: 'unsubscribe', detail: { source: 'one-click', category: claim.category } },
       { onConflict: 'email' },
     );
+    if (suppressError) {
+      Sentry.captureException(suppressError, { tags: { route: 'unsubscribe' } });
+      return { ok: false, message: 'Something went wrong. Please try again shortly.' };
+    }
     return { ok: true, message: 'You will no longer receive these emails.' };
   }
 
-  const merged = {
-    ...(player.notification_preferences as Record<string, unknown> | null ?? {}),
-    ...emailCategoryPatch(claim.category, false),
-  };
-  const { error } = await db
-    .from('players')
-    .update({ notification_preferences: merged })
-    .eq('email', claim.email);
-  if (error) return { ok: false, message: 'Something went wrong. Please try again shortly.' };
+  const { error } = await db.rpc('merge_notification_preferences_by_email', {
+    p_email: claim.email,
+    p_patch: emailCategoryPatch(claim.category, false),
+  });
+  if (error) {
+    Sentry.captureException(error, { tags: { route: 'unsubscribe' } });
+    return { ok: false, message: 'Something went wrong. Please try again shortly.' };
+  }
 
   const label = CATEGORY_LABEL.get(claim.category) ?? 'these';
   return { ok: true, message: `You will no longer receive "${label}" emails.` };

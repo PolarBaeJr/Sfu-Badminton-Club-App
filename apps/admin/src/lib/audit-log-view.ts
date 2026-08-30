@@ -13,6 +13,8 @@
 // from an audit trail because a colour lookup missed is the worst bug this
 // screen can have.
 
+import { isDegradedAuditReason } from './audit-policy';
+
 export interface AuditLogEntry {
   id: string;
   created_at: string;
@@ -360,4 +362,30 @@ export function relativeWhen(iso: string, now: Date): string {
  */
 export function shortRef(id: string): string {
   return (id ?? '').split('-')[0] || '—';
+}
+
+/* -------------------------------------------------------------------------- */
+/* Audit health                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Whether this entry is DEGRADED: the fact is real, the detail is gone.
+ *
+ * The audit log is best effort by design — a write that fails is reported and
+ * retried without its payload rather than thrown, because throwing after the
+ * mutation has already landed makes an operator repeat an action that in fact
+ * succeeded. See ./audit-policy.ts for why that trade was accepted.
+ *
+ * The cost of that trade is entries that look complete and are not. This is the
+ * function that lets the screen say so. It recognises only what the writer
+ * marks, via the shared sentinel — there is no way to surface a write that was
+ * lost entirely, because a lost write leaves no row to flag.
+ */
+export function isDegradedEntry(log: Pick<AuditLogEntry, 'reason'>): boolean {
+  return isDegradedAuditReason(log.reason);
+}
+
+/** How many entries in a set are degraded. Zero is the expected answer. */
+export function countDegraded(logs: readonly Pick<AuditLogEntry, 'reason'>[]): number {
+  return logs.reduce((n, log) => (isDegradedEntry(log) ? n + 1 : n), 0);
 }

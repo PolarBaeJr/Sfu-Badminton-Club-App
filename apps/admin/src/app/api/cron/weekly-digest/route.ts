@@ -29,6 +29,30 @@ export const dynamic = 'force-dynamic';
 // restarting, and once the week is finished any further POST is a no-op.
 const MAX_SENDS_PER_RUN = 40;
 
+// THE CURSOR IS NO LONGER THE THING THAT STOPS A DOUBLE SEND (F-019).
+//
+// A cursor is a read-modify-write. Two invocations that overlap both read the
+// same `after`, both take the same first MAX_SENDS_PER_RUN members in id order,
+// and both mail them — and the Monday schedule fires every five minutes for two
+// hours precisely so that a long run can resume, which is the same thing as
+// saying overlapping invocations are the expected shape rather than an
+// accident. pg_net's own timeout-and-retry reaches it without anything on the
+// app side going wrong.
+//
+// digest_deliveries (00194) is the per-recipient, per-window idempotency key.
+// Every send is preceded by an insert of (week_start, player_id) with
+// ON CONFLICT DO NOTHING; the row that comes back is the claim, and no row back
+// means another invocation already owns this member. The cursor stays, because
+// it is a cheap resume position and the honest "this week is finished" flag —
+// but it is not what stands between a member and a second copy of their week.
+const DIGEST_DELIVERIES = 'digest_deliveries';
+
+// How stale an unfinished claim must be before the run reports it. Anything
+// this run itself claimed is completed within the same iteration, so a claim
+// older than this belongs to an invocation that died between claiming and
+// recording — the one case this design trades a possible missed digest for.
+const STRANDED_CLAIM_MS = 10 * 60_000;
+
 // cron_config already exists (00033), is RLS-enabled with no policies, and is
 // revoked from anon and authenticated — the service-role client this route uses
 // bypasses RLS. Reusing it keeps this fix app-layer: no migration, nothing for
@@ -66,8 +90,17 @@ async function readProgress(
   admin: ReturnType<typeof createAdminClient>,
   window: string,
 ): Promise<DigestProgress> {
-  const { data } = await admin.from('cron_config').select('value').eq('key', PROGRESS_KEY).maybeSingle();
+  const { data, error } = await admin.from('cron_config').select('value').eq('key', PROGRESS_KEY).maybeSingle();
   const fresh: DigestProgress = { window, after: null, complete: false };
+  // FAIL CLOSED. A failed read is indistinguishable from "no cursor yet"
+  // unless the error is inspected, and "no cursor yet" means start at the
+  // beginning — so a transient read failure part-way through a week's send
+  // re-mails everyone the previous batches already reached. writeProgress
+  // below already refuses to swallow its own error for exactly this reason;
+  // the read has the same consequence and has to be treated the same way.
+  if (error) {
+    throw new Error(`Could not read digest progress: ${error.message}`);
+  }
   if (!data?.value) return fresh;
   try {
     const parsed = JSON.parse(data.value as string) as Partial<DigestProgress>;
@@ -76,11 +109,20 @@ async function readProgress(
     if (parsed.window !== window) return fresh;
     return { window, after: parsed.after ?? null, complete: parsed.complete === true };
   } catch {
-    // Unparseable state must not wedge the job for ever. Losing the cursor
-    // costs at most one week's duplicate sends; refusing to run costs the
-    // digest entirely, every week, until somebody notices.
-    Sentry.captureMessage('weekly-digest: unreadable progress cursor, restarting the week');
-    return fresh;
+    // AN INCIDENT, NOT A RESTART. This used to fall through to a fresh cursor,
+    // reasoning that one week of duplicates beats a wedged job. That trade is
+    // the wrong way round for a mass mailing: duplicates go to the whole club,
+    // are unrecallable, and drive unsubscribes and spam complaints that cost
+    // the sending domain's reputation — while a skipped digest costs one week
+    // of a weekly summary and is visible in the same alert this raises.
+    //
+    // Clearing it deliberately is one statement, and doing it deliberately is
+    // the point: DELETE FROM cron_config WHERE key = '<PROGRESS_KEY>';
+    Sentry.captureMessage('weekly-digest: unreadable progress cursor — refusing to run', 'error');
+    throw new Error(
+      `Digest progress cursor is unreadable. Refusing to run rather than re-mailing the club. ` +
+      `Inspect cron_config key '${PROGRESS_KEY}' and clear it deliberately to restart the week.`,
+    );
   }
 }
 
@@ -112,8 +154,44 @@ export async function POST(request: Request) {
     const window = periodEnd.toISOString().slice(0, 10);
 
     const progress = await readProgress(admin, window);
+
+    // Everyone this window has already been DECIDED ABOUT — mailed, suppressed,
+    // opted out, failed, or claimed by an invocation still running. Read once;
+    // the claim below is what actually excludes, this only avoids walking over
+    // members another run has plainly finished.
+    const { data: settled, error: settledErr } = await admin
+      .from(DIGEST_DELIVERIES)
+      .select('player_id, claimed_at, completed_at')
+      .eq('week_start', window);
+    // Fail closed, for the same reason readProgress does: a failed read here is
+    // indistinguishable from "nobody has been mailed yet", and acting on that
+    // is the duplicate mailing this table exists to prevent.
+    if (settledErr) throw new Error(`Could not read digest deliveries: ${settledErr.message}`);
+    const already = new Set((settled ?? []).map((r) => r.player_id as string));
+
+    // Claims nobody closed. NOT retried — see the completion comment below and
+    // 00194. Reported, because a claim with no outcome is the one member this
+    // design may silently not mail, and the alert is what makes that a decision
+    // somebody can act on rather than a hole.
+    //
+    // BEFORE the already-complete gate, not after. A crash in the run that
+    // finishes the week strands its own claims and then nothing else runs, so
+    // reporting after the gate would be the one case that never reports.
+    const stranded = (settled ?? []).filter(
+      (r) => !r.completed_at && Date.parse(r.claimed_at as string) < now.getTime() - STRANDED_CLAIM_MS,
+    );
+    if (stranded.length > 0) {
+      Sentry.captureMessage(
+        `weekly-digest: ${stranded.length} delivery claim(s) for ${window} were never completed — those members may not have been mailed`,
+        'warning',
+      );
+    }
+
     if (progress.complete) {
-      return NextResponse.json({ ran_at: now.toISOString(), window, already_complete: true });
+      return NextResponse.json({
+        ran_at: now.toISOString(), window, already_complete: true,
+        stranded_claims: stranded.length,
+      });
     }
 
     // Only players who actually played. A digest saying "0 matches, no change"
@@ -203,14 +281,38 @@ export async function POST(request: Request) {
     // order has to be total and stable across invocations. It is the id, not
     // the name, because names are neither unique nor immutable.
     const eligible = Array.from(byPlayer.values()).sort((a, b) => (a.playerId < b.playerId ? -1 : 1));
-    const pending = progress.after
-      ? eligible.filter((a) => a.playerId > progress.after!)
-      : eligible;
+
+    const pending = eligible.filter(
+      (a) => !already.has(a.playerId) && (!progress.after || a.playerId > progress.after),
+    );
     const batch = pending.slice(0, MAX_SENDS_PER_RUN);
 
     let sent = 0;
     let skipped = 0;
+    let claimedElsewhere = 0;
     for (const agg of batch) {
+      // THE CLAIM, one member at a time and immediately before the send.
+      // ignoreDuplicates is PostgREST's ON CONFLICT DO NOTHING, and `.select()`
+      // returns only rows this statement actually inserted — so an empty result
+      // is another invocation holding this member, and the only correct thing
+      // to do with it is nothing. Per member rather than per batch so a crash
+      // strands one recipient instead of forty.
+      const { data: claim, error: claimErr } = await admin
+        .from(DIGEST_DELIVERIES)
+        .upsert(
+          { week_start: window, player_id: agg.playerId, claimed_at: new Date().toISOString() },
+          { onConflict: 'week_start,player_id', ignoreDuplicates: true },
+        )
+        .select('player_id');
+      // A claim that cannot be written is not a licence to send unclaimed.
+      if (claimErr) throw new Error(`Could not claim digest delivery: ${claimErr.message}`);
+      if (!claim || claim.length === 0) {
+        claimedElsewhere += 1;
+        progress.after = agg.playerId;
+        await writeProgress(admin, progress);
+        continue;
+      }
+
       // Sequential on purpose: a burst of parallel sends against the club's
       // sending reputation is exactly the shape that gets throttled.
       const outcome = await sendWeeklyDigestEmail(agg.email, agg.name, {
@@ -228,6 +330,52 @@ export async function POST(request: Request) {
 
       if (outcome?.sent) sent += 1;
       else skipped += 1;
+
+      // Close the claim with what actually happened, including the provider's
+      // own id for the sends — the only durable link from "I never got it" to
+      // the provider log.
+      //
+      // A THROW IS RECORDED AS `failed` AND CLOSED, NOT LEFT RETRYABLE. We
+      // cannot tell a throw before the provider was called from one after it
+      // accepted the message, and for a club-wide mailing those two are not
+      // symmetric: a duplicate is unrecallable and costs the sending domain's
+      // reputation, a miss costs one member one week of a summary that is in
+      // the app anyway. The session-reminder job decides the identical question
+      // the other way round, deliberately — see 00194.
+      const completion = outcome === null
+        ? { outcome: 'failed' as const, provider_message_id: null }
+        : outcome.sent
+          ? { outcome: 'sent' as const, provider_message_id: outcome.providerMessageId }
+          : { outcome: outcome.reason, provider_message_id: null };
+      const { error: closeErr, count: closedCount } = await admin
+        .from(DIGEST_DELIVERIES)
+        .update({ completed_at: new Date().toISOString(), ...completion }, { count: 'exact' })
+        .eq('week_start', window)
+        .eq('player_id', agg.playerId);
+      // A zero-row close is reported, not shrugged off. It used to be neither
+      // requested nor checked, under a comment claiming "the claim still holds,
+      // so the member cannot be mailed twice" -- which is only true while the
+      // claim row still exists under THIS player_id. A merge running
+      // concurrently invalidates both halves: it repoints the row to the
+      // survivor (so this filter misses it) or, before 00205 took a row lock,
+      // let the cascade delete it outright (so there is no claim at all and
+      // the survivor can be mailed the same digest again). PostgREST reports
+      // an update that matched nothing as success, so without count:'exact'
+      // this is indistinguishable from a normal close.
+      if (!closeErr && closedCount === 0) {
+        Sentry.captureException(
+          new Error(
+            `Digest delivery close matched no row for ${agg.playerId} in week ${window}: ` +
+              'the claim was repointed or removed by a concurrent merge',
+          ),
+        );
+      }
+      if (closeErr) {
+        Sentry.captureException(
+          new Error(`Digest delivery record not closed for ${agg.playerId}: ${closeErr.message}`),
+          { extra: { job: 'weekly-digest', window, outcome: completion.outcome } },
+        );
+      }
 
       // ADVANCED PER MEMBER, NOT PER BATCH, and advanced for a skip too. The
       // cursor records "this member has been DEALT WITH", not "this member was
@@ -250,6 +398,8 @@ export async function POST(request: Request) {
       eligible: eligible.length,
       sent,
       skipped,
+      claimed_elsewhere: claimedElsewhere,
+      stranded_claims: stranded.length,
       remaining,
       complete: remaining === 0,
     });

@@ -412,12 +412,21 @@ export async function markTournamentFeeUnpaid(tournamentId: string, playerId: st
   if (!oldFee) throw new Error('Fee record not found');
 
   // The row STAYS, with only the payment fields cleared — the entry itself is
-  // still a fact, and the member still owes for it. Same as markFeeUnpaid.
-  const { error } = await adminClient
+  // still a fact, and the member still owes for it. Same as markFeeUnpaid,
+  // including the compare-and-swap: see the comment there for why an unguarded
+  // `WHERE id = ...` lets a stale Mark Unpaid erase a newer payment without
+  // leaving any sign of it in the audit trail.
+  const unpaidQuery = adminClient
     .from('club_fees')
     .update({ paid_at: null, marked_by: null, method: null })
     .eq('id', oldFee.id);
+  const { data: cleared, error } = await (
+    oldFee.paid_at === null ? unpaidQuery.is('paid_at', null) : unpaidQuery.eq('paid_at', oldFee.paid_at)
+  ).select('id');
   if (error) throw new Error(error.message);
+  if (!cleared || cleared.length === 0) {
+    throw new Error('This fee was changed by someone else while you were working on it. Reload and try again.');
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,

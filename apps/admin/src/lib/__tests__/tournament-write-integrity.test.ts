@@ -15,8 +15,23 @@ interface Fault {
   table: string;
   op: Op;
   message: string;
-  /** Narrow the fault to one row: gets the filters and the payload of the write. */
-  when?: (ctx: { filters: Array<[string, unknown]>; payload: Row }) => boolean;
+  /**
+   * The PostgREST error code. Only supplied where a caller distinguishes one
+   * code from another — `PGRST116` ("no rows") is the case that matters here,
+   * because a `.single()` that finds nothing is not a failure and the code is
+   * the only thing that says so. Without it a test cannot tell "throw on any
+   * error" from "throw on everything except an empty result", and the
+   * over-correction passes.
+   */
+  code?: string;
+  /**
+   * Narrow the fault to one row: gets the filters and the payload of the write,
+   * and the column list it asked for. `cols` is what lets a fault stand for a
+   * MISSING COLUMN rather than a broken table — PostgREST answers 42703 only to
+   * the query that names the column, and a fault that took down every read of
+   * the table instead would model an outage, not an out-of-date schema.
+   */
+  when?: (ctx: { filters: Array<[string, unknown]>; payload: Row; cols: string }) => boolean;
 }
 
 const store = vi.hoisted(() => ({
@@ -28,6 +43,61 @@ const store = vi.hoisted(() => ({
    * other desk's result commits in production, and the only way to reach D1.
    */
   beforeDeletePhase: null as null | (() => void),
+  /**
+   * Runs before each tournament_matches INSERT — the only place a competing
+   * generation can land in production, because a draw is built one PostgREST
+   * round trip at a time and the advisory lock its teardown took was released
+   * at that teardown's COMMIT. Nothing else in this harness can put the other
+   * desk's redraw INSIDE the insert loop, which is where 00197's whole finding
+   * lives.
+   */
+  beforeMatchInsert: null as null | (() => void),
+  /**
+   * Runs at the top of complete_event_under_field_lock — after finalisation
+   * has read the winners' status and written their placings, and before the
+   * flip. That gap is precisely where an admin's disqualification commits in
+   * production, and it is the only place the round-18 crowned-DQ interleaving
+   * can be created: the guard in assignPositionsAndPoints has already run.
+   */
+  beforeCompleteEvent: null as null | (() => void),
+  /**
+   * Runs at the top of rewrite_event_placings_under_field_lock — after the
+   * recompute has taken its results snapshot and computed a ladder from it,
+   * and before that ladder is written. That gap is the whole of 00215: a
+   * second officer's void or correction commits there, and before the fence
+   * the first officer's stale ladder simply landed on top of it.
+   */
+  beforeRewritePlacings: null as null | (() => void),
+  /** Every RPC the code under test issued, so a test can assert what it PASSED. */
+  rpcCalls: [] as Array<{ name: string; args: Record<string, unknown> }>,
+  /**
+   * Runs at the top of promote_pool_qualifier — after buildFieldFromPool has
+   * read the target field and passed assertNobodyLeftUnpaired, and before the
+   * promotion writes. That gap is where a member's own entry commits in
+   * production, and it is the only place the F-004 duplicate can be created:
+   * for a doubles bracket the `existing` map is built from tournament_pairs
+   * alone, so an unpaired participant row arriving here is invisible to it.
+   */
+  beforePromote: null as null | (() => void),
+  /**
+   * Runs at the top of add_participants_under_field_lock — after
+   * addParticipantToEvent has asked playersAlreadyPaired and been told no, and
+   * before the entry is written. In production those are two PostgREST round
+   * trips and therefore two transactions, which is exactly why the check moved
+   * into the RPC: an advisory lock cannot span them.
+   */
+  beforeAdd: null as null | (() => void),
+  /**
+   * "This database predates 00197" — ONE fact, honoured everywhere it shows.
+   *
+   * It has to be one switch rather than a hand-placed fault, because the two
+   * observable consequences are not independent: the column the fence probes is
+   * missing AND delete_phase_matches is still 00144's integer-returning
+   * version. A test that arranged only one of them would be describing a
+   * database that cannot exist, and the mutation proof would land on the wrong
+   * line.
+   */
+  oldSchema: false,
   // Stands in for `gen_random_uuid()`. Bracket generation inserts a match shell
   // and immediately uses the id it gets back to wire up the next round, so an
   // insert that returns no id cannot be exercised at all.
@@ -98,8 +168,16 @@ const makeClient = vi.hoisted(() => () => {
         ? { ...r, event: (store.db.tournament_events ?? []).find((e) => e.id === r.event_id) ?? null }
         : { ...r };
 
-    const fault = () =>
-      store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when({ filters, payload })));
+    const fault = () => {
+      // 42703, and only for the query that names the missing column — the
+      // generator's own `select('*')` on this row still succeeds on an old
+      // database, it just comes back a column short.
+      if (store.oldSchema && table === 'tournament_events' && op === 'select'
+          && cols.includes('draw_generation_id')) {
+        return { table, op, message: 'column tournament_events.draw_generation_id does not exist' } as Fault;
+      }
+      return store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when({ filters, payload, cols })));
+    };
 
     const run = () => {
       const f = fault();
@@ -116,6 +194,27 @@ const makeClient = vi.hoisted(() => () => {
       }
       if (op === 'insert') {
         const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
+        // trg_tournament_match_generation (00197). A stamped row whose claim is
+        // not the event's current one is refused; an unstamped row passes. This
+        // is on the TABLE and not in an RPC because the real inserts go straight
+        // through PostgREST, and modelling it anywhere else would make the
+        // superseded-generator tests pass without the fence existing.
+        if (table === 'tournament_matches') {
+          store.beforeMatchInsert?.();
+          for (const r of rows) {
+            if (r.draw_generation_id == null) continue;
+            const ev = (store.db.tournament_events ?? []).find((e) => e.id === r.event_id);
+            if (ev?.draw_generation_id !== r.draw_generation_id) {
+              return {
+                data: null,
+                error: {
+                  message: 'This draw was rebuilt by somebody else while it was being generated, so these matches were not saved. Press Generate again to build the current draw.',
+                  code: '23514',
+                },
+              };
+            }
+          }
+        }
         // The id is spread FIRST so an explicit one in the payload wins, exactly
         // as a DEFAULT does. Rows are returned rather than discarded because
         // `.insert(...).select('id').single()` is how every match shell in the
@@ -185,7 +284,7 @@ const makeClient = vi.hoisted(() => () => {
       order(c: string, opts?: { ascending?: boolean }) { orderBy = [c, opts?.ascending !== false]; return api; },
       async single() {
         const f = fault();
-        if (f) return { data: null, error: { message: f.message } };
+        if (f) return { data: null, error: { message: f.message, code: f.code } };
         // `.insert(x).select('id').single()` is a WRITE that returns what it
         // wrote. Reading the table instead — which is what this did — meant an
         // insert issued that way never happened at all, and any code path built
@@ -201,7 +300,7 @@ const makeClient = vi.hoisted(() => () => {
       },
       async maybeSingle() {
         const f = fault();
-        if (f) return { data: null, error: { message: f.message } };
+        if (f) return { data: null, error: { message: f.message, code: f.code } };
         const r = matching()[0];
         return { data: r ? embed(r) : null, error: null };
       },
@@ -219,8 +318,8 @@ const makeClient = vi.hoisted(() => () => {
   // would, so the existing fault fixtures keep working — but the FIRST failure
   // restores the whole store and returns an error. A harness that let half the
   // writes survive could not tell the fixed behaviour from the bug it replaces.
-  const faultFor = (table: string, op: Op, ctx: { filters: Array<[string, unknown]>; payload: Row }) =>
-    store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when(ctx)));
+  const faultFor = (table: string, op: Op, ctx: { filters: Array<[string, unknown]>; payload: Row; cols?: string }) =>
+    store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when({ cols: '*', ...ctx })));
 
   // rating_setting_int('provisional_threshold', 8)
   const threshold = () => {
@@ -446,13 +545,855 @@ const makeClient = vi.hoisted(() => () => {
     if (played > 0) return refuse(`${played} match(es) in this draw have a result`);
     if (rated > 0) return refuse(`${rated} match(es) in this draw still carry an applied rating that was never reversed`);
     if (live > 0) return refuse(`${live} match(es) in this draw are being played right now`);
-    return Promise.resolve({ data: gone.length, error: null });
+
+    // THE CLAIM (00197), issued after the three refusals for the same reason
+    // the real one is: a teardown that is not allowed to proceed must not take
+    // the event's generation away from one that is.
+    const generation = `gen-${++store.seq}-draw`;
+    const ev = (store.db.tournament_events ?? []).find((r) => r.id === eventId);
+    if (ev) ev.draw_generation_id = generation;
+    // 00144 returned a bare count. The app reading `.generation` off that is
+    // the whole reason the fence has to run before the DELETE commits.
+    if (store.oldSchema) return Promise.resolve({ data: gone.length, error: null });
+    return Promise.resolve({ data: { deleted: gone.length, generation }, error: null });
+  }
+
+  // The grant ledger of 00188, which is what actually makes a bonus once-only.
+  // Modelled as a table rather than a flag because the uniqueness is per
+  // (event, kind, subject) and the two kinds are independent.
+  function claimGrant(eventId: string, kind: string, subjectId: string): boolean {
+    const grants = (store.db.tournament_bonus_grants ??= []);
+    if (grants.some((g) => g.event_id === eventId && g.kind === kind && g.subject_id === subjectId)) {
+      return false;
+    }
+    grants.push({ event_id: eventId, kind, subject_id: subjectId, applied_delta: 0 });
+    return true;
+  }
+
+  // THE GRANT AND THE PAYMENT SHARE A TRANSACTION, so a failure after the claim
+  // takes the claim down with it and the retry pays. Modelling the claim as
+  // durable-on-failure would make a transient error permanently un-payable —
+  // the opposite of what the ledger is for — and would quietly assert the
+  // wrong contract about SQL that does roll back.
+  function releaseGrant(eventId: string, kind: string, subjectId: string): void {
+    const grants = (store.db.tournament_bonus_grants ??= []);
+    const i = grants.findIndex(
+      (g) => g.event_id === eventId && g.kind === kind && g.subject_id === subjectId
+    );
+    if (i >= 0) grants.splice(i, 1);
+  }
+
+  function ratingBounds(): { lo: number; hi: number } {
+    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
+    let lo = (settings?.min_elo as number | undefined) ?? 100;
+    let hi = (settings?.max_elo as number | undefined) ?? 1500;
+    // rating_bounds() falls back wholesale when the pair is nonsensical.
+    if (hi <= lo) { lo = 100; hi = 1500; }
+    return { lo, hi };
+  }
+
+  // Mirrors apply_placement_bonus (00179, 00188): claim the grant, then read
+  // the CURRENT rating, add, clamp to the CONFIGURED bounds, write, and report
+  // what actually landed. The clamp used to happen in TypeScript before the
+  // write; the point of 00179 is that the read, the add and the write are one
+  // locked operation, and of 00188 that the claim is in the same transaction,
+  // so the tests that assert clamping and single-payment are really asserting
+  // this function.
+  function placementBonusRpc(args: Record<string, unknown>) {
+    const pid = args.p_player_id as string;
+    const eventId = args.p_event_id as string;
+    if (!claimGrant(eventId, 'rating', pid)) {
+      return Promise.resolve({ data: { applied: false, already_granted: true, applied_delta: 0 }, error: null });
+    }
+    const field = args.p_discipline === 'singles' ? 'singles_elo' : 'doubles_elo';
+    const row = (store.db.ratings ?? []).find((r) => r.player_id === pid);
+    // The SQL raises rather than inventing 400 for a player with no rating row.
+    if (!row) {
+      releaseGrant(eventId, 'rating', pid);
+      return Promise.resolve({
+        data: null,
+        error: { message: `No ratings row for player ${pid} — cannot award a placement bonus` },
+      });
+    }
+    // Consulted with the same { table, op, filters, payload } shape a direct
+    // PostgREST write would present, so fault fixtures written against
+    // `ratings`/`update` keep describing this write after it moved into SQL.
+    const fault = faultFor('ratings', 'update', { filters: [['player_id', pid]], payload: {} });
+    if (fault) {
+      releaseGrant(eventId, 'rating', pid);
+      return Promise.resolve({ data: null, error: { message: fault.message } });
+    }
+    const { lo, hi } = ratingBounds();
+    const before = row[field] as number;
+    const after = Math.min(Math.max(before + ((args.p_bonus as number) ?? 0), lo), hi);
+    row[field] = after;
+    row.updated_at = new Date().toISOString();
+    return Promise.resolve({
+      data: { applied: true, already_granted: false, new_elo: after, applied_delta: after - before },
+      error: null,
+    });
+  }
+
+  // Mirrors credit_participant_placement_bonus (00188). Same grant, same lock,
+  // same clamp — this write was a read-modify-write issued from the
+  // application until 00188, and it carried the whole batch as its race
+  // window exactly as the rating write did before 00179.
+  function creditParticipantRpc(args: Record<string, unknown>) {
+    const eventId = args.p_event_id as string;
+    const partId = args.p_participant_id as string;
+    const bonus = (args.p_bonus as number) ?? 0;
+    if (!claimGrant(eventId, 'participant_credit', partId)) {
+      return Promise.resolve({ data: { applied: false, already_granted: true }, error: null });
+    }
+    const row = (store.db.tournament_participants ?? []).find(
+      (r) => r.id === partId && r.event_id === eventId
+    );
+    if (!row) {
+      releaseGrant(eventId, 'participant_credit', partId);
+      return Promise.resolve({
+        data: null,
+        error: { message: `No participant ${partId} in event ${eventId}` },
+      });
+    }
+    // Same { table, op, filters, payload } shape a direct PostgREST write
+    // presented, so fault fixtures written against tournament_participants
+    // keep describing this write after it moved into SQL.
+    const fault = faultFor('tournament_participants', 'update', { filters: [['id', partId]], payload: {} });
+    if (fault) {
+      releaseGrant(eventId, 'participant_credit', partId);
+      return Promise.resolve({ data: null, error: { message: fault.message } });
+    }
+    const { lo, hi } = ratingBounds();
+    const prevAfter = row.elo_after as number | null | undefined;
+    const newAfter = prevAfter === null || prevAfter === undefined
+      ? null
+      : Math.min(Math.max(prevAfter + bonus, lo), hi);
+    row.elo_change = ((row.elo_change as number | null) ?? 0) + bonus;
+    row.elo_after = newAfter;
+    return Promise.resolve({
+      data: { applied: true, already_granted: false, elo_change: row.elo_change, elo_after: newAfter },
+      error: null,
+    });
   }
 
   function rpc(name: string, args: Record<string, unknown>) {
+    store.rpcCalls.push({ name, args });
     if (name === 'apply_tournament_match_rating') return applyRpc(args);
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
     if (name === 'delete_phase_matches') return deletePhaseRpc(args);
+    if (name === 'apply_placement_bonus') return placementBonusRpc(args);
+    if (name === 'credit_participant_placement_bonus') return creditParticipantRpc(args);
+    // Mirrors event_has_legacy_bonus_payment (00189), reading the same marker
+    // rows the SQL reads rather than a parallel fixture.
+    if (name === 'event_has_legacy_bonus_payment') {
+      const eventId = args.p_event_id as string;
+      const f = faultFor('tournament_bonus_grants', 'select', { filters: [['event_id', eventId]], payload: {} });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      const marked = (store.db.tournament_bonus_grants ?? []).some(
+        (g) => g.event_id === eventId && g.kind === 'event_legacy_paid' && g.subject_id === eventId,
+      );
+      return Promise.resolve({ data: marked, error: null });
+    }
+    // Mirrors publish_event_draw (00193). The status flip stopped being a plain
+    // UPDATE when the re-count moved into the same statement, so the fake has to
+    // model both halves — and it still consults faultFor on the tournament_events
+    // UPDATE, because the fault-injection tests that make the publish fail are
+    // asserting on the draw not being advertised, not on which wire call carried
+    // it.
+    if (name === 'publish_event_draw') {
+      const eventId = args.p_event_id as string;
+      const doubles = args.p_doubles as boolean;
+      const payload = { status: args.p_new_status, updated_at: new Date().toISOString() };
+      const f = faultFor('tournament_events', 'update', { filters: [['id', eventId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      const ev = (store.db.tournament_events ?? []).find((r) => r.id === eventId);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      // THE THREE ASSERTIONS 00197 ADDED. The first is the fence: publishing a
+      // claim that has moved on would put this generation's status on somebody
+      // else's bracket. The other two are about what was actually built, which
+      // publication never looked at before.
+      if (ev.draw_generation_id !== args.p_generation) {
+        return Promise.resolve({ data: { ok: false, reason: 'superseded' }, error: null });
+      }
+      // THE DRAWN SET, NOT A COUNT (00200). p_expected was an integer and null
+      // meant "do not check", which is how the pool-seeded path came to assert
+      // nothing at all. Both directions are modelled here because the swap case
+      // — one entrant out, one in, total unchanged — is invisible to a count and
+      // is the reason the shape changed.
+      const entrants = (args.p_entrants as string[] | null) ?? [];
+      const wholeField = args.p_whole_field as boolean;
+      const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+      const live = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && (r.status === 'registered' || r.status === 'checked_in'),
+      );
+      if (entrants.length === 0) {
+        // The real function RAISES here rather than returning a refusal: an
+        // empty list is a caller fault, and letting it through would be the
+        // null-means-do-not-check behaviour coming back by another door.
+        return Promise.resolve({ data: null, error: { message: 'publish_event_draw: p_entrants may not be null or empty' } });
+      }
+      const liveIds = new Set(live.map((r) => r.id as string));
+      const left = entrants.filter((id) => !liveIds.has(id)).length;
+      if (left > 0) {
+        return Promise.resolve({
+          data: { ok: false, reason: 'entrant_left', count: left }, error: null,
+        });
+      }
+      // Only when the draw was supposed to BE the field. A pool-seeded draw is
+      // a subset by construction — the members who did not qualify are still
+      // registered — so extras there are the normal state, not a fault.
+      if (wholeField) {
+        const drawn = new Set(entrants);
+        const extra = live.filter((r) => !drawn.has(r.id as string)).length;
+        if (extra > 0) {
+          return Promise.resolve({
+            data: { ok: false, reason: 'field_grew', expected: entrants.length, now: live.length },
+            error: null,
+          });
+        }
+      }
+      const phase = (args.p_phase as string | null) ?? null;
+      const built = (store.db.tournament_matches ?? []).filter(
+        (m) => m.event_id === eventId && (phase === null || m.phase === phase),
+      );
+      const foreign = built.filter((m) => m.draw_generation_id !== args.p_generation).length;
+      if (foreign > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'foreign_matches', count: foreign }, error: null });
+      }
+      if (built.length === 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'no_matches' }, error: null });
+      }
+      Object.assign(ev, payload);
+      return Promise.resolve({ data: { ok: true, matches: built.length }, error: null });
+    }
+    // Stand-in for promote_pool_qualifier (00198). The pool promotion used to be
+    // a direct insert into one of these two tables; it moved behind an RPC so the
+    // duplicate check and the write happen under the SAME field advisory lock the
+    // entry path takes. The fake cannot model a lock, but it can model the check
+    // the lock exists to make answerable — and the write still goes through the
+    // ordinary query() path, so every fault fixture aimed at a tournament_pairs
+    // or tournament_participants insert keeps firing exactly as before.
+    if (name === 'promote_pool_qualifier') {
+      store.beforePromote?.();
+      const eventId = args.p_event_id as string;
+      const doubles = args.p_doubles as boolean;
+      const p1 = args.p_player1_id as string;
+      const p2 = (args.p_player2_id as string | null) ?? null;
+      const ids = [p1, p2].filter((v): v is string => typeof v === 'string');
+      const live = (r: Row) => r.status !== 'withdrawn' && r.status !== 'disqualified';
+      const asParticipant = (store.db.tournament_participants ?? []).some(
+        (r) => r.event_id === eventId && ids.includes(r.player_id as string) && live(r),
+      );
+      const asPair = (store.db.tournament_pairs ?? []).some(
+        (r) =>
+          r.event_id === eventId &&
+          (ids.includes(r.player1_id as string) || ids.includes(r.player2_id as string)) &&
+          live(r),
+      );
+      if (asParticipant || asPair) {
+        return Promise.resolve({
+          data: { ok: false, reason: 'already_in_field', conflict: asParticipant ? 'participant' : 'pair' },
+          error: null,
+        });
+      }
+      const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+      const row: Row = doubles
+        ? {
+            event_id: eventId, player1_id: p1, player2_id: p2, pair_name: args.p_pair_name,
+            combined_elo: args.p_elo, status: 'checked_in', checked_in_at: args.p_checked_in_at,
+            checked_in_by: args.p_admin_id, seed_number: args.p_seed, added_by: args.p_admin_id,
+          }
+        : {
+            event_id: eventId, player_id: p1, elo_before: args.p_elo,
+            status: 'checked_in', checked_in_at: args.p_checked_in_at,
+            checked_in_by: args.p_admin_id, seed_number: args.p_seed, added_by: args.p_admin_id,
+          };
+      return query(table).insert(row).select('id').single().then((res) =>
+        res.error
+          ? { data: null, error: res.error }
+          : { data: { ok: true, id: (res.data as Row).id }, error: null },
+      );
+    }
+    // Stand-in for add_participants_under_field_lock (00199). The exec's two
+    // entry paths used to insert into tournament_participants directly, asking
+    // "is this person already half of a pair?" one round trip earlier; the
+    // check and the write now happen under the same field lock everybody else
+    // takes. Modelled here are the two questions that lock exists to make
+    // answerable — an existing pair and an existing live entry. Capacity and
+    // the per-member cap are NOT modelled here even though 00199 does enforce
+    // both (and refuses the whole call when either trips), because the app
+    // decides them above this call and its own tests cover them there. So a
+    // test that seeds a full event or an over-cap member and expects THIS to
+    // refuse is testing nothing — it would pass here and fail against the real
+    // database. Model them before writing one.
+    if (name === 'add_participants_under_field_lock') {
+      store.beforeAdd?.();
+      const eventId = args.p_event_id as string;
+      const entries = (args.p_entries as Array<{ player_id: string; elo_before: number }>) ?? [];
+      const ids = entries.map((e) => e.player_id);
+      const live = (r: Row) => r.status !== 'withdrawn' && r.status !== 'disqualified';
+      const inPair = (store.db.tournament_pairs ?? []).some(
+        (r) =>
+          r.event_id === eventId &&
+          (ids.includes(r.player1_id as string) || ids.includes(r.player2_id as string)) &&
+          live(r),
+      );
+      if (inPair) {
+        return Promise.resolve({ data: { ok: false, reason: 'already_in_pair' }, error: null });
+      }
+      const dupe = (store.db.tournament_participants ?? []).find(
+        (r) => r.event_id === eventId && ids.includes(r.player_id as string) && live(r),
+      );
+      if (dupe) {
+        return Promise.resolve({
+          data: { ok: false, reason: 'already_registered', player_id: dupe.player_id },
+          error: null,
+        });
+      }
+      // The write still goes through the ordinary query() path, so every fault
+      // fixture aimed at a tournament_participants insert keeps firing. One row
+      // at a time because this builder's insert() takes one — the real function
+      // writes the batch in a single statement, which matters for atomicity in
+      // Postgres and not at all for what these tests observe, since a refusal
+      // returns above this line and never reaches a partial write.
+      return (async () => {
+        const written: Row[] = [];
+        for (const e of entries) {
+          const row: Row = {
+            event_id: eventId, player_id: e.player_id, elo_before: e.elo_before,
+            added_by: args.p_admin_id, status: 'registered',
+          };
+          const res = await query('tournament_participants').insert(row).select('id').single();
+          if (res.error) return { data: null, error: res.error };
+          written.push({ ...row, id: (res.data as Row).id });
+        }
+        return { data: { ok: true, participants: written }, error: null };
+      })();
+    }
+    // ---- THE FENCED FIELD RPCS (00201) -----------------------------------
+    // These replaced nine direct PostgREST writes. Modelled against the same
+    // store rather than stubbed, and they still consult faultFor on the
+    // underlying table UPDATE, because the fault-injection tests that make a
+    // withdrawal fail are asserting on the entry not moving — not on which wire
+    // call carried it.
+    const fieldTableFor = (isPair: boolean) => (isPair ? 'tournament_pairs' : 'tournament_participants');
+
+    // 00213. The snapshot the finalisation fence compares. Modelled as the same
+    // narrow column set the SQL function builds, because the point of the fence
+    // is that a match can move WITHOUT any entry moving — so a harness that
+    // hashed the whole row would refuse on `court` and prove nothing about the
+    // columns a placing is actually computed from.
+    const resultsFingerprintFor = (eventId: string): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      for (const m of store.db.tournament_matches ?? []) {
+        if (m.event_id !== eventId) continue;
+        out[m.id as string] = {
+          st: m.status ?? null,
+          wp: m.winner_participant_id ?? null,
+          wr: m.winner_pair_id ?? null,
+          lp: m.loser_participant_id ?? null,
+          lr: m.loser_pair_id ?? null,
+          sc: m.scores ?? null,
+          wo: m.walkover_winner ?? null,
+          by: m.is_bye ?? null,
+          th: m.is_third_place ?? null,
+          rn: m.round_number ?? null,
+          bp: m.bracket_position ?? null,
+          ph: m.phase ?? null,
+          pa: m.participant_a_id ?? null,
+          pb: m.participant_b_id ?? null,
+          ra: m.pair_a_id ?? null,
+          rb: m.pair_b_id ?? null,
+          dg: m.draw_generation_id ?? null,
+        };
+      }
+      return out;
+    };
+
+    if (name === 'event_results_fingerprint') {
+      // The snapshot is a SECURITY DEFINER read of tournament_matches, so it is
+      // faultable on the same terms as the direct reads of that table -- keyed
+      // by the projection the function builds, which no direct read asks for.
+      const f = faultFor('tournament_matches', 'select', {
+        filters: [['event_id', args.p_event_id]], payload: {}, cols: 'event_results_fingerprint',
+      });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      return Promise.resolve({ data: resultsFingerprintFor(args.p_event_id as string), error: null });
+    }
+
+    if (name === 'set_field_entry_status') {
+      const entryId = args.p_entry_id as string;
+      const isPair = args.p_is_pair as boolean;
+      const next = args.p_new_status as string;
+      const table = fieldTableFor(isPair);
+      const row = (store.db[table] ?? []).find((r) => r.id === entryId);
+      if (!row) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === row.event_id);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+
+      // The narrow guards, in the SQL's order: the check-in/no-show floor
+      // first, then the completed ceiling that applies to all four statuses.
+      if ((next === 'checked_in' || next === 'no_show') && ev.status === 'registration') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      if (ev.status === 'completed') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_completed', event_status: ev.status }, error: null });
+      }
+      if (next === 'checked_in' && row.status !== 'registered' && row.status !== 'checked_in') {
+        return Promise.resolve({
+          data: { ok: false, reason: 'entry_status', entry_status: row.status, event_status: ev.status },
+          error: null,
+        });
+      }
+
+      const already = row.status === next;
+      if (!already) {
+        const payload: Row = { status: next };
+        if (next === 'checked_in') {
+          payload.checked_in_at = new Date().toISOString();
+          payload.checked_in_by = (args.p_actor as string | null) ?? null;
+        }
+        const f = faultFor(table, 'update', { filters: [['id', entryId]], payload });
+        if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+        Object.assign(row, payload);
+      }
+      return Promise.resolve({
+        data: {
+          ok: true, already, entry_status_before: row.status, event_status: ev.status,
+          event_id: ev.id, tournament_id: ev.tournament_id, draw_locked: ev.draw_locked ?? false,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'remove_field_entry') {
+      const entryId = args.p_entry_id as string;
+      const isPair = args.p_is_pair as boolean;
+      const table = fieldTableFor(isPair);
+      const rows = store.db[table] ?? [];
+      const row = rows.find((r) => r.id === entryId);
+      if (!row) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === row.event_id);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status !== 'registration' && ev.status !== 'checkin') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      if (ev.draw_locked) return Promise.resolve({ data: { ok: false, reason: 'draw_locked' }, error: null });
+      const f = faultFor(table, 'delete', { filters: [['id', entryId]], payload: {} });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      store.db[table] = rows.filter((r) => r.id !== entryId);
+      return Promise.resolve({
+        data: { ok: true, event_id: ev.id, tournament_id: ev.tournament_id, event_status: ev.status },
+        error: null,
+      });
+    }
+
+    if (name === 'bulk_check_in_field') {
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const ids = args.p_ids as string[] | null;
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status === 'registration' || ev.status === 'completed') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      const payload: Row = {
+        status: 'checked_in', checked_in_at: new Date().toISOString(),
+        checked_in_by: (args.p_actor as string | null) ?? null,
+      };
+      const f = faultFor(table, 'update', { filters: [['event_id', eventId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      // `status === 'registered'` is re-checked here and NOT taken from the id
+      // list, exactly as the SQL does — the list was screened outside the fence.
+      const hit = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && r.status === 'registered' && (ids === null || ids.includes(r.id as string)),
+      );
+      for (const r of hit) Object.assign(r, payload);
+      return Promise.resolve({
+        data: {
+          ok: true, checked_in: hit.length, ids: hit.map((r) => r.id),
+          event_status: ev.status, tournament_id: ev.tournament_id,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'mark_field_entries_no_show') {
+      const ids = args.p_entry_ids as string[];
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const rows = (store.db[table] ?? []).filter((r) => ids.includes(r.id as string));
+      if (rows.length === 0) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const events = [...new Set(rows.map((r) => r.event_id))];
+      if (events.length !== 1) {
+        return Promise.resolve({ data: { ok: false, reason: 'entries_span_events', events: events.length }, error: null });
+      }
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === events[0]);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status === 'registration' || ev.status === 'completed') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      const f = faultFor(table, 'update', { filters: [['id', ids[0] as string]], payload: { status: 'no_show' } });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      for (const r of rows) r.status = 'no_show';
+      return Promise.resolve({
+        data: { ok: true, marked: rows.length, event_id: ev.id, tournament_id: ev.tournament_id, event_status: ev.status },
+        error: null,
+      });
+    }
+
+    // ---- 00209: the seeding, grouping and finalisation fences -----------
+    //
+    // Transcribed from the SQL in the same order the SQL asks them, so a guard
+    // added there and not here shows up as a test that stops mirroring the
+    // database rather than as one that quietly passes. faultFor is still
+    // consulted on the underlying table so the existing fault-injection tests
+    // reach these paths.
+
+    /** The refusals every 00209 event-scoped RPC makes, in the SQL's order. */
+    function seedStageRefusal(ev: Row | undefined, statuses: string[]) {
+      if (!ev) return { ok: false, reason: 'event_not_found' };
+      if (ev.draw_locked) return { ok: false, reason: 'draw_locked' };
+      if (!statuses.includes(ev.status as string)) {
+        return { ok: false, reason: 'event_status', event_status: ev.status };
+      }
+      return null;
+    }
+
+    if (name === 'set_field_entry_seed') {
+      const entryId = args.p_entry_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const row = (store.db[table] ?? []).find((r) => r.id === entryId);
+      if (!row) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === row.event_id);
+      const refusal = seedStageRefusal(ev, ['registration']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const payload: Row = { seed_number: (args.p_seed as number | null) ?? null };
+      const f = faultFor(table, 'update', { filters: [['id', entryId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      Object.assign(row, payload);
+      return Promise.resolve({
+        data: { ok: true, event_id: ev!.id, tournament_id: ev!.tournament_id, event_status: ev!.status },
+        error: null,
+      });
+    }
+
+    if (name === 'auto_seed_field_by_rating') {
+      const eventId = args.p_event_id as string;
+      const isPair = args.p_is_pair as boolean;
+      const table = fieldTableFor(isPair);
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      const refusal = seedStageRefusal(ev, ['registration']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const f = faultFor(table, 'update', { filters: [['event_id', eventId]], payload: { seed_number: 1 } });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      // row_number() OVER (ORDER BY <rating> DESC NULLS LAST, id).
+      const ratingCol = isPair ? 'combined_elo' : 'elo_before';
+      const eligible = (store.db[table] ?? [])
+        .filter((r) => r.event_id === eventId && r.status !== 'withdrawn' && r.status !== 'disqualified')
+        .sort((a, b) => {
+          const x = a[ratingCol] as number | null;
+          const y = b[ratingCol] as number | null;
+          if (x === null && y === null) return String(a.id).localeCompare(String(b.id));
+          if (x === null) return 1;
+          if (y === null) return -1;
+          if (x !== y) return y - x;
+          return String(a.id).localeCompare(String(b.id));
+        });
+      eligible.forEach((r, i) => { r.seed_number = i + 1; });
+      return Promise.resolve({
+        data: {
+          ok: true, seeded: eligible.length, event_id: eventId,
+          tournament_id: ev!.tournament_id, event_status: ev!.status,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'clear_field_seeds') {
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      const refusal = seedStageRefusal(ev, ['registration']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const f = faultFor(table, 'update', { filters: [['event_id', eventId]], payload: { seed_number: null } });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      // The WHOLE field, seeded or not — see the SQL's comment.
+      const hit = (store.db[table] ?? []).filter((r) => r.event_id === eventId);
+      for (const r of hit) r.seed_number = null;
+      return Promise.resolve({
+        data: {
+          ok: true, cleared: hit.length, event_id: eventId,
+          tournament_id: ev!.tournament_id, event_status: ev!.status,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'set_field_groups') {
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const assignments = args.p_assignments as Record<string, number>;
+      const expected = args.p_expected as string[];
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      const refusal = seedStageRefusal(ev, ['registration', 'checkin']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const groupCount = (ev!.group_count as number | null) ?? 1;
+      if (groupCount < 2) {
+        return Promise.resolve({ data: { ok: false, reason: 'not_a_group_stage', group_count: groupCount }, error: null });
+      }
+      const matches = (store.db.tournament_matches ?? []).filter((m) => m.event_id === eventId).length;
+      if (matches > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'fixtures_exist', matches }, error: null });
+      }
+      const now = (store.db[table] ?? [])
+        .filter((r) => r.event_id === eventId && (r.status === 'registered' || r.status === 'checked_in'))
+        .map((r) => r.id as string);
+      const arrived = now.filter((id) => !expected.includes(id)).length;
+      const left = expected.filter((id) => !now.includes(id)).length;
+      if (arrived > 0 || left > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'field_changed', arrived, left }, error: null });
+      }
+      const bad = Object.values(assignments).filter((g) => g < 1 || g > groupCount).length;
+      if (bad > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'group_out_of_range', group_count: groupCount, bad }, error: null });
+      }
+      const f = faultFor(table, 'update', { filters: [['event_id', eventId]], payload: { group_number: 1 } });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      let written = 0;
+      for (const [id, group] of Object.entries(assignments)) {
+        const row = (store.db[table] ?? []).find((r) => r.id === id && r.event_id === eventId);
+        if (row) { row.group_number = group; written++; }
+      }
+      return Promise.resolve({
+        data: {
+          ok: true, assigned: written, group_count: groupCount, event_id: eventId,
+          tournament_id: ev!.tournament_id, event_status: ev!.status,
+        },
+        error: null,
+      });
+    }
+
+    if (name === 'set_field_entry_group') {
+      const entryId = args.p_entry_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const group = args.p_group as number;
+      const row = (store.db[table] ?? []).find((r) => r.id === entryId);
+      if (!row) return Promise.resolve({ data: { ok: false, reason: 'entry_not_found' }, error: null });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === row.event_id);
+      const refusal = seedStageRefusal(ev, ['registration', 'checkin']);
+      if (refusal) return Promise.resolve({ data: refusal, error: null });
+      const groupCount = (ev!.group_count as number | null) ?? 1;
+      if (groupCount < 2) {
+        return Promise.resolve({ data: { ok: false, reason: 'not_a_group_stage', group_count: groupCount }, error: null });
+      }
+      if (group < 1 || group > groupCount) {
+        return Promise.resolve({ data: { ok: false, reason: 'group_out_of_range', group_count: groupCount }, error: null });
+      }
+      const matches = (store.db.tournament_matches ?? []).filter((m) => m.event_id === row.event_id).length;
+      if (matches > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'fixtures_exist', matches }, error: null });
+      }
+      const payload: Row = { group_number: group };
+      const f = faultFor(table, 'update', { filters: [['id', entryId]], payload });
+      if (f) return Promise.resolve({ data: null, error: { message: f.message } });
+      Object.assign(row, payload);
+      return Promise.resolve({
+        data: { ok: true, event_id: ev!.id, tournament_id: ev!.tournament_id, event_status: ev!.status },
+        error: null,
+      });
+    }
+
+    if (name === 'complete_event_under_field_lock') {
+      store.beforeCompleteEvent?.();
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const field = args.p_field as string[];
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status !== 'live') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      const arrived = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && r.status !== 'withdrawn' && r.status !== 'disqualified'
+          && !field.includes(r.id as string),
+      ).length;
+      if (arrived > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'field_changed', arrived }, error: null });
+      }
+      // 00211. Mirrors the real function: the field check above deliberately
+      // allows SHRINKAGE, so it cannot see an entry that left AND had won.
+      const won = (args.p_won as string[] | undefined) ?? [];
+      const exitedWinners = (store.db[table] ?? []).filter(
+        (r) => r.event_id === eventId && won.includes(r.id as string)
+          && (r.status === 'withdrawn' || r.status === 'disqualified'),
+      );
+      if (exitedWinners.length > 0) {
+        return Promise.resolve({
+          data: {
+            ok: false,
+            reason: 'winner_exited',
+            winners: exitedWinners.map((r) => `${r.id} (${r.status})`).join(', '),
+          },
+          error: null,
+        });
+      }
+      const incomplete = (store.db.tournament_matches ?? []).filter(
+        (m) => m.event_id === eventId
+          && !['completed', 'walkover', 'voided', 'bye'].includes(m.status as string)
+          && m.is_bye !== true,
+      ).length;
+      if (incomplete > 0) {
+        return Promise.resolve({ data: { ok: false, reason: 'matches_incomplete', incomplete }, error: null });
+      }
+      // 00213. Mirrors the real function: rebuild the snapshot HERE, under the
+      // lock, and refuse if it is not the one the caller placed from. The check
+      // above asks whether the matches are finished; this asks whether they
+      // still say what the ladder was computed from. A corrected result stays
+      // 'completed' and a void counts as settled, so neither is visible to it.
+      const nowResults = resultsFingerprintFor(eventId);
+      const sentResults = (args.p_results ?? null) as Record<string, unknown> | null;
+      if (sentResults === null) {
+        return Promise.resolve({ data: null, error: { message: 'p_results must be the object returned by event_results_fingerprint' } });
+      }
+      if (JSON.stringify(nowResults) !== JSON.stringify(sentResults)) {
+        const moved = Object.keys({ ...nowResults, ...sentResults }).filter(
+          (k) => JSON.stringify(nowResults[k]) !== JSON.stringify(sentResults[k]),
+        );
+        return Promise.resolve({
+          data: { ok: false, reason: 'results_changed', matches_moved: moved.sort().slice(0, 5).join(', ') },
+          error: null,
+        });
+      }
+      // 00212. THE PLACINGS LAND HERE, not before the call, and they land in
+      // the same transaction as the flip. Modelled row by row so the fault
+      // harness can still hit them: they are real UPDATEs against the same
+      // table in the real function, and a test that injects on
+      // `payload.final_position === 2` has to keep firing, or every write
+      // failure test below goes vacuously green.
+      //
+      // `undo` is the transaction. Anything that fails mid-write restores every
+      // row already touched and leaves the event live — which is what RAISE
+      // does inside the real function, and the property the migration exists
+      // for.
+      const undo: Array<() => void> = [];
+      const rollback = () => { for (const u of undo.reverse()) u(); };
+      const rowsOf = (id: string) =>
+        (store.db[table] ?? []).filter((r) => r.id === id && r.event_id === eventId);
+      const applyRow = (id: string, payload: Row): string | null => {
+        const rows = rowsOf(id);
+        // The real function counts affected rows and raises when an id matched
+        // nothing in THIS event. NO TEST HERE REACHES THIS BRANCH, deliberately:
+        // the ids all come from the event's own rows, so no application path can
+        // produce a foreign one -- which is exactly why the check belongs in the
+        // SECURITY DEFINER function rather than up here. Its coverage is the
+        // behavioural probe in 00212's verify block.
+        if (rows.length === 0) return `${id} matched no row in event ${eventId}`;
+        const fault = faultFor(table, 'update', { filters: [['id', id]], payload });
+        if (fault) return fault.message;
+        for (const r of rows) {
+          const before = { ...r };
+          undo.push(() => { for (const k of Object.keys(r)) delete r[k]; Object.assign(r, before); });
+          Object.assign(r, payload);
+        }
+        return null;
+      };
+
+      const positions = (args.p_positions as Record<string, number> | undefined) ?? {};
+      const points = (args.p_points as Record<string, number> | undefined) ?? {};
+      const toClear = (args.p_clear as string[] | undefined) ?? [];
+      for (const [id, pos] of Object.entries(positions)) {
+        const err = applyRow(id, { final_position: pos });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      for (const [id, pts] of Object.entries(points)) {
+        const err = applyRow(id, { points: pts });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      for (const id of toClear) {
+        // The clear is NOT existence-checked, matching the function: a row that
+        // is gone already holds no placing.
+        if (rowsOf(id).length === 0) continue;
+        const err = applyRow(id, { final_position: null, points: null });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+
+      const payload: Row = { status: 'completed', updated_at: new Date().toISOString() };
+      const f = faultFor('tournament_events', 'update', { filters: [['id', eventId]], payload });
+      if (f) { rollback(); return Promise.resolve({ data: null, error: { message: f.message } }); }
+      Object.assign(ev, payload);
+      return Promise.resolve({
+        data: { ok: true, event_id: eventId, tournament_id: ev.tournament_id },
+        error: null,
+      });
+    }
+
+    // 00215. The corrective twin of complete_event_under_field_lock: the same
+    // snapshot fence and the same three writes in one transaction, but the
+    // event is already `completed` and the status is not touched. Deliberately
+    // has NO p_field and NO p_won check -- see the migration header for why
+    // refusing on a departed winner would be worse than writing here.
+    if (name === 'rewrite_event_placings_under_field_lock') {
+      store.beforeRewritePlacings?.();
+      const eventId = args.p_event_id as string;
+      const table = fieldTableFor(args.p_is_pair as boolean);
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === eventId);
+      if (!ev) return Promise.resolve({ data: { ok: false, reason: 'event_not_found' }, error: null });
+      if (ev.status !== 'completed') {
+        return Promise.resolve({ data: { ok: false, reason: 'event_status', event_status: ev.status }, error: null });
+      }
+      const nowResults = resultsFingerprintFor(eventId);
+      const sentResults = (args.p_results ?? null) as Record<string, unknown> | null;
+      if (sentResults === null) {
+        return Promise.resolve({ data: null, error: { message: 'p_results must be the object returned by event_results_fingerprint' } });
+      }
+      if (JSON.stringify(nowResults) !== JSON.stringify(sentResults)) {
+        const moved = Object.keys({ ...nowResults, ...sentResults }).filter(
+          (k) => JSON.stringify(nowResults[k]) !== JSON.stringify(sentResults[k]),
+        );
+        return Promise.resolve({
+          data: { ok: false, reason: 'results_changed', matches_moved: moved.sort().slice(0, 5).join(', ') },
+          error: null,
+        });
+      }
+      const undo: Array<() => void> = [];
+      const rollback = () => { for (const u of undo.reverse()) u(); };
+      const rowsOf = (id: string) =>
+        (store.db[table] ?? []).filter((r) => r.id === id && r.event_id === eventId);
+      const applyRow = (id: string, payload: Row): string | null => {
+        const rows = rowsOf(id);
+        if (rows.length === 0) return `${id} matched no row in event ${eventId}`;
+        const fault = faultFor(table, 'update', { filters: [['id', id]], payload });
+        if (fault) return fault.message;
+        for (const r of rows) {
+          const before = { ...r };
+          undo.push(() => { for (const k of Object.keys(r)) delete r[k]; Object.assign(r, before); });
+          Object.assign(r, payload);
+        }
+        return null;
+      };
+      const positions = (args.p_positions as Record<string, number> | undefined) ?? {};
+      const points = (args.p_points as Record<string, number> | undefined) ?? {};
+      const toClear = (args.p_clear as string[] | undefined) ?? [];
+      for (const [id, pos] of Object.entries(positions)) {
+        const err = applyRow(id, { final_position: pos });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      for (const [id, pts] of Object.entries(points)) {
+        const err = applyRow(id, { points: pts });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      for (const id of toClear) {
+        if (rowsOf(id).length === 0) continue;
+        const err = applyRow(id, { final_position: null, points: null });
+        if (err) { rollback(); return Promise.resolve({ data: null, error: { message: err } }); }
+      }
+      // The status is NOT flipped: this event was completed before the call.
+      return Promise.resolve({
+        data: { ok: true, event_id: eventId, tournament_id: ev.tournament_id },
+        error: null,
+      });
+    }
+
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -462,12 +1403,20 @@ const makeClient = vi.hoisted(() => () => {
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
-vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'admin-1' }) }));
+// SWITCHABLE, because one of the things under test is what happens when the
+// gate REFUSES. Hoisted so the vi.mock factory below can close over it.
+const capabilityGate = vi.hoisted(() => ({ refuse: null as string | null }));
+vi.mock('../actions/_shared', () => ({
+  requireCapability: async () => {
+    if (capabilityGate.refuse) throw new Error(capabilityGate.refuse);
+    return { id: 'admin-1' };
+  },
+}));
 
 import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
 } from '../tournament-actions/results';
-import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
+import { finalizeEvent, applyPlacementBonuses, recomputeEventStandings } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
 import { updateTournamentEvent } from '../tournament-actions/events';
 // THE FORM'S OWN PAYLOAD BUILDER, not a hand-made patch. Whether an exec's
@@ -480,9 +1429,10 @@ import { toFormatPayload, EMPTY_FORMAT_VALUES } from '@/app/tournaments/[id]/eve
 // refusal and these tests must all be reading the same arithmetic.
 import { maxFirstRoundByes, nextPowerOf2 } from '@badminton/shared';
 import { autoSeedEventByElo } from '../tournament-actions/seeding';
-import { withdrawParticipant } from '../tournament-actions/participants';
+import { addParticipantToEvent, withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
+  computeRoundRobinStandings,
   FORFEIT_REASON, PUBLIC_WALKOVER_REASONS,
 } from '../tournament-actions/_internal';
 import { createAdminClient } from '../supabase-server';
@@ -525,7 +1475,15 @@ const LIVE_RATING_DEFAULTS = {
 
 beforeEach(() => {
   store.faults = [];
+  capabilityGate.refuse = null;
   store.beforeDeletePhase = null;
+  store.beforeMatchInsert = null;
+  store.beforeCompleteEvent = null;
+  store.beforeRewritePlacings = null;
+  store.rpcCalls = [];
+  store.beforePromote = null;
+  store.beforeAdd = null;
+  store.oldSchema = false;
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
     tournament_events: [{
@@ -1453,18 +2411,37 @@ describe('finalizeEvent', () => {
   });
 
   it('leaves the event live when a final_position write fails, so it can be retried', async () => {
+    // FAULTS THE SECOND WRITE, NOT THE FIRST, and that is load-bearing. The
+    // placings go out runner-up first (position 2 is p-bob), so a fault on
+    // position 2 fails before anything has landed and the "nothing was written"
+    // assertion below holds whether or not the batch rolls back -- it was
+    // vacuous. Faulting position 1 means p-bob's row is already written when
+    // the failure hits, so only a real rollback can make both null.
     store.faults.push({
       table: 'tournament_participants', op: 'update', message: 'permission denied for table tournament_participants',
-      when: ({ payload }) => payload.final_position === 2,
+      when: ({ payload }) => payload.final_position === 1,
     });
 
-    await expect(finalizeEvent('e1')).rejects.toThrow(/final_position/);
+    // The message no longer names the COLUMN that failed. It cannot: the write
+    // happens inside the RPC now, so what comes back is the database's own
+    // error, not a label the caller attached to a PostgREST call it issued
+    // itself. The underlying cause is still carried through, which is the part
+    // an exec can act on.
+    await expect(finalizeEvent('e1')).rejects.toThrow(/nothing was saved.*permission denied/);
 
     // The old code flipped the event to completed regardless, and finalizeEvent
     // refuses anything that is not live — so a half-positioned event could not
     // be repaired from the console at all.
     expect(event().status).toBe('live');
-    expect(participant('p-alice').final_position).toBe(1);
+
+    // AND NOTHING AT ALL WAS WRITTEN (00212). This used to assert p-alice
+    // KEPT first place through the failure — the writes went out one PostgREST
+    // call at a time, so the one that succeeded stayed. The placings now travel
+    // with the flip and land in its transaction, so a failure anywhere in the
+    // batch takes the whole batch with it. That is a strictly stronger
+    // guarantee than the one this test used to encode, and it is what stops two
+    // concurrent finalisations leaving a ladder made of halves.
+    expect(participant('p-alice').final_position).toBeNull();
     expect(participant('p-bob').final_position).toBeNull();
   });
 
@@ -1485,14 +2462,582 @@ describe('finalizeEvent', () => {
     expect(participant('p-bob').points).toBe(75);
   });
 
+  // NO FAULT IS INJECTED IN EITHER OF THESE. That is the point: the defect they
+  // cover needs no failed write, no concurrency and no interleaving -- just an
+  // ordinary disqualification after an ordinary final.
+  it('refuses to crown a champion who has been disqualified', async () => {
+    // The final is already recorded with p-alice as the winner (beforeEach).
+    // The disqualification lands afterwards, which is the ordinary case: the
+    // cascade forfeits only OPEN matches, so a completed final keeps its
+    // recorded winner and finalisation used to read that as a championship.
+    participant('p-alice').status = 'disqualified';
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/has left the event/);
+
+    // Nothing awarded, and the event still finalisable once a human voids or
+    // replays the match. Deliberately NOT "or reinstate the entry": there is no
+    // console path back from disqualified -- set_field_entry_status refuses
+    // check-in from an exited status (00201) and is the only status writer.
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-alice').points).toBeNull();
+    expect(participant('p-bob').final_position).toBeNull();
+    expect(participant('p-bob').points).toBeNull();
+  });
+
+  it('hands the winners to the completion fence, so the DQ cannot slip in behind the guard', async () => {
+    // The round-18 finding. The guard above is a READ, and it holds no lock
+    // through to the status flip -- an admin can disqualify the champion in
+    // between, and the fence's own field check deliberately allows shrinkage,
+    // so nothing downstream would have caught it. 00211 closes that by
+    // re-reading these same entries under the lock, which only works if the
+    // app actually tells it who won.
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+
+    const call = store.rpcCalls.find((c) => c.name === 'complete_event_under_field_lock');
+    expect(call).toBeDefined();
+    // p-alice won the final. An empty array here would make the fence's check
+    // vacuous while every other test still passed.
+    expect(call!.args.p_won).toEqual(['p-alice']);
+  });
+
+  it('refuses at the fence when the champion is disqualified after the guard ran', async () => {
+    // The interleaving itself, driven through the mock, which mirrors 00211.
+    // The guard cannot see this -- the status changes after it read -- so if
+    // this passes it is the fence that caught it.
+    store.beforeCompleteEvent = () => { participant('p-alice').status = 'disqualified'; };
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/won its place left the event/);
+    expect(event().status).toBe('live');
+  });
+
+  // ---- 00213: THE RESULTS, NOT ONLY THE ENTRIES -------------------------
+  // Every fence above this asks about the FIELD -- who is entered, who won and
+  // is still here. The placings are computed from the MATCHES, and a match can
+  // be corrected or voided without a single entry moving, so none of them can
+  // see it. These four are the other half.
+
+  it('hands the fence the results it placed from, not just the field', async () => {
+    await finalizeEvent('e1');
+
+    const snap = store.rpcCalls.find((c) => c.name === 'event_results_fingerprint');
+    expect(snap).toBeDefined();
+    expect(snap!.args.p_event_id).toBe('e1');
+
+    const call = store.rpcCalls.find((c) => c.name === 'complete_event_under_field_lock');
+    // An absent or empty p_results would leave the fence comparing nothing
+    // against nothing while every other test here still passed -- the exact
+    // vacuous shape this suite exists to catch.
+    expect(call!.args.p_results).toBeDefined();
+    expect(Object.keys(call!.args.p_results as Record<string, unknown>)).toEqual([QF]);
+  });
+
+  it('refuses when the final is corrected while the ladder is being computed', async () => {
+    // THE FINDING. The score was entered backwards and a desk fixes it after
+    // this finalisation read the draw. The match stays 'completed', nobody
+    // withdraws, nobody is disqualified -- so the field check, the winner
+    // re-check and the open-match count all pass, and the old code crowned the
+    // loser off a result the database no longer held.
+    store.beforeCompleteEvent = () => {
+      Object.assign(match(QF), { winner_participant_id: 'p-bob', loser_participant_id: 'p-alice' });
+    };
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/match result changed/);
+
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-alice').points).toBeNull();
+    expect(participant('p-bob').final_position).toBeNull();
+    expect(participant('p-bob').points).toBeNull();
+  });
+
+  it('refuses when a settled match is voided in that same window', async () => {
+    // SEPARATE FROM THE ABOVE, because 'voided' is one of the four statuses the
+    // open-match count treats as SETTLED. Voiding the final mid-finalisation
+    // therefore leaves that count at zero and is invisible to it -- the ladder
+    // would still be crowned from a match the club has struck out.
+    store.beforeCompleteEvent = () => { match(QF).status = 'voided'; };
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/match result changed/);
+
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+  });
+
+  it('takes the snapshot BEFORE computing, so a change during the compute still refuses', async () => {
+    // THE ORDERING, driven rather than asserted from the source. The hook fires
+    // on the match read inside assignPositionsAndPoints -- i.e. strictly after
+    // the snapshot and strictly before the flip.
+    //
+    // This is what discriminates the two orderings. Snapshot first: the
+    // snapshot is stale by the time the flip re-reads, and the call refuses.
+    // Snapshot after the compute: it would be taken AFTER this mutation, match
+    // the database exactly, and the call would complete a ladder computed from
+    // data that had already moved. A false refusal is a reload; a false accept
+    // is the wrong player in the club's records.
+    let fired = false;
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'unused -- this fault never fires',
+      // KEYED TO THE COMPUTE'S OWN PROJECTION. finalizeEvent reads
+      // tournament_matches twice, and the FIRST read -- the incomplete-match
+      // count -- happens before the snapshot is taken. Firing on that one would
+      // put the change ahead of the snapshot, which is a different scenario
+      // entirely and passes under either ordering. Only assignPositionsAndPoints
+      // asks for the winner columns.
+      when: ({ cols }) => {
+        if (!fired && cols.includes('winner_participant_id')) {
+          fired = true;
+          Object.assign(match(QF), { winner_participant_id: 'p-bob', loser_participant_id: 'p-alice' });
+        }
+        return false;
+      },
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/match result changed/);
+    expect(fired).toBe(true);
+    expect(event().status).toBe('live');
+  });
+
+  // ROUND ROBIN, and the two above are not enough on their own. wonTheirPosition
+  // used to be filled only inside `if (knockout)`, so a round robin handed the
+  // fence an empty p_won and its winner check was skipped entirely -- the guard
+  // read as present in every knockout test while being absent on the other
+  // branch. Codex found this in round 19.
+  it('hands the fence a round robins placings too, not an empty set', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+
+    const call = store.rpcCalls.find((c) => c.name === 'complete_event_under_field_lock');
+    expect(call).toBeDefined();
+    // BOTH, not just the leader. A round-robin table is computed against the
+    // whole field, so one entry leaving moves every win count that was measured
+    // against them -- the table nobody would compute again.
+    expect((call!.args.p_won as string[]).slice().sort()).toEqual(['p-alice', 'p-bob']);
+  });
+
+  it('refuses a round robin whose leader is disqualified after the guard ran', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    store.beforeCompleteEvent = () => { participant('p-alice').status = 'disqualified'; };
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/won its place left the event/);
+
+    // The whole of codex's sequence: the leader kept final_position = 1 in a
+    // COMPLETED event, so the placement-bonus ledger would have paid it.
+    expect(event().status).toBe('live');
+  });
+
+  // CODEX'S ROUND-20 SEQUENCE, and it runs THROUGH the guard rather than around
+  // it -- which is why the two tests above pass while the defect is live. The
+  // refusal is not the end state; the retry is.
+  it('clears the stale placing on the retry, so a refused finalisation cannot be laundered', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+
+    // 1-2. The leader is disqualified after the positions are computed. The
+    // status writer touches only `status` (00202:1010).
+    store.beforeCompleteEvent = () => { participant('p-alice').status = 'disqualified'; };
+    await expect(finalizeEvent('e1')).rejects.toThrow(/won its place left the event/);
+
+    // 3. Refused, event still live -- and since 00212 the refusal happens
+    // BEFORE any write, so this path no longer even creates the stale placing.
+    // That closes the sequence one step earlier than the clear does.
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+
+    // 3b. So the clear is exercised against a placing that got there some other
+    // way -- an earlier finalisation, or a recompute. Written directly here
+    // rather than manufactured by the refusal above, because relying on the
+    // refusal to produce it is what made this test depend on the bug it was
+    // covering. The retry must still take it away.
+    participant('p-alice').final_position = 1;
+    participant('p-alice').points = 3;
+
+    // 4. The retry. Standings now exclude p-alice, so they are absent from the
+    // new map -- and nothing used to rewrite their row.
+    store.beforeCompleteEvent = null;
+    await finalizeEvent('e1');
+
+    expect(event().status).toBe('completed');
+    // THE ASSERTION. Without the clear this is still 1, on a disqualified
+    // entry, in a completed event.
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-alice').points).toBeNull();
+    expect(participant('p-bob').final_position).toBe(1);
+  });
+
+  // THE OTHER CALLER of assignPositionsAndPoints, and the reason the clear above
+  // is not the whole fix. recomputeEventStandings redoes a COMPLETED event's
+  // standings after a result is corrected, so the clear fires there too -- but
+  // the `moved` list it reports was built from positionMap alone, and a cleared
+  // entry is absent from that map by construction. So the one case the caller's
+  // warning exists for was the one case it could not see.
+  it('reports a placing the recompute REMOVED, not just the ones it moved', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    // The bonuses landed on that finalisation. Nothing can take them back.
+    //
+    // Recorded as a GRANT, because that is where the ledger lives now. The
+    // audit row this used to push is written after the payment commits and is
+    // best-effort, so a ledger read keyed on it reported "nothing paid" for
+    // the whole window between the two — on the one question where guessing
+    // wrong doubles a rating.
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'rating', subject_id: 'pl-alice',
+      discipline: 'singles', requested_bonus: 32, applied_delta: 32,
+    });
+
+    // Now the champion is disqualified and the standings are redone.
+    participant('p-alice').status = 'disqualified';
+    const standings = await recomputeEventStandings('e1');
+
+    expect(participant('p-alice').final_position).toBeNull();
+    // THE ASSERTION. Built from positionMap alone, `moved` held only p-bob's
+    // 2 -> 1 and said nothing about the placing that vanished.
+    expect(standings.moved).toContainEqual({ id: 'p-alice', from: 1, to: null });
+    expect(standings.bonusesAlreadyPaid).toBe(true);
+
+    // And because it is in `moved`, the audit row records the removal too --
+    // results.ts reads nothing but moved.length, so this is also what makes the
+    // officer warning fire on an unreversible payment.
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'standings_recomputed').at(-1)!;
+    expect((audit.details as { moved: unknown[] }).moved).toContainEqual({ id: 'p-alice', from: 1, to: null });
+  });
+
+  it('refuses to silently skip the clear when the placings cannot be read', async () => {
+    // THE SECOND FAIL-OPEN, and the more dangerous of the two: this read is not
+    // just where `previous` comes from, it IS the list the cleared branch
+    // clears. Discarded, the error cascades into a clean-looking success --
+    // empty list, so nothing written, so no `moved`, so
+    // recomputeStandingsAfterCorrection returns without a word, and the void
+    // lands while the stale champion keeps the trophy.
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    participant('p-alice').status = 'disqualified';
+    store.faults.push({
+      table: 'tournament_participants', op: 'select', message: 'connection reset',
+      when: ({ cols }) => cols === 'id, final_position, points',
+    });
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/placings could not be read.*connection reset/);
+
+    // AND THE STANDINGS ARE UNTOUCHED, which is the honest outcome: the caller
+    // is told, rather than shown a success over an event whose champion is
+    // still standing.
+    expect(participant('p-alice').final_position).toBe(1);
+  });
+
+  it('writes nothing when the caller may not write standings', async () => {
+    // AN AUTHORISATION-ORDER DEFECT, not a missing check. finalize.ts is
+    // `'use server'`, so recomputeEventStandings is a Server Action taking a
+    // caller-supplied eventId. The gate used to sit at the BOTTOM, inside the
+    // audit block -- so the service-role clear had already committed by the time
+    // it ran, and the `moved.length > 0` guard around that block meant it did
+    // not run at all when the clear moved nothing.
+    //
+    // The assertion that matters is the second one: the refusal has to arrive
+    // with the standings still intact, not after they are gone.
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    participant('p-alice').status = 'disqualified';
+    capabilityGate.refuse = 'You do not have permission to rewrite standings.';
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/do not have permission/);
+
+    expect(participant('p-alice').final_position).toBe(1);
+  });
+
+  // ---- 00215: the corrective path lands under the fence -------------------
+  //
+  // Finalisation was fenced three times over (00212 the placings, 00213 the
+  // snapshot, 00214 the row lock). The OTHER writer of final_position and
+  // points -- the recompute a correction triggers -- had no lock at any point:
+  // it read the matches, computed a ladder, and wrote it with three plain
+  // UPDATEs, while its caller ran it after its own mutation had committed.
+  it('refuses to write a ladder computed from a result that moved underneath it', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    // Officer A starts a recompute. Officer B voids a match in the window
+    // between A's snapshot and A's write -- which is exactly what the fence's
+    // re-read under the lock exists to catch. No entry moves and no match is
+    // left open, so every entry-side check still passes.
+    store.beforeRewritePlacings = () => { match(QF).status = 'voided'; };
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/Another result changed/);
+
+    // NOTHING WAS WRITTEN. Before the fence, A's ladder landed on top of
+    // whatever B had just done, restoring a champion the results no longer
+    // support -- and both officers were told their action succeeded.
+    expect(participant('p-alice').final_position).toBe(1);
+    expect(participant('p-bob').final_position).toBe(2);
+  });
+
+  it('carries the results snapshot it computed from into the write', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+
+    participant('p-alice').status = 'disqualified';
+    store.rpcCalls = [];
+    await recomputeEventStandings('e1');
+
+    // The snapshot is taken BEFORE anything is computed from it -- taking it
+    // afterwards would make it agree with a ladder built from data that had
+    // already moved, which is a false ACCEPT rather than a false refusal.
+    const snap = store.rpcCalls.findIndex((c) => c.name === 'event_results_fingerprint');
+    const write = store.rpcCalls.findIndex((c) => c.name === 'rewrite_event_placings_under_field_lock');
+    expect(snap).toBeGreaterThanOrEqual(0);
+    expect(write).toBeGreaterThan(snap);
+    // And it is that snapshot that travels, not a second read taken at write
+    // time -- the whole point is that the two can differ. A null here would
+    // make the fence opt-out by omission, which the RPC rejects outright.
+    expect(store.rpcCalls[write]!.args.p_results).not.toBeNull();
+    expect(store.rpcCalls[write]!.args.p_results).toBeTypeOf('object');
+    // The status is NOT among the arguments: a recompute restates a finished
+    // event's standings, it does not finish one.
+    expect(store.rpcCalls[write]!.args).not.toHaveProperty('p_field');
+    expect(store.rpcCalls[write]!.args).not.toHaveProperty('p_won');
+  });
+
+  it('leaves the standings alone when the results snapshot cannot be read', async () => {
+    // THE THIRD FAIL-OPEN ON THIS PATH, and it would be the quietest. Discarded,
+    // the snapshot arrives as null, and the fence rejects a null outright -- so
+    // the officer would get a raw argument-validation error from the database
+    // about a parameter they never supplied, instead of being told the results
+    // could not be read. Nothing is written either way; what changes is whether
+    // the sentence means anything at the desk.
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+
+    participant('p-alice').status = 'disqualified';
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'connection reset',
+      when: ({ cols }) => cols === 'event_results_fingerprint',
+    });
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/results could not be read.*connection reset/);
+    expect(participant('p-alice').final_position).toBe(1);
+  });
+
+  it('takes the results snapshot BEFORE the ladder is computed, not just before the write', async () => {
+    // THE ORDERING, DRIVEN RATHER THAN ASSERTED FROM THE CALL SEQUENCE. Both a
+    // snapshot taken at the top and one taken a line before the write come back
+    // as snapshot-then-write, so the index check above cannot separate them.
+    // The difference only shows on an edit that lands in the gap BETWEEN the
+    // snapshot and the compute.
+    //
+    // Snapshot first: it is stale by the time the fence re-reads, and the write
+    // is refused. Snapshot after the compute: it would be taken AFTER this
+    // mutation, agree with the database exactly, and write a ladder built from
+    // data that had already moved. A false refusal is a reload; a false accept
+    // restores the wrong champion on a completed event.
+    //
+    // Same shape as the finalisation-path test above, because it is the same
+    // ordering property one path over.
+    Object.assign(event(), { format: 'round_robin' });
+    await finalizeEvent('e1');
+    expect(participant('p-alice').final_position).toBe(1);
+
+    let fired = false;
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'unused -- this fault never fires',
+      // KEYED TO THE COMPUTE'S OWN PROJECTION, for the same reason as above:
+      // only assignPositionsAndPoints asks for the winner columns, so firing
+      // here is strictly after the snapshot and strictly before the write.
+      when: ({ cols }) => {
+        if (!fired && cols.includes('winner_participant_id')) {
+          fired = true;
+          match(QF).status = 'voided';
+        }
+        return false;
+      },
+    });
+
+    await expect(recomputeEventStandings('e1')).rejects.toThrow(/Another result changed/);
+    expect(fired).toBe(true);
+    expect(participant('p-alice').final_position).toBe(1);
+  });
+
+  // THE ASYMMETRY, and it is the reason the round-robin hole was argued away in
+  // the first place. A DQ landing BEFORE finalisation is not the same defect: a
+  // round-robin table can simply be recomputed without that entry, and
+  // computeRoundRobinStandings does exactly that, so nobody holds a placing
+  // they cannot keep. A knockout has no such move -- the recorded final still
+  // names the champion -- which is why the sibling test above DOES refuse.
+  //
+  // What the original reasoning missed is that this only covers entries that
+  // left before the standings were computed. The two tests above are the case
+  // it does not cover.
+  it('places a round robins disqualified leader nowhere, rather than refusing', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    participant('p-alice').status = 'disqualified';
+
+    await finalizeEvent('e1');
+
+    expect(event().status).toBe('completed');
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-bob').final_position).toBe(1);
+    // And the fence was told about the entry that IS placed, not about the one
+    // that left -- so p_won stays a set of entries that must still be present.
+    const call = store.rpcCalls.find((c) => c.name === 'complete_event_under_field_lock');
+    expect(call!.args.p_won).toEqual(['p-bob']);
+  });
+
+  it('still finalises when the entry that left is one that LOST', async () => {
+    // The guard is scoped to entries that won their placing. A withdrawal is
+    // most often exactly this -- the forfeit cascade ends the run with a
+    // loser's placing -- and refusing here would block most real events.
+    participant('p-bob').status = 'withdrawn';
+
+    await finalizeEvent('e1');
+
+    expect(event().status).toBe('completed');
+    expect(participant('p-alice').final_position).toBe(1);
+    expect(participant('p-alice').points).toBe(100);
+    expect(participant('p-bob').final_position).toBe(2);
+  });
+
   it('surfaces a failed points write without completing the event', async () => {
     store.faults.push({
       table: 'tournament_participants', op: 'update', message: 'permission denied',
       when: ({ payload }) => 'points' in payload,
     });
 
-    await expect(finalizeEvent('e1')).rejects.toThrow(/points/);
+    // Same as the final_position case above: the column no longer appears in the
+    // message, the database's own error does.
+    await expect(finalizeEvent('e1')).rejects.toThrow(/nothing was saved.*permission denied/);
     expect(event().status).toBe('live');
+    // And the positions that were written BEFORE the points in the same call
+    // went back with them. Under the old one-call-per-write shape this event
+    // kept a full ladder with no points on it.
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-bob').final_position).toBeNull();
+  });
+
+  // ----------------------------------------------------------------
+  // A VOIDED FINAL IS NOT AN INCOMPLETE ONE
+  // ----------------------------------------------------------------
+  //
+  // The completeness query excludes "voided" outright, so an event whose final
+  // was voided walks straight past it -- and assignPositionsAndPoints then takes
+  // its max(round_number) over matches that still HAVE a result, which is the
+  // round below. The winner of that round, who lost the final, was crowned.
+  //
+  // The corrective paths (voidMatch, undoMatchResult) hit the same defect from
+  // the other side and CLEAR the standings, because their event is already
+  // completed. Here nothing has been written yet, so this refuses instead.
+  describe('when the match that decides the event has no result', () => {
+    it('refuses rather than crowning the round below', async () => {
+      // The describe's beforeEach left a one-match draw, so QF IS the final.
+      Object.assign(match(QF), { status: 'voided', winner_participant_id: null, loser_participant_id: null });
+
+      await expect(finalizeEvent('e1')).rejects.toThrow(/decides this event has no result/);
+
+      // AND NOTHING MOVED. A refusal that half-finalised would be worse than the
+      // crowning it replaced.
+      expect(event().status).toBe('live');
+      expect(participant('p-alice').final_position).toBeNull();
+      expect(participant('p-bob').final_position).toBeNull();
+    });
+
+    it('still finalises when the voided match was NOT the deciding one', async () => {
+      // THE DISCRIMINATOR. Without it, "refuse whenever anything is voided"
+      // passes the test above and breaks every ordinary correction -- voiding a
+      // first-round match and replaying it is routine, and the event that
+      // follows still has a champion.
+      //
+      // Two rounds: round 1 voided, round 2 played. p-alice beat p-bob in the
+      // final, so the ladder is exactly the one-match case's.
+      store.db.tournament_matches = [
+        { ...match(QF), status: 'voided', winner_participant_id: null, loser_participant_id: null,
+          winner_to_match_id: null, winner_to_position: null, round_number: 1 },
+        {
+          id: SF, event_id: 'e1', status: 'completed', is_bye: false,
+          participant_a_id: 'p-alice', participant_b_id: 'p-bob',
+          winner_participant_id: 'p-alice', loser_participant_id: 'p-bob',
+          winner_to_match_id: null, winner_to_position: null,
+          round_number: 2, scores: [{ a: 21, b: 15 }, { a: 21, b: 17 }], elo_snapshot: null, notes: null,
+        },
+      ];
+
+      await finalizeEvent('e1');
+
+      expect(event().status).toBe('completed');
+      expect(participant('p-alice').final_position).toBe(1);
+      expect(participant('p-bob').final_position).toBe(2);
+    });
+
+    it('does not read a bye as a missing result', async () => {
+      // BYES ARE WRITTEN `status: 'completed'` WITH A WINNER (brackets.ts), so
+      // assignPositionsAndPoints counts one as a result and the guard must not
+      // read one as a missing result.
+      //
+      // WHAT THIS DOES NOT PIN, said plainly: the guard used to filter byes out
+      // of its read, and restoring that filter fails no test here -- including
+      // this one. It cannot be pinned, because byes are only ever seeded into
+      // round 1, so a top round made only of byes means a one-round draw and
+      // both readings then answer "not undetermined" by different routes. The
+      // filter was dropped to keep the guard's read identical to the one it is
+      // reasoning about, not to fix a reachable bug. This test pins the outcome
+      // that matters: a draw decided by a bye still finalises.
+      Object.assign(match(QF), { is_bye: true, participant_b_id: null, loser_participant_id: null });
+      store.db.tournament_participants = store.db.tournament_participants!.filter((r) => r.id !== 'p-bob');
+
+      await finalizeEvent('e1');
+
+      expect(event().status).toBe('completed');
+      expect(participant('p-alice').final_position).toBe(1);
+    });
+
+    it('refuses rather than assuming a champion when the bracket cannot be read', async () => {
+      // THE FAIL-OPEN THAT WAS THERE. supabase-js resolves rather than rejects
+      // on a Postgres error, so a discarded `error` turns any transient failure
+      // into an empty bracket, an "undetermined" of false, and the auto-crown
+      // this guard exists to stop -- silently, and only under the conditions
+      // that make it hardest to notice.
+      store.faults.push({
+        table: 'tournament_matches', op: 'select', message: 'connection reset',
+        // Keyed to the guard's own projection so the rest of finalisation --
+        // the completeness check, the placings read -- is untouched and the
+        // refusal can only have come from the guard.
+        when: ({ cols }) => cols === 'round_number, status',
+      });
+
+      await expect(finalizeEvent('e1')).rejects.toThrow(/champion could not be established.*connection reset/);
+      expect(event().status).toBe('live');
+      expect(participant('p-alice').final_position).toBeNull();
+    });
+  });
+
+  it('refuses rather than completing an event with no champion, positions or points', async () => {
+    // THE SAME FAIL-OPEN ONE FUNCTION DOWN, and the worst of the family. The
+    // read this fault hits is the one every position, point and placement bonus
+    // in a knockout is computed from. Discarded, the error became an empty
+    // bracket, which produced an empty position map and an empty points map --
+    // and the completion RPC accepts empty JSON and still flips the event to
+    // `completed`. The event finishes with nobody placed anywhere and not one
+    // line of error.
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'connection reset',
+      // Keyed to that read's own projection -- the guard above selects
+      // `round_number, status` and the completeness check selects the slot
+      // columns, so neither can be the source of this refusal.
+      when: ({ cols }) => !!cols && cols.includes('winner_pair_id'),
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/bracket could not be read.*connection reset/);
+
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+    expect(participant('p-alice').points ?? null).toBeNull();
   });
 });
 
@@ -1620,8 +3165,51 @@ describe('placement bonuses', () => {
     expect(participant('p-bob').elo_change).toBe(20);
   });
 
+  // F-003. The audit-log ledger could only ever be written AFTER the whole
+  // batch was paid, so between two concurrent finalises — or one retried
+  // through a proxy timeout — both runs read a ledger with no rows in it and
+  // both paid the podium. Blanking the ledger after a successful run is
+  // exactly what the loser of that race sees.
+  it('pays nobody twice even when the ledger is invisible to the second run', async () => {
+    await applyPlacementBonuses('e1');
+    expect(ratingOf('pl-alice')).toBe(1032);
+    expect(ratingOf('pl-bob')).toBe(1020);
+
+    // The second run's view: the first run's ledger row does not exist yet.
+    store.db.tournament_audit_log = [];
+
+    await applyPlacementBonuses('e1');
+
+    // Unchanged. The grant rows of 00188 are what refuse it, and they were
+    // written in the same transaction as each payment — so there is no window
+    // in which a second caller can observe "not yet paid".
+    expect(ratingOf('pl-alice')).toBe(1032);
+    expect(ratingOf('pl-bob')).toBe(1020);
+    expect(participant('p-alice').elo_change).toBe(32);
+    expect(participant('p-bob').elo_change).toBe(20);
+  });
+
+  // THE SECOND HALF OF CODEX'S ROUND-20 SEQUENCE, and the money end of it.
+  // This query asks only for a non-null final_position, with no filter on
+  // entry status -- so a stale placing left on a disqualified entry was paid a
+  // podium bonus. assignPositionsAndPoints now clears those placings, which is
+  // the real fix; this is the second lock on the door, and money is the one
+  // place worth having one.
+  it('pays no bonus to an entry that has left the event, whatever placing its row holds', async () => {
+    participant('p-alice').status = 'disqualified';
+
+    await applyPlacementBonuses('e1');
+
+    // Alice holds final_position = 1 and is disqualified. Nothing.
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(participant('p-alice').elo_change).toBeNull();
+    // And the event still pays everybody who IS in it, so this is a filter and
+    // not an outage.
+    expect(ratingOf('pl-bob')).toBe(1020);
+  });
+
   it('refuses to award anything when the ledger cannot be read', async () => {
-    store.faults.push({ table: 'tournament_audit_log', op: 'select', message: 'permission denied' });
+    store.faults.push({ table: 'tournament_bonus_grants', op: 'select', message: 'permission denied' });
 
     await expect(applyPlacementBonuses('e1')).rejects.toThrow(/would double every rating/);
     expect(ratingOf('pl-alice')).toBe(1000);
@@ -1631,6 +3219,64 @@ describe('placement bonuses', () => {
     store.faults.push({ table: 'tournament_audit_log', op: 'insert', message: 'disk full' });
 
     await expect(applyPlacementBonuses('e1')).rejects.toThrow(/Do NOT re-run placement bonuses/);
+  });
+
+  // 00189. The per-subject grant rows only exist for payments made after 00188.
+  // An event paid before it has none — the backfill that was supposed to
+  // reconstruct them read details -> 'rated_players' out of the audit log, and
+  // those details are NULL on every historical row, so it inserted nothing.
+  // Without an event-level marker the unique index excludes nobody and the
+  // whole podium gets paid a second time.
+  describe('events paid before the grant ledger existed', () => {
+    const markLegacyPaid = (eventId: string) => {
+      (store.db.tournament_bonus_grants ??= []).push({
+        event_id: eventId, kind: 'event_legacy_paid', subject_id: eventId, applied_delta: 0,
+      });
+    };
+
+    it('refuses to pay an event marked as already paid by the old code path', async () => {
+      markLegacyPaid('e1');
+
+      await expect(applyPlacementBonuses('e1')).rejects.toThrow(/already awarded placement bonuses/);
+      expect(ratingOf('pl-alice')).toBe(1000);
+      expect(ratingOf('pl-bob')).toBe(1000);
+      expect(participant('p-alice').elo_change ?? 0).toBe(0);
+    });
+
+    // This used to assert the opposite — that an override argument let an admin
+    // force the run. It was removed because finalize.ts is a 'use server'
+    // module, which makes that argument a field of the POST body rather than a
+    // test affordance: anyone holding tournaments.results.bonuses.write could
+    // send it and walk through the guard, and that capability is exactly who
+    // the guard is for. A marked event is now unpayable through the action at
+    // all; the remedy is a deliberate DELETE of the marker row in the database.
+    it('cannot be forced past the marker by a caller supplying extra arguments', async () => {
+      markLegacyPaid('e1');
+
+      // Deliberately shaped like the old override call. The cast is the point:
+      // a client POST is not type-checked, so the only thing that can stop this
+      // is the signature genuinely not reading a second argument.
+      const forced = applyPlacementBonuses as unknown as (
+        id: string, opts?: Record<string, unknown>,
+      ) => Promise<unknown>;
+
+      await expect(forced('e1', { allowLegacyRepay: true })).rejects.toThrow(/already awarded placement bonuses/);
+      expect(ratingOf('pl-alice')).toBe(1000);
+      expect(ratingOf('pl-bob')).toBe(1000);
+      expect(participant('p-alice').elo_change ?? 0).toBe(0);
+    });
+
+    it('fails closed when the marker cannot be read at all', async () => {
+      store.faults.push({ table: 'tournament_bonus_grants', op: 'select', message: 'permission denied' });
+
+      await expect(applyPlacementBonuses('e1')).rejects.toThrow(/would double every rating/);
+      expect(ratingOf('pl-alice')).toBe(1000);
+    });
+
+    it('does not block an event that was never paid', async () => {
+      await applyPlacementBonuses('e1');
+      expect(ratingOf('pl-alice')).toBe(1032);
+    });
   });
 });
 
@@ -1893,6 +3539,189 @@ describe('regenerating a draw that already exists', () => {
     const rated = store.db.tournament_matches!.find((m) => m.elo_snapshot != null);
     // The snapshot is still there, so the delta is still reversible.
     expect(rated?.elo_snapshot).toEqual(snapshot);
+  });
+
+  // ==========================================================================
+  // A SUPERSEDED GENERATION CANNOT WRITE (00197)
+  // ==========================================================================
+  //
+  // 00193 made the PUBLICATION of a draw atomic and said in its own header what
+  // it left open: generation is dozens of separate round trips, and the advisory
+  // lock its teardown takes is an xact lock that is gone the moment that DELETE
+  // commits. So two execs pressing Generate interleave — A deletes and starts
+  // inserting, B deletes (taking A's rows) and finishes, and A's remaining
+  // INSERTs land in a draw that is already live.
+  //
+  // WHY THIS HAS NOT OBVIOUSLY BROKEN ANYTHING, and why that is not a defence.
+  // tournament_matches_draw_position_idx (00107) is UNIQUE on
+  // (event_id, phase, round_number, bracket_position), so most of A's late rows
+  // collide with B's. That only holds while both generators build the SAME
+  // position space. One withdrawal between A and B is enough to make A's draw
+  // larger, and A's surplus positions collide with nothing.
+  //
+  // The hook fires INSIDE the insert loop, because that is the only place the
+  // race exists. Fired at the teardown instead — the one window this file
+  // already had — it would reproduce nothing: at that point A has written
+  // nothing to supersede.
+  // THE SWAP. Nobody asked for this one — it fell out of comparing the drawn
+  // SET instead of the drawn TOTAL, and it is the strongest reason 00200
+  // changed the shape.
+  //
+  // One entrant withdraws and another enters while the draw is being built. The
+  // count is identical before and after, so the old `now > expected` comparison
+  // saw nothing at all and published a bracket with a fixture for somebody who
+  // had left and none for somebody who was in the event. Both halves are wrong
+  // and neither is visible from a total.
+  it('REFUSES A DRAW WHEN ONE ENTRANT SWAPPED FOR ANOTHER MID-BUILD, leaving the count unchanged', async () => {
+    seedField(4);
+
+    let fired = false;
+    store.beforeMatchInsert = () => {
+      if (fired || (store.db.tournament_matches ?? []).length === 0) return;
+      fired = true;
+      const rows = store.db.tournament_participants ?? [];
+      // p-3 leaves, somebody new arrives. Four registered before, four after.
+      rows.find((r) => r.id === 'p-3')!.status = 'withdrawn';
+      rows.push({
+        id: 'p-late', event_id: 'e1', player_id: 'pl-late', elo_before: 1400,
+        elo_after: null, elo_change: null, seed_number: null,
+        final_position: null, points: null, status: 'registered',
+      });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    // The count check could not have produced this. Proof it is the set:
+    const live = (store.db.tournament_participants ?? []).filter(
+      (r) => r.status === 'registered' || r.status === 'checked_in',
+    );
+    expect(live).toHaveLength(4);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/left the event while it was being built/);
+    // The remedy is one press of the button they just pressed, and the draw
+    // must not have been advertised in the meantime.
+    expect(res.ok === false && res.error).toMatch(/press Generate again/);
+    expect(event().status).toBe('checkin');
+  });
+
+  // THE OTHER DIRECTION, AND WHAT ACTUALLY ANSWERS IT. A pure arrival never
+  // reaches publish_event_draw's own check: assertFieldDidNotGrow runs a few
+  // lines earlier and refuses first, by design — "it fails the generation early
+  // and cheaply". Neutralising the RPC's arrival branch leaves this test green,
+  // and that is not a gap in the test, it is where the answer comes from.
+  //
+  // So this pins the SENTENCE, not the fence. It is worth keeping through a
+  // rewrite of the fence because the failure it guards against is a plausible
+  // one: 00200 added a departure message beside the arrival message, and an
+  // arrival that starts reading as "somebody left the event" is wrong in a way
+  // no other test here would notice. The fence's own arrival branch is covered
+  // by the swap case above, which assertFieldDidNotGrow cannot see.
+  it('still refuses a draw that somebody entered mid-build, with the arrival sentence', async () => {
+    seedField(4);
+
+    let fired = false;
+    store.beforeMatchInsert = () => {
+      if (fired || (store.db.tournament_matches ?? []).length === 0) return;
+      fired = true;
+      (store.db.tournament_participants ?? []).push({
+        id: 'p-late', event_id: 'e1', player_id: 'pl-late', elo_before: 1400,
+        elo_after: null, elo_change: null, seed_number: null,
+        final_position: null, points: null, status: 'registered',
+      });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/arrived while this draw was being built/);
+    expect(event().status).toBe('checkin');
+  });
+
+  it('REFUSES A DRAW WHOSE GENERATION WAS SUPERSEDED MID-BUILD, and publishes nothing', async () => {
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+
+    // The other desk redraws after A's first insert has landed: its teardown
+    // clears the table and claims the event's generation. Once only — A must be
+    // refused on its very next write, not repeatedly rescued.
+    let fired = false;
+    store.beforeMatchInsert = () => {
+      if (fired || (store.db.tournament_matches ?? []).length === 0) return;
+      fired = true;
+      store.db.tournament_matches = [];
+      Object.assign(event(), { draw_generation_id: 'the-other-desks-claim' });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/rebuilt by somebody else/);
+    // THE ASSERTION THAT MATTERS. Not "it threw" — that a superseded generation
+    // left no fixture behind and did not advertise a draw. A test that only
+    // checked the message would pass on a fix that refused the publish and let
+    // the orphan matches stand, which is the corrupt state, not the safe one.
+    expect(store.db.tournament_matches ?? []).toHaveLength(0);
+    expect(event().status).toBe('checkin');
+  });
+
+  // The other end of the same fence, and the case the trigger alone does not
+  // cover: A's inserts ALL land — nothing supersedes it until it has finished
+  // building — and the claim moves in the window between its last INSERT and its
+  // publish. Without the check in publish_event_draw this flips a status onto a
+  // table whose contents belong to somebody else's draw.
+  it('refuses to publish a draw whose claim moved after the last insert', async () => {
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+
+    const claim = event().draw_generation_id;
+    expect(typeof claim).toBe('string');
+    Object.assign(event(), { draw_generation_id: 'the-other-desks-claim' });
+
+    const publish = await makeClient().rpc('publish_event_draw', {
+      p_event_id: 'e1',
+      p_new_status: 'bracket_generated',
+      p_doubles: false,
+      p_entrants: ['tp-1'],
+      p_whole_field: false,
+      p_phase: null,
+      p_generation: claim,
+    });
+    expect(publish.data).toMatchObject({ ok: false, reason: 'superseded' });
+    expect(event().status).toBe('checkin');
+  });
+
+  it('REFUSES TO TEAR DOWN A DRAW AGAINST A DATABASE OLDER THAN THIS IMAGE, deleting nothing', async () => {
+    // The deploy order this repo actually runs. Images auto-update from CI the
+    // moment a merge lands; migrations are applied by hand afterwards. So the
+    // ordinary sequence is new-image-old-database, and in that window
+    // delete_phase_matches is still 00144's integer-returning version.
+    //
+    // Without the fence, the shape of the failure is the worst one available:
+    // the RPC commits its DELETE in its own round trip, the generation check
+    // then finds no generation in an integer and throws, and the phase is gone
+    // with nothing rebuilt. Pressing Generate again just repeats it. The fence
+    // turns that into a refusal with the draw untouched, by dating the schema
+    // BEFORE anything destructive runs.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const before = store.db.tournament_matches!.length;
+    expect(before).toBeGreaterThan(0);
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+
+    // 42703 — what PostgREST answers when 00197 has not been applied and the
+    // column the fence asks for does not exist yet.
+    store.oldSchema = true;
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    // FIRST, because it is the one that matters: the old draw is still
+    // standing. Remove the fence and this is what breaks — the teardown commits
+    // and the phase is gone, which no re-press can undo.
+    expect(store.db.tournament_matches!.length).toBe(before);
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/left alone/);
   });
 
   it('refuses when a match is ON COURT — no race required', async () => {
@@ -3454,6 +5283,142 @@ describe('a knockout seeded from a group stage', () => {
     expect(promoted.map((p) => p.pair_name).sort())
       .toEqual(['pair-g1-0', 'pair-g1-1', 'pair-g2-0', 'pair-g2-1']);
   });
+
+  // ==========================================================
+  // F-004, the promotion half (00198)
+  // ==========================================================
+  //
+  // THE DUPLICATE THIS EXISTS TO PREVENT. buildFieldFromPool reads the target
+  // field once, passes assertNobodyLeftUnpaired, and then promotes over dozens
+  // of round trips. A member's own entry takes the field advisory lock, sees no
+  // pair, and writes an unpaired participant row. For a DOUBLES bracket the
+  // `existing` map is keyed on pairs only, so that row is invisible to the
+  // promotion, which then inserts the same member as half a pair — leaving them
+  // both a participant and half a pair, which is the original corruption.
+  //
+  // Before 00198 the promotion was a direct insert taking no lock, so nothing
+  // could refuse it. The check now happens inside the RPC, under the same lock
+  // the entry took, which is the only place the answer is stable.
+  it('refuses the generation when an entry lands between the field read and the promotion', async () => {
+    store.db.tournament_events!.push({
+      id: 'e0', tournament_id: 't1', status: 'completed', event_type: 'mens_doubles',
+      format: 'round_robin', match_format: 'best_of_3_to_21', elo_multiplier: 1,
+      placement_bonus_enabled: false, group_count: 2, qualifiers_per_group: 2,
+    });
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false, event_type: 'mens_doubles',
+      seeded_from_event_id: 'e0', seed_by: 'wins', max_participants: null,
+    });
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = [];
+    store.db.tournament_matches = [];
+    let n = 0;
+    for (const g of [1, 2]) {
+      const members = [0, 1, 2].map((i) => `pair-g${g}-${i}`);
+      members.forEach((id, i) => {
+        store.db.tournament_pairs!.push({
+          id, event_id: 'e0', player1_id: `${id}-a`, player2_id: `${id}-b`,
+          pair_name: id, combined_elo: 2400 - i * 10, seed_number: null,
+          group_number: g, final_position: null, points: null, status: 'checked_in',
+        });
+      });
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          store.db.tournament_matches.push({
+            id: `dm-${++n}`, event_id: 'e0', status: 'completed', is_bye: false,
+            is_third_place: false, round_number: 1, bracket_position: n,
+            pair_a_id: members[i], pair_b_id: members[j],
+            winner_pair_id: members[i], loser_pair_id: members[j],
+            winner_to_match_id: null, winner_to_position: null,
+            scores: [{ a: 21, b: 10 }, { a: 21, b: 12 }], elo_snapshot: null, notes: null,
+          });
+        }
+      }
+    }
+
+    // The other desk's entry, landing in the window — ONCE, so this is the
+    // interleaving and not a permanently dirty fixture. `pair-g1-0-a` is a
+    // member of the top qualifying pair, so the promotion is about to write him
+    // into a pair he is already entered against as an individual.
+    let landed = false;
+    store.beforePromote = () => {
+      if (landed) return;
+      landed = true;
+      store.db.tournament_participants!.push({
+        id: 'late-entry', event_id: 'e1', player_id: 'pair-g1-0-a',
+        elo_before: 1200, elo_after: null, elo_change: null, seed_number: null,
+        final_position: null, points: null, status: 'registered',
+      });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    // REFUSED, and told the exec what to do about it.
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/Press Generate again/i);
+
+    // AND THE FIELD IS NOT CORRUPT. The member is a participant OR half a pair,
+    // never both — no pair containing him was written.
+    const pairsHere = store.db.tournament_pairs!.filter((p) => p.event_id === 'e1');
+    expect(
+      pairsHere.some((p) => p.player1_id === 'pair-g1-0-a' || p.player2_id === 'pair-g1-0-a'),
+    ).toBe(false);
+    // No draw was advertised over the half-built field either.
+    expect(store.db.tournament_matches!.filter((m) => m.event_id === 'e1')).toHaveLength(0);
+    expect(event().status).toBe('checkin');
+  });
+
+  // ==========================================================
+  // F-004, the exec's own entry paths (00199)
+  // ==========================================================
+  //
+  // 00196 fenced the PLAYER's entry and 00198 fenced the POOL PROMOTION, but
+  // the two doors an exec uses were still a check in one round trip and an
+  // insert in another. addParticipantToEvent asks playersAlreadyPaired whether
+  // this member is already half of a team, is told no, and inserts — and there
+  // is no cross-table unique constraint to catch a pair that landed in between,
+  // because the pair lives in tournament_pairs and the entry in
+  // tournament_participants. The member ends up in the event TWICE.
+  //
+  // The check now happens inside add_participants_under_field_lock, under the
+  // same advisory lock the pairing path holds while it decides that neither
+  // player is spoken for.
+  it('refuses an exec entry when a pair for that member lands between the check and the insert', async () => {
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false, event_type: 'mens_doubles',
+      max_participants: null,
+    });
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = [];
+    store.db.tournament_matches = [];
+    store.db.ratings!.push({
+      player_id: 'pl-carol', singles_elo: 1100, doubles_elo: 1150,
+      singles_provisional: false, doubles_provisional: false, singles_matches_played: 30,
+    });
+
+    // The other desk pairs Carol in the window — ONCE, so this is the
+    // interleaving and not a fixture that was dirty to begin with. The app's
+    // own playersAlreadyPaired ran before this and correctly saw nothing.
+    let landed = false;
+    store.beforeAdd = () => {
+      if (landed) return;
+      landed = true;
+      store.db.tournament_pairs!.push({
+        id: 'late-pair', event_id: 'e1', player1_id: 'pl-carol', player2_id: 'pl-dave',
+        pair_name: 'Carol / Dave', combined_elo: 2300, seed_number: null,
+        group_number: null, final_position: null, points: null, status: 'registered',
+      });
+    };
+
+    await expect(addParticipantToEvent('e1', 'pl-carol')).rejects.toThrow(
+      /into a team while this was being submitted/i,
+    );
+
+    // AND NOTHING LANDED. Carol is half of a pair and nothing else; the entry
+    // the exec was mid-way through is simply not there.
+    expect(store.db.tournament_participants!.filter((r) => r.player_id === 'pl-carol')).toHaveLength(0);
+    expect(store.db.tournament_pairs!.filter((r) => r.event_id === 'e1')).toHaveLength(1);
+  });
 });
 
 describe('third-place playoff', () => {
@@ -4480,24 +6445,402 @@ describe('auto-seeding by rating', () => {
     expect(seeds()).toEqual([['p-0', 2], ['p-1', 3], ['p-2', 1]]);
   });
 
-  it('REFUSES rather than half-seeding when a write fails', async () => {
+  it('SEEDS NOBODY when the write fails, rather than some of the field', async () => {
     field([1400, 1300, 1200]);
-    // The behaviour the old code could not have: every update's result was
-    // discarded, so this failure returned success and left a field where one
-    // entrant kept no seed while the others were renumbered around them. Seeds
-    // decide the draw, so a partial application is worse than a refusal.
+    // THE FAILURE MODE THIS ASSERTS CHANGED SHAPE IN 00209, and the assertion
+    // moved with it rather than being deleted.
+    //
+    // Originally every update's result was discarded, so a failure returned
+    // success and left a field where one entrant kept no seed while the others
+    // were renumbered around them. That was fixed by checking N writes and
+    // refusing if any failed. 00209 removed the N writes: seeding is now one
+    // statement inside the field lock, so there is no partial state left to
+    // detect — the guarantee is stronger and it is structural.
+    //
+    // What still has to hold is what the exec sees: a failure must refuse
+    // loudly and leave every seed exactly as it was.
     store.faults.push({
       table: 'tournament_participants',
       op: 'update',
       message: 'connection reset',
-      when: ({ filters }) => filters.some(([col, v]) => col === 'id' && v === 'p-1'),
+      when: ({ filters }) => filters.some(([col]) => col === 'event_id'),
     });
-    await expect(autoSeedEventByElo('e1')).rejects.toThrow(/Auto-seed/);
+    await expect(autoSeedEventByElo('e1')).rejects.toThrow(/connection reset/);
+    expect(seeds()).toEqual([['p-0', null], ['p-1', null], ['p-2', null]]);
   });
 
   it('refuses on a locked draw', async () => {
     field([1400, 1300]);
     Object.assign(event(), { draw_locked: true });
     await expect(autoSeedEventByElo('e1')).rejects.toThrow(/locked/i);
+  });
+
+  it('refuses once the event has left registration, which nothing enforced before', async () => {
+    // The console has always gated every seed control on
+    // `status === 'registration' && !drawLocked` (participant-controls.ts), but
+    // the server action checked only draw_locked — so the status half of its
+    // own rule had no server-side enforcement at all and a stale tab or a
+    // direct call could reseed a live event underneath its own bracket. 00209's
+    // fence is where that rule finally exists.
+    field([1400, 1300, 1200]);
+    Object.assign(event(), { status: 'live' });
+    await expect(autoSeedEventByElo('e1')).rejects.toThrow(/moved to "live"/);
+    expect(seeds()).toEqual([['p-0', null], ['p-1', null], ['p-2', null]]);
+  });
+});
+
+// ============================================================
+// The reads that used to fail OPEN
+// ============================================================
+// Five reads on the finalisation path discarded their error and carried on
+// with a default. Each had its own flavour of wrong answer, and none of them
+// was detectable from the outside: the finalise reported success every time.
+//
+// The split these tests encode is between reads taken BEFORE anything is
+// written — where a refusal costs a reload and nothing else, so they throw —
+// and reads taken AFTER the event is already `completed`, where throwing
+// would skip the audit row and the notification that are owed regardless. The
+// second kind are HELD and raised at the end. Held is not swallowed: the step
+// that could not read does not then proceed on a guess.
+describe('finalisation reads fail closed', () => {
+  beforeEach(async () => {
+    store.db.tournament_matches = [match(QF)];
+    match(QF).winner_to_match_id = null;
+    match(QF).winner_to_position = null;
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    event().placement_bonus_enabled = true;
+    store.db.platform_settings!.push({ key: 'tournament_bonuses', value: { enabled: true } });
+  });
+
+  const auditActions = () =>
+    (store.db.tournament_audit_log ?? []).map((r) => r.action as string);
+
+  it('pays no bonus when the master switch cannot be read, and still finalises', async () => {
+    store.faults.push({
+      table: 'platform_settings', op: 'select', message: 'permission denied for table platform_settings',
+      when: ({ filters }) => filters.some(([c, v]) => c === 'key' && v === 'tournament_bonuses'),
+    });
+
+    // THE DIRECTION THAT MATTERS. The old fallback object was the CONSTANTS,
+    // which carry `enabled: true` — so this exact failure used to authorise a
+    // payment on the strength of a read that did not happen.
+    const before = ratingOf('pl-alice');
+    const notifiedBefore = (store.db.notifications ?? []).length;
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/bonus settings could not be read/);
+
+    // Measured as a DELTA against the rating the match itself already moved,
+    // so this cannot pass by the bonus and the match cancelling out.
+    expect(ratingOf('pl-alice')).toBe(before);
+
+    // ...and the finalise itself went through. The event is completed, the
+    // placings landed, and the two things owed to everybody regardless of the
+    // bonus were both done. A throw at the read would have skipped both.
+    expect(event().status).toBe('completed');
+    expect(participant('p-alice').final_position).toBe(1);
+    expect(auditActions()).toContain('event_finalized');
+    expect((store.db.notifications ?? []).length).toBeGreaterThan(notifiedBefore);
+  });
+
+  it('sends no completion notification when the entrant list cannot be read', async () => {
+    // The recipient read, not the placings read: this fires only on the
+    // trailing select, after the event is already completed.
+    let finalised = false;
+    store.faults.push({
+      table: 'tournament_participants', op: 'select', message: 'permission denied for table tournament_participants',
+      when: () => finalised,
+    });
+    store.beforeCompleteEvent = () => { finalised = true; };
+    const notifiedBefore = (store.db.notifications ?? []).length;
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/entrant list could not be read/);
+
+    // NOBODY, RATHER THAN NOBODY-BY-ACCIDENT. `?? []` used to turn the failed
+    // read into an empty recipient list, so notifyPlayers was called with no
+    // one and the finalise reported success.
+    expect((store.db.notifications ?? []).length).toBe(notifiedBefore);
+    expect(event().status).toBe('completed');
+    expect(auditActions()).toContain('event_finalized');
+  });
+
+  it('reports every follow-up failure rather than only the first', async () => {
+    let finalised = false;
+    store.beforeCompleteEvent = () => { finalised = true; };
+    store.faults.push({
+      table: 'platform_settings', op: 'select', message: 'settings unreadable',
+      when: ({ filters }) => filters.some(([c, v]) => c === 'key' && v === 'tournament_bonuses'),
+    });
+    store.faults.push({
+      table: 'tournament_participants', op: 'select', message: 'roster unreadable',
+      when: () => finalised,
+    });
+
+    const err = await finalizeEvent('e1').then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(err).not.toBeNull();
+    expect(err!.message).toMatch(/2 follow-up steps/);
+    expect(err!.message).toMatch(/bonuses were not applied/);
+    expect(err!.message).toMatch(/notification was not sent/);
+  });
+
+  it('finalises silently when nothing fails, so the collector adds no noise', async () => {
+    const before = ratingOf('pl-alice');
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+    // The champion bonus is 32, and it DID land — which is what makes the
+    // three refusals above assertions about the guard rather than about a
+    // fixture in which no bonus was ever payable.
+    expect(ratingOf('pl-alice')).toBe(before + 32);
+  });
+});
+
+describe('round-robin standings reads fail closed', () => {
+  beforeEach(() => {
+    event().format = 'round_robin';
+    store.db.tournament_matches = [match(QF)];
+    match(QF).winner_to_match_id = null;
+    match(QF).winner_to_position = null;
+  });
+
+  it('refuses rather than handing back a table where everyone scored zero', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    // BEFORE ANY WRITE, so this throws outright. Swallowed, a failed entrants
+    // read produced an empty pointsMap and a failed results read dropped every
+    // win — either way the ladder that landed was internally consistent and
+    // wrong, and final_position is assigned straight off it.
+    // KEYED ON ORDER, BECAUSE THE TWO READS ARE TEXTUALLY IDENTICAL.
+    // finalizeEvent's field read (finalize.ts:1153) and the round-robin points
+    // read (finalize.ts:757) issue the same select on the same table with the
+    // same filters, and the field read runs first. Anything narrower than
+    // "the second one" would have faulted the wrong guard — which is exactly
+    // what the first version of this test did, and it passed against a
+    // message no part of this change produces.
+    let seen = 0;
+    store.faults.push({
+      table: 'tournament_participants', op: 'select', message: 'permission denied for table tournament_participants',
+      when: ({ cols }) => cols.replace(/\s/g, '') === 'id' && ++seen === 2,
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/round-robin entrants could not be read/);
+    expect(seen).toBe(2);
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+  });
+
+  it('refuses when the results themselves cannot be read', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    let armed = false;
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'permission denied for table tournament_matches',
+      when: ({ cols }) => {
+        if (cols.includes('winner_pair_id')) { armed = true; return true; }
+        return false;
+      },
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/round-robin results could not be read/);
+    expect(armed).toBe(true);
+    expect(event().status).toBe('live');
+  });
+});
+
+// ============================================================
+// The emergency stop that opened when it could not read itself
+// ============================================================
+// assertTournamentNotSuspended discarded its error, so `data` came back null
+// and `data?.suspended_at` was undefined — the one gate that stops writes on a
+// suspended tournament read "I could not find out" as "carry on". Nothing in
+// the repo exercised its failure path before these two tests.
+describe('the suspension gate fails closed', () => {
+  beforeEach(async () => {
+    store.db.tournament_matches = [match(QF)];
+    match(QF).winner_to_match_id = null;
+    match(QF).winner_to_position = null;
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+  });
+
+  it('refuses to finalise when the suspension state cannot be read', async () => {
+    store.faults.push({
+      table: 'tournaments', op: 'select', message: 'permission denied for table tournaments',
+    });
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/whether this tournament is suspended/);
+
+    // Nothing moved. The gate runs before the first write, so a refusal here
+    // costs a reload — which is the whole argument for making it refuse.
+    expect(event().status).toBe('live');
+    expect(participant('p-alice').final_position).toBeNull();
+  });
+
+  it('still refuses on an actual suspension, and says which', async () => {
+    store.db.tournaments![0]!.suspended_at = '2026-08-29T00:00:00Z';
+    store.db.tournaments![0]!.suspension_reason = 'hall flooded';
+
+    await expect(finalizeEvent('e1')).rejects.toThrow(/suspended: hall flooded/);
+    expect(event().status).toBe('live');
+  });
+
+  it('lets an unsuspended tournament through, so the gate is not simply stuck shut', async () => {
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+  });
+});
+
+// ============================================================
+// The two reads computeRoundRobinStandings opened with
+// ============================================================
+// Driven directly rather than through finalizeEvent, because both queries are
+// textually identical to reads its callers issue earlier in the same request,
+// and an order-keyed fault would be asserting about the wrong one. The first
+// version of the round-robin tests above made exactly that mistake and passed
+// against a message no part of this change produces.
+describe('computeRoundRobinStandings reads fail closed', () => {
+  it('refuses when the event itself cannot be read', async () => {
+    store.faults.push({
+      table: 'tournament_events', op: 'select', message: 'permission denied for table tournament_events',
+    });
+    await expect(computeRoundRobinStandings('e1')).rejects.toThrow(/Could not read this event/);
+  });
+
+  it('refuses when the results cannot be read', async () => {
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'permission denied for table tournament_matches',
+    });
+    await expect(computeRoundRobinStandings('e1')).rejects.toThrow(/Could not read this event's results/);
+  });
+
+  // AN ABSENT EVENT IS STILL `[]`, and that is deliberate: the event being
+  // gone is a real state the callers already handle, and only the error case
+  // changed. Without this the fix could have been written as "throw on
+  // anything falsy" and no test would have noticed.
+  it('still returns an empty table for an event that is genuinely gone', async () => {
+    // PGRST116 IS THE WHOLE TEST. `.single()` reports "no rows" as an error,
+    // so a guard written as "throw on any error" would turn a deleted event
+    // into a refusal for every caller that already copes with `[]`. Asserting
+    // this without the code was vacuous: the harness answers an unmatched
+    // read with `{ data: null, error: null }`, which passes either way.
+    store.faults.push({
+      table: 'tournament_events', op: 'select',
+      message: 'JSON object requested, multiple (or no) rows returned',
+      code: 'PGRST116',
+    });
+    await expect(computeRoundRobinStandings('e1')).resolves.toEqual([]);
+  });
+
+  it('returns a real table when both reads work, so the guards are not stuck shut', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    const table = await computeRoundRobinStandings('e1');
+    expect(table.length).toBe(2);
+    expect(table[0]!.id).toBe('p-alice');
+  });
+});
+
+// ============================================================
+// The ledger reads the grants, not the audit log
+// ============================================================
+// `tournament_bonus_grants` is claimed inside each payment's own transaction;
+// the audit row is written afterwards and is best-effort. Keyed on the audit
+// row, the ledger reported "nothing paid" for the whole window between the two
+// — and on a retry inside that window it is the only thing standing between a
+// player and a second bonus. The UNIQUE index still refuses the double pay, so
+// this was never a wrong PAYMENT; it was the hint being wrong on exactly the
+// question it exists to answer.
+describe('the bonus ledger reads what was actually paid', () => {
+  beforeEach(() => {
+    event().status = 'completed';
+    event().placement_bonus_enabled = true;
+    participant('p-alice').final_position = 1;
+    participant('p-bob').final_position = 2;
+  });
+
+  it('sees a grant whose audit row never landed', async () => {
+    // The payment committed; the audit insert did not. There is no
+    // `placement_bonuses_applied` row anywhere in this fixture.
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'rating', subject_id: 'pl-alice',
+      discipline: 'singles', requested_bonus: 32, applied_delta: 32,
+    });
+
+    await applyPlacementBonuses('e1');
+
+    // Alice is skipped because the ledger can see her grant. Read from the
+    // audit log this was invisible and she was paid a second time.
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(ratingOf('pl-bob')).toBe(1020);
+  });
+
+  it('does not mistake a legacy marker for a paid subject', async () => {
+    // A marker addresses its own EVENT — subject_id = event_id — so a reader
+    // that filed every row by subject would have put 'e1' into ratedPlayers
+    // and skipped nobody, which looks identical to working.
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'event_legacy_paid', subject_id: 'e1',
+      discipline: null, requested_bonus: 0, applied_delta: 0,
+    });
+
+    // applyPlacementBonuses refuses a marked event several checks earlier, so
+    // the observable is the refusal — not a payment that skipped everybody.
+    await expect(applyPlacementBonuses('e1')).rejects.toThrow(/already awarded placement bonuses/);
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(ratingOf('pl-bob')).toBe(1000);
+  });
+
+  it('warns on a correction to an event that only carries a legacy marker', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'event_legacy_paid', subject_id: 'e1',
+      discipline: null, requested_bonus: 0, applied_delta: 0,
+    });
+
+    participant('p-alice').status = 'disqualified';
+    const standings = await recomputeEventStandings('e1');
+
+    // THE HOLE THIS CLOSES. On an event paid by a version that kept no
+    // per-player record there are no `rating` rows at all, so counting only
+    // those said "nothing was paid" — silencing the officer warning on
+    // precisely the events where the payment provably happened and provably
+    // cannot be reversed.
+    expect(standings.bonusesAlreadyPaid).toBe(true);
+  });
+
+  it('says nothing was paid when nothing was', async () => {
+    Object.assign(event(), { format: 'round_robin' });
+    participant('p-alice').status = 'disqualified';
+    const standings = await recomputeEventStandings('e1');
+    expect(standings.bonusesAlreadyPaid).toBe(false);
+  });
+});
+
+// A DELIBERATELY MALFORMED MARKER, and the only way to observe the filing rule
+// directly. A well-formed marker addresses its own event, so a reader that
+// filed it as a paid SUBJECT would put a uuid nobody holds into ratedPlayers
+// and skip nobody — indistinguishable from working. The invariant
+// `subject_id = event_id` is asserted by 00189 and 00190 at migration time and
+// is NOT enforced by a constraint, so a row that breaks it is reachable; here
+// it names a real player, which is what makes the mis-filing visible as a
+// player who silently goes unpaid.
+describe('a non-grant kind is never a paid subject', () => {
+  it('pays a player whose id appears as a marker subject', async () => {
+    event().status = 'completed';
+    event().placement_bonus_enabled = true;
+    participant('p-alice').final_position = 1;
+    participant('p-bob').final_position = 2;
+
+    (store.db.tournament_bonus_grants ??= []).push({
+      event_id: 'e1', kind: 'event_legacy_paid', subject_id: 'pl-alice',
+      discipline: null, requested_bonus: 0, applied_delta: 0,
+    });
+
+    // Not refused: the legacy check matches on subject_id = event_id, and this
+    // row does not. So the ledger read is reached, and it must file this row
+    // by its KIND rather than by its subject.
+    await applyPlacementBonuses('e1');
+
+    expect(ratingOf('pl-alice')).toBe(1032);
+    expect(ratingOf('pl-bob')).toBe(1020);
   });
 });

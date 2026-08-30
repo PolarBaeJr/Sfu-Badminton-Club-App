@@ -31,11 +31,13 @@ import {
   computeRoundRobinStandings,
   settleWrites,
   assertWritesSucceeded,
+  mustWrite,
   drawWithinTiers,
   makeDrawRng,
   newDrawSeed,
   planGroupAssignment,
   drawAvoidingSameGroupRound1,
+  assertFieldDidNotGrow,
 } from './_internal';
 
 // Block (re)generating a draw once any match has a recorded result —
@@ -225,6 +227,114 @@ function statusAfterDraw(
 }
 
 /**
+ * Publish a generated draw: re-count the field and flip the status together.
+ *
+ * The reason this is not just another mustWrite is that the two halves have to
+ * be one statement. Everything else in generation is recoverable by re-running
+ * it; a draw published over a field that grew is not, because the entry it
+ * missed has no fixture and nothing says so.
+ */
+async function publishDraw(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  newStatus: 'live' | 'bracket_generated' | 'pool_live' | 'pool_generated',
+  doubles: boolean,
+  // THE IDS THIS DRAW WAS BUILT FROM, not how many there were (00200). A count
+  // cannot see a swap: one entrant withdraws and another enters while the draw
+  // is being generated, the total is unchanged, and publication succeeds on a
+  // bracket that has a fixture for somebody who left and none for somebody who
+  // is in the event.
+  entrants: string[],
+  // POSITIONALLY ALIGNED WITH `entrants` (00202). An id set cannot see a swap:
+  // swapping a pair's member keeps the pair id, so the set is unchanged while
+  // the team, and the combined_elo the draw was seeded by, are not. These carry
+  // what each entrant contained so publication can compare that too.
+  digests: Array<Record<string, string | number | null>>,
+  // True when `entrants` is supposed to BE the field. False for a pool-seeded
+  // draw, whose entrants are the qualifiers — the members who did not qualify
+  // are still registered, so "somebody is in the event and not in the draw" is
+  // the normal state there rather than a fault. The other direction is checked
+  // on both paths.
+  wholeField: boolean,
+  phase: TournamentMatchPhase | null,
+  generation: string,
+): Promise<void> {
+  const { data, error } = await adminClient.rpc('publish_event_draw', {
+    p_event_id: eventId,
+    p_new_status: newStatus,
+    p_doubles: doubles,
+    p_entrants: entrants,
+    p_whole_field: wholeField,
+    p_phase: phase,
+    p_generation: generation,
+    p_digests: digests,
+  });
+  if (error) throw new Error(`Publishing the draw failed: ${error.message}`);
+  if (!data) throw new Error('Publishing the draw returned nothing.');
+  if (!data.ok) {
+    if (data.reason === 'field_grew') {
+      const arrived = Number(data.now ?? 0) - Number(data.expected ?? 0);
+      throw new ExpectedError(
+        `${arrived} ${arrived === 1 ? 'entry' : 'entries'} arrived while this draw was being built, so it would have left `
+        + `${arrived === 1 ? 'somebody' : 'people'} out. Nothing was published — press Generate again to include `
+        + `${arrived === 1 ? 'them' : 'everyone'}.`,
+      );
+    }
+    // SOMEBODY IN THIS DRAW IS NO LONGER IN THE EVENT (00200) — a withdrawal
+    // landed while the draw was being built, so a fixture here belongs to
+    // somebody who has left. This is the cost of comparing the set instead of
+    // the total, and it is only acceptable because the remedy is one press of
+    // the button they just pressed. The sentence therefore says exactly that
+    // and does not ask them to work out what changed.
+    if (data.reason === 'entrant_left') {
+      const gone = Number(data.count ?? 0);
+      throw new ExpectedError(
+        `${gone === 1 ? 'Somebody' : `${gone} people`} in this draw left the event while it was being built, `
+        + `so ${gone === 1 ? 'their match' : 'their matches'} would have had nobody to play. Nothing was published — `
+        + 'press Generate again to rebuild it without them.',
+      );
+    }
+    // SOMEBODY ELSE REBUILT THIS DRAW while this one was being built (00197).
+    // Nothing of this generation's is in the table — the trigger refused it —
+    // so there is nothing to undo and the remedy is to look at what is there.
+    // AN ENTRANT IS STILL HERE BUT IS NOT WHAT IT WAS (00202) — the usual cause
+    // is a pair whose member was swapped while the draw was being built, which
+    // leaves the pair id, and therefore the entrant set, completely unchanged.
+    // Same remedy as entrant_left, and the same reason it is acceptable.
+    if (data.reason === 'entrant_changed') {
+      const changed = Number(data.count ?? 0);
+      throw new ExpectedError(
+        `${changed === 1 ? 'An entry' : `${changed} entries`} in this draw changed while it was being built — `
+        + `${changed === 1 ? 'a team member was swapped, or a seed was edited' : 'team members were swapped, or seeds were edited'}. `
+        + 'Nothing was published — press Generate again to rebuild it as the event now stands.',
+      );
+    }
+    if (data.reason === 'superseded') {
+      throw new ExpectedError(
+        'This draw was rebuilt by somebody else while it was being generated, so nothing here was saved. '
+        + 'Reload the event to see the draw that was published, and press Generate again if it is not the one you wanted.',
+      );
+    }
+    // Both of these are unreachable while the trigger and the inserts above
+    // hold, which is why they are worth reporting as faults rather than as
+    // something the exec did.
+    if (data.reason === 'foreign_matches') {
+      Sentry.captureMessage('publish_event_draw: foreign matches in the phase', {
+        level: 'error',
+        tags: { eventId, count: String(data.count ?? '') },
+      });
+      throw new Error('This draw contains matches from another generation and was not published.');
+    }
+    if (data.reason === 'no_matches') {
+      Sentry.captureMessage('publish_event_draw: nothing was built', { level: 'error', tags: { eventId } });
+      throw new Error('No matches were created for this draw, so it was not published.');
+    }
+    if (data.reason === 'event_not_found') throw new Error('Event not found');
+    throw new Error('Could not publish the draw — please try again.');
+  }
+}
+
+/**
  * Delete the matches of ONE phase, leaving the other half alone.
  *
  * The single most destructive line in this module used to be
@@ -274,12 +384,52 @@ async function deletePhaseMatches(
   adminClient: ReturnType<typeof createAdminClient>,
   eventId: string,
   phase: TournamentMatchPhase | null,
-) {
-  const { error } = await adminClient.rpc('delete_phase_matches', {
+): Promise<string> {
+  // SCHEMA FENCE, AND IT HAS TO BE BEFORE THE TEARDOWN (00197).
+  //
+  // delete_phase_matches commits its DELETE in its own round trip. If this
+  // image is running against a database where 00197 has not been applied yet,
+  // the RPC is still 00144's integer-returning version: the delete lands, and
+  // then the generation check below throws over a phase that no longer exists
+  // and cannot be rebuilt until the migration runs. Deploying the image before
+  // the migration is the DEFAULT order here — images auto-update from CI while
+  // migrations are run by hand — so this is the likely sequence, not the exotic
+  // one.
+  //
+  // Asking for the column 00197 adds is the cheapest way to date the schema:
+  // on an old database PostgREST answers 42703 and nothing has been destroyed
+  // yet. One extra round trip on an operation an exec performs by hand.
+  const { error: fenceError } = await adminClient
+    .from('tournament_events')
+    .select('draw_generation_id')
+    .eq('id', eventId)
+    .maybeSingle();
+  if (fenceError) {
+    Sentry.captureException(fenceError);
+    throw new Error(
+      'This draw cannot be fenced against a competing rebuild, so it was left alone. ' +
+        'The database is likely older than this version of the app; no matches were deleted.',
+    );
+  }
+
+  const { data, error } = await adminClient.rpc('delete_phase_matches', {
     p_event_id: eventId,
     p_phase: phase,
   });
-  if (!error) return;
+  if (!error) {
+    // THE GENERATION THIS TEARDOWN CLAIMED (00197). Every match inserted below
+    // carries it, publish_event_draw refuses a claim that has moved on, and a
+    // BEFORE INSERT trigger refuses a stamped row from a superseded one. It is
+    // returned rather than re-read because re-reading it would be a second
+    // round trip that could see somebody else's claim and stamp the whole draw
+    // with it — which is the failure this is built to prevent, arrived at by a
+    // different route.
+    const generation = (data as { generation?: unknown } | null)?.generation;
+    if (typeof generation !== 'string') {
+      throw new Error('The draw teardown did not return a generation, so this draw cannot be fenced.');
+    }
+    return generation;
+  }
   // The function raises its own refusals with messages written for the desk —
   // which matches to void, which to unvoid, which are on court — so they are
   // passed through rather than replaced with something vaguer.
@@ -295,10 +445,60 @@ async function deletePhaseMatches(
 // Pool -> bracket seeding
 // ============================================================
 
+/**
+ * THE RAW COLUMNS PUBLICATION COMPARES, minus the two the generator writes
+ * itself (00202). Raw, not derived: the generators coalesce combined_elo to 400
+ * and choose between elo_after and elo_before depending on which path built the
+ * field, and putting that derived number here would oblige publish_event_draw
+ * to reproduce the same choice in SQL. A divergence between the two would be a
+ * silent false accept, so the comparison is column-to-column and the fallback
+ * logic stays in exactly one place.
+ *
+ * Keys are short because they travel per entrant and are matched by
+ * jsonb_build_object in publish_event_draw — they must stay in step with it.
+ */
+type EntrantIdentity = Record<string, string | number | null>;
+
+function doublesIdentity(
+  r: { player1_id: string; player2_id: string; combined_elo: number | null },
+): EntrantIdentity {
+  return { p1: r.player1_id, p2: r.player2_id, ce: r.combined_elo ?? null };
+}
+
+function singlesIdentity(
+  r: { player_id: string; elo_before: number | null; elo_after: number | null },
+): EntrantIdentity {
+  return { p: r.player_id, eb: r.elo_before ?? null, ea: r.elo_after ?? null };
+}
+
+/**
+ * What this generator asserts each entrant IS, at the moment it publishes.
+ *
+ * seed and grp are the generator's INTENDED values rather than snapshot ones,
+ * because the generator writes both columns itself — seed_number on all four
+ * draw paths and group_number on the round-robin one. The digest is therefore
+ * "the row as this draw requires it to be", and publication refuses if the
+ * table disagrees. That covers both a concurrent writer changing a seed and the
+ * generator's own seed write having silently failed to land.
+ */
+function entrantDigest(e: FieldEntry): Record<string, string | number | null> {
+  return { ...e.identity, seed: e.seed, grp: e.dbGroup };
+}
+
 type FieldEntry = {
   id: string;
   seed: number | null;
   elo: number;
+  /** The identity/rating columns as read when this entrant was snapshotted. */
+  identity: EntrantIdentity;
+  /**
+   * This event's own tournament_pairs/tournament_participants.group_number.
+   *
+   * NOT the same thing as `group` below, and the difference is why it exists:
+   * on a pool-seeded draw `group` is the group the entrant qualified OUT OF in
+   * the SOURCE event, which has nothing to do with this row's column.
+   */
+  dbGroup: number | null;
   /**
    * The group this entrant qualified out of, and where they finished in it.
    * Both null outside a group-seeded field — an ordinary or single-pool draw
@@ -411,17 +611,29 @@ async function buildFieldFromPool(
 
   // Anyone already entered here — including withdrawals, which must be seen so
   // a withdrawal is skipped rather than re-created by the promotion insert.
-  const existing = new Map<string, { id: string; status: string }>();
+  // group_number and the rating columns come back too — 00202. This read IS the
+  // snapshot for anyone already entered here, so it is where their digest has to
+  // be taken from; re-reading them later would reopen the window the digest
+  // exists to close.
+  const existing = new Map<string, {
+    id: string; status: string; identity: EntrantIdentity; dbGroup: number | null;
+  }>();
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, player1_id, player2_id, status')
+      .select('id, player1_id, player2_id, combined_elo, group_number, status')
       .eq('event_id', eventId);
-    for (const p of pairs ?? []) existing.set(pairKey(p.player1_id, p.player2_id), { id: p.id, status: p.status });
+    for (const p of pairs ?? []) existing.set(pairKey(p.player1_id, p.player2_id), {
+      id: p.id, status: p.status, identity: doublesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+    });
   } else {
     const { data: parts } = await adminClient.from('tournament_participants')
-      .select('id, player_id, status')
+      .select('id, player_id, elo_before, elo_after, group_number, status')
       .eq('event_id', eventId);
-    for (const p of parts ?? []) existing.set(p.player_id, { id: p.id, status: p.status });
+    for (const p of parts ?? []) existing.set(p.player_id, {
+      id: p.id, status: p.status, identity: singlesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+    });
   }
 
   const srcGroupCount = (source as { group_count?: number | null }).group_count ?? 1;
@@ -434,14 +646,13 @@ async function buildFieldFromPool(
     srcGroupCount >= 2 ? srcGroupCount * perGroup : standings.length,
   );
   // Promoted qualifiers arrive checked in: they have just finished playing the
-  // pool, so they are demonstrably present. checked_in_at is set alongside the
-  // status because the attendance list keys on the timestamp, not the enum —
-  // status is overwritten by a later withdrawal, the timestamp is not.
-  const promotedAttendance = {
-    status: 'checked_in',
-    checked_in_at: new Date().toISOString(),
-    checked_in_by: adminId,
-  };
+  // pool, so they are demonstrably present. The status and the checking-in
+  // admin are written by promote_pool_qualifier itself (00198); the TIMESTAMP
+  // is stamped here so one promotion run shares a single instant rather than
+  // drifting a few milliseconds per round trip. It is carried separately from
+  // the status because the attendance list keys on the timestamp, not the
+  // enum — status is overwritten by a later withdrawal, the timestamp is not.
+  const promotedCheckedInAt = new Date().toISOString();
   const entries: FieldEntry[] = [];
   let promoted = 0;
   let skipped = 0;
@@ -468,48 +679,85 @@ async function buildFieldFromPool(
       groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
     };
     if (already) {
-      entries.push({ id: already.id, seed, elo: src.elo, ...from });
+      entries.push({
+        id: already.id, seed, elo: src.elo,
+        identity: already.identity, dbGroup: already.dbGroup, ...from,
+      });
       continue;
     }
 
-    // Split rather than one ternary insert. With both the table name AND the
-    // row shape chosen by the same condition, the client cannot narrow them
-    // together — it checks the union of shapes against whichever table it
-    // resolved, and rejects the pairs row for missing participant columns and
-    // vice versa. Two calls, each with one table and one shape, type cleanly.
-    const { data: created, error } = doubles
-      ? await adminClient
-          .from('tournament_pairs')
-          .insert({
-            event_id: eventId,
-            player1_id: src.players[0],
-            player2_id: src.players[1],
-            pair_name: src.name,
-            combined_elo: src.elo,
-            ...promotedAttendance,
-            seed_number: seed,
-            added_by: adminId,
-          })
-          .select('id')
-          .single()
-      : await adminClient
-          .from('tournament_participants')
-          .insert({
-            event_id: eventId,
-            player_id: src.players[0],
-            elo_before: src.elo,
-            ...promotedAttendance,
-            seed_number: seed,
-            added_by: adminId,
-          })
-          .select('id')
-          .single();
-    if (error || !created) {
+    // THE INSERT GOES THROUGH AN RPC (00198), not straight at the two tables.
+    // enter_tournament_event takes the field advisory lock before it decides
+    // that nobody here is spoken for; this promotion writes the SAME field, and
+    // until now it did so without taking that lock. The two could interleave
+    // and leave one member both a participant and half a pair — the original
+    // duplicate-entry corruption. pg_advisory_xact_lock lives for one
+    // transaction and a PostgREST call IS the transaction, so the check and the
+    // insert cannot be split across two round trips; they move into the RPC
+    // together. The RPC also picks the table and the row shape, which removes
+    // the two-call split this used to need to type cleanly.
+    const { data: promotedRow, error } = await adminClient.rpc('promote_pool_qualifier', {
+      p_event_id: eventId,
+      // THE EVENT THIS QUALIFIER CAME FROM — 00218. `standings` is a snapshot
+      // taken once, before this loop, and nothing holds the pool event still
+      // afterwards; a member withdrawn from it after the snapshot frees a cap
+      // slot they may already have spent elsewhere. The RPC re-asks whether
+      // their pool entry is still there, under the tournament row lock that
+      // makes the answer hold until the insert commits.
+      p_source_event_id: sourceId,
+      p_doubles: doubles,
+      p_player1_id: src.players[0],
+      p_player2_id: doubles ? src.players[1] : null,
+      p_pair_name: doubles ? src.name : null,
+      p_elo: src.elo,
+      p_seed: seed,
+      p_admin_id: adminId,
+      p_checked_in_at: promotedCheckedInAt,
+    });
+    if (error) {
       Sentry.captureException(error);
-      throw new Error(`Could not enter a pool qualifier into the bracket: ${error?.message ?? 'unknown error'}`);
+      throw new Error(`Could not enter a pool qualifier into the bracket: ${error.message}`);
+    }
+    const result = promotedRow as
+      | { ok: boolean; id?: string; reason?: string; conflict?: string }
+      | null;
+    if (!result?.ok) {
+      // THE POOL ENTRY WENT AWAY UNDER THE SNAPSHOT — 00218. This is the same
+      // answer as the withdrawal branch above, arrived at from the source side
+      // instead of the target side: they are not in the pool any more, so they
+      // do not take a bracket slot and the next finisher moves up.
+      if (result?.reason === 'source_entry_left') {
+        skipped++;
+        continue;
+      }
+      // A collision is NOT a skip. `skipped` means the exec withdrew somebody
+      // and the next finisher moves up, which is correct; this means the field
+      // changed underneath the promotion, and promoting around it would build a
+      // bracket that disagrees with the pool everyone just played. Refuse the
+      // generation — no matches exist yet at this point, so pressing Generate
+      // again re-reads the field and is the whole remedy.
+      if (result?.reason === 'already_in_field') {
+        throw new ExpectedError(
+          'Somebody was entered into this bracket while it was being built from the pool standings, so the draw was not created. Press Generate again to build it from the current field.'
+        );
+      }
+      throw new Error(
+        `Could not enter a pool qualifier into the bracket: ${result?.reason ?? 'unknown error'}`
+      );
     }
     promoted++;
-    entries.push({ id: created.id, seed, elo: src.elo, ...from });
+    // THE DIGEST OF A ROW THIS GENERATOR JUST CREATED — 00202. Not a re-read:
+    // promote_pool_qualifier inserts exactly the arguments passed to it above,
+    // leaving group_number and (for singles) elo_after at their defaults, so
+    // the inserted row is known without asking for it back.
+    entries.push({
+      id: result.id as string, seed, elo: src.elo,
+      identity: doubles
+        ? { p1: src.players[0] ?? null, p2: src.players[1] ?? null, ce: src.elo }
+        : { p: src.players[0] ?? null, eb: src.elo, ea: null },
+      dbGroup: null,
+      ...from,
+    });
   }
 
   if (entries.length < 2) {
@@ -632,26 +880,53 @@ async function buildFieldFromOwnPool(
   // what an unseeded draw would sort by, and because the audit row is more
   // useful when the field it describes is the real one.
   const eloOf = new Map<string, number>();
+  // The same read produces the digest — 00202. See buildFieldFromPool.
+  const digestOf = new Map<string, { identity: EntrantIdentity; dbGroup: number | null }>();
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, combined_elo').eq('event_id', eventId);
-    for (const p of pairs ?? []) eloOf.set(p.id, p.combined_elo ?? 400);
+      .select('id, player1_id, player2_id, combined_elo, group_number').eq('event_id', eventId);
+    for (const p of pairs ?? []) {
+      eloOf.set(p.id, p.combined_elo ?? 400);
+      digestOf.set(p.id, {
+        identity: doublesIdentity(p),
+        dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+      });
+    }
   } else {
     const { data: parts } = await adminClient.from('tournament_participants')
-      .select('id, elo_before, elo_after').eq('event_id', eventId);
+      .select('id, player_id, elo_before, elo_after, group_number').eq('event_id', eventId);
     // elo_after is where the pool left them, with elo_before as the fallback for
     // an entry that somehow played nothing.
-    for (const p of parts ?? []) eloOf.set(p.id, p.elo_after ?? p.elo_before ?? 400);
+    for (const p of parts ?? []) {
+      eloOf.set(p.id, p.elo_after ?? p.elo_before ?? 400);
+      digestOf.set(p.id, {
+        identity: singlesIdentity(p),
+        dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+      });
+    }
   }
 
   const capacity = Math.min(ownPoolCapacity(event), standings.length);
-  const entries: FieldEntry[] = standings.slice(0, capacity).map((standing, i) => ({
-    id: standing.id,
-    seed: i + 1,
-    elo: eloOf.get(standing.id) ?? 400,
-    group: (standing as { group?: number | null }).group ?? null,
-    groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
-  }));
+  const entries: FieldEntry[] = standings.slice(0, capacity).map((standing, i) => {
+    // A standing whose entry row is not in the read above cannot be given a
+    // digest, and an empty one would be refused by publish_event_draw every
+    // single time with 'entrant_changed' — a permanent, unexplained failure.
+    // Say what actually went wrong instead. Unlike elo, where 400 is a
+    // legitimate default, there is no honest fallback identity.
+    const digest = digestOf.get(standing.id);
+    if (!digest) {
+      throw new ExpectedError('A round-robin finisher no longer has an entry in this event. Reload and try again.');
+    }
+    return {
+      id: standing.id,
+      seed: i + 1,
+      elo: eloOf.get(standing.id) ?? 400,
+      identity: digest.identity,
+      dbGroup: digest.dbGroup,
+      group: (standing as { group?: number | null }).group ?? null,
+      groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
+    };
+  });
 
   if (entries.length < 2) {
     throw new ExpectedError('The round robin produced fewer than 2 available finishers, which is not a knockout.');
@@ -737,6 +1012,7 @@ async function createThirdPlaceMatch(
   // The shape lives on the row, so it is simply passed in, and it is the
   // final's: "third place games best to 3 21s".
   shape: { games_per_match: number; points_per_game: number } | null,
+  generation: string,
 ): Promise<string | null> {
   if (totalRounds < 2 || semiFinalIds.length !== 2) return null;
 
@@ -749,6 +1025,7 @@ async function createThirdPlaceMatch(
   const { data: created, error } = await adminClient.from('tournament_matches').insert({
     event_id: eventId,
     phase,
+    draw_generation_id: generation,
     round_number: totalRounds,
     round_name: THIRD_PLACE_ROUND_NAME,
     bracket_position: 1,
@@ -859,19 +1136,30 @@ async function generateSingleEliminationBracketImpl(
     poolSkipped = field.skipped;
     poolGroupCount = field.groupCount;
   } else if (doubles) {
+    // The member and group columns come back for the digest — 00202. This read
+    // is the snapshot the draw is built from, so it is the only correct place
+    // to take it from.
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, seed_number, combined_elo, status')
+      .select('id, seed_number, combined_elo, group_number, player1_id, player2_id, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
-    entries = (pairs ?? []).map(p => ({ id: p.id, seed: p.seed_number, elo: p.combined_elo ?? 400 }));
+    entries = (pairs ?? []).map(p => ({
+      id: p.id, seed: p.seed_number, elo: p.combined_elo ?? 400,
+      identity: doublesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+    }));
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, seed_number, elo_before, status')
+      .select('id, seed_number, elo_before, elo_after, group_number, player_id, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
-    entries = (participants ?? []).map(p => ({ id: p.id, seed: p.seed_number, elo: p.elo_before ?? 400 }));
+    entries = (participants ?? []).map(p => ({
+      id: p.id, seed: p.seed_number, elo: p.elo_before ?? 400,
+      identity: singlesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
+    }));
   }
 
   const N = entries.length;
@@ -1083,7 +1371,7 @@ async function generateSingleEliminationBracketImpl(
   // Delete the existing matches OF THIS PHASE. On a pool_to_bracket event the
   // played-out pool sits in the same table and must survive a redraw of the
   // knockout — see deletePhaseMatches.
-  await deletePhaseMatches(adminClient, eventId, phase);
+  const generation = await deletePhaseMatches(adminClient, eventId, phase);
 
   // THE ROUND LADDER (00108). Stamped onto the rows as they are created rather
   // than stored as a plan on the event, so there is nothing that can disagree
@@ -1115,6 +1403,7 @@ async function generateSingleEliminationBracketImpl(
       const { data: match, error } = await adminClient.from('tournament_matches').insert({
         event_id: eventId,
         phase,
+        draw_generation_id: generation,
         round_number: round,
         round_name: roundName,
         bracket_position: pos,
@@ -1176,38 +1465,58 @@ async function generateSingleEliminationBracketImpl(
       updateData.status = 'ready';
     }
 
-    await adminClient.from('tournament_matches').update(updateData).eq('id', matchId);
+    await mustWrite(
+      `Seeding round-1 match ${matchId}`,
+      adminClient.from('tournament_matches').update(updateData).eq('id', matchId).select('id'),
+    );
 
     // If bye, advance winner to next match
     if (isBye) {
-      const { data: currentMatch } = await adminClient.from('tournament_matches')
+      const { data: currentMatch, error: routeErr } = await adminClient.from('tournament_matches')
         .select('winner_to_match_id, winner_to_position')
         .eq('id', matchId)
         .single();
+      // A failed read here reads as "this match routes nowhere", which for a
+      // bye means the player who received it is never advanced — a bracket
+      // with a missing entrant in round 2, published as complete.
+      if (routeErr) {
+        throw new Error(`Reading the winner route for match ${matchId} failed: ${routeErr.message}`);
+      }
 
       if (currentMatch?.winner_to_match_id) {
         const advanceField = doubles
           ? (currentMatch.winner_to_position === 'a' ? 'pair_a_id' : 'pair_b_id')
           : (currentMatch.winner_to_position === 'a' ? 'participant_a_id' : 'participant_b_id');
 
-        await adminClient.from('tournament_matches')
-          .update({ [advanceField]: (slotA ?? slotB)!.id })
-          .eq('id', currentMatch.winner_to_match_id);
+        await mustWrite(
+          `Advancing the bye from match ${matchId} into ${currentMatch.winner_to_match_id}`,
+          adminClient.from('tournament_matches')
+            .update({ [advanceField]: (slotA ?? slotB)!.id })
+            .eq('id', currentMatch.winner_to_match_id)
+            .select('id'),
+        );
 
         // Check if next match now has both participants → set to ready
-        const { data: nextMatch } = await adminClient.from('tournament_matches')
+        const { data: nextMatch, error: nextErr } = await adminClient.from('tournament_matches')
           .select('*')
           .eq('id', currentMatch.winner_to_match_id)
           .single();
+        if (nextErr) {
+          throw new Error(`Reading match ${currentMatch.winner_to_match_id} failed: ${nextErr.message}`);
+        }
 
         if (nextMatch) {
           const hasBoth = doubles
             ? (nextMatch.pair_a_id && nextMatch.pair_b_id)
             : (nextMatch.participant_a_id && nextMatch.participant_b_id);
           if (hasBoth) {
-            await adminClient.from('tournament_matches')
-              .update({ status: 'ready' })
-              .eq('id', currentMatch.winner_to_match_id);
+            await mustWrite(
+              `Marking match ${currentMatch.winner_to_match_id} ready`,
+              adminClient.from('tournament_matches')
+                .update({ status: 'ready' })
+                .eq('id', currentMatch.winner_to_match_id)
+                .select('id'),
+            );
           }
         }
       }
@@ -1220,7 +1529,7 @@ async function generateSingleEliminationBracketImpl(
   const thirdPlaceId = includeThirdPlace
     ? await createThirdPlaceMatch(
         adminClient, eventId, totalRounds, matchesByRound[totalRounds - 1] ?? [],
-        phase, ladder?.thirdPlace ?? null,
+        phase, ladder?.thirdPlace ?? null, generation,
       )
     : null;
 
@@ -1251,10 +1560,44 @@ async function generateSingleEliminationBracketImpl(
     assertWritesSucceeded('Numbering the bracket matches', failures);
   }
 
-  // Update event status
-  await adminClient.from('tournament_events')
-    .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
-    .eq('id', eventId);
+  // Audit F-004, the draw half: a member who entered while this draw was being
+  // built is in the event and would be in no match. Checked BEFORE the publish,
+  // so nothing has been advertised and the matches inserted above are simply
+  // replaced by the next Generate. Pool-seeded events are exempt — their field
+  // comes from another event's standings, so a new entry here was never going
+  // to be in it.
+  if (!seededFromPool) await assertFieldDidNotGrow(adminClient, eventId, doubles, N);
+
+  // Update event status.
+  //
+  // THE LAST WRITE IS THE ONE THAT PUBLISHES THE DRAW, so it is the one that
+  // must never succeed quietly on top of a failure. Everything above now
+  // throws rather than continuing, which means reaching this line is the
+  // assertion that the whole draw landed; letting this one write fail silently
+  // would leave the event advertising a bracket it does not have.
+  // THE RE-COUNT AND THE FLIP UNDER ONE LOCK (00193). assertFieldDidNotGrow
+  // above re-counts the field, but "immediately before the flip" is not
+  // "atomically with it": an entry landing in that gap is admitted by
+  // enter_tournament_event — correctly, the event is still open — and is not in
+  // this bracket. publish_event_draw takes the event row, which is the same row
+  // an entry must take, so only two orderings exist: the entry commits first
+  // and this refuses, or this commits first and the entry is closed out.
+  // NO LONGER A COUNT, AND NO LONGER EXEMPT (00200). The count was `null` for a
+  // pool-seeded draw because the entrants are the qualifiers, not everyone
+  // registered, so a live total of the participant table is not the number this
+  // draw was built from and would have refused every pool-to-bracket
+  // publication. Passing the ids splits that into two questions, and only the
+  // second one is about the whole field — so the first, "is everybody in this
+  // draw still in the event", is now asked on the pool path too.
+  // `entries` is the field this bracket was built from, whatever produced it —
+  // the pool builders return the same shape as the two direct reads. So the
+  // pool-seeded path is no longer exempt from the check: it passes its
+  // qualifiers and asks only that they all still be in the event, which is the
+  // half a live count of the participant table could never express.
+  await publishDraw(
+    adminClient, eventId, statusAfterDraw(event, phase), doubles,
+    entries.map(e => e.id), entries.map(entrantDigest), !seededFromPool, phase, generation,
+  );
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
@@ -1446,11 +1789,14 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   // group_number and the rating come back too, because a group stage assigns
   // any entry that does not yet have a group and needs the same ordering the
   // Assign Groups button uses to do it.
-  let entries: Array<{ id: string; seed: number | null; elo: number; group: number | null }> = [];
+  let entries: Array<{
+    id: string; seed: number | null; elo: number; group: number | null;
+    identity: EntrantIdentity; dbGroup: number | null;
+  }> = [];
 
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, seed_number, combined_elo, group_number, status')
+      .select('id, seed_number, combined_elo, group_number, player1_id, player2_id, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
@@ -1458,11 +1804,13 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       id: p.id,
       seed: p.seed_number,
       elo: p.combined_elo ?? 400,
+      identity: doublesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
       group: (p as { group_number?: number | null }).group_number ?? null,
     }));
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, seed_number, elo_before, group_number, status')
+      .select('id, seed_number, elo_before, elo_after, group_number, player_id, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
@@ -1470,6 +1818,8 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       id: p.id,
       seed: p.seed_number,
       elo: p.elo_before ?? 400,
+      identity: singlesIdentity(p),
+      dbGroup: (p as { group_number?: number | null }).group_number ?? null,
       group: (p as { group_number?: number | null }).group_number ?? null,
     }));
   }
@@ -1536,7 +1886,13 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       // yet — the delete is still ahead — so refusing costs only a re-press.
       assertWritesSucceeded('Assigning the groups for this round robin', failures);
     }
-    for (const e of entries) e.group = plan.get(e.id)!;
+    // dbGroup MOVES WITH IT — 00202. This generator writes group_number itself,
+    // so the digest's grp has to be the value it just wrote; leaving it at the
+    // snapshot's would make publication refuse this draw's own legitimate write.
+    // On the round-robin path the two are the same number, which is exactly why
+    // they are kept as separate fields: on a pool-seeded knockout `group` is the
+    // group somebody qualified out of in ANOTHER event.
+    for (const e of entries) { e.group = plan.get(e.id)!; e.dbGroup = plan.get(e.id)!; }
   } else {
     for (const e of entries) e.group = 1;
   }
@@ -1547,7 +1903,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   }
 
   // Delete any existing matches OF THIS PHASE — see deletePhaseMatches.
-  await deletePhaseMatches(adminClient, eventId, phase);
+  const generation = await deletePhaseMatches(adminClient, eventId, phase);
 
   // ONE SHARED ROUND NUMBERING ACROSS THE GROUPS, and one shared
   // bracket_position within each round. 00081 put a UNIQUE index on
@@ -1575,6 +1931,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
         const insertData: Record<string, unknown> = {
           event_id: eventId,
           phase,
+          draw_generation_id: generation,
           // THE POOL IS PLAYED TO 11 (00108) — "we play round robin 11s". Only
           // on the pool_to_bracket format, for the same reason the knockout
           // ladder is: an ordinary round robin that has always been played at
@@ -1598,15 +1955,43 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
           insertData.participant_b_id = away.id;
         }
 
-        await adminClient.from('tournament_matches').insert(insertData);
+        // A round-robin fixture that fails to insert used to leave a hole in
+        // the published schedule: two players who never find their match on
+        // the board, discovered on the day.
+        await mustWrite(
+          `Inserting round-robin fixture ${insertData.match_number ?? ''}`.trim(),
+          adminClient.from('tournament_matches').insert(insertData).select('id'),
+        );
       }
     }
   }
 
-  // Update event status
-  await adminClient.from('tournament_events')
-    .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
-    .eq('id', eventId);
+  // Audit F-004, the draw half: a member who entered while this draw was being
+  // built is in the event and would be in no match. Checked BEFORE the publish,
+  // so nothing has been advertised and the matches inserted above are simply
+  // replaced by the next Generate. Pool-seeded events are exempt — their field
+  // comes from another event's standings, so a new entry here was never going
+  // to be in it.
+  await assertFieldDidNotGrow(adminClient, eventId, doubles, N);
+
+  // Update event status.
+  //
+  // THE LAST WRITE IS THE ONE THAT PUBLISHES THE DRAW, so it is the one that
+  // must never succeed quietly on top of a failure. Everything above now
+  // throws rather than continuing, which means reaching this line is the
+  // assertion that the whole draw landed; letting this one write fail silently
+  // would leave the event advertising a bracket it does not have.
+  // THE RE-COUNT AND THE FLIP UNDER ONE LOCK (00193). assertFieldDidNotGrow
+  // above re-counts the field, but "immediately before the flip" is not
+  // "atomically with it": an entry landing in that gap is admitted by
+  // enter_tournament_event — correctly, the event is still open — and is not in
+  // this bracket. publish_event_draw takes the event row, which is the same row
+  // an entry must take, so only two orderings exist: the entry commits first
+  // and this refuses, or this commits first and the entry is closed out.
+  await publishDraw(
+    adminClient, eventId, statusAfterDraw(event, phase), doubles,
+    entries.map(e => e.id), entries.map(entrantDigest), true, phase, generation,
+  );
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,

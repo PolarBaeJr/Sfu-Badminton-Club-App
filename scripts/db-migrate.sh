@@ -2,13 +2,25 @@
 #
 # db-migrate.sh - report and apply supabase/migrations against a live database.
 #
-#   ./scripts/db-migrate.sh status  [prod|staging]
+#   ./scripts/db-migrate.sh status   [prod|staging]
 #   ./scripts/db-migrate.sh backfill [prod|staging]
-#   ./scripts/db-migrate.sh apply   [prod|staging] <version>
+#   ./scripts/db-migrate.sh prepare  [prod|staging] <version>
+#   ./scripts/db-migrate.sh apply    [prod|staging] <version> [--yes]
+#   ./scripts/db-migrate.sh preflight [prod|staging]
 #
 # Everything runs over `ssh pi` into the database container. `status` is read
 # only and safe to run any time. `backfill` and `apply` write, and print the
 # exact SQL they are about to run before running it.
+#
+# `prepare` USED TO BE CALLED `apply`, AND THAT WAS A TRAP. It builds the
+# bundle, prints an ssh command, and exits 0 without running it. The final line
+# says "Read the bundle, then run", so the behaviour was discoverable — but a
+# command named `apply` that exits successfully having applied nothing is the
+# wrong thing to be reading carefully at 2am during a release. The name now
+# describes what it does, and `apply` does what its name says: it runs the
+# bundle, then CONFIRMS against the database that the migration row landed with
+# the expected checksum before reporting success. Bundle creation is never
+# treated as evidence of anything.
 #
 # Two things this script exists to get right, both of which have gone wrong by
 # hand before:
@@ -169,9 +181,11 @@ cmd_backfill() {
   echo "  ssh pi 'docker exec -i $CONTAINER psql -U postgres -d postgres -v ON_ERROR_STOP=1' < $sql_file"
 }
 
-cmd_apply() {
+# Builds the bundle (migration + its schema_migrations row) and echoes its path.
+# Applying it is the caller's job — cmd_apply below, or an operator by hand.
+cmd_prepare() {
   local v="${3:-}"
-  [ -n "$v" ] || { echo "usage: $0 apply $target <version>" >&2; exit 2; }
+  [ -n "$v" ] || { echo "usage: $0 prepare $target <version>" >&2; exit 2; }
   local f
   f="$(ls "$MIGRATIONS_DIR/${v}_"*.sql 2>/dev/null | head -1)" || true
   [ -n "$f" ] || { echo "no migration file for version '$v'" >&2; exit 1; }
@@ -223,14 +237,165 @@ cmd_apply() {
   echo "wrapping:  $reason"
   echo "bundle:    $bundle  (the file, plus its schema_migrations row)"
   echo
-  echo "Read the bundle, then run:"
+  echo "NOTHING HAS BEEN APPLIED. Read the bundle, then either run:"
   echo
   echo "  ssh pi 'docker exec -i $CONTAINER psql -U postgres -d postgres -v ON_ERROR_STOP=1$flag' < $bundle"
+  echo
+  echo "or let the runner do it and verify the result:"
+  echo
+  echo "  $0 apply $target $v"
+
+  # Exported for cmd_apply, which reuses this whole preparation step rather
+  # than duplicating the wrapping and splicing decisions.
+  PREPARED_BUNDLE="$bundle"
+  PREPARED_FLAG="$flag"
+  PREPARED_FILE="$f"
 }
+
+cmd_apply() {
+  local v="${3:-}"
+  [ -n "$v" ] || { echo "usage: $0 apply $target <version> [--yes]" >&2; exit 2; }
+
+  cmd_prepare "$@"
+  echo
+
+  if [ "$ASSUME_YES" != "1" ]; then
+    # A live database write. Refuse to guess when nobody is at the keyboard.
+    if [ ! -t 0 ]; then
+      echo "Refusing to apply non-interactively without --yes." >&2
+      exit 1
+    fi
+    printf 'Apply %s to %s? Type the target name to confirm: ' "$v" "$target"
+    read -r reply
+    [ "$reply" = "$target" ] || { echo "Not confirmed; nothing applied." >&2; exit 1; }
+  fi
+
+  echo "applying..."
+  # ON_ERROR_STOP is what makes a mid-file failure a non-zero exit rather than a
+  # partially applied migration reported as fine.
+  if ! ssh pi "docker exec -i $CONTAINER psql -U postgres -d postgres -v ON_ERROR_STOP=1$PREPARED_FLAG" < "$PREPARED_BUNDLE"; then
+    echo >&2
+    echo "psql FAILED. $v is NOT recorded as applied — the row is spliced into the" >&2
+    echo "same transaction as the DDL, so a failure rolls both back together." >&2
+    echo "Bundle kept for inspection: $PREPARED_BUNDLE" >&2
+    exit 1
+  fi
+
+  # THE POINT OF THE COMMAND. A zero exit from psql is necessary and not
+  # sufficient: read the row back and compare the checksum to the file on disk.
+  # Success is what the database says happened, never what the runner intended.
+  local recorded expected
+  expected="$(checksum "$PREPARED_FILE")"
+  recorded="$(psql_value "SELECT checksum FROM public.schema_migrations WHERE version = '$v';")"
+  if [ -z "$recorded" ]; then
+    echo "psql exited 0 but $v has no schema_migrations row on $target." >&2
+    echo "Do not assume it applied. Bundle: $PREPARED_BUNDLE" >&2
+    exit 1
+  fi
+  if [ "$recorded" != "$expected" ]; then
+    echo "$v recorded with checksum $recorded, expected $expected." >&2
+    echo "The file on disk is not the file that was applied. Bundle: $PREPARED_BUNDLE" >&2
+    exit 1
+  fi
+
+  rm -f "$PREPARED_BUNDLE"
+  echo
+  echo "APPLIED and VERIFIED: $v on $target (checksum $expected)"
+}
+
+# THE RELEASE GATE (F-012). "Is this database at the schema this checkout
+# expects?" — one comparison, answered before an image is promoted.
+#
+# WHY THIS IS THE AUTHORITATIVE CHECK AND READINESS IS NOT. The audit asked for
+# one of the two to be authoritative, and it cannot be readiness. Readiness
+# gates the proxy backend: a lagging database would fail the probe on EVERY
+# replica at once, take the local backend pool to zero, and hand the site to a
+# mesh peer that is talking to the same database and fails identically. A
+# schema mismatch would become a total outage instead of a blocked promotion.
+# Readiness answers "can this container reach the database"; that is a
+# different question and it keeps answering only that one.
+#
+# So the gate is here, it is a deliberate step in the release, and it exits
+# non-zero with a reason a human can act on.
+cmd_preflight() {
+  local manifest="$MIGRATIONS_DIR/.manifest.json"
+  [ -f "$manifest" ] || { echo "no $manifest — run scripts/gen-migration-manifest.sh" >&2; exit 2; }
+
+  local want_rollup want_count want_latest
+  want_rollup="$(sed -n 's/.*"rollup"[^"]*"\([a-f0-9]*\)".*/\1/p' "$manifest")"
+  want_count="$(sed -n 's/.*"count"[^0-9]*\([0-9]*\).*/\1/p' "$manifest")"
+  want_latest="$(sed -n 's/.*"latest"[^"]*"\([0-9]*\)".*/\1/p' "$manifest")"
+
+  # "No manifest table" is its OWN state, not a mismatch. A database that has
+  # never been through 00161 cannot be compared at all, and reporting it as
+  # "behind" would send somebody looking for missing migrations rather than for
+  # the bootstrap step.
+  if ! table_exists; then
+    echo "PREFLIGHT: UNKNOWN — public.schema_migrations does not exist on $target."
+    echo "This is not a version mismatch; the database has no manifest to compare."
+    echo "Apply 00161_schema_migrations.sql, then run: $0 backfill $target"
+    exit 3
+  fi
+
+  local db_lines db_rollup db_count db_latest
+  db_lines="$(psql_value "SELECT version || ' ' || checksum FROM public.schema_migrations ORDER BY version;")"
+  # Same input shape the generator hashes: one trailing newline per line, none
+  # extra. printf '%s\n' on a here-string is where an off-by-one newline hides.
+  db_rollup="$(printf '%s\n' "$db_lines" | shasum -a 256 | awk '{print $1}')"
+  db_count="$(psql_value "SELECT count(*) FROM public.schema_migrations;")"
+  db_latest="$(psql_value "SELECT COALESCE(max(version), '') FROM public.schema_migrations;")"
+
+  if [ "$db_rollup" = "$want_rollup" ]; then
+    echo "PREFLIGHT: OK — $target is at the release manifest ($db_count migrations, latest $db_latest)."
+    echo "rollup $db_rollup"
+    exit 0
+  fi
+
+  echo "PREFLIGHT: MISMATCH on $target." >&2
+  echo "  expected  $want_count migrations, latest $want_latest, rollup $want_rollup" >&2
+  echo "  database  $db_count migrations, latest $db_latest, rollup $db_rollup" >&2
+  echo >&2
+  # The rollup says THAT they differ. Say HOW, or the next step is guesswork.
+  echo "Run '$0 status $target' for the file-by-file breakdown. In summary:" >&2
+  local f v c rec
+  while IFS= read -r -d '' f; do
+    v="$(version_of "$f")"; c="$(checksum "$f")"
+    rec="$(printf '%s\n' "$db_lines" | awk -v v="$v" '$1 == v {print $2}')"
+    if [ -z "$rec" ]; then
+      echo "  PENDING  $v $(name_of "$f")" >&2
+    elif [ "$rec" != "$c" ]; then
+      echo "  DRIFT    $v $(name_of "$f") — recorded $rec, file $c" >&2
+    fi
+  done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -name '[0-9]*.sql' -print0 | sort -z)
+  # A version the database has and this checkout does not: the database is
+  # AHEAD, which means promoting this image would be a downgrade — the one
+  # direction a "pending migrations" reading never suggests on its own.
+  while read -r v _; do
+    [ -n "$v" ] || continue
+    if ! compgen -G "$MIGRATIONS_DIR/${v}_*.sql" >/dev/null; then
+      echo "  AHEAD    $v is applied on $target and is not in this checkout" >&2
+    fi
+  done <<< "$db_lines"
+  echo >&2
+  echo "Do not promote this image against $target until this is resolved." >&2
+  exit 1
+}
+
+ASSUME_YES=0
+args=()
+for a in "$@"; do
+  case "$a" in
+    --yes|-y) ASSUME_YES=1 ;;
+    *) args+=("$a") ;;
+  esac
+done
+set -- "${args[@]+"${args[@]}"}"
 
 case "${1:-}" in
   status)   cmd_status ;;
   backfill) cmd_backfill ;;
+  prepare)  cmd_prepare "$@" ;;
   apply)    cmd_apply "$@" ;;
-  *) sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  preflight) cmd_preflight ;;
+  *) sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac

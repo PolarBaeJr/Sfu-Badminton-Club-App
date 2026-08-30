@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
 import { rateLimit, getClientIp } from '@badminton/shared';
 import { signPayload } from '@/lib/passkey/cookie';
+import { recordChallenge } from '@/lib/passkey/challenge-store';
+import { createAdminClient } from '@/lib/supabase-server';
 import {
   getRpId,
   isPasskeyLoginConfigured,
@@ -45,6 +47,12 @@ export async function POST(request: Request) {
     rpID: getRpId(),
     userVerification: 'preferred',
   });
+
+  // Single-use record, server side (00181). No user id: this is the
+  // discoverable-credential flow, so who is signing in is not known until
+  // the assertion comes back. The purpose still binds it to THIS flow, so a
+  // login challenge cannot be presented to admin step-up.
+  await recordChallenge(createAdminClient(), options.challenge, 'admin_login', null, CHALLENGE_TTL_SECONDS);
 
   const challengeToken = await signPayload(
     { challenge: options.challenge, type: 'login' },

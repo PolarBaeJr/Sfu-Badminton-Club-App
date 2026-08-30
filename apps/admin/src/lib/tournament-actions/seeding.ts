@@ -1,6 +1,5 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { isDoublesEvent, ExpectedError } from '@badminton/shared';
@@ -9,33 +8,75 @@ import {
   requireCapability,
   revalidateEventPaths,
   planGroupAssignment,
-  settleWrites,
-  assertWritesSucceeded,
+  fencedRefusal,
   type GroupCandidate,
+  type FencedFieldResult,
 } from './_internal';
+
+// ---------------------------------------------------------------------------
+// THE SIX WRITES THAT WERE OUTSIDE THE FENCE (00209)
+// ---------------------------------------------------------------------------
+// 00201 made one advisory key THE fence for the event field and moved every
+// field-mutating RPC onto it. This file never joined: it wrote seed_number and
+// group_number straight through PostgREST, four of the six through a `table`
+// variable chosen at runtime from the event's discipline — which is why the
+// repo-wide census for 00201 did not surface them.
+//
+// Seeds are the draw's INPUT, so this is the withdrawal race's defect class
+// rather than a lesser one. A seed write landing between the generator
+// building a bracket and publish_event_draw accepting it produces a published
+// bracket whose seeding no longer matches the rows it was built from, and
+// nothing downstream notices because by then the bracket is fixtures.
+//
+// Each action below keeps its cheap, friendly refusals — they are what the
+// exec reads, and they are made against a row fetched a round trip earlier —
+// and then hands the write to an RPC that re-asks the same questions under the
+// lock. Where the two disagree it is the race being caught, not the exec
+// being wrong, and fencedRefusal says so.
+//
+// THE RPCS ALSO ENFORCE THE STATUS HALF OF THE CONSOLE'S OWN RULE, which had
+// no server-side enforcement at all. participant-controls.ts gates every seed
+// control on `status === 'registration' && !drawLocked`; these actions checked
+// only draw_locked. The status check below is that gate finally being real,
+// not a rule invented here.
+
+/**
+ * The event context both event-wide seed writes need.
+ *
+ * The draw-lock refusal deliberately stays at the two CALL SITES rather than
+ * moving in here. "Unlock it before clearing seeds" and "Unlock it before
+ * changing seeds" are different sentences at the desk, and
+ * tournament-refusal-classification.test.ts reads this file as source: it
+ * matches `throw new ExpectedError('<the exact sentence>')`, so a message
+ * routed through a variable is a message that test can no longer classify.
+ * Both reasons point the same way — keep the literal where it is thrown.
+ */
+async function loadSeedStage(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+) {
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new ExpectedError('Event not found.');
+  return { event, doubles: isDoublesEvent(event.event_type) };
+}
 
 export async function updateParticipantSeed(participantId: string, seedNumber: number | null) {
   await requireCapability('tournaments.draw.seed.set.write');
   const adminClient = createAdminClient();
 
-  const { data: participant } = await adminClient.from('tournament_participants')
-    .select('event_id, event:tournament_events(tournament_id, draw_locked)')
-    .eq('id', participantId)
-    .single();
-  const ev = (participant?.event as unknown as { tournament_id: string; draw_locked: boolean } | null);
-  if (ev?.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before changing seeds.');
+  const { data: fenced, error } = await adminClient.rpc('set_field_entry_seed', {
+    p_entry_id: participantId,
+    p_is_pair: false,
+    p_seed: seedNumber,
+  });
+  if (error) throw new Error(error.message);
+  const result = fenced as FencedFieldResult | null;
+  if (!result?.ok) fencedRefusal(result, 'Participant not found');
 
-  const { error } = await adminClient.from('tournament_participants')
-    .update({ seed_number: seedNumber })
-    .eq('id', participantId);
-
-  if (error) {
-    Sentry.captureException(error);
-    throw new Error(error.message);
-  }
-
-  if (ev?.tournament_id && participant?.event_id) {
-    revalidateEventPaths(ev.tournament_id, participant.event_id as string);
+  // The context comes back FROM the fence rather than from a read taken before
+  // it, so the paths revalidated are the ones the write actually landed on.
+  if (result.tournament_id && result.event_id) {
+    revalidateEventPaths(result.tournament_id, result.event_id);
   }
 }
 
@@ -43,86 +84,56 @@ export async function updatePairSeed(pairId: string, seedNumber: number | null) 
   await requireCapability('tournaments.draw.seed.set.write');
   const adminClient = createAdminClient();
 
-  const { data: pair } = await adminClient.from('tournament_pairs')
-    .select('event_id, event:tournament_events(tournament_id, draw_locked)')
-    .eq('id', pairId)
-    .single();
-  const ev = (pair?.event as unknown as { tournament_id: string; draw_locked: boolean } | null);
-  if (ev?.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before changing seeds.');
+  const { data: fenced, error } = await adminClient.rpc('set_field_entry_seed', {
+    p_entry_id: pairId,
+    p_is_pair: true,
+    p_seed: seedNumber,
+  });
+  if (error) throw new Error(error.message);
+  const result = fenced as FencedFieldResult | null;
+  if (!result?.ok) fencedRefusal(result, 'Pair not found');
 
-  const { error } = await adminClient.from('tournament_pairs')
-    .update({ seed_number: seedNumber })
-    .eq('id', pairId);
-
-  if (error) {
-    Sentry.captureException(error);
-    throw new Error(error.message);
-  }
-
-  if (ev?.tournament_id && pair?.event_id) {
-    revalidateEventPaths(ev.tournament_id, pair.event_id as string);
+  if (result.tournament_id && result.event_id) {
+    revalidateEventPaths(result.tournament_id, result.event_id);
   }
 }
 
 export async function autoSeedEventByElo(eventId: string) {
   const admin = await requireCapability('tournaments.draw.seed.auto.write');
   const adminClient = createAdminClient();
+  const { event, doubles } = await loadSeedStage(adminClient, eventId);
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before changing seeds.');
 
-  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
-  if (!event) throw new Error('Event not found');
-
-  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
-
-  const doubles = isDoublesEvent(event.event_type);
-
-  // ONE ROUND TRIP PER ENTRANT, NOT ONE AFTER ANOTHER. This used to `await`
-  // inside the loop, so a 32-entry draw was 32 sequential hops to the database
-  // and the wall clock was N x latency. The ordering work is not the cost and
-  // never was — `.order()` is a single indexed scan inside Postgres. The cost
-  // is the trips.
+  // THE ORDERING MOVED INSIDE THE FENCE, and that is the correctness change
+  // rather than a performance one.
   //
-  // AND THE WRITES ARE CHECKED NOW. Every update's result was discarded, so a
-  // failure was silent: an exec pressed Auto-Seed, saw no error, and got a
-  // half-seeded field where some entrants kept a stale seed and others had
-  // none. Seeds decide the draw, so half-applied is worse than refused —
-  // settleWrites collects the failures and assertWritesSucceeded turns any into
-  // one message naming what did not land.
+  // This used to read the entrants ordered by rating and then issue one UPDATE
+  // per entrant from here — so the read that decided the order and the writes
+  // that recorded it were N+1 separate transactions, and a withdrawal landing
+  // among them seeded a field that no longer existed. It also needed
+  // settleWrites/assertWritesSucceeded to stop a half-applied seeding going
+  // unnoticed, and a bulk upsert was ruled out because PostgREST would have
+  // turned a one-column update into a full-row rewrite.
   //
-  // Deliberately NOT a bulk upsert. PostgREST would send {id, seed_number} as an
-  // INSERT ... ON CONFLICT, and Postgres evaluates the insert tuple before it
-  // detects the conflict — so every NOT NULL column without a default (event_id,
-  // player_id) would have to be round-tripped and written back, turning a
-  // one-column update into a full-row rewrite. A single UPDATE ... FROM (VALUES)
-  // would be one trip, but it needs SQL this client cannot send: that is a
-  // database function and a migration, and it is not worth one at club sizes.
-  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
-  const ratingColumn = doubles ? 'combined_elo' : 'elo_before';
-
-  const { data: entries, error: readError } = await adminClient.from(table)
-    .select(`id, ${ratingColumn}`)
-    .eq('event_id', eventId)
-    .not('status', 'in', '("withdrawn","disqualified")')
-    .order(ratingColumn, { ascending: false, nullsFirst: false });
-
-  // A failed READ used to fall through as `if (entries)` and seed nobody, which
-  // reads to the exec as "auto-seed did nothing" rather than as an error.
-  if (readError) throw new Error(`Could not read this event's entrants: ${readError.message}`);
-
-  if (entries && entries.length > 0) {
-    const { failures } = await settleWrites(
-      entries.map((entry, i) => [
-        `${table}.seed_number for ${entry.id}`,
-        adminClient.from(table).update({ seed_number: i + 1 }).eq('id', entry.id),
-      ]),
-    );
-    assertWritesSucceeded('Auto-seed', failures);
-  }
+  // One statement inside the lock has none of those problems: it cannot be
+  // interleaved, it cannot half-apply, and it is one round trip instead of
+  // N+1. The predicate and the order are unchanged — everyone not withdrawn or
+  // disqualified, highest rating first, NULLs last, pairs on combined_elo and
+  // singles on elo_before.
+  const { data: fenced, error } = await adminClient.rpc('auto_seed_field_by_rating', {
+    p_event_id: eventId,
+    p_is_pair: doubles,
+  });
+  if (error) throw new Error(error.message);
+  const result = fenced as FencedFieldResult | null;
+  if (!result?.ok) fencedRefusal(result, 'Event not found');
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
     event_id: eventId,
     action: 'auto_seeded',
     performed_by: admin.id,
+    details: { seeded: result.seeded ?? 0 },
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
@@ -135,28 +146,23 @@ export async function autoSeedEventByElo(eventId: string) {
 export async function clearSeeds(eventId: string) {
   const admin = await requireCapability('tournaments.draw.seed.clear.write');
   const adminClient = createAdminClient();
-
-  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
-  if (!event) throw new Error('Event not found');
+  const { event, doubles } = await loadSeedStage(adminClient, eventId);
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before clearing seeds.');
 
-  const doubles = isDoublesEvent(event.event_type);
-  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
-
-  const { error } = await adminClient.from(table)
-    .update({ seed_number: null })
-    .eq('event_id', eventId);
-
-  if (error) {
-    Sentry.captureException(error);
-    throw new Error(error.message);
-  }
+  const { data: fenced, error } = await adminClient.rpc('clear_field_seeds', {
+    p_event_id: eventId,
+    p_is_pair: doubles,
+  });
+  if (error) throw new Error(error.message);
+  const result = fenced as FencedFieldResult | null;
+  if (!result?.ok) fencedRefusal(result, 'Event not found');
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
     event_id: eventId,
     action: 'seeds_cleared',
     performed_by: admin.id,
+    details: { cleared: result.cleared ?? 0 },
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
@@ -194,13 +200,15 @@ async function loadGroupStage(
   // leave them playing a group they are no longer in — the standings would
   // partition one way and the matches another. Regenerating the fixtures is the
   // honest remedy, and the generator already refuses to do that over results.
+  //
+  // Re-asked under the lock by both group RPCs (00209), which is what stops a
+  // generation committing between this read and the write.
   const { count: matchCount, error } = await adminClient.from('tournament_matches')
     .select('id', { count: 'exact', head: true })
     .eq('event_id', eventId);
   // Same reasoning as assertDrawIsRebuildable: a discarded error here reads as
   // "no fixtures yet" and lets a live event's groups be rewritten underneath it.
   if (error) {
-    Sentry.captureException(error);
     throw new Error(`Could not check whether this event has fixtures yet, so the groups were left alone: ${error.message}`);
   }
   if ((matchCount ?? 0) > 0) {
@@ -218,10 +226,14 @@ async function assignEventGroupsImpl(eventId: string) {
   const { event, groupCount, doubles } = await loadGroupStage(adminClient, eventId);
 
   const table = doubles ? 'tournament_pairs' : 'tournament_participants';
-  const { data: rows } = await adminClient.from(table)
+  const { data: rows, error: readError } = await adminClient.from(table)
     .select(doubles ? 'id, seed_number, combined_elo, group_number, status' : 'id, seed_number, elo_before, group_number, status')
     .eq('event_id', eventId)
     .in('status', ['registered', 'checked_in']);
+  // A failed read here would deal an empty field into groups and report
+  // success — the same silently-permissive shape every other discarded read in
+  // this file has already been given.
+  if (readError) throw new Error(`Could not read this event's entrants: ${readError.message}`);
 
   const entries: GroupCandidate[] = (rows ?? []).map((r) => {
     const row = r as unknown as Record<string, unknown>;
@@ -250,17 +262,29 @@ async function assignEventGroupsImpl(eventId: string) {
   // generator, which runs without anybody asking for a re-deal.
   const plan = planGroupAssignment(entries, groupCount, { reassignAll: true });
 
-  const { failures } = await settleWrites(
-    [...plan.entries()].map(([id, group]) => [
-      `${table}.group_number for ${id}`,
-      adminClient.from(table).update({ group_number: group }).eq('id', id),
-    ] as const),
-  );
-  // A half-written assignment is not cosmetic: the generator would build
-  // fixtures for the groups it finds, so some entrants would play a group they
-  // were never dealt into. Nothing has been generated yet, so a refusal costs
-  // only a re-press.
-  assertWritesSucceeded('Dealing the field into groups', failures);
+  // THE PLAN STAYS HERE AND THE FIELD IT WAS MADE FROM IS VERIFIED THERE.
+  // planGroupAssignment is serpentine-by-seed with a tier walk and its own
+  // tests; porting it into plpgsql to gain a fence would be a second
+  // implementation of the thing that decides who plays whom. So this follows
+  // publish_event_draw's shape instead — the entry ids the plan covers travel
+  // with it, and the RPC refuses if the eligible field under the lock is not
+  // that set. Both directions matter: an arrival would be built fixtures for a
+  // group nobody dealt it into, and a departure means the plan balanced group
+  // sizes against somebody who has gone.
+  //
+  // ONE WRITE, NOT N. The previous batch of per-row updates could half-apply,
+  // which is why it needed settleWrites — the generator would then have built
+  // fixtures for the groups it found and some entrants would have played a
+  // group they were never dealt into.
+  const { data: fenced, error } = await adminClient.rpc('set_field_groups', {
+    p_event_id: eventId,
+    p_is_pair: doubles,
+    p_assignments: Object.fromEntries(plan),
+    p_expected: entries.map(e => e.id),
+  });
+  if (error) throw new Error(error.message);
+  const result = fenced as FencedFieldResult | null;
+  if (!result?.ok) fencedRefusal(result, 'Event not found');
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
@@ -288,26 +312,32 @@ async function updateEntryGroupImpl(
   if (!entry?.event_id) throw new ExpectedError('That entry is no longer in this event.');
 
   const eventId = entry.event_id as string;
-  const { event, groupCount, doubles } = await loadGroupStage(adminClient, eventId);
+  const { doubles } = await loadGroupStage(adminClient, eventId);
   // The discipline decides which table holds the entries, so an entry found in
   // the wrong one means the caller and the event disagree about what this event
   // is — write nothing.
   if (doubles !== (table === 'tournament_pairs')) {
     throw new ExpectedError('That entry does not belong to this event’s discipline.');
   }
-  if (!Number.isInteger(groupNumber) || groupNumber < 1 || groupNumber > groupCount) {
-    throw new ExpectedError(`Group must be between 1 and ${groupCount}.`);
+  if (!Number.isInteger(groupNumber)) {
+    throw new ExpectedError('Group must be a whole number.');
   }
 
-  const { error } = await adminClient.from(table)
-    .update({ group_number: groupNumber })
-    .eq('id', entryId);
-  if (error) {
-    Sentry.captureException(error);
-    throw new Error(error.message);
-  }
+  // The range check, the group-stage check and the fixtures check are all made
+  // again inside the fence against the group_count it reads there — this
+  // caller's copy came from a row read a round trip ago.
+  const { data: fenced, error } = await adminClient.rpc('set_field_entry_group', {
+    p_entry_id: entryId,
+    p_is_pair: doubles,
+    p_group: groupNumber,
+  });
+  if (error) throw new Error(error.message);
+  const result = fenced as FencedFieldResult | null;
+  if (!result?.ok) fencedRefusal(result, 'That entry is no longer in this event.');
 
-  revalidateEventPaths(event.tournament_id, eventId);
+  if (result.tournament_id && result.event_id) {
+    revalidateEventPaths(result.tournament_id, result.event_id);
+  }
 }
 
 // Server actions return their refusals as values. Every guard above is a

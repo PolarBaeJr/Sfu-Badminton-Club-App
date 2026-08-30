@@ -14,7 +14,7 @@
 // SOURCE DATABASE: staging — container "supabase-staging-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 65 tables, 2 views and 26 enums.
+// Covers 67 tables, 2 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -547,6 +547,41 @@ export type Database = {
         }
         Relationships: []
       }
+      digest_deliveries: {
+        Row: {
+          claimed_at: string
+          completed_at: string | null
+          outcome: string | null
+          player_id: string
+          provider_message_id: string | null
+          week_start: string
+        }
+        Insert: {
+          claimed_at?: string
+          completed_at?: string | null
+          outcome?: string | null
+          player_id: string
+          provider_message_id?: string | null
+          week_start: string
+        }
+        Update: {
+          claimed_at?: string
+          completed_at?: string | null
+          outcome?: string | null
+          player_id?: string
+          provider_message_id?: string | null
+          week_start?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "digest_deliveries_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       discord_announcement_posts: {
         Row: {
           announcement_id: string
@@ -863,6 +898,9 @@ export type Database = {
       }
       disputes: {
         Row: {
+          claimed_at: string | null
+          claimed_by: string | null
+          claimed_resolution_type: Database["public"]["Enums"]["dispute_resolution"] | null
           created_at: string
           description: string
           id: string
@@ -877,6 +915,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          claimed_resolution_type?: Database["public"]["Enums"]["dispute_resolution"] | null
           created_at?: string
           description: string
           id?: string
@@ -891,6 +932,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          claimed_resolution_type?: Database["public"]["Enums"]["dispute_resolution"] | null
           created_at?: string
           description?: string
           id?: string
@@ -905,6 +949,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "disputes_claimed_by_fkey"
+            columns: ["claimed_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "disputes_match_id_fkey"
             columns: ["match_id"]
@@ -948,51 +999,6 @@ export type Database = {
           reason?: string
         }
         Relationships: []
-      }
-      event_feedback: {
-        Row: {
-          comment: string | null
-          created_at: string
-          id: string
-          player_id: string
-          rating: number | null
-          tournament_id: string
-          updated_at: string
-        }
-        Insert: {
-          comment?: string | null
-          created_at?: string
-          id?: string
-          player_id: string
-          rating?: number | null
-          tournament_id: string
-          updated_at?: string
-        }
-        Update: {
-          comment?: string | null
-          created_at?: string
-          id?: string
-          player_id?: string
-          rating?: number | null
-          tournament_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "event_feedback_player_id_fkey"
-            columns: ["player_id"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "event_feedback_tournament_id_fkey"
-            columns: ["tournament_id"]
-            isOneToOne: false
-            referencedRelation: "tournaments"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       event_waiver_acceptances: {
         Row: {
@@ -1653,6 +1659,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      passkey_challenges: {
+        Row: {
+          challenge_hash: string
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          purpose: string
+          user_id: string | null
+        }
+        Insert: {
+          challenge_hash: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          purpose: string
+          user_id?: string | null
+        }
+        Update: {
+          challenge_hash?: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          purpose?: string
+          user_id?: string | null
+        }
+        Relationships: []
       }
       passkey_credentials: {
         Row: {
@@ -2394,6 +2430,9 @@ export type Database = {
           intent: Database["public"]["Enums"]["session_intent"]
           player_id: string
           reminded_at: string | null
+          reminder_attempted_at: string | null
+          reminder_attempts: number
+          reminder_failed_at: string | null
           session_id: string
           updated_at: string
         }
@@ -2403,6 +2442,9 @@ export type Database = {
           intent: Database["public"]["Enums"]["session_intent"]
           player_id: string
           reminded_at?: string | null
+          reminder_attempted_at?: string | null
+          reminder_attempts?: number
+          reminder_failed_at?: string | null
           session_id: string
           updated_at?: string
         }
@@ -2412,6 +2454,9 @@ export type Database = {
           intent?: Database["public"]["Enums"]["session_intent"]
           player_id?: string
           reminded_at?: string | null
+          reminder_attempted_at?: string | null
+          reminder_attempts?: number
+          reminder_failed_at?: string | null
           session_id?: string
           updated_at?: string
         }
@@ -2569,6 +2614,47 @@ export type Database = {
           },
         ]
       }
+      tournament_bonus_grants: {
+        Row: {
+          applied_delta: number
+          discipline: string | null
+          event_id: string
+          granted_at: string
+          id: string
+          kind: string
+          requested_bonus: number
+          subject_id: string
+        }
+        Insert: {
+          applied_delta?: number
+          discipline?: string | null
+          event_id: string
+          granted_at?: string
+          id?: string
+          kind: string
+          requested_bonus: number
+          subject_id: string
+        }
+        Update: {
+          applied_delta?: number
+          discipline?: string | null
+          event_id?: string
+          granted_at?: string
+          id?: string
+          kind?: string
+          requested_bonus?: number
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_bonus_grants_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_checkin_tokens: {
         Row: {
           created_at: string
@@ -2601,6 +2687,7 @@ export type Database = {
       tournament_events: {
         Row: {
           created_at: string | null
+          draw_generation_id: string | null
           draw_locked: boolean | null
           elo_multiplier: number | null
           event_type: string
@@ -2623,6 +2710,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          draw_generation_id?: string | null
           draw_locked?: boolean | null
           elo_multiplier?: number | null
           event_type: string
@@ -2645,6 +2733,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          draw_generation_id?: string | null
           draw_locked?: boolean | null
           elo_multiplier?: number | null
           event_type?: string
@@ -2767,6 +2856,7 @@ export type Database = {
           bracket_position: number
           court: string | null
           created_at: string | null
+          draw_generation_id: string | null
           elo_snapshot: Json | null
           event_id: string
           games_per_match: number | null
@@ -2806,6 +2896,7 @@ export type Database = {
           bracket_position: number
           court?: string | null
           created_at?: string | null
+          draw_generation_id?: string | null
           elo_snapshot?: Json | null
           event_id: string
           games_per_match?: number | null
@@ -2845,6 +2936,7 @@ export type Database = {
           bracket_position?: number
           court?: string | null
           created_at?: string | null
+          draw_generation_id?: string | null
           elo_snapshot?: Json | null
           event_id?: string
           games_per_match?: number | null
@@ -3637,6 +3729,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      add_participants_under_field_lock: {
+        Args: { p_admin_id: string; p_entries: Json; p_event_id: string }
+        Returns: Json
+      }
       admin_access_level: { Args: { p_user_id: string }; Returns: string }
       admin_console_access: { Args: { p_user_id: string }; Returns: Json }
       admins_with_passkeys: {
@@ -3646,6 +3742,15 @@ export type Database = {
       apply_match_result: {
         Args: { p_confirmed_by: string; p_match_id: string }
         Returns: undefined
+      }
+      apply_placement_bonus: {
+        Args: {
+          p_bonus: number
+          p_discipline: string
+          p_event_id: string
+          p_player_id: string
+        }
+        Returns: Json
       }
       apply_rating_delta: {
         Args: {
@@ -3676,7 +3781,24 @@ export type Database = {
         }
         Returns: undefined
       }
+      assert_notification_patch: {
+        Args: { p_email_only?: boolean; p_patch: Json }
+        Returns: undefined
+      }
       assign_member_code: { Args: { p_player_id: string }; Returns: string }
+      auto_seed_field_by_rating: {
+        Args: { p_event_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
+      bulk_check_in_field: {
+        Args: {
+          p_actor: string
+          p_event_id: string
+          p_ids: string[]
+          p_is_pair: boolean
+        }
+        Returns: Json
+      }
       calculate_elo_update: {
         Args: {
           p_event_multiplier: number
@@ -3697,13 +3819,47 @@ export type Database = {
         }
         Returns: boolean
       }
+      claim_dispute_for_resolution: {
+        Args: {
+          p_actor_id: string
+          p_dispute_id: string
+          p_resolution_type?: Database["public"]["Enums"]["dispute_resolution"]
+        }
+        Returns: Json
+      }
       claim_privilege_attribution: {
         Args: { p_player_id: string }
+        Returns: Json
+      }
+      claim_session_reminders: {
+        Args: {
+          p_max_attempts?: number
+          p_player_ids: string[]
+          p_session_id: string
+          p_stale_before: string
+        }
+        Returns: { gave_up: boolean; player_id: string }[]
+      }
+      clear_field_seeds: {
+        Args: { p_event_id: string; p_is_pair: boolean }
         Returns: Json
       }
       club_local_instant: {
         Args: { p_date: string; p_time: string }
         Returns: string
+      }
+      complete_event_under_field_lock: {
+        Args: {
+          p_clear: string[]
+          p_event_id: string
+          p_field: string[]
+          p_is_pair: boolean
+          p_points: Json
+          p_positions: Json
+          p_results: Json
+          p_won: string[]
+        }
+        Returns: Json
       }
       consume_discord_link_token: {
         Args: { p_token_hash: string }
@@ -3711,6 +3867,31 @@ export type Database = {
           displaced_discord_user_id: string
           linked_discord_user_id: string
         }[]
+      }
+      consume_passkey_challenge: {
+        Args: { p_challenge_hash: string; p_purpose: string }
+        Returns: boolean
+      }
+      convert_club_match_to_casual: {
+        Args: { p_actor_id: string; p_match_id: string; p_reason: string }
+        Returns: Json
+      }
+      create_challenge_atomic: {
+        Args: {
+          p_format: string
+          p_games_per_match?: number
+          p_note?: string
+          p_opponent_id: string
+          p_opponent_partner_id?: string
+          p_partner_id?: string
+          p_points_per_game?: number
+          p_rated_flag: boolean
+          p_scheduled_date?: string
+          p_scheduled_time?: string
+          p_session_id?: string
+          p_type: string
+        }
+        Returns: Json
       }
       create_player_with_rating: {
         Args: {
@@ -3725,9 +3906,13 @@ export type Database = {
         }
         Returns: string
       }
+      credit_participant_placement_bonus: {
+        Args: { p_bonus: number; p_event_id: string; p_participant_id: string }
+        Returns: Json
+      }
       delete_phase_matches: {
         Args: { p_event_id: string; p_phase: string }
-        Returns: number
+        Returns: Json
       }
       derive_member_code: { Args: { p_player_id: string }; Returns: string }
       derived_format_weight: {
@@ -3757,6 +3942,22 @@ export type Database = {
         Returns: number
       }
       ensure_player_for_user: { Args: { p_user_id: string }; Returns: string }
+      enter_tournament_event: {
+        Args: {
+          p_doubles: boolean
+          p_elo_before: number
+          p_event_id: string
+          p_player_id: string
+          p_user_agent?: string
+          p_waiver_hash?: string
+        }
+        Returns: Json
+      }
+      event_has_legacy_bonus_payment: {
+        Args: { p_event_id: string }
+        Returns: boolean
+      }
+      event_results_fingerprint: { Args: { p_event_id: string }; Returns: Json }
       format_best_of: {
         Args: { p_format: Database["public"]["Enums"]["match_format"] }
         Returns: number
@@ -3849,12 +4050,33 @@ export type Database = {
         Args: { p_a: number; p_b: number; p_target: number }
         Returns: boolean
       }
+      issue_passkey_challenge: {
+        Args: {
+          p_challenge_hash: string
+          p_purpose: string
+          p_ttl_seconds: number
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      mark_field_entries_no_show: {
+        Args: { p_entry_ids: string[]; p_is_pair: boolean }
+        Returns: Json
+      }
       match_counts_toward_stats: {
         Args: {
           p_result_status: Database["public"]["Enums"]["result_status"]
           p_walkover_type: Database["public"]["Enums"]["walkover_type"]
         }
         Returns: boolean
+      }
+      merge_my_notification_preferences: {
+        Args: { p_patch: Json }
+        Returns: Json
+      }
+      merge_notification_preferences_by_email: {
+        Args: { p_email: string; p_patch: Json }
+        Returns: Json
       }
       merge_players: {
         Args: { p_actor: string; p_keep: string; p_remove: string }
@@ -3896,6 +4118,34 @@ export type Database = {
         Returns: number
       }
       points_cap: { Args: { p_target: number }; Returns: number }
+      promote_pool_qualifier: {
+        Args: {
+          p_admin_id: string
+          p_checked_in_at: string
+          p_doubles: boolean
+          p_elo: number
+          p_event_id: string
+          p_pair_name: string
+          p_player1_id: string
+          p_player2_id: string
+          p_seed: number
+          p_source_event_id: string
+        }
+        Returns: Json
+      }
+      publish_event_draw: {
+        Args: {
+          p_digests: Json
+          p_doubles: boolean
+          p_entrants: string[]
+          p_event_id: string
+          p_generation: string
+          p_new_status: string
+          p_phase: string
+          p_whole_field: boolean
+        }
+        Returns: Json
+      }
       rating_bounds: {
         Args: Record<PropertyKey, never>
         Returns: { hi: number; lo: number }
@@ -3917,10 +4167,62 @@ export type Database = {
         Returns: boolean
       }
       recompute_player_stats: { Args: { p_player: string }; Returns: number }
+      reject_walkover_atomic: {
+        Args: { p_admin_id: string; p_walkover_id: string }
+        Returns: Json
+      }
+      remove_field_entry: {
+        Args: { p_entry_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
+      report_walkover_atomic: {
+        Args: {
+          p_challenge_id: string
+          p_forfeit_player_id: string
+          p_notice_hours?: number
+          p_walkover_type: string
+        }
+        Returns: Json
+      }
+      resolve_dispute_rated: {
+        Args: {
+          p_admin_id: string
+          p_dispute_id: string
+          p_games?: Json
+          p_resolution_note?: string
+          p_resolution_type: Database["public"]["Enums"]["dispute_resolution"]
+          p_winner_side?: Database["public"]["Enums"]["team_side"]
+        }
+        Returns: Json
+      }
+      resolve_dispute_unrated: {
+        Args: {
+          p_actor_id: string
+          p_dispute_id: string
+          p_resolution_note?: string
+          p_resolution_type: Database["public"]["Enums"]["dispute_resolution"]
+        }
+        Returns: Json
+      }
+      respond_to_challenge: {
+        Args: { p_challenge_id: string; p_response: string }
+        Returns: Json
+      }
       reverse_match_result: { Args: { p_match_id: string }; Returns: undefined }
       reverse_tournament_match_rating: {
         Args: { p_match_id: string }
         Returns: undefined
+      }
+      rewrite_event_placings_under_field_lock: {
+        Args: {
+          p_clear: string[]
+          p_event_id: string
+          p_is_pair: boolean
+          p_points: Json
+          p_positions: Json
+          p_results: Json
+        }
+        Returns: Json
       }
       scrub_deleted_identity: {
         Args: Record<PropertyKey, never>
@@ -3928,6 +4230,32 @@ export type Database = {
       }
       session_cap_for: { Args: { p_match_type: string }; Returns: number }
       session_checkin_open: { Args: { p_session_id: string }; Returns: boolean }
+      set_field_entry_group: {
+        Args: { p_entry_id: string; p_group: number; p_is_pair: boolean }
+        Returns: Json
+      }
+      set_field_entry_seed: {
+        Args: { p_entry_id: string; p_is_pair: boolean; p_seed: number }
+        Returns: Json
+      }
+      set_field_entry_status: {
+        Args: {
+          p_actor: string
+          p_entry_id: string
+          p_is_pair: boolean
+          p_new_status: string
+        }
+        Returns: Json
+      }
+      set_field_groups: {
+        Args: {
+          p_assignments: Json
+          p_event_id: string
+          p_expected: string[]
+          p_is_pair: boolean
+        }
+        Returns: Json
+      }
       set_match_ready: {
         Args: { p_match_id: string; p_player_id: string; p_ready: boolean }
         Returns: string[]
@@ -3947,6 +4275,10 @@ export type Database = {
           p_pair_name: string
         }
         Returns: undefined
+      }
+      sweep_unledgered_bonus_events: {
+        Args: Record<PropertyKey, never>
+        Returns: { marked_event_id: string; marked_event_type: string }[]
       }
       unpair_tournament_pair: {
         Args: {
@@ -3970,6 +4302,14 @@ export type Database = {
           p_partner_id?: string
           p_type: string
         }
+        Returns: Json
+      }
+      void_club_match: {
+        Args: { p_actor_id: string; p_match_id: string; p_reason: string }
+        Returns: Json
+      }
+      withdraw_from_tournament_event: {
+        Args: { p_event_id: string; p_player_id: string }
         Returns: Json
       }
     }

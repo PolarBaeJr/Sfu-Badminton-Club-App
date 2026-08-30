@@ -235,20 +235,38 @@ export function isCheckinOpen(
 /**
  * Today's date in the club's timezone, as YYYY-MM-DD.
  *
- * `new Date().toISOString().split('T')[0]` gives the UTC date, and Vancouver is
- * behind UTC. Any club evening after 17:00 local is already tomorrow in UTC, so
- * stamping a DATE column that way records the wrong day — an exec ending a
- * season on Friday evening recorded it as ending Saturday.
+ * THE ONLY CORRECT WAY TO ASK "what day is it" ON THE SERVER. Two wrong ways
+ * were both in use, and both are the same bug wearing different clothes:
  *
- * The cutoff is deliberately not written as a fixed offset any more. It used to
- * read "17:00 PDT (16:00 PST)"; tzdata 2026b records British Columbia dropping
- * the winter fallback, so there is no PST half to the year and Vancouver is
- * UTC-7 year-round. The code never cared — it asks Intl — but the comment did.
+ *   new Date().toISOString().slice(0, 10)     the UTC date
+ *   new Date().toLocaleDateString('en-CA')    the RUNTIME's date
+ *
+ * The second reads like the fix for the first and is not. Without a `timeZone`
+ * option, Intl uses the host zone, and every app container runs with TZ unset
+ * — measured on both hosts: `date` prints UTC and `toLocaleDateString('en-CA')`
+ * returns the UTC date. Vancouver is behind UTC, so from 17:00 local onwards
+ * both forms report tomorrow. An exec ending a season on Friday evening
+ * recorded it as ending Saturday, and the comment above the call said that
+ * could not happen.
+ *
+ * The tzdata pin is the same one wallClockToUtc uses and is here for the same
+ * reason: from 2026-11-01 British Columbia stops changing its clocks
+ * (tzdata 2026b) and is UTC-7 year-round, but production Node predates that
+ * release, so ASKING Intl about a date past the cutover returns an offset an
+ * hour off — which moves the answer across midnight for one hour in every
+ * twenty-four. Past the cutover the offset is a constant and no timezone data
+ * is read at all. Before it, every tzdata release ever shipped agrees about
+ * Vancouver, so asking is safe.
  *
  * en-CA formats as YYYY-MM-DD, which is exactly the shape a Postgres DATE
  * column and every YYYY-MM-DD string comparison in this codebase expect.
  */
 export function clubToday(now: Date = new Date()): string {
+  // 2026-11-01 is a whole-day boundary under both rules (see
+  // CLUB_PERMANENT_OFFSET_FROM), so deciding the era from the pinned reading
+  // cannot disagree with deciding it from the real one.
+  const pinned = new Date(now.getTime() + CLUB_PERMANENT_OFFSET_MS).toISOString().slice(0, 10);
+  if (pinned >= CLUB_PERMANENT_OFFSET_FROM) return pinned;
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: CLUB_TIMEZONE,
     year: 'numeric',

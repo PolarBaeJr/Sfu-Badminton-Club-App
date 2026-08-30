@@ -12,6 +12,8 @@ import {
   sortLogs,
   visibleLogs,
   type AuditLogEntry,
+  isDegradedEntry,
+  countDegraded,
 } from '../audit-log-view';
 
 // The screen's job is to lose nothing. Most of what follows is a test that some
@@ -371,5 +373,26 @@ describe('shortRef', () => {
 
   it('degrades rather than throwing', () => {
     expect(shortRef('')).toBe('—');
+  });
+});
+
+describe('audit health', () => {
+  const entry = (reason: string | null) => ({ reason });
+
+  it('flags an entry whose payload was dropped and leaves the rest alone', () => {
+    expect(isDegradedEntry(entry('Voided. [audit payload dropped: too large]'))).toBe(true);
+    expect(isDegradedEntry(entry('Voided at the players’ request.'))).toBe(false);
+    expect(isDegradedEntry(entry(null))).toBe(false);
+  });
+
+  it('counts degraded entries, and counts zero when there are none', () => {
+    expect(countDegraded([
+      entry('ordinary'),
+      entry('Voided. [audit payload dropped: too large]'),
+      entry(null),
+      entry('Removed. [audit payload dropped: bad value]'),
+    ])).toBe(2);
+    expect(countDegraded([entry('ordinary'), entry(null)])).toBe(0);
+    expect(countDegraded([])).toBe(0);
   });
 });

@@ -32,6 +32,13 @@ function UnavailableContent() {
   // to confirm a passkey they have already confirmed and would go looking for a
   // security problem instead of an outage.
   const isPermissionsOutage = searchParams.get('reason') === 'permissions';
+  // Same idea, different lookup: the middleware could not find out whether this
+  // admin has an enrolled passkey. It used to answer "no" and wave them
+  // through, which switched the console's second factor off for everybody
+  // whenever the database was unwell. Now it holds the door and says so — and
+  // the passkey prompt below is still the way back in, because confirming a
+  // passkey does not need that lookup to have worked.
+  const isPasskeyOutage = searchParams.get('reason') === 'passkey-unavailable';
 
   useEffect(() => {
     const supabase = createClient();
@@ -80,7 +87,7 @@ function UnavailableContent() {
     window.location.href = withBase('/login');
   }
 
-  if (isPermissionsOutage) {
+  if (isPermissionsOutage || isPasskeyOutage) {
     return (
       <div className="min-h-screen flex items-center bg-[var(--bg-primary)]">
         <div className="max-w-xl w-full mx-auto px-6">
@@ -88,10 +95,13 @@ function UnavailableContent() {
             <span className="bar" />
             Console unavailable
           </div>
-          <h1 className="page-title">We can&apos;t check your permissions</h1>
+          <h1 className="page-title">
+            {isPasskeyOutage ? "We can't check your passkey" : "We can't check your permissions"}
+          </h1>
           <p className="page-sub">
-            The console could not read what you have access to, so it is holding the door
-            rather than guessing. Nothing has changed about your account.
+            {isPasskeyOutage
+              ? 'The console could not read whether your account has a passkey enrolled, so it is holding the door rather than guessing. Nothing has changed about your account.'
+              : 'The console could not read what you have access to, so it is holding the door rather than guessing. Nothing has changed about your account.'}
           </p>
           <div className="mt-8 space-y-6">
             <p className="text-sm text-[var(--text-muted)] max-w-[52ch]">
