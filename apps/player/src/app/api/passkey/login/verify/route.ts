@@ -5,13 +5,7 @@ import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 import type { AuthenticationResponseJSON, AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
-import {
-  rateLimit,
-  getClientIp,
-  parseOrThrow,
-  AUTH_COOKIE_OPTIONS,
-  hostOnlyAuthCookieClears,
-} from '@badminton/shared';
+import { parseOrThrow, AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { verifyPayload } from '@/lib/passkey/cookie';
@@ -58,25 +52,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
 
-  // Still tighter than the enrolment routes — this one is reachable pre-auth —
-  // but 5/min was sized when a passkey was a rarely-used extra. It is now the
-  // primary way in, and the whole club signs in within a few minutes of a
-  // session starting. Whether that is five buckets or one depends on what
-  // getClientIp can resolve (see the note in ../options/route.ts): if the
-  // per-client header does not survive our edge, everyone behind it shares this
-  // count and the sixth member through the door is told to try again later.
+  // NOT RATE LIMITED HERE. The throttle covering this route is at the edge, on
+  // the /api/passkey prefix (240/min per client IP, routes.json on the proxy).
+  // It has to stay wide: this is now the primary way in and the whole club
+  // signs in within a few minutes of a session starting, largely from one
+  // campus NAT, so a tight per-IP number locks out real members holding correct
+  // credentials rather than stopping an attacker.
   //
-  // 20 covers a door queue without meaningfully widening anything. Every
-  // attempt needs a valid single-use challenge cookie minted by /login/options
-  // AND a signature over that challenge; the cookie is cleared on every outcome
-  // including failure, so an attempt cannot be retried against the same
-  // challenge; and every failure is deliberately uniform, so there is no oracle
-  // to grind. The options limiter above bounds how fast challenges can be
-  // minted in the first place, which is the real ceiling on this route.
-  const ip = getClientIp(request);
-  const rl = rateLimit(`pk-login-verify:${ip}`, 20, 60_000);
-  if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
-
+  // Being wide is safe, and the limit was never what made this route safe in
+  // the first place. Every attempt needs a valid single-use challenge cookie
+  // minted by /login/options AND a signature over that challenge; the cookie is
+  // cleared on every outcome including failure, so an attempt cannot be retried
+  // against the same challenge; and every failure is deliberately uniform, so
+  // there is no oracle to grind. Those three properties are the actual control.
   let body: z.infer<typeof bodySchema>;
   try {
     body = parseOrThrow(bodySchema, await request.json());

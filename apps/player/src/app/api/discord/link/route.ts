@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { getClientIp, rateLimit } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -18,12 +17,6 @@ export const dynamic = 'force-dynamic';
 // success, and must not leave a tombstone chasing an account we never touched.
 export async function DELETE(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:unlink:${ip}`, 30, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   let body: unknown;
   try {

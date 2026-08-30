@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getClientIp, rateLimit, clubToday } from '@badminton/shared';
+import { clubToday } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { onPublicTracks, onVisibleTracks } from '@/lib/session-track-filter';
@@ -59,12 +59,6 @@ const MAX_SESSIONS = 10;
 // unfiltered message just moves the leak.
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:sessions:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const supabase = createServiceRoleClient();
 

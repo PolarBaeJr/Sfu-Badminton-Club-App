@@ -4,7 +4,7 @@ import { verifyRegistrationResponse } from '@simplewebauthn/server';
 import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
-import { rateLimit, getClientIp, parseOrThrow } from '@badminton/shared';
+import { parseOrThrow } from '@badminton/shared';
 import { getCurrentPlayer, createServiceRoleClient } from '@/lib/supabase-server';
 import { verifyPayload } from '@/lib/passkey/cookie';
 import { consumeChallenge } from '@/lib/passkey/challenge-store';
@@ -29,10 +29,6 @@ export async function POST(request: Request) {
   if (!isPasskeyConfigured()) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
-
-  const ip = getClientIp(request);
-  const rl = rateLimit(`pk-reg-verify:${ip}`, 10, 60_000);
-  if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   const player = await getCurrentPlayer();
   if (!player) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CLUB_TIMEZONE, getClientIp, rateLimit, clubToday } from '@badminton/shared';
+import { CLUB_TIMEZONE, clubToday } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -63,12 +63,6 @@ function clubLocalToday(): string {
 
 export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
-
-  const ip = getClientIp(request);
-  const limited = rateLimit(`discord:tournaments:${ip}`, 60, 60_000);
-  if (!limited.success) {
-    return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
-  }
 
   const supabase = createServiceRoleClient();
 

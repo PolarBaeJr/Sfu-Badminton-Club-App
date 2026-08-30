@@ -1,11 +1,5 @@
-import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import {
-  DISCORD_LINK_TOKEN_REGEX,
-  getAccountStanding,
-  getClientIp,
-  rateLimit,
-} from '@badminton/shared';
+import { DISCORD_LINK_TOKEN_REGEX, getAccountStanding } from '@badminton/shared';
 import { getCurrentPlayer } from '@/lib/supabase-server';
 import { LinkClient } from './link-client';
 
@@ -20,19 +14,6 @@ export const dynamic = 'force-dynamic';
 // halves are proven independently.
 export default async function LinkPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-
-  const rl = rateLimit(
-    `discord-link:${getClientIp(new Request('http://localhost', { headers: await headers() }))}`,
-    20,
-    60_000
-  );
-  if (!rl.success) {
-    return (
-      <Shell title="Too many attempts">
-        Wait a minute and open the link again.
-      </Shell>
-    );
-  }
 
   // Shape-checked before anything else uses it, including the redirect below.
   if (!DISCORD_LINK_TOKEN_REGEX.test(token)) {
