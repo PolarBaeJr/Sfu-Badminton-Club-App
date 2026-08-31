@@ -215,3 +215,305 @@ describe('the two ways the card route fails silently in the container', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// RECENT FORM
+//
+// The card used to describe exactly one person, and resolveProfile guarantees
+// that person is on the public ladder. A match row names OTHER people, and
+// neither leaderboard-privacy.test.ts nor profile-status-privacy.test.ts would
+// notice: the first keys on singles_elo/doubles_elo, the second on a
+// from('players') select naming `status`, and discord-profile.ts is allowlisted
+// in both. A read of match_participants that named an opponent trips neither.
+// So the rule is asserted here.
+
+/** A thenable chain that answers whatever the table was mapped to. */
+function chain(result: unknown) {
+  const obj: Record<string, unknown> = {
+    then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
+      Promise.resolve(result).then(res, rej),
+    maybeSingle: () => Promise.resolve(result),
+    single: () => Promise.resolve(result),
+  };
+  for (const m of ['select', 'eq', 'neq', 'in', 'or', 'not', 'order', 'limit']) {
+    obj[m] = () => obj;
+  }
+  return obj;
+}
+
+/** Point `from` at one canned answer per table. Unmapped tables read empty. */
+function tables(map: Record<string, unknown>) {
+  from.mockImplementation((table: string) =>
+    chain(map[table] ?? { data: [], error: null, count: 0 })
+  );
+}
+
+function ladderRow(over: Record<string, unknown> = {}) {
+  return { ...LADDER_ROW, ...over };
+}
+
+/** One `matches` row as the recent-form query selects it. */
+function matchRow(over: Record<string, unknown> = {}) {
+  return {
+    id: 'm1',
+    played_at: '2026-08-20T02:00:00Z',
+    match_type: 'doubles',
+    score_summary: '21-15, 21-18',
+    winner_side: 'a',
+    ...over,
+  };
+}
+
+describe('recent form is fetched only when it is drawn, and only for a listed member', () => {
+  it('costs the bot nothing: without withForm no form table is read at all', async () => {
+    tables({ players: { data: playerRow(), error: null } });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    // /api/discord/profile answers the bot, whose embed draws none of this,
+    // and it is the caller sitting on Discord's 3s interaction deadline.
+    for (const t of ['matches', 'match_participants', 'head_to_head_stats', 'session_attendance']) {
+      expect(from).not.toHaveBeenCalledWith(t);
+    }
+    expect(result.profile.recent).toEqual([]);
+    expect(result.profile.rival).toBeNull();
+    // Null, not 0. "Not fetched" is not the same claim as "never came".
+    expect(result.profile.nights).toBeNull();
+  });
+
+  it('fetches nothing for a member the ladder excludes, even when asked to', async () => {
+    // Their rating is off the ladder by their own setting or the club's. Their
+    // match history on a permanently-cached public PNG would be the same
+    // disclosure by another route.
+    rpc.mockResolvedValue({ data: [], error: null });
+    tables({ players: { data: playerRow(), error: null } });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(from).not.toHaveBeenCalledWith('matches');
+    expect(result.profile.recent).toEqual([]);
+    expect(result.profile.nights).toBeNull();
+  });
+});
+
+describe('a match row may not name somebody the ladder does not list', () => {
+  it('drops the name of an off-ladder opponent but keeps the result', async () => {
+    rpc.mockResolvedValue({ data: [ladderRow()], error: null }); // p1 only
+    tables({
+      players: { data: playerRow(), error: null },
+      matches: { data: [matchRow()], error: null },
+      match_participants: {
+        data: [
+          { match_id: 'm1', player_id: 'p1', team_side: 'a', win_flag: true },
+          // Hidden, suspended or pending — the ladder is the same answer for
+          // all three, and none of them consented to a public image.
+          { match_id: 'm1', player_id: 'hidden', team_side: 'b', win_flag: false },
+        ],
+        error: null,
+      },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(result.profile.recent).toHaveLength(1);
+    expect(result.profile.recent[0]!.opponents).toEqual([]);
+    // The row is still a row: the member's own result is theirs to show.
+    expect(result.profile.recent[0]!.won).toBe(true);
+    expect(result.profile.recent[0]!.score).toBe('21-15, 21-18');
+    expect(JSON.stringify(result.profile)).not.toContain('hidden');
+  });
+
+  it('names an opponent who is on the ladder', async () => {
+    rpc.mockResolvedValue({
+      data: [ladderRow(), ladderRow({ id: 'p2', name: 'Kiera Chan', handle: 'kiera' })],
+      error: null,
+    });
+    tables({
+      players: { data: playerRow(), error: null },
+      matches: { data: [matchRow()], error: null },
+      match_participants: {
+        data: [
+          { match_id: 'm1', player_id: 'p1', team_side: 'a', win_flag: true },
+          { match_id: 'm1', player_id: 'p2', team_side: 'b', win_flag: false },
+        ],
+        error: null,
+      },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(result.profile.recent[0]!.opponents).toEqual(['Kiera Chan']);
+  });
+
+  it('never counts the member\'s own partner as an opponent', async () => {
+    rpc.mockResolvedValue({
+      data: [
+        ladderRow(),
+        ladderRow({ id: 'mate', name: 'Sam Lee' }),
+        ladderRow({ id: 'p2', name: 'Kiera Chan' }),
+      ],
+      error: null,
+    });
+    tables({
+      players: { data: playerRow(), error: null },
+      matches: { data: [matchRow()], error: null },
+      match_participants: {
+        data: [
+          { match_id: 'm1', player_id: 'p1', team_side: 'a', win_flag: true },
+          { match_id: 'm1', player_id: 'mate', team_side: 'a', win_flag: true },
+          { match_id: 'm1', player_id: 'p2', team_side: 'b', win_flag: false },
+        ],
+        error: null,
+      },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(result.profile.recent[0]!.opponents).toEqual(['Kiera Chan']);
+  });
+});
+
+describe('the score reads from the member\'s side, not the admin\'s', () => {
+  it('flips every game when the member played on side b', async () => {
+    // score_summary is written sideA-sideB. Side A is whichever side the
+    // submitting admin entered first, so printing it raw shows half the club
+    // losing matches they won.
+    rpc.mockResolvedValue({ data: [ladderRow()], error: null });
+    tables({
+      players: { data: playerRow(), error: null },
+      matches: {
+        data: [matchRow({ score_summary: '15-21, 18-21', winner_side: 'b' })],
+        error: null,
+      },
+      match_participants: {
+        data: [{ match_id: 'm1', player_id: 'p1', team_side: 'b', win_flag: null }],
+        error: null,
+      },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(result.profile.recent[0]!.score).toBe('21-15, 21-18');
+    // win_flag was null; winner_side is the same answer off the match row.
+    expect(result.profile.recent[0]!.won).toBe(true);
+  });
+});
+
+describe('the rival record belongs to the member it is drawn on', () => {
+  it('does not invert when the member is player_b', async () => {
+    // head_to_head_stats has CHECK (player_a_id < player_b_id), so which
+    // column holds the member is not knowable in advance — and reading the
+    // wrong win count inverts the record with two entirely plausible numbers.
+    rpc.mockResolvedValue({
+      data: [ladderRow(), ladderRow({ id: 'p2', name: 'Kiera Chan' })],
+      error: null,
+    });
+    tables({
+      players: { data: playerRow(), error: null },
+      head_to_head_stats: {
+        data: [
+          {
+            player_a_id: 'p2',
+            player_b_id: 'p1',
+            player_a_wins: 2,
+            player_b_wins: 5,
+            total_matches: 7,
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(result.profile.rival).toEqual({ name: 'Kiera Chan', wins: 5, losses: 2 });
+  });
+
+  it('adds the singles and doubles rows for the same person together', async () => {
+    rpc.mockResolvedValue({
+      data: [ladderRow(), ladderRow({ id: 'p2', name: 'Kiera Chan' })],
+      error: null,
+    });
+    tables({
+      players: { data: playerRow(), error: null },
+      head_to_head_stats: {
+        data: [
+          { player_a_id: 'p1', player_b_id: 'p2', player_a_wins: 1, player_b_wins: 1, total_matches: 2 },
+          { player_a_id: 'p1', player_b_id: 'p2', player_a_wins: 2, player_b_wins: 0, total_matches: 2 },
+        ],
+        error: null,
+      },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    // A rival is a person, not a discipline.
+    expect(result.profile.rival).toEqual({ name: 'Kiera Chan', wins: 3, losses: 1 });
+  });
+
+  it('will not name an off-ladder rival, and will not call one meeting a rivalry', async () => {
+    rpc.mockResolvedValue({ data: [ladderRow(), ladderRow({ id: 'p3', name: 'Sam Lee' })], error: null });
+    tables({
+      players: { data: playerRow(), error: null },
+      head_to_head_stats: {
+        data: [
+          // Most-played, but not on the ladder: no name may be drawn for them.
+          { player_a_id: 'hidden', player_b_id: 'p1', player_a_wins: 1, player_b_wins: 8, total_matches: 9 },
+          // On the ladder, but a single meeting is a coincidence.
+          { player_a_id: 'p1', player_b_id: 'p3', player_a_wins: 1, player_b_wins: 0, total_matches: 1 },
+        ],
+        error: null,
+      },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(result.profile.rival).toBeNull();
+    expect(JSON.stringify(result.profile)).not.toContain('hidden');
+  });
+});
+
+describe('nights played counts nights the member was there', () => {
+  it('asks only for the statuses that mean present', async () => {
+    // no_show and excused are rows on the record too, and counting them would
+    // make the figure "nights on file" rather than "nights played".
+    const { PRESENT_STATUSES } = await import('../schedule');
+    expect([...PRESENT_STATUSES]).toEqual(['checked_in', 'present']);
+
+    const src = readFileSync(join(SRC, 'lib', 'discord-profile.ts'), 'utf8');
+    expect(src).toMatch(/session_attendance/);
+    expect(src).toMatch(/\.in\('status', \[\.\.\.PRESENT_STATUSES\]\)/);
+  });
+
+  it('reports the count the database returned', async () => {
+    rpc.mockResolvedValue({ data: [ladderRow()], error: null });
+    tables({
+      players: { data: playerRow(), error: null },
+      session_attendance: { data: null, error: null, count: 27 },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(result.profile.nights).toBe(27);
+  });
+});
