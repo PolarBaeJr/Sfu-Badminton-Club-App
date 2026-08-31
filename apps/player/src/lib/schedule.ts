@@ -137,6 +137,27 @@ export function describeMyState(
   return 'none';
 }
 
+/**
+ * The two `session_attendance.status` values that mean the member was actually
+ * there.
+ *
+ * NOT THE SAME QUESTION AS isAttendanceRecorded below, which is true for
+ * `no_show` and `excused` as well: those are rows on the record saying the
+ * member was NOT there. Anything counting nights played wants this one.
+ *
+ * Exported because the pair was restated at four call sites and had already
+ * started to mean "whatever that file's author remembered" -- the array form is
+ * for a PostgREST `.in()` filter, the predicate for rows already in hand.
+ * (session-attendee-counts.ts keeps its own copy on purpose; that one mirrors
+ * 00152's SQL and is documented to die with the fallback it serves.)
+ */
+export const PRESENT_STATUSES = ['checked_in', 'present'] as const;
+
+/** See PRESENT_STATUSES. */
+export function wasPresent(status: string | null | undefined): boolean {
+  return status === 'checked_in' || status === 'present';
+}
+
 /** True once attendance is on the record, which is what retires the RSVP controls. */
 export function isAttendanceRecorded(status: AttendanceStatus | null | undefined): boolean {
   return status === 'checked_in' || status === 'present' || status === 'no_show' || status === 'excused';

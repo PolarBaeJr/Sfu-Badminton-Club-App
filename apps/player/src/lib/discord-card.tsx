@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CardAward, CardBackground, DiscordProfile } from './discord-profile';
+import type { CardAward, CardBackground, CardMatch, DiscordProfile } from './discord-profile';
+import { formatStreak } from './ladder';
 
 /**
  * The profile card's pixels.
@@ -20,7 +21,11 @@ import type { CardAward, CardBackground, DiscordProfile } from './discord-profil
  */
 
 export const W = 1000;
-export const H = 420;
+// 420 until the card carried only the three ladder figures. The extra 160 is
+// the recent-form block and the rival/nights line beneath it; Discord scales
+// the image to the channel's width either way, so height costs nothing but
+// pixels.
+export const H = 580;
 
 const INK = '#f0f0f0';
 const MUTE = '#8a8a8a';
@@ -132,11 +137,14 @@ function Stat({
   label,
   value,
   sub,
+  sub2,
   dim,
 }: {
   label: string;
   value: string;
   sub?: string | null;
+  /** Second muted line -- win rate and streak, which are per discipline. */
+  sub2?: string | null;
   dim?: boolean;
 }) {
   return (
@@ -163,8 +171,11 @@ function Stat({
       >
         {value}
       </div>
-      <div style={{ fontFamily: 'Barlow', fontWeight: 400, fontSize: 17, color: MUTE }}>
+      <div style={{ display: 'flex', fontFamily: 'Barlow', fontWeight: 400, fontSize: 17, color: MUTE }}>
         {sub ?? ' '}
+      </div>
+      <div style={{ display: 'flex', fontFamily: 'Barlow', fontWeight: 400, fontSize: 17, color: MUTE }}>
+        {sub2 ?? ' '}
       </div>
     </div>
   );
@@ -225,6 +236,197 @@ function Rail({ awards }: { awards: CardAward[] }) {
       </div>
     </div>
   );
+}
+
+/**
+ * A name cut down to fit, e.g. "Christopher Wong" -> "Christopher W.".
+ *
+ * satori supports neither text-overflow nor a measured width, so anything that
+ * has to fit is shortened by rule rather than by the layout. A doubles row can
+ * carry two names and the card is a fixed 1000px, so the pair is abbreviated
+ * together or not at all -- one full name beside one initial reads as a
+ * mistake.
+ */
+function shortName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const last = parts[parts.length - 1];
+  if (parts.length < 2 || !last) return name;
+  return `${parts[0]} ${last[0]}.`;
+}
+
+/** The opposing side, named if the card is allowed to name them. */
+function opponentLine(opponents: string[]): string | null {
+  const first = opponents[0];
+  if (!first) return null;
+  const full = opponents.join(', ');
+  if (full.length <= 30) return `vs ${full}`;
+  const short = opponents.map(shortName).join(', ');
+  if (short.length <= 30) return `vs ${short}`;
+  return `vs ${shortName(first)} +${opponents.length - 1}`;
+}
+
+/**
+ * One recent match.
+ *
+ * W AND L AS LETTERS, not a tick and a cross. Barlow ships here as latin,
+ * latin-ext and vietnamese only, and satori draws a glyph outside those subsets
+ * as a tofu box with no warning anywhere -- see CardAward. Every mark on this
+ * row is a letter, a digit, a hyphen or the middot the card already uses.
+ *
+ * The partner in a doubles match is deliberately not named: two more names
+ * would double the row's width budget on a card that cannot measure text, and
+ * the D marker already says there was one.
+ */
+function MatchRow({ match }: { match: CardMatch }) {
+  const versus = opponentLine(match.opponents);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 32 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 26,
+          height: 26,
+          background: match.won ? RED : '#1e1e1e',
+          border: `1px solid ${LINE}`,
+          fontFamily: 'Barlow',
+          fontWeight: 600,
+          fontSize: 16,
+          color: match.won ? '#ffffff' : MUTE,
+        }}
+      >
+        {match.won ? 'W' : 'L'}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          width: 18,
+          fontFamily: 'Barlow',
+          fontWeight: 600,
+          fontSize: 16,
+          color: MUTE,
+        }}
+      >
+        {match.type === 'doubles' ? 'D' : 'S'}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          width: 260,
+          fontFamily: 'Barlow',
+          fontWeight: 600,
+          fontSize: 20,
+          color: INK,
+        }}
+      >
+        {match.score ?? 'no score recorded'}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          fontFamily: 'Barlow',
+          fontWeight: 400,
+          fontSize: 19,
+          color: MUTE,
+        }}
+      >
+        {versus ?? ''}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Recent form, and the empty case is a finished thing rather than a gap.
+ *
+ * A member with no confirmed matches is a normal member -- new, or one who has
+ * only ever played casually without a result being entered -- and the block
+ * says so in the same voice the Unranked block uses.
+ */
+function RecentForm({ recent }: { recent: CardMatch[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div
+        style={{
+          display: 'flex',
+          fontFamily: 'Barlow',
+          fontWeight: 600,
+          fontSize: 15,
+          letterSpacing: 1.4,
+          color: MUTE,
+        }}
+      >
+        RECENT
+      </div>
+      {recent.length > 0 ? (
+        recent.map((m, i) => <MatchRow key={i} match={m} />)
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            height: 32,
+            fontFamily: 'Barlow',
+            fontWeight: 400,
+            fontSize: 19,
+            color: MUTE,
+          }}
+        >
+          No matches on the record yet
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A small label/value pair for the line under recent form. */
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+      <div
+        style={{
+          display: 'flex',
+          fontFamily: 'Barlow',
+          fontWeight: 600,
+          fontSize: 15,
+          letterSpacing: 1.4,
+          color: MUTE,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          fontFamily: 'Barlow',
+          fontWeight: 600,
+          fontSize: 20,
+          color: INK,
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Win rate as a whole percent, or null when there is nothing to divide.
+ *
+ * A member with no completed matches has no win rate, and "0%" is a different
+ * and much worse claim than nothing at all.
+ */
+function winRate(w: number, l: number): string | null {
+  const played = w + l;
+  if (played === 0) return null;
+  return `${Math.round((w / played) * 100)}%`;
+}
+
+/** Win rate and streak, the two figures already in the payload and unused. */
+function formLine(w: number, l: number, streak: number): string | null {
+  const parts = [winRate(w, l), formatStreak(streak)?.label].filter(Boolean);
+  return parts.length > 0 ? parts.join(' \u00b7 ') : null;
 }
 
 function record(w: number, l: number) {
@@ -334,11 +536,13 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
               label="DOUBLES"
               value={`${doubles.elo}${doubles.provisional ? '*' : ''}`}
               sub={`#${doubles.rank} · ${record(doubles.wins, doubles.losses)}`}
+              sub2={formLine(doubles.wins, doubles.losses, doubles.streak)}
             />
             <Stat
               label="SINGLES"
               value={`${singles.elo}${singles.provisional ? '*' : ''}`}
               sub={`#${singles.rank} · ${record(singles.wins, singles.losses)}`}
+              sub2={formLine(singles.wins, singles.losses, singles.streak)}
             />
             <Stat
               label="TOURNAMENT"
@@ -354,6 +558,26 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
             <Stat label="LADDER" value="Unranked" sub="not shown on the club ladder" dim />
           </div>
         )}
+
+        {/* Only for a member the ladder lists. resolveProfile fetches none of
+            this for anyone else -- their games are as private as the rating
+            they chose to keep off the ladder -- so an unranked card keeps the
+            shape it has always had, one block and the rail. */}
+        {profile.ranked ? <RecentForm recent={profile.recent} /> : null}
+
+        {profile.ranked ? (
+          <div style={{ display: 'flex', gap: 40, alignItems: 'baseline' }}>
+            <Meta
+              label="RIVAL"
+              value={
+                profile.rival
+                  ? `${profile.rival.name} ${profile.rival.wins}-${profile.rival.losses}`
+                  : 'none yet'
+              }
+            />
+            <Meta label="NIGHTS" value={String(profile.nights ?? 0)} />
+          </div>
+        ) : null}
 
         <Rail awards={profile.awards} />
       </div>

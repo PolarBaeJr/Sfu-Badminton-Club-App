@@ -36,7 +36,9 @@ export async function GET(
   // Re-read rather than carrying the numbers in the token: a card fetched a
   // week after it was posted should show what is true now, and a token that
   // carried its own data would be a signed snapshot nobody could correct.
-  const result = await resolveProfile({ by: 'playerId', value: playerId });
+  // withForm: this is the only caller that draws recent form -- see
+  // ResolveOptions. The bot's own route asks for the profile without it.
+  const result = await resolveProfile({ by: 'playerId', value: playerId }, { withForm: true });
   if ('miss' in result) return gone();
 
   const avatar = await avatarDataUri(result.profile.avatarUrl);

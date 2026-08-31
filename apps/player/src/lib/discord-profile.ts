@@ -2,6 +2,7 @@ import { createServiceRoleClient } from './supabase-server';
 import { statusForViewer, mayViewRow } from './public-profile';
 import type { PlayerStatus } from '@badminton/shared';
 import { HANDLE_MIN_LENGTH, HANDLE_MAX_LENGTH } from '@badminton/shared';
+import { PRESENT_STATUSES } from './schedule';
 
 /**
  * The profile card's data, and the one place that decides what a card may say.
@@ -35,6 +36,48 @@ export interface LadderLine {
   streak: number;
   /** Position on this ladder among ranked players. */
   rank: number;
+}
+
+/**
+ * One row of the card's recent form.
+ *
+ * THE SCORE READS SUBJECT-FIRST. `matches.score_summary` is written as
+ * `sideA-sideB` per game (admin/lib/actions/matches.ts:300), which is not a
+ * point of view -- it is whichever side the submitting admin happened to enter
+ * first. A card that printed it raw would show the member losing 15-21 a match
+ * they won, so each pair is flipped when the member played on side 'b'.
+ */
+export interface CardMatch {
+  won: boolean;
+  /** 'singles' | 'doubles'. Drawn as a one-letter marker, not a word. */
+  type: string;
+  /** Already oriented subject-first, e.g. "21-15, 19-21, 21-18". */
+  score: string | null;
+  /**
+   * The other side, and ONLY the members of it who are on the public ladder.
+   *
+   * THIS IS THE CARD'S FIRST MENTION OF ANYONE BUT ITS SUBJECT, and it is the
+   * reason this field is a list of names rather than a list of players. Every
+   * other figure on the card is about the member who ran /profile or was named
+   * by them, and resolveProfile guarantees that member is on the ladder. An
+   * opponent is not: they may be hidden by their own setting, suspended, or
+   * waiting for approval, and none of them asked to appear in a public PNG
+   * that Discord's CDN keeps for good. So an opponent the ladder does not list
+   * contributes no name and the row renders as score-and-result.
+   *
+   * /leaderboard/[playerId] deliberately does the opposite -- see its own
+   * comment, "WHAT IT HIDES IS THE RATING, NOT THE PERSON" -- and that is
+   * right for a page behind a session that re-renders on every visit. It is
+   * the same asymmetry, and the same reason, as the subject's own status.
+   */
+  opponents: string[];
+}
+
+/** The opponent the member has played most, with the member's own record. */
+export interface CardRival {
+  name: string;
+  wins: number;
+  losses: number;
 }
 
 export interface CardBackground {
@@ -82,6 +125,17 @@ export interface DiscordProfile {
    * this one function, with no layout work and no payload change.
    */
   awards: CardAward[];
+  /**
+   * Up to three most recent CONFIRMED matches, newest first.
+   *
+   * Empty for a member with no confirmed matches -- and also for every member
+   * who is off the public ladder, who is never asked for. See loadForm.
+   */
+  recent: CardMatch[];
+  /** Null when nobody qualifies; see loadForm for what qualifies. */
+  rival: CardRival | null;
+  /** Sessions the member actually attended. Null when not fetched. */
+  nights: number | null;
 }
 
 /**
@@ -146,6 +200,189 @@ function rankBy(rows: LeaderboardRow[], column: 'singles_elo' | 'doubles_elo') {
   return at;
 }
 
+/**
+ * The score, turned round so it reads from the member's side.
+ *
+ * `matches.score_summary` is `sideA-sideB` per game, joined with ", " (see
+ * admin/lib/actions/matches.ts:300). Side A is not a point of view -- it is
+ * whichever side the submitting admin entered first -- so printing it raw
+ * shows half the club losing 15-21 matches they won.
+ */
+function orientScore(summary: string | null, side: string | null): string | null {
+  if (!summary) return null;
+  if (side !== 'b') return summary;
+  return summary
+    .split(',')
+    .map((game) => {
+      const pair = game.trim().match(/^(\d+)-(\d+)$/);
+      return pair ? `${pair[2]}-${pair[1]}` : game.trim();
+    })
+    .join(', ');
+}
+
+/** Least a pair must have played before "rival" means anything. */
+const RIVAL_MIN_MATCHES = 2;
+
+/** How many recent matches the card has room to draw. */
+const RECENT_LIMIT = 3;
+
+interface CardForm {
+  recent: CardMatch[];
+  rival: CardRival | null;
+  /** Null means NOT FETCHED, which is not the same claim as zero nights. */
+  nights: number | null;
+}
+
+const NO_FORM: CardForm = { recent: [], rival: null, nights: null };
+
+/**
+ * Recent form, the top rival and nights played.
+ *
+ * ONLY EVER CALLED FOR A MEMBER WHO IS ON THE LADDER, and the caller enforces
+ * that rather than this function re-deriving it. Somebody the ladder excludes
+ * gets the card's "Unranked" block and none of this: their match history on a
+ * permanently-cached public image is the same disclosure that keeping their
+ * rating off the ladder exists to prevent, and it would be a strange privacy
+ * setting that hid the number but published the games behind it.
+ *
+ * THE LADDER IS ALSO THE NAMING RULE. `ladder` is the list the caller already
+ * fetched, so deciding whether an opponent may be named costs nothing and
+ * cannot disagree with the decision made about the subject -- see
+ * CardMatch.opponents.
+ *
+ * EVERY READ HERE FAILS TO EMPTY, WHICH IS WHY THE CARD IS VERIFIED AGAINST A
+ * REAL MEMBER rather than a fixture. PostgREST answers a read it cannot serve
+ * -- a mistyped embed, a missing grant -- with an empty list and no error, and
+ * "no matches yet" is exactly what a broken query looks like. my-stats' best-
+ * partners query shipped that way and returned nothing for months.
+ */
+async function loadForm(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  playerId: string,
+  ladder: LeaderboardRow[]
+): Promise<CardForm> {
+  const named = new Map(ladder.map((r) => [r.id, r.name]));
+
+  const [matchesRes, h2hRes, nightsRes] = await Promise.all([
+    // Based on `matches`, not on `match_participants`, so ORDER BY played_at is
+    // a real ordering -- PostgREST cannot order parent rows by a column of a
+    // to-one embed, and the participant-first form of this query takes three
+    // arbitrary rows and calls them recent. Same reasoning as my-stats.
+    //
+    // CASUAL AND UNRATED MATCHES COUNT. The section says what the member last
+    // played, and a Friday club game is something they played; nothing in the
+    // row is an Elo figure, so there is no rated number for an unrated match to
+    // sit beside and misrepresent.
+    supabase
+      .from('matches')
+      .select(
+        'id, played_at, match_type, score_summary, winner_side, participants:match_participants!inner(player_id)'
+      )
+      .eq('participants.player_id', playerId)
+      // A disputed or voided match rendered as a win on an image nobody can
+      // recall is the one kind of wrong this section must not produce.
+      .eq('result_status', 'confirmed')
+      .not('played_at', 'is', null)
+      .order('played_at', { ascending: false })
+      .limit(RECENT_LIMIT),
+    // The CHECK on this table is `player_a_id < player_b_id`, so which column
+    // holds the member is not knowable in advance and neither is which win
+    // count is theirs. Rows are per match_type; a rival is a person, so the
+    // two are added together below.
+    supabase
+      .from('head_to_head_stats')
+      .select('player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches')
+      .or(`player_a_id.eq.${playerId},player_b_id.eq.${playerId}`)
+      .order('total_matches', { ascending: false })
+      .limit(20),
+    // Nights the member was actually there -- not nights on their record.
+    // `no_show` and `excused` are rows too. See PRESENT_STATUSES.
+    supabase
+      .from('session_attendance')
+      .select('id', { count: 'exact', head: true })
+      .eq('player_id', playerId)
+      .in('status', [...PRESENT_STATUSES]),
+  ]);
+
+  type MatchRow = {
+    id: string;
+    played_at: string | null;
+    match_type: string | null;
+    score_summary: string | null;
+    winner_side: string | null;
+  };
+  const matches = (matchesRes.data ?? []) as unknown as MatchRow[];
+
+  let recent: CardMatch[] = [];
+  if (matches.length > 0) {
+    // A SECOND READ, because the !inner filter above narrows the embed to this
+    // member's own row -- that is what makes it a filter. The other side has to
+    // be asked for separately.
+    const { data: sidesData } = await supabase
+      .from('match_participants')
+      .select('match_id, player_id, team_side, win_flag')
+      .in(
+        'match_id',
+        matches.map((m) => m.id)
+      );
+    const sides = (sidesData ?? []) as unknown as {
+      match_id: string;
+      player_id: string;
+      team_side: string | null;
+      win_flag: boolean | null;
+    }[];
+
+    recent = matches.map((m) => {
+      const rows = sides.filter((r) => r.match_id === m.id);
+      const mine = rows.find((r) => r.player_id === playerId) ?? null;
+      const side = mine?.team_side ?? null;
+      return {
+        // win_flag is nullable; winner_side is the same answer from the match
+        // rather than from the participant, and one of the two is always set on
+        // a confirmed result.
+        won: mine?.win_flag ?? (side !== null && m.winner_side === side),
+        type: m.match_type ?? 'singles',
+        score: orientScore(m.score_summary, side),
+        opponents: rows
+          .filter((r) => r.player_id !== playerId && r.team_side !== side)
+          .map((r) => named.get(r.player_id))
+          .filter((n): n is string => !!n),
+      };
+    });
+  }
+
+  type H2HRow = {
+    player_a_id: string;
+    player_b_id: string;
+    player_a_wins: number;
+    player_b_wins: number;
+    total_matches: number;
+  };
+  const tally = new Map<string, { total: number; wins: number; losses: number }>();
+  for (const row of (h2hRes.data ?? []) as unknown as H2HRow[]) {
+    const subjectIsA = row.player_a_id === playerId;
+    const other = subjectIsA ? row.player_b_id : row.player_a_id;
+    // Only somebody the ladder lists may be named, exactly as for opponents.
+    if (!named.has(other)) continue;
+    const acc = tally.get(other) ?? { total: 0, wins: 0, losses: 0 };
+    acc.total += row.total_matches;
+    acc.wins += subjectIsA ? row.player_a_wins : row.player_b_wins;
+    acc.losses += subjectIsA ? row.player_b_wins : row.player_a_wins;
+    tally.set(other, acc);
+  }
+  let rival: CardRival | null = null;
+  let rivalTotal = 0;
+  for (const [id, acc] of tally) {
+    // One meeting is not a rivalry, and "vs Sam 1-0" on a card reads as a
+    // claim about a matchup rather than the coincidence it is.
+    if (acc.total < RIVAL_MIN_MATCHES || acc.total <= rivalTotal) continue;
+    rivalTotal = acc.total;
+    rival = { name: named.get(id)!, wins: acc.wins, losses: acc.losses };
+  }
+
+  return { recent, rival, nights: nightsRes.count ?? 0 };
+}
+
 export type ProfileTarget =
   | { by: 'discordUserId'; value: string }
   | { by: 'handle'; value: string }
@@ -167,8 +404,29 @@ export type ProfileMiss =
  * who asked not to be listed. Reading players.handle directly would find them
  * all and would be a strictly wider surface than the website it mirrors.
  */
+export interface ResolveOptions {
+  /**
+   * Fetch recent form, the top rival and nights played -- four extra reads.
+   *
+   * OFF BY DEFAULT because only one of this resolver's two callers draws them.
+   * /api/discord/card renders the PNG and wants them; /api/discord/profile
+   * answers the bot, whose embed reads `bio`, the provisional footnote and the
+   * card URL and nothing else. That path is also the one on Discord's
+   * three-second interaction deadline -- handleProfile replies rather than
+   * deferring -- so making it pay for four reads it never renders is how
+   * /profile starts timing out, and it would do so first on staging, where
+   * SUPABASE_INTERNAL_URL is unset and every call hairpins.
+   *
+   * THE RULES DO NOT MOVE WITH THE FLAG. What may be said about a member, and
+   * about anyone named beside them, is still decided only in this file; this
+   * chooses how much is asked for, not what is allowed.
+   */
+  withForm?: boolean;
+}
+
 export async function resolveProfile(
-  target: ProfileTarget
+  target: ProfileTarget,
+  options: ResolveOptions = {}
 ): Promise<{ profile: DiscordProfile } | { miss: ProfileMiss }> {
   const supabase = createServiceRoleClient();
 
@@ -241,6 +499,11 @@ export async function resolveProfile(
   const dRank = rankBy(ladder, 'doubles_elo');
   const sRank = rankBy(ladder, 'singles_elo');
 
+  // `line` is the gate, not `options.withForm` alone: a member off the public
+  // ladder never has form fetched for them, whoever asked and for whatever
+  // reason. See loadForm.
+  const form = options.withForm && line ? await loadForm(supabase, player.id, ladder) : NO_FORM;
+
   return {
     profile: {
       id: player.id,
@@ -275,6 +538,9 @@ export async function resolveProfile(
       tournamentPoints: line ? line.tournament_points : null,
       background: resolveBackground(player),
       awards: resolveAwards(player),
+      recent: form.recent,
+      rival: form.rival,
+      nights: form.nights,
     },
   };
 }
