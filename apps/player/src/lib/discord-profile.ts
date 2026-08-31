@@ -332,22 +332,31 @@ async function loadForm(
       win_flag: boolean | null;
     }[];
 
-    recent = matches.map((m) => {
+    recent = matches.flatMap((m) => {
       const rows = sides.filter((r) => r.match_id === m.id);
       const mine = rows.find((r) => r.player_id === playerId) ?? null;
       const side = mine?.team_side ?? null;
-      return {
+      // NO ROW, NO CLAIM. Without the member's own participant row there is no
+      // side to orient the score by and no result to report, and the defaults
+      // are not neutral: `won` would be false and the score would print in the
+      // admin's entry order, so a read that came back short would render three
+      // losses at inverted scores onto an image Discord keeps. This read cannot
+      // disagree with the one above except transiently -- same client, same
+      // key -- and a row missing from the card is the honest way to lose that
+      // race.
+      if (!mine || side === null) return [];
+      return [{
         // win_flag is nullable; winner_side is the same answer from the match
         // rather than from the participant, and one of the two is always set on
         // a confirmed result.
-        won: mine?.win_flag ?? (side !== null && m.winner_side === side),
+        won: mine.win_flag ?? m.winner_side === side,
         type: m.match_type ?? 'singles',
         score: orientScore(m.score_summary, side),
         opponents: rows
           .filter((r) => r.player_id !== playerId && r.team_side !== side)
           .map((r) => named.get(r.player_id))
           .filter((n): n is string => !!n),
-      };
+      }];
     });
   }
 

@@ -9,6 +9,15 @@ import { join } from 'node:path';
 // that from being a public dump of the roster is asserted here.
 
 const SRC = join(__dirname, '..', '..');
+/**
+ * The card route's source. Read as text because the two things asserted about
+ * it below are arguments it passes, not behaviour it exports -- and both fail
+ * by rendering a plausible card rather than by throwing.
+ */
+const ROUTE = readFileSync(
+  join(SRC, 'app', 'api', 'discord', 'card', '[token]', 'route.tsx'),
+  'utf8'
+);
 
 const rpc = vi.fn();
 const maybeSingle = vi.fn();
@@ -191,7 +200,7 @@ describe('handle lookup cannot reach somebody who is off the ladder', () => {
   });
 });
 
-describe('the two ways the card route fails silently in the container', () => {
+describe('the four ways the card route fails silently in the container', () => {
   it('is excluded from the middleware matcher, or Discord caches a login redirect', () => {
     const middleware = readFileSync(join(SRC, 'middleware.ts'), 'utf8');
     expect(middleware).toMatch(/api\/discord\/card\//);
@@ -204,6 +213,22 @@ describe('the two ways the card route fails silently in the container', () => {
     const config = readFileSync(join(SRC, '..', 'next.config.js'), 'utf8');
     expect(config).toMatch(/outputFileTracingIncludes/);
     expect(config).toMatch(/'\/api\/discord\/card\/\[token\]':\s*\['\.\/src\/fonts\/\*\.ttf'\]/);
+  });
+
+  it('asks the resolver for form, or every card claims an empty history', () => {
+    // withForm is off by default -- see ResolveOptions -- and this route is its
+    // only caller. Drop the flag and the card still renders, still 200s, and
+    // says "No matches on the record yet" / "none yet" / 0 for everyone. That is
+    // the empty state, drawn on purpose to look finished, so nothing about the
+    // image says the data was never asked for.
+    expect(ROUTE).toMatch(/withForm:\s*true/);
+  });
+
+  it('takes its height from cardHeight, or satori clips the bottom line off', () => {
+    // The route picks the canvas height and Card lays out to its own; satori
+    // cannot size an image to its content, so the two just have to agree. A
+    // constant here crops the rival/nights line away with no error at all.
+    expect(ROUTE).toMatch(/height:\s*cardHeight\(/);
   });
 
   it('ships the .ttf faces satori can actually read, not the browser\'s .woff2', () => {
@@ -408,6 +433,34 @@ describe('the score reads from the member\'s side, not the admin\'s', () => {
     expect(result.profile.recent[0]!.score).toBe('21-15, 21-18');
     // win_flag was null; winner_side is the same answer off the match row.
     expect(result.profile.recent[0]!.won).toBe(true);
+  });
+
+  it('drops a match whose own participant row did not come back', async () => {
+    // Two reads, and the second can come back short of the first. With no row
+    // of the member's own there is no side to orient by and no result to
+    // report, and BOTH defaults lie in the same direction: a loss, at the
+    // admin's entry order. Three of those is a card saying the member is on a
+    // losing streak, cached by Discord for good. A missing row is the honest
+    // way to lose that race.
+    rpc.mockResolvedValue({ data: [ladderRow()], error: null });
+    tables({
+      players: { data: playerRow(), error: null },
+      matches: {
+        data: [matchRow({ score_summary: '15-21', winner_side: 'b' })],
+        error: null,
+      },
+      // Everyone but the member.
+      match_participants: {
+        data: [{ match_id: 'm1', player_id: 'other', team_side: 'a', win_flag: true }],
+        error: null,
+      },
+    });
+
+    const { resolveProfile } = await import('../discord-profile');
+    const result = await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    if (!('profile' in result)) throw new Error('expected a profile');
+    expect(result.profile.recent).toEqual([]);
   });
 });
 
