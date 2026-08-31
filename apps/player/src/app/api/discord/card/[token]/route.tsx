@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og';
 import { readCardToken } from '@/lib/discord-card-token';
 import { resolveProfile } from '@/lib/discord-profile';
-import { Card, FONTS, W, H, avatarDataUri } from '@/lib/discord-card';
+import { Card, FONTS, W, cardHeight, avatarDataUri } from '@/lib/discord-card';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,7 +45,9 @@ export async function GET(
 
   return new ImageResponse(<Card profile={result.profile} avatar={avatar} />, {
     width: W,
-    height: H,
+    // The renderer's own answer, not a constant: an unranked card is shorter
+    // because it has less on it. See cardHeight.
+    height: cardHeight(result.profile),
     fonts: FONTS,
     headers: {
       // Discord's CDN caches what it fetched anyway; this keeps a member who

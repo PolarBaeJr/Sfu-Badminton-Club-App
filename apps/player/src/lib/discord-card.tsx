@@ -21,11 +21,25 @@ import { formatStreak } from './ladder';
  */
 
 export const W = 1000;
-// 420 until the card carried only the three ladder figures. The extra 160 is
-// the recent-form block and the rival/nights line beneath it; Discord scales
-// the image to the channel's width either way, so height costs nothing but
-// pixels.
-export const H = 580;
+// 420 was the whole card when it carried only the three ladder figures, and it
+// is still the whole card for a member who has none. See cardHeight.
+export const H = 420;
+
+/** With the recent-form block and the rival/nights line under it. */
+export const H_WITH_FORM = 580;
+
+/**
+ * How tall to draw THIS card.
+ *
+ * An unranked member gets neither recent form nor rival nor nights -- see
+ * loadForm -- so drawing them at the full height would post 160px of nothing
+ * into a channel. satori cannot size an image to its content, but the caller
+ * chooses the height it renders at, so the two just have to agree; both the
+ * route and Card ask this.
+ */
+export function cardHeight(profile: DiscordProfile): number {
+  return profile.ranked ? H_WITH_FORM : H;
+}
 
 const INK = '#f0f0f0';
 const MUTE = '#8a8a8a';
@@ -50,7 +64,7 @@ export const FONTS = [
  * new case here, and nothing above this function moves. resolveBackground in
  * lib/discord-profile.ts decides WHICH; this decides what it looks like.
  */
-function Background({ background }: { background: CardBackground }) {
+function Background({ background, height }: { background: CardBackground; height: number }) {
   switch (background.kind) {
     case 'default':
     default:
@@ -61,7 +75,7 @@ function Background({ background }: { background: CardBackground }) {
             top: 0,
             left: 0,
             width: W,
-            height: H,
+            height,
             display: 'flex',
             background: '#0a0a0a',
           }}
@@ -76,7 +90,7 @@ function Background({ background }: { background: CardBackground }) {
               top: 0,
               left: 0,
               width: 10,
-              height: H,
+              height,
               display: 'flex',
               background: RED,
             }}
@@ -87,7 +101,7 @@ function Background({ background }: { background: CardBackground }) {
               top: 0,
               left: 0,
               width: W,
-              height: H,
+              height,
               display: 'flex',
               background: 'linear-gradient(120deg, rgba(204,0,0,0.16) 0%, rgba(10,10,10,0) 55%)',
             }}
@@ -435,10 +449,11 @@ function record(w: number, l: number) {
 
 export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: string | null }) {
   const { doubles, singles } = profile;
+  const height = cardHeight(profile);
 
   return (
-    <div style={{ position: 'relative', display: 'flex', width: W, height: H }}>
-      <Background background={profile.background} />
+    <div style={{ position: 'relative', display: 'flex', width: W, height }}>
+      <Background background={profile.background} height={height} />
 
       <div
         style={{
@@ -446,7 +461,7 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
           display: 'flex',
           flexDirection: 'column',
           width: W,
-          height: H,
+          height,
           padding: '38px 44px 30px 52px',
           justifyContent: 'space-between',
         }}
