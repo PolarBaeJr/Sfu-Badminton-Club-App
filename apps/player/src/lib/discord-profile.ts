@@ -344,6 +344,10 @@ async function loadForm(
       // disagree with the one above except transiently -- same client, same
       // key -- and a row missing from the card is the honest way to lose that
       // race.
+      //
+      // `side === null` is the type narrowing and not a second case:
+      // match_participants.team_side is NOT NULL (00001), and staging reads
+      // zero rows without one.
       if (!mine || side === null) return [];
       return [{
         // win_flag is nullable; winner_side is the same answer from the match
