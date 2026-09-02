@@ -17,6 +17,8 @@
 // ============================================================
 
 /** One rated match, reduced to what the line needs. */
+import { wasPresent } from './schedule';
+
 export interface RatingPoint {
   /** ISO timestamp of the match, used only for the boundary and the tooltip. */
   at: string;
@@ -474,9 +476,8 @@ export function deriveAttendance(
   records: readonly AttendanceRecord[],
   playerStatus: string | null | undefined
 ): AttendanceSummary {
-  const presentStatuses = new Set(['checked_in', 'present']);
   const attendedIds = new Set(
-    records.filter((r) => presentStatuses.has(r.status)).map((r) => r.session_id)
+    records.filter((r) => wasPresent(r.status)).map((r) => r.session_id)
   );
 
   const eligible = sessions

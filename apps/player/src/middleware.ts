@@ -146,6 +146,6 @@ export const config = {
   // with no session, so a gated probe would 307 to /login and — since the check
   // now requires exactly 200 — mark a perfectly good container unhealthy.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/|api/health/).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/|api/health/|api/discord/card/).*)',
   ],
 };

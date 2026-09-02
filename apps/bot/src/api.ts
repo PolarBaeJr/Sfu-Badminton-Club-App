@@ -656,3 +656,99 @@ export function clearFeedbackPost(
   const params = new URLSearchParams({ source, sourceId, guildId });
   return send<{ ok: true }>('DELETE', `/api/discord/feedback-relay?${params}`);
 }
+
+export interface ProfileLadderLine {
+  elo: number;
+  provisional: boolean;
+  wins: number;
+  losses: number;
+  streak: number;
+  rank: number;
+}
+
+export interface ProfilePayload {
+  id: string;
+  name: string;
+  handle: string | null;
+  avatarUrl: string | null;
+  bio: string | null;
+  status: string | null;
+  ranked: boolean;
+  doubles: ProfileLadderLine | null;
+  singles: ProfileLadderLine | null;
+  tournamentPoints: number | null;
+  awards: { label: string; glyph?: string | null }[];
+}
+
+/** The app declining on purpose — not a fault. See fetchProfile. */
+export type ProfileMiss =
+  | 'not_linked'
+  | 'target_unlinked'
+  | 'no_such_handle'
+  | 'not_found';
+
+export type ProfileResult =
+  | { profile: ProfilePayload; cardUrl: string }
+  | { miss: ProfileMiss };
+
+/**
+ * A member's profile card.
+ *
+ * Written out rather than routed through get() for two reasons. The 404s are
+ * the app declining on purpose — "you haven't linked", "no such handle" — and
+ * get() turns every non-ok status into the same AppApiError, which would tell a
+ * member the club app was down when they had simply mistyped a handle. And the
+ * card's URL has to be built against APP_PUBLIC_URL: Discord's CDN fetches the
+ * image from outside the cluster, so the in-cluster APP_API_URL it would
+ * otherwise inherit is unreachable. Same split, and the same reason, as
+ * mintLinkToken.
+ *
+ * Both Discord ids travel as HEADERS. Ids in a URL end up in the access log.
+ */
+export async function fetchProfile(
+  callerId: string | null,
+  target: { discordUserId?: string | null; handle?: string | null }
+): Promise<ProfileResult> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  const publicBase = process.env.APP_PUBLIC_URL;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+  if (!publicBase) throw new AppApiError('APP_PUBLIC_URL is not set');
+
+  const path = target.handle
+    ? `/api/discord/profile?${new URLSearchParams({ handle: target.handle })}`
+    : '/api/discord/profile';
+
+  const response = await fetch(new URL(path, base), {
+    headers: {
+      authorization: `Bearer ${secret}`,
+      ...(callerId ? { 'x-discord-user-id': callerId } : {}),
+      ...(target.discordUserId ? { 'x-discord-target-id': target.discordUserId } : {}),
+    },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+
+  if (response.status === 404) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    const miss = body?.error;
+    return {
+      miss:
+        miss === 'not_linked' ||
+        miss === 'target_unlinked' ||
+        miss === 'no_such_handle'
+          ? miss
+          : 'not_found',
+    };
+  }
+
+  if (!response.ok) {
+    throw new AppApiError(`GET /api/discord/profile -> ${response.status}`);
+  }
+
+  const body = (await response.json()) as { profile: ProfilePayload; cardToken: string };
+  return {
+    profile: body.profile,
+    cardUrl: new URL(`/api/discord/card/${body.cardToken}`, publicBase).toString(),
+  };
+}
