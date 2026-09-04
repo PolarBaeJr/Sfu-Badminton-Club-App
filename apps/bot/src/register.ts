@@ -7,6 +7,12 @@ import { COMMAND_DEFINITIONS } from './commands.js';
 // can take up to an hour to propagate the first time, which is worth knowing
 // before concluding a deploy failed.
 //
+// `autocomplete: true` IS PART OF THE STORED DEFINITION, not something the bot
+// decides at runtime. Deploying the handler alone changes nothing: Discord will
+// not send an autocomplete interaction for an option it has not been told is
+// one, so /profile's handle picker stays inert until this runs again — and then
+// for up to an hour more while the global registration propagates.
+//
 // Run manually: `npm run register -w bot`
 async function main() {
   const token = process.env.DISCORD_BOT_TOKEN;

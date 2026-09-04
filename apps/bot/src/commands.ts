@@ -4,6 +4,7 @@ import {
   AppApiError,
   clearRevocations,
   deleteLink,
+  fetchCard,
   fetchLeaderboard,
   fetchProfile,
   fetchSelfRoles,
@@ -16,6 +17,7 @@ import {
   AlreadyLinkedError,
   mintLinkToken,
   writeGuildConfig,
+  type CardFile,
   type FeedbackKind,
   type SessionSummary,
   type TournamentSummary,
@@ -23,6 +25,7 @@ import {
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
+import { loadHandles, matchHandles } from './handles.js';
 import { type ManagedRole } from './roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
@@ -132,6 +135,10 @@ export const COMMAND_DEFINITIONS = [
         name: 'handle',
         description: 'Club handle, for a member who has not linked Discord',
         required: false,
+        // The `member` option above cannot have this: Discord populates a USER
+        // option from the server's own member list and only accepts
+        // autocomplete on STRING, INTEGER and NUMBER.
+        autocomplete: true,
       },
     ],
   },
@@ -379,6 +386,13 @@ export interface CommandOption {
    */
   options?: CommandOption[];
   type?: number;
+  /**
+   * AUTOCOMPLETE ONLY: which slot the cursor is in.
+   *
+   * Discord marks exactly one, and it is sent even when nothing has been typed
+   * yet — that first empty-value call is how the picker opens.
+   */
+  focused?: boolean;
 }
 
 /** The chosen subcommand and its arguments, for a command that has any. */
@@ -464,6 +478,33 @@ export async function handleLeaderboard(options: CommandOption[] | undefined) {
   });
 }
 
+// Discord abandons an interaction that has not been answered in three seconds
+// and tells the member the application did not respond. Everything /profile
+// does has to fit inside this, which is set under the real limit to leave room
+// for encoding and writing the reply.
+const PROFILE_BUDGET_MS = 2600;
+
+// Below this there is not enough left for a fetch to finish, and starting one
+// anyway only delays the fallback by the time it takes to time out.
+const MIN_CARD_FETCH_MS = 400;
+
+// A CEILING AS WELL AS A FLOOR, because the two failures are not symmetric: a
+// card that does not arrive has the URL fallback right below, and a missed
+// Discord deadline has nothing. A read that succeeds at the last millisecond
+// still leaves a multipart body to encode and write, so the read is not allowed
+// to consume the whole remainder.
+//
+// 1800 IS MEASURED, NOT GUESSED. Timed from inside the staging bot container on
+// the Pi, four consecutive fetches of a real card: 1046, 945, 611, 631ms. Every
+// one of those is a fresh render -- nothing between the bot and the app caches
+// this, so the route's own cache-control never comes into play here -- which
+// makes ~1050ms the honest worst case rather than a cold-start outlier. A
+// ceiling of 1200 sat 150ms above that, so an ordinary slow render would have
+// dropped to the URL fallback intermittently, looking like the feature was
+// broken at random. Raising it to 1800 keeps ~800ms of the budget in reserve
+// for encoding and writing the reply, which is far more than an 85KB body needs.
+const MAX_CARD_FETCH_MS = 1800;
+
 /**
  * A member's profile card.
  *
@@ -471,23 +512,36 @@ export async function handleLeaderboard(options: CommandOption[] | undefined) {
  * the club ladder already publishes about the member, and the point of the
  * command is that somebody can post their card into a channel.
  *
- * THE CARD ITSELF IS A PNG THE APP RENDERS, reached through a signed URL the
- * app minted for this reply. The bot does not draw it and does not know the
- * numbers on it; it is handed a URL and puts it in an embed. That keeps the
- * card's visibility rules in the same place as every other rule this bot
- * renders — the app — rather than splitting them across two codebases.
+ * THE CARD ITSELF IS A PNG THE APP RENDERS. The bot fetches its bytes and
+ * uploads them, but it still does not draw the card and does not know the
+ * numbers on it — the app decides both, which keeps the card's visibility rules
+ * in the same place as every other rule this bot renders rather than splitting
+ * them across two codebases.
  *
- * The four misses below are the app declining on purpose, and each one sends
- * the member somewhere different. Collapsing them into "something went wrong"
- * would leave someone who mistyped a handle waiting for an outage to end.
+ * UPLOADED RATHER THAN LINKED. An embed's `image.url` makes Discord's CDN fetch
+ * the card itself, from outside the cluster, and the signed URL it would be
+ * fetching expires — so the picture goes missing from a message that stays in
+ * the channel. Uploading the bytes hands Discord a file it owns and stores, and
+ * it also removes the embed frame the card was never designed to sit inside.
+ *
+ * NOT DEFERRED, deliberately. index.ts defers every command ephemerally, and a
+ * deferred /profile would therefore be visible only to the caller — which is
+ * the one property this command exists to not have. Making the deferral public
+ * instead would publish the four misses below, each of which is ephemeral on
+ * purpose.
+ *
+ * The four misses are the app declining on purpose, and each one sends the
+ * member somewhere different. Collapsing them into "something went wrong" would
+ * leave someone who mistyped a handle waiting for an outage to end.
  */
 export async function handleProfile(
   options: CommandOption[] | undefined,
   context: InteractionContext
-) {
+): Promise<BotResponse> {
   const member = option(options, 'member');
   const handle = option(options, 'handle');
 
+  const started = Date.now();
   const result = await fetchProfile(context.discordUserId, {
     discordUserId: member ? String(member) : null,
     handle: handle ? String(handle) : null,
@@ -519,23 +573,78 @@ export async function handleProfile(
   const p = result.profile;
   const provisional = !!(p.doubles?.provisional || p.singles?.provisional);
 
-  return reply({
-    color: CLUB_RED,
-    // The name is on the card. Repeating it as a title would print it twice in
-    // the same block; the embed carries only what the image cannot.
-    ...(p.bio
-      ? { description: p.bio.length > 240 ? `${p.bio.slice(0, 237)}...` : p.bio }
-      : {}),
-    image: { url: result.cardUrl },
-    ...(provisional
-      ? {
-          // Same footnote /leaderboard prints, for the same reason: a rating
-          // shown without it reads as settled when it is not, and in a channel
-          // that misreading outlives the message.
-          footer: { text: '* rating still provisional' },
-        }
-      : {}),
-  });
+  const lines: string[] = [];
+  // The name is on the card. Repeating it would print it twice in the same
+  // block; the message carries only what the image cannot.
+  if (p.bio) lines.push(p.bio.length > 240 ? `${p.bio.slice(0, 237)}...` : p.bio);
+  // LOAD-BEARING, not decoration. The card itself draws the asterisk, so
+  // dropping this line leaves an unexplained `*` on an image Discord caches
+  // publicly and forever — and a rating shown without the footnote reads as
+  // settled when it is not.
+  if (provisional) lines.push('* rating still provisional');
+  const content = lines.join('\n\n');
+
+  const remaining = PROFILE_BUDGET_MS - (Date.now() - started);
+  const card =
+    remaining >= MIN_CARD_FETCH_MS
+      ? await fetchCard(result.cardUrl, Math.min(remaining, MAX_CARD_FETCH_MS))
+      : null;
+
+  if (card) {
+    return {
+      type: 4,
+      data: {
+        // Omitted entirely rather than sent empty: this branch has no fallback
+        // left if Discord refuses the body.
+        ...(content ? { content } : {}),
+        // Both halves of the pair, and the filename taken from the file rather
+        // than written out again. Discord accepts a declaration that does not
+        // match the part with a 200 and renders the message with no image at
+        // all — the same silent half-success postMessageWithFile guards.
+        attachments: [{ id: 0, filename: card.filename }],
+      },
+      file: card,
+    };
+  }
+
+  // The bytes did not arrive in time. The URL still resolves for whoever opens
+  // it, so the reply degrades to a link rather than to an apology.
+  return {
+    type: 4,
+    data: { content: [content, result.cardUrl].filter(Boolean).join('\n') },
+  };
+}
+
+/**
+ * The handle picker behind /profile.
+ *
+ * READS THE FOCUSED OPTION, not the one named 'handle'. Discord says which slot
+ * the cursor is in, and it sends the option with an empty value the moment the
+ * picker opens — matching by name would answer the wrong slot as soon as a
+ * second autocompleting option is added, and would look like a picker that
+ * suggests nothing.
+ *
+ * The value of a choice is the BARE HANDLE, because it lands straight in the
+ * option handleProfile passes to fetchProfile. Anything decorative in there
+ * becomes a lookup for a handle nobody has.
+ */
+export async function handleProfileAutocomplete(
+  options: CommandOption[] | undefined
+): Promise<BotResponse> {
+  const focused = options?.find((o) => o.focused);
+  const hits = matchHandles(await loadHandles(), String(focused?.value ?? ''));
+
+  return {
+    type: 8,
+    data: {
+      choices: hits.map((h) => ({
+        // Discord refuses a choice name over 100 characters, and refusing it
+        // takes the whole response down rather than that one row.
+        name: `${h.name} (@${h.handle})`.slice(0, 100),
+        value: h.handle,
+      })),
+    },
+  };
 }
 
 function formatSession(s: SessionSummary) {
@@ -1434,11 +1543,25 @@ export function isSelfRoleButton(customId: string | undefined | null): boolean {
   return typeof customId === 'string' && customId.startsWith(SELF_ROLE_PREFIX);
 }
 
+/**
+ * What a handler answers Discord with.
+ *
+ * `file` is a SIDECAR and is never part of the JSON body. index.ts splits it
+ * off and writes a multipart response when it is set; leaving it on would
+ * JSON.stringify the raw bytes into the payload, which Discord accepts as a
+ * message with a very large content field.
+ */
+export interface BotResponse {
+  type: number;
+  data?: Record<string, unknown>;
+  file?: CardFile;
+}
+
 export async function dispatch(
   name: string,
   options: CommandOption[] | undefined,
   context: InteractionContext = { discordUserId: null, guildId: null }
-) {
+): Promise<BotResponse> {
   try {
     switch (name) {
       case 'leaderboard':

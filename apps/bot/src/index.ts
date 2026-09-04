@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import {
   DEFERRED_COMMANDS,
   dispatch,
+  handleProfileAutocomplete,
   handleReportModal,
   handleSelfRoleButton,
   isReportModal,
@@ -14,6 +15,8 @@ import {
   type ResolvedAttachment,
 } from './commands.js';
 import { DiscordApi, editDeferredReply } from './discord-api.js';
+import { warmHandles } from './handles.js';
+import { sendMultipart } from './multipart.js';
 import { reconcile } from './reconcile.js';
 import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
@@ -29,6 +32,12 @@ const PORT = Number(process.env.PORT ?? 3002);
 // Discord will not POST a body larger than this, so anything bigger is not
 // Discord. Cap it rather than buffering whatever arrives.
 const MAX_BODY_BYTES = 256 * 1024;
+
+// How long the autocomplete branch will wait on a cold handle cache before
+// answering with nothing. Well under Discord's three seconds, because losing
+// this race costs one keystroke's suggestions and missing the deadline costs
+// the member an error.
+const AUTOCOMPLETE_BUDGET_MS = 1_000;
 
 function send(res: ServerResponse, status: number, body: unknown) {
   const payload = JSON.stringify(body);
@@ -444,6 +453,13 @@ const server = createServer(async (req, res) => {
     }
 
     const response = await dispatch(interaction.data.name, interaction.data.options, context);
+    if (response.file) {
+      // The file is SPLIT OFF, never passed through. send() would
+      // JSON.stringify it, and a serialised byte array is a payload Discord
+      // accepts as a message with a colossal content field.
+      const { file, ...payload } = response;
+      return sendMultipart(res, 200, payload, file);
+    }
     return send(res, 200, response);
   }
 
@@ -536,6 +552,35 @@ const server = createServer(async (req, res) => {
     return send(res, 200, { type: 6 });
   }
 
+  // APPLICATION_COMMAND_AUTOCOMPLETE — the /profile handle picker, refiring on
+  // every keystroke.
+  //
+  // CANNOT BE DEFERRED. Type 8 within about three seconds is the only valid
+  // answer there is, and the fall-through below would reply type 1, which the
+  // picker renders as "loading options failed".
+  //
+  // So the cold-cache read races a timer and empty choices win it. A picker
+  // that suggests nothing for one keystroke is invisible; a missed deadline is
+  // an error the member sees.
+  if (interaction.type === 4 && interaction.data) {
+    const options = interaction.data.options;
+    try {
+      const answered = await Promise.race([
+        handleProfileAutocomplete(options),
+        new Promise<{ type: number; data: { choices: [] } }>((resolve) =>
+          setTimeout(() => resolve({ type: 8, data: { choices: [] } }), AUTOCOMPLETE_BUDGET_MS)
+        ),
+      ]);
+      return send(res, 200, answered);
+    } catch (error) {
+      // The whole branch, because createServer's handler has no outer catch: a
+      // throw escaping here writes no response at all and raises an unhandled
+      // rejection in the process.
+      console.error('[bot] autocomplete failed:', error);
+      return send(res, 200, { type: 8, data: { choices: [] } });
+    }
+  }
+
   // Unknown interaction type — acknowledge rather than erroring, so a future
   // Discord type does not surface to users as a broken bot.
   return send(res, 200, { type: 1 });
@@ -556,6 +601,11 @@ server.listen(PORT, '0.0.0.0', () => {
   } else {
     console.log('[bot] no DISCORD_BOT_TOKEN — gateway disabled, bot will show offline');
   }
+
+  // Filled now rather than on the first keystroke: an autocomplete cannot be
+  // deferred, so a cold cache spends the member's whole budget on a fetch.
+  // Non-fatal, like loadConfig below — the picker simply pays for it later.
+  warmHandles();
 
   // Where config comes from, said once. The guild map and audit channel are
   // read from the database at runtime now, so the env vars are only the
