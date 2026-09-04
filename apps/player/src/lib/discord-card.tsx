@@ -42,10 +42,17 @@ export const W = 1000;
  * Unranked: 32 top + 106 hero + 22 + 132 panel + 31 rail + 26 bottom = 349.
  * Ranked:   that, + 12 + 156 for the recent/rival row               = 517.
  *
- * The few pixels over each total are deliberate slack: a font's real line box
- * is a little taller than its size, and being short is the failure that cannot
- * be seen from a passing test. discord-card-render.test.ts draws every shape
- * and checks the PNG came back the size it asked for.
+ * THE CONSTANTS ARE EACH 7 MORE THAN THAT SUM, on purpose: 349 + 7 = 356 and
+ * 517 + 7 = 524. A font's real line box is a little taller than its nominal
+ * size, so the blocks measure fractionally over their nominal heights, and
+ * being short is the failure that loses information rather than merely looking
+ * untidy. Do not "correct" 356 down to 349 -- that reintroduces the crop.
+ *
+ * discord-card-render.test.ts draws every shape and checks that nothing was
+ * cropped at the bottom edge. It CANNOT see the opposite mistake: an over-tall
+ * constant leaves dead black above the rail, which no assertion here detects,
+ * so run that test with CARD_RENDER_OUT set and look at the images whenever
+ * these numbers change.
  */
 export const H = 356;
 
