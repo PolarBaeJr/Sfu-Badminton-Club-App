@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Users } from 'lucide-react';
-import { createServerSupabaseClient, getViewer, getExecutives } from '@/lib/supabase-server';
+import { getViewer, getExecutives } from '@/lib/supabase-server';
 import { AvatarChip } from '@badminton/ui';
 import { ExecBioEditor } from './exec-bio-editor';
 
@@ -54,13 +54,14 @@ function countWord(n: number) {
 export default async function ExecPage() {
   const execs = await getExecutives();
 
-  // Only to choose the back link. getViewer() would be the wrong tool:
-  // it reads the whole players row through the service-role client, and this
-  // page needs to know nothing about the visitor beyond whether Me exists for
-  // them. A signed-out visitor arrives here from the landing page, and '← ME'
-  // would walk them into a login wall.
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // WHO IS LOOKING — for two unrelated decisions below. Both read the ONE
+  // getViewer() the root layout has already made this request, so neither costs
+  // anything. This used to be a bespoke auth.getUser() here, which was a second
+  // GoTrue round trip on what the request budget says is its dearest call.
+  //
+  // A signed-out visitor arrives here from the landing page, and '← ME' would
+  // walk them into a login wall — hence the two different back links.
+  const { user, player: me } = await getViewer();
   const back = user ? { href: '/my-stats', label: '← ME' } : { href: '/', label: '← HOME' };
 
   // WHICH CARD, IF ANY, BELONGS TO THE PERSON LOOKING AT IT — the one officer
@@ -68,21 +69,12 @@ export default async function ExecPage() {
   // else, which is every signed-out visitor, every ordinary member, and every
   // officer looking at a colleague.
   //
-  // getViewer() is a service-role read of the whole row, so it is called
-  // ONLY inside this branch: the comment above is about not walking a
-  // signed-out visitor into a login wall, and the same reasoning says not to
-  // run a privileged read for a stranger who cannot possibly own a card here.
-  //
   // `is_exec`, not hasConsoleAccess(): the test has to match the function's own
   // `is_exec AND active_flag` filter, or a varsity trainer — who has console
   // access and is on no public page — would be handed an editor for a card that
   // does not exist. Matching an id against the returned rows is what enforces
   // active_flag, since an inactive officer is not in `execs` at all.
-  let viewerExecId: string | null = null;
-  if (user) {
-    const { player: me } = await getViewer();
-    viewerExecId = me?.is_exec ? (me.id as string) : null;
-  }
+  const viewerExecId = me?.is_exec ? (me.id as string) : null;
 
   // get_executives() orders alphabetically by title — `ORDER BY (exec_title IS
   // NULL), exec_title, name` — which puts Marketing above President and reads
