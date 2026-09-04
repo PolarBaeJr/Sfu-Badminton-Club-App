@@ -271,6 +271,23 @@ export function fetchLeaderboard(
   return get<LeaderboardPage>(`/api/discord/leaderboard?${params}`);
 }
 
+export interface ClubHandle {
+  handle: string;
+  name: string;
+}
+
+/**
+ * Every handle the ladder publishes, for the /profile picker.
+ *
+ * NAMES AND HANDLES ONLY. The route it calls reads the same ladder function the
+ * handle lookup itself reads, so the suggestions are exactly the set a member
+ * could already have found by typing — see the route for why that equivalence
+ * is the privacy argument and not a coincidence.
+ */
+export function fetchHandles(): Promise<{ members: ClubHandle[] }> {
+  return get<{ members: ClubHandle[] }>('/api/discord/handles');
+}
+
 /**
  * The schedule as THIS caller should see it.
  *
@@ -751,4 +768,53 @@ export async function fetchProfile(
     profile: body.profile,
     cardUrl: new URL(`/api/discord/card/${body.cardToken}`, publicBase).toString(),
   };
+}
+
+export interface CardFile {
+  filename: string;
+  contentType: string;
+  bytes: Uint8Array;
+}
+
+// A rendered card is tens of kilobytes. Anything approaching this is not one,
+// and buffering it would spend the rest of the interaction's budget on a body
+// that is going to be discarded.
+const MAX_CARD_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The rendered card as BYTES, so the reply can upload it instead of linking it.
+ *
+ * NEVER THROWS. A timeout, an expired card token, an HTML error page from
+ * something in front of the app — every one of them comes back as null, because
+ * the caller's answer to null is the URL fallback and an exception would sail
+ * past it into dispatch's generic "couldn't reach the club app". The whole
+ * point of the fallback is that it stays reachable.
+ *
+ * Takes its budget rather than using TIMEOUT_MS: by the time this runs the
+ * caller has already spent part of Discord's three seconds on fetchProfile, and
+ * what is left still has to cover encoding and writing the multipart body.
+ */
+export async function fetchCard(cardUrl: string, budgetMs: number): Promise<CardFile | null> {
+  try {
+    const response = await fetch(cardUrl, { signal: AbortSignal.timeout(budgetMs) });
+    if (!response.ok) return null;
+
+    // A proxy error page is a 200 whose body is HTML. Uploading it would attach
+    // a file Discord renders as a broken image, which reads as the card being
+    // wrong rather than the card never having arrived.
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.startsWith('image/')) return null;
+
+    // Checked twice on purpose: the header is absent on a chunked response, so
+    // it can only ever reject early, never authorise.
+    const declared = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > MAX_CARD_BYTES) return null;
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_CARD_BYTES) return null;
+
+    return { filename: 'card.png', contentType, bytes };
+  } catch {
+    return null;
+  }
 }
