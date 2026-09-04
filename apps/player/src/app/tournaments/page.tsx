@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import {
   CLUB_TIMEZONE,
   isDoublesEvent,
@@ -76,7 +76,7 @@ function one<T>(embed: unknown): T | null {
 
 export default async function TournamentsPage() {
   const supabase = await createServerSupabaseClient();
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   const todayKey = clubDayKey(new Date().toISOString(), CLUB_TIMEZONE);
 
   // Members see the season they are playing in. Same rule as the sessions list.
@@ -118,7 +118,7 @@ export default async function TournamentsPage() {
             'event:tournament_events(id, event_type, status, tournament:tournaments(id, name, start_date))',
           )
           // player.id is players.id — a UUID read from the verified session in
-          // getCurrentPlayer, never a caller-supplied string, so interpolating
+          // getViewer, never a caller-supplied string, so interpolating
           // it into the filter cannot carry anything but a uuid.
           .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
           .order('created_at', { ascending: false })

@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import {
   CLUB_TIMEZONE,
   MATCH_FORMAT_LABELS,
@@ -114,7 +114,7 @@ function Handle({ handle }: { handle: string | null }) {
 }
 
 export default async function FeedPage() {
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
@@ -507,7 +507,7 @@ export default async function FeedPage() {
         ? `From ${formatTime(nextSession.start_time)}`
         : null;
 
-  // The reader's own aggregate record. getCurrentPlayer() already selects
+  // The reader's own aggregate record. getViewer() already selects
   // `ratings(*)`, so this is free — no extra round trip, and no whole-club
   // get_leaderboard() fetch just to print one member's numbers. It is the
   // member's OWN row, so hide_from_leaderboard does not apply: that flag
@@ -854,7 +854,7 @@ export default async function FeedPage() {
           )}
 
           {/* YOUR RECORD ---------------------------------------------- */}
-          {/* Every figure here comes off the `ratings` row getCurrentPlayer()
+          {/* Every figure here comes off the `ratings` row getViewer()
               already loads. Deliberately NOT on this card:
               - ladder POSITION. Working it out means get_leaderboard(), which
                 fetches the whole club on a screen that does not otherwise need

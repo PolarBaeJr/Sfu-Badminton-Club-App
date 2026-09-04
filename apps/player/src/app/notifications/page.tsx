@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { CLUB_TIMEZONE, formatRelativeTime } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { BellOff } from 'lucide-react';
@@ -33,7 +33,7 @@ function metadataOf(n: { metadata: NotificationMetadata }): Record<string, unkno
 }
 
 export default async function NotificationsPage() {
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();

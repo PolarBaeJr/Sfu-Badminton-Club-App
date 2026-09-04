@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Users } from 'lucide-react';
-import { createServerSupabaseClient, getCurrentPlayer, getExecutives } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer, getExecutives } from '@/lib/supabase-server';
 import { AvatarChip } from '@badminton/ui';
 import { ExecBioEditor } from './exec-bio-editor';
 
@@ -54,7 +54,7 @@ function countWord(n: number) {
 export default async function ExecPage() {
   const execs = await getExecutives();
 
-  // Only to choose the back link. getCurrentPlayer() would be the wrong tool:
+  // Only to choose the back link. getViewer() would be the wrong tool:
   // it reads the whole players row through the service-role client, and this
   // page needs to know nothing about the visitor beyond whether Me exists for
   // them. A signed-out visitor arrives here from the landing page, and '← ME'
@@ -68,7 +68,7 @@ export default async function ExecPage() {
   // else, which is every signed-out visitor, every ordinary member, and every
   // officer looking at a colleague.
   //
-  // getCurrentPlayer() is a service-role read of the whole row, so it is called
+  // getViewer() is a service-role read of the whole row, so it is called
   // ONLY inside this branch: the comment above is about not walking a
   // signed-out visitor into a login wall, and the same reasoning says not to
   // run a privileged read for a stranger who cannot possibly own a card here.
@@ -80,7 +80,7 @@ export default async function ExecPage() {
   // active_flag, since an inactive officer is not in `execs` at all.
   let viewerExecId: string | null = null;
   if (user) {
-    const me = await getCurrentPlayer();
+    const { player: me } = await getViewer();
     viewerExecId = me?.is_exec ? (me.id as string) : null;
   }
 

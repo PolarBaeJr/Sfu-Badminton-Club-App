@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { getCheckinSettings } from '@/lib/checkin-settings';
 import {
   CLUB_TIMEZONE,
@@ -46,7 +46,7 @@ const PAST_STATE_LABEL: Partial<Record<MyState, { text: string; tone: string }>>
 };
 
 export default async function SessionsPage() {
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
   // The schedule stays visible for everyone — knowing when the club plays is
   // not a privilege. RsvpButtons/CheckInButton read the same standing from

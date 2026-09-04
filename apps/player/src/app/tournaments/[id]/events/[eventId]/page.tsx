@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import {
   formatDate,
   isDoublesEvent,
@@ -177,7 +177,7 @@ export default async function EventDetailPage({
 
   const allMatches = matches as Array<Record<string, unknown>>;
 
-  const currentPlayer = await getCurrentPlayer();
+  const { player: currentPlayer } = await getViewer();
   // `paired` is the discriminator; `partnerName` is display only and may be
   // null even for a real pair, so nothing branches on it.
   let playerRegistration: { status: string; paired: boolean; partnerName?: string | null } | null = null;

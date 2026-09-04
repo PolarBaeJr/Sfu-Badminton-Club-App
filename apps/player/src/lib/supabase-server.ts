@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { cache } from 'react';
 import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
 
@@ -90,10 +91,16 @@ export async function getExecutives(): Promise<{
   return data ?? [];
 }
 
-export async function getCurrentPlayer() {
+// THE ONE `players` QUERY THE WHOLE REQUEST SHARES. Written once because the
+// entire point of getViewer() below is that its request and getCurrentPlayer()'s
+// are byte-identical; two column lists that drift apart are two round trips
+// again, and nothing anywhere would say so.
+const PLAYER_SELECT = '*, ratings(*), waiver_acceptances(document, version, accepted_at)';
+
+async function loadViewer() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) return { user: null, player: null };
 
   // Service role for the full row: migration 00032 revokes blanket SELECT on
   // players, and a column grant denies select('*') even on your own row. This
@@ -101,9 +108,49 @@ export async function getCurrentPlayer() {
   // anything the caller supplies — it can only ever return the caller's row.
   const { data: player } = await createServiceRoleClient()
     .from('players')
-    .select('*, ratings(*), waiver_acceptances(document, version, accepted_at)')
+    .select(PLAYER_SELECT)
     .eq('user_id', user.id)
     .maybeSingle();
 
-  return player;
+  return { user, player: player ?? null };
 }
+
+/**
+ * The caller's own player row, read FRESH every call.
+ *
+ * Deliberately not cached, and that is not an oversight — see getViewer() below
+ * for the cached one. completeOnboarding() calls this a second time immediately
+ * after inserting the row, specifically to pick up the id it just created
+ * ("Re-fetch for the freshly created row's id", actions/profile.ts). A
+ * request-scoped cache would hand that call the pre-insert `null`, and the
+ * acceptances, the passkey record and the skill tier would all be skipped in
+ * silence. Server actions and route handlers use this one.
+ */
+export async function getCurrentPlayer() {
+  return (await loadViewer()).player;
+}
+
+/**
+ * THE SAME READ, ONCE PER REQUEST — for Server Components only.
+ *
+ * The root layout and the page rendering under it both need the viewer, and
+ * before this they each fetched it: the layout with its own named column list,
+ * the page through getCurrentPlayer()'s `select('*')`. Different URLs, so Next's
+ * fetch memoization could not collapse them — prod's Kong log carried both
+ * shapes side by side — and every authenticated navigation paid for two
+ * `players` reads and two /auth/v1/user round trips where one would do.
+ *
+ * react cache() is scoped to the request, so whichever of the two runs first
+ * fills it and the other hits it. That is safe HERE and nowhere else: rendering
+ * never mutates, so there is no write for a cached read to be stale against. A
+ * server action does mutate, which is exactly why it keeps getCurrentPlayer().
+ * When Next follows an action with a re-render in the same request the action
+ * has already finished before anything here is called, so what lands in the
+ * cache is the post-mutation row.
+ *
+ * `user` comes back alongside `player` because they answer different questions.
+ * A member with a live session but no players row is authenticated — the layout
+ * has always shown them signed-in chrome — and collapsing this to `player !==
+ * null` would sign them out halfway through onboarding.
+ */
+export const getViewer = cache(loadViewer);

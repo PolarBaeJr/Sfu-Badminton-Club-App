@@ -26,6 +26,13 @@ export default async function PostLoginPage({
   } = await (await createServerSupabaseClient()).auth.getUser();
   if (user) await ensurePlayerRowForUser(user.id);
 
+  // getCurrentPlayer(), NOT getViewer(), and this is the one page where that
+  // distinction decides the outcome. ensurePlayerRowForUser() above may have
+  // just CREATED the row, and the root layout has already rendered by now — so
+  // the request-scoped cache getViewer() reads from was filled before the
+  // insert, with player: null. Through getViewer() a member claiming their row
+  // on first sign-in would be sent to /onboarding on the strength of a lookup
+  // that ran before the row existed.
   const player = await getCurrentPlayer();
   // Not just a missing profile: a row can exist with setup unfinished (the
   // signup function inserts it with onboarding_completed FALSE), and sending
