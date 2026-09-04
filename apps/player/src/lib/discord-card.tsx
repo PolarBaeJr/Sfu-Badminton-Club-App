@@ -18,15 +18,39 @@ import { formatStreak } from './ladder';
  * outputFileTracingIncludes in next.config.js -- nothing imports them, so
  * nothing traces them, and without that entry the route builds clean and 500s
  * on its first real request.
+ *
+ * THE LAYOUT IS A PANEL GRID, and the panels are the whole reason it reads as
+ * a card rather than as a page. Every figure sits in a bordered box that says
+ * what it is, so the eye lands on a value and finds its label without
+ * tracking; the previous flat rows left three big numbers floating over an
+ * empty field and a reader had to work out which was which. Panels also make
+ * the empty cases honest -- a member with no rival gets a panel that says so,
+ * where a flat line just went missing.
  */
 
 export const W = 1000;
-// 420 was the whole card when it carried only the three ladder figures, and it
-// is still the whole card for a member who has none. See cardHeight.
-export const H = 420;
 
-/** With the recent-form block and the rival/nights line under it. */
-export const H_WITH_FORM = 580;
+/**
+ * BOTH HEIGHTS ARE THE SUM OF THE BLOCKS, not round numbers.
+ *
+ * satori cannot size an image to its content, so the height is asserted here
+ * and the layout has to match it. Assert too little and the last row is cropped
+ * with no error anywhere; assert too much -- which is what 420/580 did -- and
+ * the card posts a band of empty black into the channel, because the rail is
+ * pinned to the bottom and nothing fills the gap above it.
+ *
+ * Unranked: 32 top + 106 hero + 22 + 132 panel + 31 rail + 26 bottom = 349.
+ * Ranked:   that, + 12 + 156 for the recent/rival row               = 517.
+ *
+ * The few pixels over each total are deliberate slack: a font's real line box
+ * is a little taller than its size, and being short is the failure that cannot
+ * be seen from a passing test. discord-card-render.test.ts draws every shape
+ * and checks the PNG came back the size it asked for.
+ */
+export const H = 356;
+
+/** With the recent-form block and the rival panel beside it. */
+export const H_WITH_FORM = 524;
 
 /**
  * How tall to draw THIS card.
@@ -41,10 +65,14 @@ export function cardHeight(profile: DiscordProfile): number {
   return profile.ranked ? H_WITH_FORM : H;
 }
 
-const INK = '#f0f0f0';
-const MUTE = '#8a8a8a';
+const INK = '#f2f2f2';
+const MUTE = '#8d8d8d';
+const FAINT = '#666666';
 const RED = '#cc0000';
 const LINE = 'rgba(255,255,255,0.10)';
+/** Panel fill and edge. Two values used everywhere, so a panel cannot drift. */
+const PANEL = 'rgba(255,255,255,0.045)';
+const PANEL_LINE = 'rgba(255,255,255,0.09)';
 
 // Read once per process rather than per request. The files are ~68KB each and
 // never change while the container lives.
@@ -95,6 +123,11 @@ function Background({ background, height }: { background: CardBackground; height
               background: RED,
             }}
           />
+          {/* Two washes rather than one. The corner glow gives the hero band a
+              light source so the avatar is not floating on flat black, and the
+              long diagonal keeps the bottom half from going dead -- a card is
+              mostly seen at thumbnail size, where an even field reads as an
+              image that failed to load. */}
           <div
             style={{
               position: 'absolute',
@@ -103,7 +136,18 @@ function Background({ background, height }: { background: CardBackground; height
               width: W,
               height,
               display: 'flex',
-              background: 'linear-gradient(120deg, rgba(204,0,0,0.16) 0%, rgba(10,10,10,0) 55%)',
+              background: 'radial-gradient(120% 90% at 6% 0%, rgba(204,0,0,0.30) 0%, rgba(10,10,10,0) 60%)',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: W,
+              height,
+              display: 'flex',
+              background: 'linear-gradient(160deg, rgba(255,255,255,0.05) 0%, rgba(10,10,10,0) 45%)',
             }}
           />
         </div>
@@ -147,48 +191,80 @@ export async function avatarDataUri(url: string | null): Promise<string | null> 
   }
 }
 
-function Stat({
+/**
+ * A section label. One definition, because there are now six of them and they
+ * have to be identical or the grid stops reading as a grid.
+ */
+function Label({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        fontFamily: 'Barlow',
+        fontWeight: 600,
+        fontSize: 14,
+        letterSpacing: 1.5,
+        color: FAINT,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+/**
+ * One figure in the stat row.
+ *
+ * `accent` marks the club's primary discipline so the row has a first item
+ * rather than four equal ones -- a red top edge and brighter ink, which is the
+ * whole of the emphasis. Nothing here is a different SIZE, because four panels
+ * of different heights stop being a grid.
+ */
+function StatPanel({
   label,
   value,
   sub,
   sub2,
+  accent,
   dim,
 }: {
   label: string;
   value: string;
   sub?: string | null;
-  /** Second muted line -- win rate and streak, which are per discipline. */
   sub2?: string | null;
+  accent?: boolean;
   dim?: boolean;
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 168 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        flex: 1,
+        height: 132,
+        padding: '14px 16px 0 16px',
+        background: PANEL,
+        border: `1px solid ${PANEL_LINE}`,
+        borderTop: accent ? `2px solid ${RED}` : `1px solid ${PANEL_LINE}`,
+      }}
+    >
+      <Label text={label} />
       <div
         style={{
-          fontFamily: 'Barlow',
-          fontWeight: 600,
-          fontSize: 15,
-          letterSpacing: 1.4,
-          color: MUTE,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
+          display: 'flex',
           fontFamily: 'Barlow Condensed',
           fontWeight: 700,
-          fontSize: 54,
-          lineHeight: 1,
+          fontSize: 50,
+          lineHeight: 1.12,
           color: dim ? MUTE : INK,
         }}
       >
         {value}
       </div>
-      <div style={{ display: 'flex', fontFamily: 'Barlow', fontWeight: 400, fontSize: 17, color: MUTE }}>
+      <div style={{ display: 'flex', fontFamily: 'Barlow', fontWeight: 400, fontSize: 16, color: MUTE }}>
         {sub ?? ' '}
       </div>
-      <div style={{ display: 'flex', fontFamily: 'Barlow', fontWeight: 400, fontSize: 17, color: MUTE }}>
+      <div style={{ display: 'flex', fontFamily: 'Barlow', fontWeight: 400, fontSize: 16, color: FAINT }}>
         {sub2 ?? ' '}
       </div>
     </div>
@@ -196,58 +272,88 @@ function Stat({
 }
 
 /**
- * The bottom rail — and the reserved home for awards.
+ * The headline rank, top right.
  *
- * IT IS NOT AN EMPTY ROW WAITING TO BE FILLED. The rail exists in its own right
- * as the card's footer, carrying the club line every card needs; awards fill it
- * from the right when there are any. So the empty case — which is the only case
- * that exists today — is not a gap, and the day awards ship the layout does not
- * change at all.
+ * THE BETTER OF THE TWO LADDERS, named. A card needs one figure the eye reaches
+ * first, and "#3 DOUBLES" is the only fact on here that is both a single number
+ * and worth boasting about -- the ratings themselves are already in the grid
+ * below, and repeating one of them at four times the size would just be louder,
+ * not clearer. Ties go to doubles, which is what the club mostly plays.
  */
-function Rail({ awards }: { awards: CardAward[] }) {
+function bestLadder(profile: DiscordProfile): { rank: number; label: string } | null {
+  const { doubles, singles } = profile;
+  if (!doubles && !singles) return null;
+  if (doubles && singles) {
+    return singles.rank < doubles.rank
+      ? { rank: singles.rank, label: 'SINGLES' }
+      : { rank: doubles.rank, label: 'DOUBLES' };
+  }
+  if (doubles) return { rank: doubles.rank, label: 'DOUBLES' };
+  return { rank: singles!.rank, label: 'SINGLES' };
+}
+
+function RankBadge({ rank, label }: { rank: number; label: string }) {
   return (
     <div
       style={{
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        borderTop: `1px solid ${LINE}`,
-        paddingTop: 14,
-        marginTop: 4,
+        justifyContent: 'center',
+        width: 132,
+        height: 106,
+        background: 'rgba(204,0,0,0.13)',
+        border: `1px solid rgba(204,0,0,0.45)`,
       }}
     >
       <div
         style={{
           display: 'flex',
-          fontFamily: 'Barlow',
-          fontWeight: 600,
-          fontSize: 15,
-          letterSpacing: 1.6,
-          color: MUTE,
+          fontFamily: 'Barlow Condensed',
+          fontWeight: 700,
+          fontSize: 58,
+          lineHeight: 1,
+          color: INK,
         }}
       >
-        SFU BADMINTON CLUB
+        {`#${rank}`}
       </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        {awards.slice(0, 4).map((a, i) => (
-          <div
-            key={i}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              border: `1px solid ${LINE}`,
-              padding: '5px 10px',
-              fontFamily: 'Barlow',
-              fontWeight: 600,
-              fontSize: 15,
-              color: INK,
-            }}
-          >
-            <div style={{ display: 'flex' }}>{a.label}</div>
-          </div>
-        ))}
+      <div
+        style={{
+          display: 'flex',
+          marginTop: 6,
+          fontFamily: 'Barlow',
+          fontWeight: 600,
+          fontSize: 13,
+          letterSpacing: 1.6,
+          color: '#e07070',
+        }}
+      >
+        {label}
       </div>
+    </div>
+  );
+}
+
+/** A small outlined tag — the handle and the moderation status. */
+function Chip({ text, tone }: { text: string; tone: 'quiet' | 'warn' }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        height: 26,
+        padding: '0 10px',
+        border: `1px solid ${tone === 'warn' ? 'rgba(204,0,0,0.55)' : LINE}`,
+        background: tone === 'warn' ? 'rgba(204,0,0,0.12)' : 'rgba(255,255,255,0.03)',
+        fontFamily: 'Barlow',
+        fontWeight: 600,
+        fontSize: 14,
+        letterSpacing: 1.1,
+        color: tone === 'warn' ? '#e58a8a' : MUTE,
+      }}
+    >
+      {text}
     </div>
   );
 }
@@ -268,14 +374,21 @@ function shortName(name: string): string {
   return `${parts[0]} ${last[0]}.`;
 }
 
-/** The opposing side, named if the card is allowed to name them. */
+/**
+ * The opposing side, named if the card is allowed to name them.
+ *
+ * The budget is 22 characters now, not 30: the recent block shares its row with
+ * the rival panel and lost about a third of its width. A name that does not fit
+ * is abbreviated, then dropped to a count -- never clipped, because satori
+ * clips by overflowing the box rather than by truncating the string.
+ */
 function opponentLine(opponents: string[]): string | null {
   const first = opponents[0];
   if (!first) return null;
   const full = opponents.join(', ');
-  if (full.length <= 30) return `vs ${full}`;
+  if (full.length <= 22) return `vs ${full}`;
   const short = opponents.map(shortName).join(', ');
-  if (short.length <= 30) return `vs ${short}`;
+  if (short.length <= 22) return `vs ${short}`;
   return `vs ${shortName(first)} +${opponents.length - 1}`;
 }
 
@@ -294,7 +407,7 @@ function opponentLine(opponents: string[]): string | null {
 function MatchRow({ match }: { match: CardMatch }) {
   const versus = opponentLine(match.opponents);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 14, height: 32 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 34 }}>
       <div
         style={{
           display: 'flex',
@@ -302,11 +415,11 @@ function MatchRow({ match }: { match: CardMatch }) {
           justifyContent: 'center',
           width: 26,
           height: 26,
-          background: match.won ? RED : '#1e1e1e',
-          border: `1px solid ${LINE}`,
+          background: match.won ? RED : 'rgba(255,255,255,0.05)',
+          border: `1px solid ${match.won ? RED : LINE}`,
           fontFamily: 'Barlow',
           fontWeight: 600,
-          fontSize: 16,
+          fontSize: 15,
           color: match.won ? '#ffffff' : MUTE,
         }}
       >
@@ -315,11 +428,11 @@ function MatchRow({ match }: { match: CardMatch }) {
       <div
         style={{
           display: 'flex',
-          width: 18,
+          width: 14,
           fontFamily: 'Barlow',
           fontWeight: 600,
-          fontSize: 16,
-          color: MUTE,
+          fontSize: 15,
+          color: FAINT,
         }}
       >
         {match.type === 'doubles' ? 'D' : 'S'}
@@ -327,10 +440,10 @@ function MatchRow({ match }: { match: CardMatch }) {
       <div
         style={{
           display: 'flex',
-          width: 260,
+          width: 218,
           fontFamily: 'Barlow',
           fontWeight: 600,
-          fontSize: 20,
+          fontSize: 19,
           color: INK,
         }}
       >
@@ -341,7 +454,7 @@ function MatchRow({ match }: { match: CardMatch }) {
           display: 'flex',
           fontFamily: 'Barlow',
           fontWeight: 400,
-          fontSize: 19,
+          fontSize: 17,
           color: MUTE,
         }}
       >
@@ -358,68 +471,182 @@ function MatchRow({ match }: { match: CardMatch }) {
  * only ever played casually without a result being entered -- and the block
  * says so in the same voice the Unranked block uses.
  */
-function RecentForm({ recent }: { recent: CardMatch[] }) {
+function RecentPanel({ recent }: { recent: CardMatch[] }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div
-        style={{
-          display: 'flex',
-          fontFamily: 'Barlow',
-          fontWeight: 600,
-          fontSize: 15,
-          letterSpacing: 1.4,
-          color: MUTE,
-        }}
-      >
-        RECENT
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        flex: 1,
+        height: 156,
+        padding: '14px 16px',
+        background: PANEL,
+        border: `1px solid ${PANEL_LINE}`,
+      }}
+    >
+      <Label text="RECENT" />
+      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 6 }}>
+        {recent.length > 0 ? (
+          recent.map((m, i) => <MatchRow key={i} match={m} />)
+        ) : (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              height: 34,
+              fontFamily: 'Barlow',
+              fontWeight: 400,
+              fontSize: 18,
+              color: MUTE,
+            }}
+          >
+            No matches on the record yet
+          </div>
+        )}
       </div>
-      {recent.length > 0 ? (
-        recent.map((m, i) => <MatchRow key={i} match={m} />)
+    </div>
+  );
+}
+
+/**
+ * The rival, as a panel rather than a line.
+ *
+ * It used to sit in a bare label/value row under recent form, where "none yet"
+ * read as something missing from the card. A panel that is present and says
+ * "none yet" reads as an answer -- and it gives the recent block a right-hand
+ * edge to end against, which is what stops three match rows of different
+ * lengths looking ragged.
+ */
+function RivalPanel({ rival }: { rival: DiscordProfile['rival'] }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: 268,
+        height: 156,
+        padding: '14px 16px',
+        background: PANEL,
+        border: `1px solid ${PANEL_LINE}`,
+      }}
+    >
+      <Label text="RIVAL" />
+      {rival ? (
+        <div style={{ display: 'flex', flexDirection: 'column', marginTop: 10 }}>
+          <div
+            style={{
+              display: 'flex',
+              fontFamily: 'Barlow Condensed',
+              fontWeight: 700,
+              // The panel is 268px wide with 32px of padding. Barlow Condensed
+              // at 34px runs about 15 characters in what is left, so a longer
+              // name steps down once and then abbreviates -- the same rule the
+              // member's own name follows in the hero.
+              fontSize: rival.name.length > 15 ? 26 : 34,
+              lineHeight: 1.15,
+              color: INK,
+            }}
+          >
+            {rival.name.length > 20 ? shortName(rival.name) : rival.name}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              marginTop: 8,
+              fontFamily: 'Barlow Condensed',
+              fontWeight: 700,
+              fontSize: 40,
+              lineHeight: 1,
+              color: rival.wins >= rival.losses ? INK : MUTE,
+            }}
+          >
+            {`${rival.wins}-${rival.losses}`}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              marginTop: 4,
+              fontFamily: 'Barlow',
+              fontWeight: 400,
+              fontSize: 15,
+              color: FAINT,
+            }}
+          >
+            {rival.wins >= rival.losses ? 'ahead in the series' : 'behind in the series'}
+          </div>
+        </div>
       ) : (
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            height: 32,
+            marginTop: 10,
+            height: 34,
             fontFamily: 'Barlow',
             fontWeight: 400,
-            fontSize: 19,
+            fontSize: 18,
             color: MUTE,
           }}
         >
-          No matches on the record yet
+          Nobody played twice yet
         </div>
       )}
     </div>
   );
 }
 
-/** A small label/value pair for the line under recent form. */
-function Meta({ label, value }: { label: string; value: string }) {
+/**
+ * The bottom rail — and the reserved home for awards.
+ *
+ * IT IS NOT AN EMPTY ROW WAITING TO BE FILLED. The rail exists in its own right
+ * as the card's footer, carrying the club line every card needs; awards fill it
+ * from the right when there are any. So the empty case — which is the only case
+ * that exists today — is not a gap, and the day awards ship the layout does not
+ * change at all.
+ */
+function Rail({ awards }: { awards: CardAward[] }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 'auto',
+        borderTop: `1px solid ${LINE}`,
+        paddingTop: 13,
+      }}
+    >
       <div
         style={{
           display: 'flex',
           fontFamily: 'Barlow',
           fontWeight: 600,
-          fontSize: 15,
-          letterSpacing: 1.4,
-          color: MUTE,
+          fontSize: 14,
+          letterSpacing: 1.7,
+          color: FAINT,
         }}
       >
-        {label}
+        SFU BADMINTON CLUB
       </div>
-      <div
-        style={{
-          display: 'flex',
-          fontFamily: 'Barlow',
-          fontWeight: 600,
-          fontSize: 20,
-          color: INK,
-        }}
-      >
-        {value}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        {awards.slice(0, 4).map((a, i) => (
+          <div
+            key={i}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              border: `1px solid ${LINE}`,
+              padding: '4px 10px',
+              fontFamily: 'Barlow',
+              fontWeight: 600,
+              fontSize: 14,
+              color: INK,
+            }}
+          >
+            <div style={{ display: 'flex' }}>{a.label}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -440,7 +667,7 @@ function winRate(w: number, l: number): string | null {
 /** Win rate and streak, the two figures already in the payload and unused. */
 function formLine(w: number, l: number, streak: number): string | null {
   const parts = [winRate(w, l), formatStreak(streak)?.label].filter(Boolean);
-  return parts.length > 0 ? parts.join(' \u00b7 ') : null;
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 function record(w: number, l: number) {
@@ -450,6 +677,7 @@ function record(w: number, l: number) {
 export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: string | null }) {
   const { doubles, singles } = profile;
   const height = cardHeight(profile);
+  const best = profile.ranked ? bestLadder(profile) : null;
 
   return (
     <div style={{ position: 'relative', display: 'flex', width: W, height }}>
@@ -462,23 +690,24 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
           flexDirection: 'column',
           width: W,
           height,
-          padding: '38px 44px 30px 52px',
-          justifyContent: 'space-between',
+          padding: '32px 40px 26px 50px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 26 }}>
+        {/* HERO. The avatar, who they are, and the one figure the eye should
+            reach first. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 24, height: 106 }}>
           {avatar ? (
             <img
               src={avatar}
-              width={124}
-              height={124}
-              style={{ width: 124, height: 124, objectFit: 'cover', border: `1px solid ${LINE}` }}
+              width={106}
+              height={106}
+              style={{ width: 106, height: 106, objectFit: 'cover', border: `1px solid ${LINE}` }}
             />
           ) : (
             <div
               style={{
-                width: 124,
-                height: 124,
+                width: 106,
+                height: 106,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -486,7 +715,7 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
                 border: `1px solid ${LINE}`,
                 fontFamily: 'Barlow Condensed',
                 fontWeight: 700,
-                fontSize: 52,
+                fontSize: 46,
                 color: MUTE,
               }}
             >
@@ -494,16 +723,18 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
             </div>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
             <div
               style={{
+                display: 'flex',
                 fontFamily: 'Barlow Condensed',
                 fontWeight: 700,
                 // satori supports neither text-overflow nor a fitted size, and
                 // the card is a fixed 1000px -- so a long name is stepped down
-                // by hand. Barlow Condensed at 62px runs about 26 characters
-                // in the space beside the avatar.
-                fontSize: profile.name.length > 34 ? 40 : profile.name.length > 26 ? 50 : 62,
+                // by hand. The rank badge took 156px off this line, so the
+                // thresholds are tighter than they were: Barlow Condensed at
+                // 58px runs about 22 characters in what is left.
+                fontSize: profile.name.length > 30 ? 38 : profile.name.length > 22 ? 46 : 58,
                 lineHeight: 1,
                 letterSpacing: -0.5,
                 color: INK,
@@ -511,66 +742,57 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
             >
               {profile.name}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {profile.handle ? (
-                <div
-                  style={{
-                    display: 'flex',
-                    fontFamily: 'Barlow',
-                    fontWeight: 400,
-                    fontSize: 21,
-                    color: MUTE,
-                  }}
-                >
-                  @{profile.handle}
-                </div>
-              ) : null}
-              {profile.status ? (
-                <div
-                  style={{
-                    display: 'flex',
-                    border: `1px solid ${LINE}`,
-                    padding: '3px 9px',
-                    fontFamily: 'Barlow',
-                    fontWeight: 600,
-                    fontSize: 14,
-                    letterSpacing: 1.2,
-                    color: MUTE,
-                  }}
-                >
-                  {profile.status.toUpperCase()}
-                </div>
-              ) : null}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {profile.handle ? <Chip text={`@${profile.handle}`} tone="quiet" /> : null}
+              {profile.status ? <Chip text={profile.status.toUpperCase()} tone="warn" /> : null}
             </div>
           </div>
+
+          {best ? <RankBadge rank={best.rank} label={best.label} /> : null}
         </div>
 
+        {/* THE GRID. Four panels for a ranked member, one for everyone else. */}
         {profile.ranked && doubles && singles ? (
-          <div style={{ display: 'flex', gap: 34 }}>
-            <Stat
+          <div style={{ display: 'flex', gap: 12, marginTop: 22 }}>
+            <StatPanel
               label="DOUBLES"
               value={`${doubles.elo}${doubles.provisional ? '*' : ''}`}
               sub={`#${doubles.rank} · ${record(doubles.wins, doubles.losses)}`}
               sub2={formLine(doubles.wins, doubles.losses, doubles.streak)}
+              accent
             />
-            <Stat
+            <StatPanel
               label="SINGLES"
               value={`${singles.elo}${singles.provisional ? '*' : ''}`}
               sub={`#${singles.rank} · ${record(singles.wins, singles.losses)}`}
               sub2={formLine(singles.wins, singles.losses, singles.streak)}
             />
-            <Stat
+            <StatPanel
               label="TOURNAMENT"
               value={String(profile.tournamentPoints ?? 0)}
               sub="points"
+            />
+            {/* Nights used to sit in a bare meta line with the rival, where a
+                single digit beside a name read as an afterthought. It is a
+                season-long figure like the three beside it and belongs in the
+                same row. */}
+            <StatPanel
+              label="NIGHTS"
+              value={String(profile.nights ?? 0)}
+              sub="attended"
             />
           </div>
         ) : (
           // NOT AN ERROR STATE. The member is off the public ladder — their own
           // setting, or a status the club set — and the card says so plainly
           // rather than printing zeroes that read as a real record.
-          <div style={{ display: 'flex' }}>
-            <Stat label="LADDER" value="Unranked" sub="not shown on the club ladder" dim />
+          <div style={{ display: 'flex', marginTop: 22 }}>
+            <StatPanel
+              label="LADDER"
+              value="Unranked"
+              sub="not shown on the club ladder"
+              dim
+            />
           </div>
         )}
 
@@ -578,19 +800,10 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
             this for anyone else -- their games are as private as the rating
             they chose to keep off the ladder -- so an unranked card keeps the
             shape it has always had, one block and the rail. */}
-        {profile.ranked ? <RecentForm recent={profile.recent} /> : null}
-
         {profile.ranked ? (
-          <div style={{ display: 'flex', gap: 40, alignItems: 'baseline' }}>
-            <Meta
-              label="RIVAL"
-              value={
-                profile.rival
-                  ? `${profile.rival.name} ${profile.rival.wins}-${profile.rival.losses}`
-                  : 'none yet'
-              }
-            />
-            <Meta label="NIGHTS" value={String(profile.nights ?? 0)} />
+          <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
+            <RecentPanel recent={profile.recent} />
+            <RivalPanel rival={profile.rival} />
           </div>
         ) : null}
 
@@ -599,4 +812,3 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
     </div>
   );
 }
-

@@ -50,10 +50,25 @@ export async function GET(
     height: cardHeight(result.profile),
     fonts: FONTS,
     headers: {
-      // Discord's CDN caches what it fetched anyway; this keeps a member who
-      // re-runs /profile after a match from being served yesterday's numbers by
-      // anything in between.
-      'cache-control': 'public, max-age=300',
+      // RENDERING THIS IS THE EXPENSIVE PART OF THE FEATURE. satori lays the
+      // card out and resvg encodes the PNG, both on the one Next.js thread that
+      // is already this app's throughput ceiling -- so every fetch served from
+      // a cache instead is a request the club's own box does not spend ~100ms
+      // of CPU on. A posted card is fetched once per viewer who scrolls past
+      // it, which makes the hit rate high and the saving real.
+      //
+      // WHAT THE WINDOW COSTS is bounded and small: /profile mints a fresh
+      // token every time it is run, so a member who wants current numbers gets
+      // a new URL and a new render no matter what this says. The window only
+      // governs re-fetches of a card ALREADY POSTED, where the alternative is
+      // re-rendering an image whose numbers nobody is watching change.
+      //
+      // s-maxage names the shared caches (Discord's CDN, the club's proxy)
+      // separately from any browser that reaches the URL directly, and
+      // stale-while-revalidate lets an edge answer instantly from a slightly
+      // old copy while it refreshes behind the request rather than making a
+      // viewer wait for a render.
+      'cache-control': 'public, max-age=900, s-maxage=900, stale-while-revalidate=3600',
     },
   });
 }
