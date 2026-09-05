@@ -40,7 +40,7 @@ function profile(over: Record<string, unknown> = {}) {
       bio: null,
       status: 'competitive',
       ranked: true,
-      doubles: { elo: 1200, provisional: false, wins: 9, losses: 3, streak: 2, rank: 4 },
+      doubles: { elo: 1200, provisional: false, wins: 9, losses: 3, streak: 2, rank: 4, compRank: 2 },
       singles: null,
       tournamentPoints: null,
       awards: [],
@@ -50,9 +50,10 @@ function profile(over: Record<string, unknown> = {}) {
   };
 }
 
-async function run() {
+async function run(type?: string) {
   const { handleProfile } = await import('../commands.js');
-  return handleProfile(undefined, CONTEXT) as Promise<{
+  const options = type ? [{ name: 'type', type: 3, value: type }] : undefined;
+  return handleProfile(options as never, CONTEXT) as Promise<{
     type: number;
     data: Record<string, unknown>;
     file?: typeof CARD;
@@ -85,7 +86,7 @@ describe('/profile', () => {
     fetchProfile.mockResolvedValue(
       profile({
         bio: 'Left-handed, plays doubles',
-        singles: { elo: 900, provisional: true, wins: 2, losses: 1, streak: 1, rank: 11 },
+        singles: { elo: 900, provisional: true, wins: 2, losses: 1, streak: 1, rank: 11, compRank: null },
       })
     );
     const response = await run();
@@ -142,6 +143,79 @@ describe('/profile', () => {
 
     expect(fetchCard).toHaveBeenCalledWith(expect.any(String), 1_800);
     now.mockRestore();
+  });
+
+  it('honours a type the member has, on the card url', async () => {
+    fetchProfile.mockResolvedValue(profile());
+
+    const response = await run('comp_doubles');
+
+    expect(fetchCard).toHaveBeenCalledWith(
+      'https://app.example/api/discord/card/tok?type=comp_doubles',
+      expect.any(Number)
+    );
+    expect(response.file).toBe(CARD);
+  });
+
+  it('says so in words when the member has no rank on the ladder asked for', async () => {
+    // THE BUG THIS EXISTS FOR: the route falls back to the default table for a
+    // member with no competitive rank, and that render is byte-identical to the
+    // one with no type at all. From the member's side the option did nothing.
+    fetchProfile.mockResolvedValue(
+      profile({ status: 'recreational', doubles: { ...profile().profile.doubles, compRank: null } })
+    );
+
+    const response = await run('comp_doubles');
+
+    expect(response.data.flags).toBe(64);
+    expect(response.data.content).toContain('does not have competitive stats');
+    // No card at all -- and asserting the fetch never happened is what stops a
+    // future version answering in words AND spending the budget rendering the
+    // very card the words say is wrong.
+    expect(fetchCard).not.toHaveBeenCalled();
+    expect(response.file).toBeUndefined();
+  });
+
+  it('treats a player app too old to send compRank as no competitive rank', async () => {
+    // NOT the same as compRank: null, and the difference is a live one: an
+    // older player app omits the key, so the value is undefined. A `=== null`
+    // check reads that as a real competitive rank and renders the very card
+    // this refusal exists to stop -- silently, and only on the deployment where
+    // the bot has rolled ahead of its player, which is not a rare shape here.
+    //
+    // The key is DELETED rather than set, because setting it to undefined would
+    // pass a `=== null` check for the wrong reason and is not what the wire
+    // actually carries.
+    const stale = profile();
+    delete (stale.profile.doubles as Record<string, unknown>).compRank;
+    fetchProfile.mockResolvedValue(stale);
+
+    const response = await run('comp_doubles');
+
+    expect(response.data.content).toContain('does not have competitive stats');
+    expect(fetchCard).not.toHaveBeenCalled();
+  });
+
+  it('refuses a discipline the member has never played', async () => {
+    fetchProfile.mockResolvedValue(profile({ singles: null }));
+
+    const response = await run('open_singles');
+
+    expect(response.data.flags).toBe(64);
+    expect(response.data.content).toContain('singles');
+    expect(fetchCard).not.toHaveBeenCalled();
+  });
+
+  it('leaves an unrecognised type to the route rather than inventing a miss', async () => {
+    // The route matches against a fixed list of four and draws the default
+    // table for anything else. Refusing here would be the bot answering for a
+    // rule it does not own.
+    fetchProfile.mockResolvedValue(profile());
+
+    const response = await run('nonsense');
+
+    expect(response.file).toBe(CARD);
+    expect(response.data.content).toBeUndefined();
   });
 
   it('keeps every miss ephemeral and carries no file', async () => {
