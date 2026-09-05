@@ -453,6 +453,46 @@ const server = createServer(async (req, res) => {
     }
 
     const response = await dispatch(interaction.data.name, interaction.data.options, context);
+
+    // ACKNOWLEDGED MID-COMMAND. The branch above defers before dispatch, which
+    // is all /setup can do — it is slow from its first byte. /profile is not:
+    // it decides in one fast call whether the answer is a card or an ephemeral
+    // refusal, and only then does the slow work. So it dispatches normally and
+    // hands back its own deferral, carrying the rest as `finish`.
+    //
+    // The acknowledgement is sent VERBATIM, flags included or absent, because
+    // the handler chose the visibility knowing the answer — see handleProfile.
+    if (response.type === 5 && response.finish) {
+      const { finish, ...ack } = response;
+      const { application_id: appId, token: interactionToken } = interaction;
+      send(res, 200, ack);
+
+      // Deliberately not awaited: the response is already sent.
+      void (async () => {
+        try {
+          const final = await finish();
+          if (!appId || !interactionToken) {
+            console.error('[bot] deferred command finished but had no interaction token');
+            return;
+          }
+          // The webhook edit takes a MESSAGE, not a callback, so the `data`
+          // wrapper comes off — and the file travels beside it rather than in
+          // it, for the same reason it does above.
+          await editDeferredReply(appId, interactionToken, final.data ?? {}, fetch, final.file);
+        } catch (error) {
+          // finish() is written not to throw, so reaching here is a bug rather
+          // than a slow render. The member is still watching a spinner.
+          console.error(`[bot] deferred ${interaction.data?.name} failed:`, error);
+          if (appId && interactionToken) {
+            await editDeferredReply(appId, interactionToken, {
+              content: 'Something went wrong. Please try again.',
+            });
+          }
+        }
+      })();
+      return;
+    }
+
     if (response.file) {
       // The file is SPLIT OFF, never passed through. send() would
       // JSON.stringify it, and a serialised byte array is a payload Discord
