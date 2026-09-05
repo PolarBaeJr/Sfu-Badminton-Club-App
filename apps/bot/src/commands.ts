@@ -570,20 +570,18 @@ export async function handleProfile(
     }
   }
 
-  const p = result.profile;
-  const provisional = !!(p.doubles?.provisional || p.singles?.provisional);
-
-  const lines: string[] = [];
-  // The name is on the card. Repeating it would print it twice in the same
-  // block; the message carries only what the image cannot.
-  if (p.bio) lines.push(p.bio.length > 240 ? `${p.bio.slice(0, 237)}...` : p.bio);
-  // LOAD-BEARING, not decoration. The card itself draws the asterisk, so
-  // dropping this line leaves an unexplained `*` on an image Discord caches
-  // publicly and forever — and a rating shown without the footnote reads as
-  // settled when it is not.
-  if (provisional) lines.push('* rating still provisional');
-  const content = lines.join('\n\n');
-
+  // NO MESSAGE BODY. Everything this reply says is drawn on the card — the bio
+  // and the provisional footnote used to be typed here beside the image, and
+  // both moved into the render.
+  //
+  // The image is the artifact: it is what gets forwarded, quoted, embedded and
+  // cached, and message text does not travel with any of that. A card that
+  // needed a caption to be understood was only complete in the one channel it
+  // was posted to.
+  //
+  // The asterisk on a provisional rating is the case that proves it. It is
+  // drawn on the panel; the line explaining it is now on the rail beside the
+  // club name, so the explanation cannot be separated from the mark.
   const remaining = PROFILE_BUDGET_MS - (Date.now() - started);
   const card =
     remaining >= MIN_CARD_FETCH_MS
@@ -594,9 +592,6 @@ export async function handleProfile(
     return {
       type: 4,
       data: {
-        // Omitted entirely rather than sent empty: this branch has no fallback
-        // left if Discord refuses the body.
-        ...(content ? { content } : {}),
         // Both halves of the pair, and the filename taken from the file rather
         // than written out again. Discord accepts a declaration that does not
         // match the part with a 200 and renders the message with no image at
@@ -608,10 +603,12 @@ export async function handleProfile(
   }
 
   // The bytes did not arrive in time. The URL still resolves for whoever opens
-  // it, so the reply degrades to a link rather than to an apology.
+  // it, so the reply degrades to a link rather than to an apology — and the
+  // link is enough on its own now, because the bio and the footnote are on the
+  // card it points at rather than in a body this branch would have to rebuild.
   return {
     type: 4,
-    data: { content: [content, result.cardUrl].filter(Boolean).join('\n') },
+    data: { content: result.cardUrl },
   };
 }
 

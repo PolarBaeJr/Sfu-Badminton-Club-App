@@ -60,6 +60,57 @@ export const H = 356;
 export const H_WITH_FORM = 524;
 
 /**
+ * The bio block: 18 marginTop + two 24px lines.
+ *
+ * THE BIO CANNOT CROP THE CARD, and that is worth stating because it is the
+ * opposite of the failure H warns about. The block below is drawn at a fixed
+ * 48px, and satori CLIPS a flex box's overflow rather than letting it push the
+ * layout down -- measured: a 599-character bio leaves the bottom edge as clean
+ * as a 149-character one. So the render test's crop check, which is what
+ * catches every other overrun in this file, can never fail for a bio.
+ *
+ * WHAT GOES WRONG INSTEAD IS QUIETER. A bio that wraps to a third line has
+ * that line clipped away inside the box: the card still looks right, and the
+ * member's words are simply gone. BIO_MAX is the only thing standing between
+ * this layout and that, which is why it is a measured number and not a guess.
+ */
+export const H_BIO = 66;
+
+/**
+ * How much of a bio the card draws.
+ *
+ * Shorter than the 240 the bot used to put in the message body, because a
+ * message can be any height and this block is exactly two lines.
+ *
+ * 150 IS MEASURED, NOT CHOSEN. Barlow 400 at 17px across the 910px of usable
+ * width fits 150 characters in two lines both for text of short words, which
+ * wraps as late as possible and so packs the most in, and for long unbroken
+ * names, which wrap early. 160 still fits; 150 keeps a margin for a face that
+ * measures differently. Raising it is a layout change -- see the wrap test in
+ * discord-card-render.test.ts, which is the assertion that holds this, because
+ * the crop check cannot.
+ */
+export const BIO_MAX = 150;
+
+/** The bio as it will be drawn, or null when there is nothing to draw. */
+export function cardBio(bio: string | null | undefined): string | null {
+  const text = (bio ?? '').trim();
+  if (!text) return null;
+  return text.length > BIO_MAX ? `${text.slice(0, BIO_MAX - 3).trimEnd()}...` : text;
+}
+
+/**
+ * Whether the card carries the provisional footnote.
+ *
+ * The asterisk is drawn on the rating itself either way; this is the line that
+ * says what it means. It lives on the rail, which has spare width and a fixed
+ * height, so unlike the bio it costs the card nothing.
+ */
+export function isProvisional(profile: DiscordProfile): boolean {
+  return !!(profile.doubles?.provisional || profile.singles?.provisional);
+}
+
+/**
  * How tall to draw THIS card.
  *
  * An unranked member gets neither recent form nor rival nor nights -- see
@@ -69,7 +120,11 @@ export const H_WITH_FORM = 524;
  * route and Card ask this.
  */
 export function cardHeight(profile: DiscordProfile): number {
-  return profile.ranked ? H_WITH_FORM : H;
+  const base = profile.ranked ? H_WITH_FORM : H;
+  // The bio is the one block whose PRESENCE varies independently of `ranked`,
+  // so it is added rather than folded into either constant. A member with no
+  // bio must not get 66px of empty card.
+  return base + (cardBio(profile.bio) ? H_BIO : 0);
 }
 
 const INK = '#f2f2f2';
@@ -611,7 +666,7 @@ function RivalPanel({ rival }: { rival: DiscordProfile['rival'] }) {
  * that exists today — is not a gap, and the day awards ship the layout does not
  * change at all.
  */
-function Rail({ awards }: { awards: CardAward[] }) {
+function Rail({ awards, provisional }: { awards: CardAward[]; provisional: boolean }) {
   return (
     <div
       style={{
@@ -623,17 +678,40 @@ function Rail({ awards }: { awards: CardAward[] }) {
         paddingTop: 13,
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          fontFamily: 'Barlow',
-          fontWeight: 600,
-          fontSize: 14,
-          letterSpacing: 1.7,
-          color: FAINT,
-        }}
-      >
-        SFU BADMINTON CLUB
+      {/* THE FOOTNOTE LIVES HERE, beside the club name, and it is the reason
+          the rail's left half is a row rather than one label. The asterisk is
+          drawn on the rating in the panel above; without this line the card
+          shows an unexplained `*` on an image Discord caches publicly and
+          forever, and a provisional rating with no footnote reads as settled.
+          The rail is a fixed height with spare width, so this costs the card
+          nothing -- which is why it is here and not in its own block. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div
+          style={{
+            display: 'flex',
+            fontFamily: 'Barlow',
+            fontWeight: 600,
+            fontSize: 14,
+            letterSpacing: 1.7,
+            color: FAINT,
+          }}
+        >
+          SFU BADMINTON CLUB
+        </div>
+        {provisional ? (
+          <div
+            style={{
+              display: 'flex',
+              fontFamily: 'Barlow',
+              fontWeight: 600,
+              fontSize: 14,
+              letterSpacing: 1.7,
+              color: MUTE,
+            }}
+          >
+            * RATING STILL PROVISIONAL
+          </div>
+        ) : null}
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         {awards.slice(0, 4).map((a, i) => (
@@ -685,6 +763,7 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
   const { doubles, singles } = profile;
   const height = cardHeight(profile);
   const best = profile.ranked ? bestLadder(profile) : null;
+  const bio = cardBio(profile.bio);
 
   return (
     <div style={{ position: 'relative', display: 'flex', width: W, height }}>
@@ -758,6 +837,34 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
           {best ? <RankBadge rank={best.rank} label={best.label} /> : null}
         </div>
 
+        {/* THE MEMBER'S OWN WORDS. Drawn on the card rather than sent as
+            Discord message text, so the card is the whole post: the image is
+            what gets forwarded, quoted and cached, and text beside it does not
+            travel with it.
+
+            HEIGHT IS FIXED, not measured, and that is what makes the block
+            safe: cardHeight has committed the card to exactly H_BIO here, and
+            a self-measuring div would let a long bio disagree with that number
+            and crop the rail off the bottom. The cost of fixing it is that a
+            third line is clipped in silence instead -- see H_BIO -- so cardBio
+            truncates before it can come to that. */}
+        {bio ? (
+          <div
+            style={{
+              display: 'flex',
+              marginTop: 18,
+              height: 48,
+              fontFamily: 'Barlow',
+              fontWeight: 400,
+              fontSize: 17,
+              lineHeight: '24px',
+              color: MUTE,
+            }}
+          >
+            {bio}
+          </div>
+        ) : null}
+
         {/* THE GRID. Four panels for a ranked member, one for everyone else. */}
         {profile.ranked && doubles && singles ? (
           <div style={{ display: 'flex', gap: 12, marginTop: 22 }}>
@@ -814,7 +921,7 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
           </div>
         ) : null}
 
-        <Rail awards={profile.awards} />
+        <Rail awards={profile.awards} provisional={isProvisional(profile)} />
       </div>
     </div>
   );
