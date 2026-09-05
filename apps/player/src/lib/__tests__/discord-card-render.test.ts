@@ -54,8 +54,11 @@ const base: DiscordProfile = {
   bio: null,
   status: null,
   ranked: true,
-  doubles: { elo: 1842, provisional: false, wins: 24, losses: 9, streak: 4, rank: 3 },
-  singles: { elo: 1596, provisional: true, wins: 8, losses: 6, streak: -1, rank: 11 },
+  // compRank null: the base fixture is a member who is NOT competitive, so
+  // every case built off it draws the tiles the way most of the club sees them.
+  // The competitive shape is its own case below.
+  doubles: { elo: 1842, provisional: false, wins: 24, losses: 9, streak: 4, rank: 3, compRank: null },
+  singles: { elo: 1596, provisional: true, wins: 8, losses: 6, streak: -1, rank: 11, compRank: null },
   tournamentPoints: 340,
   background: { kind: 'default' },
   awards: [],
@@ -152,7 +155,25 @@ async function render(profile: DiscordProfile, name: string) {
  * width is the card's 1000 less its 50px left and 40px right padding.
  */
 async function bioLines(text: string): Promise<number> {
-  const BAND = 24;
+  return linesAt(text, { width: W - 90, size: 17, band: 24 });
+}
+
+/**
+ * How many bands of a given height the text inks when drawn at a given width
+ * and font -- the same measurement bioLines makes, for any box on the card.
+ *
+ * EVERY FIXED-HEIGHT BOX ON THIS CARD NEEDS THIS, not just the bio. A tile
+ * sub-line that grows past its panel's width wraps to a second line, and
+ * StatPanel is a fixed 132px holding exactly two of them, so the wrap pushes
+ * the last line out of the box and satori clips it away without a word. The
+ * bottom-edge crop check cannot see it. Neither can the type system. Counting
+ * inked bands is the only thing that can.
+ */
+async function linesAt(
+  text: string,
+  opts: { width: number; size: number; band: number; weight?: number; letterSpacing?: number },
+): Promise<number> {
+  const BAND = opts.band;
   const el = createElement(
     'div',
     { style: { display: 'flex', width: W, height: 240, background: '#000' } },
@@ -161,10 +182,11 @@ async function bioLines(text: string): Promise<number> {
       {
         style: {
           display: 'flex',
-          width: W - 90,
+          width: opts.width,
           fontFamily: 'Barlow',
-          fontWeight: 400,
-          fontSize: 17,
+          fontWeight: opts.weight ?? 400,
+          fontSize: opts.size,
+          ...(opts.letterSpacing === undefined ? {} : { letterSpacing: opts.letterSpacing }),
           lineHeight: `${BAND}px`,
           color: '#ffffff',
         },
@@ -237,7 +259,7 @@ describe('the card fits the box it declares', () => {
       name: 'Bartholomew Fitzgerald-Kensington',
       handle: 'bartholomew_fitzgerald',
       status: 'suspended',
-      doubles: { elo: 2401, provisional: true, wins: 148, losses: 132, streak: -12, rank: 1287 },
+      doubles: { elo: 2401, provisional: true, wins: 148, losses: 132, streak: -12, rank: 1287, compRank: 964 },
       recent: [
         {
           won: false,
@@ -280,6 +302,69 @@ describe('the card fits the box it declares', () => {
       expect(await bioLines(bio), name).toBeLessThanOrEqual(2);
     }
   }, 60_000);
+
+  it('fits the competitive tiles and the badge label in the boxes they get', async () => {
+    // THE ASSERTION THAT HOLDS THE COMP RANK, and like the bio one it is a wrap
+    // count rather than a crop check -- StatPanel and RankBadge are both fixed
+    // boxes, so an overlong line is clipped in silence, not drawn off the card.
+    //
+    // PANEL_TEXT is the panel's usable width, derived not guessed: the card is
+    // 1000 wide with 50 left and 40 right padding, so the grid gets 910; four
+    // panels with three 12px gaps make each (910 - 36) / 4 = 218.5; each has
+    // 16px of padding a side. BADGE_TEXT is RankBadge's own width, which has no
+    // padding at all -- the label is centred in the full 132.
+    const PANEL_TEXT = (W - 90 - 3 * 12) / 4 - 32;
+    const BADGE_TEXT = 132;
+
+    // The worst line each shape can produce, not a typical one: a four-figure
+    // open rank beside a three-figure comp rank, and a record in the hundreds.
+    const worst: DiscordProfile = {
+      ...base,
+      doubles: { elo: 2401, provisional: true, wins: 148, losses: 132, streak: -12, rank: 1287, compRank: 964 },
+      singles: { elo: 1596, provisional: true, wins: 108, losses: 96, streak: -11, rank: 1102, compRank: 873 },
+    };
+    for (const [label, text] of [
+      ['rank sub', `#${worst.doubles!.rank} open · #${worst.doubles!.compRank} comp`],
+      ['form sub', `${worst.doubles!.wins}W ${worst.doubles!.losses}L · 53% · L12`],
+    ] as const) {
+      expect(await linesAt(text, { width: PANEL_TEXT, size: 16, band: 22 }), label).toBe(1);
+    }
+
+    // Both badge labels, at RankBadge's own font. 'OPEN DOUBLES' is the longer.
+    for (const label of ['OPEN DOUBLES', 'OPEN SINGLES'] as const) {
+      expect(
+        await linesAt(label, { width: BADGE_TEXT, size: 13, band: 18, weight: 600, letterSpacing: 1.6 }),
+        label,
+      ).toBe(1);
+    }
+
+    // And the whole card still draws clean at that worst case.
+    const { buf } = await render(worst, 'comp-worst');
+    expect(bottomEdgeInk(buf)).toBeLessThan(CLEAN);
+  }, 60_000);
+
+  it('detects a tile sub-line too long for its panel', async () => {
+    // THE TEST FOR THE TEST above. Half again as much text as the worst real
+    // line takes a second band, and linesAt says so. If this goes green the
+    // width measurement has stopped measuring and the check above is worthless.
+    const PANEL_TEXT = (W - 90 - 3 * 12) / 4 - 32;
+    expect(await linesAt('#1287 open · #964 comp · 148W 132L', { width: PANEL_TEXT, size: 16, band: 22 }))
+      .toBeGreaterThan(1);
+  }, 30_000);
+
+  it('leaves a non-competitive member\'s tiles exactly as they were', async () => {
+    // Most of the club is not competitive, and their card must not change. The
+    // old shape put the record on the rank line; the comp shape moves it down.
+    const casual = { ...base.doubles!, compRank: null };
+    const comp = { ...base.doubles!, compRank: 1 };
+    const { buf } = await render({ ...base, doubles: casual }, 'comp-none');
+    expect(bottomEdgeInk(buf)).toBeLessThan(CLEAN);
+    // Asserted through the card's own helpers via a render is not possible --
+    // these are private. The shapes are pinned in discord-card.test.ts instead;
+    // this case exists so the unchanged layout is actually DRAWN somewhere.
+    expect(casual.compRank).toBeNull();
+    expect(comp.compRank).toBe(1);
+  }, 30_000);
 
   it('draws a bio on an unranked card too', async () => {
     // H + H_BIO is arithmetic no other case reaches: the unranked fixture

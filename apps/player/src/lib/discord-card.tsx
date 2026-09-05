@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CardAward, CardBackground, CardMatch, DiscordProfile } from './discord-profile';
+import type { CardAward, CardBackground, CardMatch, DiscordProfile, LadderLine } from './discord-profile';
 import { formatStreak } from './ladder';
 
 /**
@@ -341,17 +341,27 @@ function StatPanel({
  * and worth boasting about -- the ratings themselves are already in the grid
  * below, and repeating one of them at four times the size would just be louder,
  * not clearer. Ties go to doubles, which is what the club mostly plays.
+ *
+ * ALWAYS THE OPEN RANK, NEVER THE COMP ONE, and the label says so. A
+ * competitive member's comp rank is the better number and it IS on the card --
+ * in their rating tile, see StatPanel below. It is deliberately not the
+ * headline: two cards posted in the same channel have to be comparable, and a
+ * badge that read "#1 COMP" on one card and "#3 OPEN" on the next would put the
+ * biggest figure on each card in a different population, with no way for a
+ * reader to tell which is the better standing without knowing both field sizes.
+ * The open ladder is the one every ranked member is on, so it is the one that
+ * means the same thing everywhere.
  */
 function bestLadder(profile: DiscordProfile): { rank: number; label: string } | null {
   const { doubles, singles } = profile;
   if (!doubles && !singles) return null;
   if (doubles && singles) {
     return singles.rank < doubles.rank
-      ? { rank: singles.rank, label: 'SINGLES' }
-      : { rank: doubles.rank, label: 'DOUBLES' };
+      ? { rank: singles.rank, label: 'OPEN SINGLES' }
+      : { rank: doubles.rank, label: 'OPEN DOUBLES' };
   }
-  if (doubles) return { rank: doubles.rank, label: 'DOUBLES' };
-  return { rank: singles!.rank, label: 'SINGLES' };
+  if (doubles) return { rank: doubles.rank, label: 'OPEN DOUBLES' };
+  return { rank: singles!.rank, label: 'OPEN SINGLES' };
 }
 
 function RankBadge({ rank, label }: { rank: number; label: string }) {
@@ -759,6 +769,32 @@ function record(w: number, l: number) {
   return `${w}W ${l}L`;
 }
 
+/**
+ * The two sub-lines of a rating tile, which carry DIFFERENT things depending on
+ * whether the member has a comp rank.
+ *
+ *   not competitive:  "#11 · 8W 6L"              /  "57% · L1"
+ *   competitive:      "#3 open · #1 comp"        /  "24W 9L · 73% · W4"
+ *
+ * The record moves down a line rather than a third line being added, because
+ * StatPanel is a fixed 132px with room for exactly two -- and satori CLIPS a
+ * fixed-height box rather than overflowing it, so a third line would vanish in
+ * silence rather than fail anything. Same trap as the bio block; see H_BIO.
+ *
+ * Most cards take the first shape and are unchanged by any of this.
+ */
+function rankSub(l: LadderLine): string {
+  return l.compRank === null
+    ? `#${l.rank} · ${record(l.wins, l.losses)}`
+    : `#${l.rank} open · #${l.compRank} comp`;
+}
+
+function formSub(l: LadderLine): string | null {
+  const form = formLine(l.wins, l.losses, l.streak);
+  if (l.compRank === null) return form;
+  return [record(l.wins, l.losses), form].filter(Boolean).join(' · ');
+}
+
 export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: string | null }) {
   const { doubles, singles } = profile;
   const height = cardHeight(profile);
@@ -871,15 +907,15 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
             <StatPanel
               label="DOUBLES"
               value={`${doubles.elo}${doubles.provisional ? '*' : ''}`}
-              sub={`#${doubles.rank} · ${record(doubles.wins, doubles.losses)}`}
-              sub2={formLine(doubles.wins, doubles.losses, doubles.streak)}
+              sub={rankSub(doubles)}
+              sub2={formSub(doubles)}
               accent
             />
             <StatPanel
               label="SINGLES"
               value={`${singles.elo}${singles.provisional ? '*' : ''}`}
-              sub={`#${singles.rank} · ${record(singles.wins, singles.losses)}`}
-              sub2={formLine(singles.wins, singles.losses, singles.streak)}
+              sub={rankSub(singles)}
+              sub2={formSub(singles)}
             />
             <StatPanel
               label="TOURNAMENT"

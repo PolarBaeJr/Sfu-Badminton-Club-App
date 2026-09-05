@@ -34,8 +34,21 @@ export interface LadderLine {
   wins: number;
   losses: number;
   streak: number;
-  /** Position on this ladder among ranked players. */
+  /** Position on this ladder among ranked players -- the OPEN ladder, everyone. */
   rank: number;
+  /**
+   * Position among competitive members only, or null for a member who is not
+   * one.
+   *
+   * THE CLUB RANKS THE SAME TWO ELOS TWICE. /leaderboard has four ladder tabs
+   * off two numbers -- Open Singles, Open Doubles, Comp Singles, Comp Doubles
+   * -- and the only difference between an open tab and its comp twin is the
+   * population: comp keeps `status === 'competitive'` and open keeps everyone
+   * (leaderboard-client.tsx:259). The elo is identical. So a competitive member
+   * holds two ranks per discipline, and the card used to show only the open one
+   * without saying that is what it was.
+   */
+  compRank: number | null;
 }
 
 /**
@@ -198,6 +211,19 @@ function rankBy(rows: LeaderboardRow[], column: 'singles_elo' | 'doubles_elo') {
   const at = new Map<string, number>();
   order.forEach((r, i) => at.set(r.id, i + 1));
   return at;
+}
+
+/**
+ * The competitive population, for the comp half of each ladder.
+ *
+ * The status string is matched here rather than in the database because
+ * get_leaderboard() has already made the VISIBILITY decision and this is a
+ * different question -- which of the visible members share a peer group. It
+ * mirrors /leaderboard's own filter exactly; if that ever moves off `status`,
+ * both places have to move together.
+ */
+function competitiveOnly(rows: LeaderboardRow[]): LeaderboardRow[] {
+  return rows.filter((r) => r.status === 'competitive');
 }
 
 /**
@@ -513,6 +539,12 @@ export async function resolveProfile(
   const line = ladder.find((r) => r.id === player.id) ?? null;
   const dRank = rankBy(ladder, 'doubles_elo');
   const sRank = rankBy(ladder, 'singles_elo');
+  // Ranked over the competitive subset, so a competitive member's position here
+  // is among their own peer group. A member who is not competitive is absent
+  // from these maps and gets null, which is what the card draws nothing for.
+  const comp = competitiveOnly(ladder);
+  const dCompRank = rankBy(comp, 'doubles_elo');
+  const sCompRank = rankBy(comp, 'singles_elo');
 
   // `line` is the gate, not `options.withForm` alone: a member off the public
   // ladder never has form fetched for them, whoever asked and for whatever
@@ -538,6 +570,7 @@ export async function resolveProfile(
             losses: line.doubles_losses,
             streak: line.current_doubles_streak,
             rank: dRank.get(line.id) ?? 0,
+            compRank: dCompRank.get(line.id) ?? null,
           }
         : null,
       singles: line
@@ -548,6 +581,7 @@ export async function resolveProfile(
             losses: line.singles_losses,
             streak: line.current_singles_streak,
             rank: sRank.get(line.id) ?? 0,
+            compRank: sCompRank.get(line.id) ?? null,
           }
         : null,
       tournamentPoints: line ? line.tournament_points : null,
