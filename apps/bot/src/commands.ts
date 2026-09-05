@@ -168,6 +168,24 @@ export const COMMAND_DEFINITIONS = [
     options: [],
   },
   {
+    // ONE WORD, because Discord's command names are `^[-_\p{L}\p{N}]{1,32}$`
+    // and lowercase -- there is no /sessionPost to register.
+    //
+    // A SIBLING of /sessions rather than a subcommand of it. Adding subcommands
+    // would turn the command every member already uses into `/sessions list`,
+    // which is a rename of the club's most-run command to make room for one
+    // execs use. They sort next to each other in the picker anyway.
+    name: 'sessionpost',
+    description: 'Post the club-wide session schedule into this channel',
+    options: [],
+    // EXEC_ONLY, on the same argument /rolepicker post makes: this writes a
+    // message into a shared channel under the club's name. It is not gated on
+    // MANAGE_GUILD because posting the schedule is session-running work and the
+    // execs who run sessions are usually not the one or two people holding that
+    // bit. '0' means an admin grants @Executives once, in Integrations.
+    default_member_permissions: EXEC_ONLY,
+  },
+  {
     name: 'tournaments',
     description: 'Upcoming club tournaments',
     options: [],
@@ -802,6 +820,61 @@ export async function handleSessions(context: InteractionContext) {
     description: sessions.map(formatSession).join('\n\n'),
     footer: { text: footer },
   });
+}
+
+/**
+ * The session schedule, posted into the channel for everyone to read.
+ *
+ * NOT EPHEMERAL -- that is the entire point of it, and it is the reason this is
+ * a separate command rather than a flag on /sessions. Read the comment on
+ * handleSessions before changing anything here: /sessions is ephemeral as a
+ * CORRECTNESS property, because the app filters that schedule to the caller's
+ * own track, and a public reply would post one member's filtered-for-them view
+ * into a channel every other track reads.
+ *
+ * WHICH IS WHY THIS FETCHES WITH NO CALLER. Passing the exec who ran it would
+ * publish THEIR schedule; the audience for a channel post is everyone who can
+ * read the channel, including members who never linked an account, so the right
+ * view is the one the app gives an unlinked caller -- club-wide nights only.
+ * See PUBLIC_TRACKS and the three-audiences comment in the sessions route. The
+ * gate on this command controls who may post, not what the post may contain,
+ * and those are different questions.
+ *
+ * NOBODY IS MENTIONED, for the reason announcements.ts gives at length: a
+ * feature that can ping the server on demand is one bad afternoon away from
+ * people muting the channel that carries club notices. The scheduled pings in
+ * session-pings.ts are the thing that is allowed to mention a role, and they
+ * are rate-limited by being tied to a session actually starting.
+ */
+export async function handleSessionPost(): Promise<BotResponse> {
+  const { sessions } = await fetchSessions(null);
+
+  // EPHEMERAL, unlike the success case. "There is nothing to post" is feedback
+  // for the exec who ran the command, not a notice the channel needs -- and a
+  // public "no sessions are open" is worse than saying nothing, because it
+  // reads as a club announcement that the club has cancelled everything.
+  if (sessions.length === 0) {
+    return ephemeral(
+      'No club-wide sessions are open right now, so there is nothing to post.'
+    );
+  }
+
+  return {
+    type: 4,
+    data: {
+      embeds: [
+        {
+          title: 'Upcoming sessions',
+          color: CLUB_RED,
+          description: sessions.map(formatSession).join('\n\n'),
+          // No "run /link to see your track" line here. That footer is advice
+          // for one reader looking at their own narrowed list; on a club-wide
+          // post it would imply this list is narrowed, which it is not.
+          footer: { text: 'RSVP on the website' },
+        },
+      ],
+    },
+  };
 }
 
 /**
@@ -1674,6 +1747,8 @@ export async function dispatch(
         return await handleProfile(options, context);
       case 'sessions':
         return await handleSessions(context);
+      case 'sessionpost':
+        return await handleSessionPost();
       case 'tournaments':
         return await handleTournaments(context);
       case 'rolepicker':
