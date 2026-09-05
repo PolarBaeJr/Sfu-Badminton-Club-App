@@ -38,6 +38,35 @@ export async function middleware(request: NextRequest) {
     return response;
   };
 
+  // Public routes viewable without an account. The predicate lives in
+  // lib/public-paths.ts so it can be tested without standing up the whole edge
+  // middleware — see the note there about what that cost us.
+  const pathname = request.nextUrl.pathname;
+  const isPublic = isPublicPath(pathname);
+
+  // NOTHING BELOW READS `user` ON A PUBLIC PATH, so on one we do not ask for it.
+  // Both gates that follow are guarded by `!isPublic`, which meant every public
+  // request built a Supabase client and paid a GoTrue round trip to validate a
+  // token whose answer was then discarded. For a signed-out visitor that is
+  // ~free (no cookie, so supabase-js fails locally without a request), but a
+  // SIGNED-IN member reading /leaderboard paid a real round trip here and a
+  // second one in the root layout, which cannot reuse this one — separate
+  // runtimes, no shared request memoization.
+  //
+  // DEFERRING THE REFRESH IS SAFE, which is the only reason this is allowed to
+  // skip the call rather than merely reorder it. getUser() is also what rotates
+  // an expiring token onto the response, via the setAll callback above; a
+  // Server Component cannot set cookies, so this is the only server-side place
+  // it happens. Skipping it does not drop the session — the refresh token does
+  // not expire from inactivity, so the next non-public request refreshes it
+  // then. The browser client refreshes and writes the cookie too (see
+  // lib/supabase-browser.ts) wherever one is mounted.
+  //
+  // Through finish(), so the stale host-only cookie clears still ride along.
+  if (isPublic) {
+    return finish(supabaseResponse);
+  }
+
   const supabase = createServerClient(
     getServerSupabaseUrl(),
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -67,12 +96,6 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Public routes viewable without an account. The predicate lives in
-  // lib/public-paths.ts so it can be tested without standing up the whole edge
-  // middleware — see the note there about what that cost us.
-  const pathname = request.nextUrl.pathname;
-  const isPublic = isPublicPath(pathname);
-
   // A scanned session QR points at /checkin/<token>, which is not public — so
   // this redirect is what a signed-out scanner actually hits, before the page
   // itself ever runs. Rewriting the path without the token dropped it, leaving
@@ -97,6 +120,10 @@ export async function middleware(request: NextRequest) {
   // an ordinary case, not an edge case.
   const authSuffix = checkinSuffix || discordSuffix;
 
+  // `!isPublic` here and on the onboarding gate below is unreachable now that
+  // the early return above covers it, and it is kept for the same reason the
+  // health probe is checked twice: two independent guards, so that deleting one
+  // cannot quietly turn a public page into a login redirect.
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
