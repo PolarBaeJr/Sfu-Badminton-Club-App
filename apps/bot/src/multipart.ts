@@ -15,6 +15,17 @@ import type { CardFile } from './api.js';
  * Its own file rather than a helper in index.ts so it can be tested: importing
  * index.ts runs its module body, which binds the port and opens a gateway
  * socket.
+ *
+ * NO COMMAND CURRENTLY TAKES THIS PATH. /profile was the only one, and it now
+ * acknowledges first and sends its card through editDeferredReply instead. Kept
+ * because answering immediately with a file is still the right shape for a
+ * command whose file is cheap, and because the nesting above is the thing most
+ * likely to be got wrong.
+ *
+ * WHICH IS THE POINT: the `data` nesting here is correct for a CALLBACK and
+ * WRONG for the webhook edit. Do not copy it onto that path -- see the note on
+ * editDeferredReply. interaction-multipart.test.ts pins this shape and says
+ * nothing about the card the club actually sends.
  */
 export async function sendMultipart(
   res: ServerResponse,

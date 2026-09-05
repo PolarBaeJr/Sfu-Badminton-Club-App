@@ -493,6 +493,9 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Unreached today -- /profile was the only command that answered
+    // immediately with a file, and it defers now. See the note in multipart.ts
+    // before sending anything down here.
     if (response.file) {
       // The file is SPLIT OFF, never passed through. send() would
       // JSON.stringify it, and a serialised byte array is a payload Discord
