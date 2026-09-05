@@ -570,3 +570,100 @@ describe('nights played counts nights the member was there', () => {
     expect(result.profile.nights).toBe(27);
   });
 });
+
+/**
+ * A focused card is about ONE discipline, all the way down.
+ *
+ * `/profile type:open_doubles` used to headline OPEN DOUBLES over the member's
+ * last three SINGLES matches and a singles-derived rival, because the badge was
+ * the only thing the focus reached. The filter has to be in the QUERY: recent
+ * form is a LIMIT 3, so narrowing the rows after they arrive draws one match
+ * for somebody who has twenty.
+ *
+ * These assert on the clauses rather than on the rows, because the mock decides
+ * the rows -- what is actually at stake is whether the clause was ever sent.
+ */
+describe('a discipline-focused card asks the database for that discipline', () => {
+  /** Every chain method returns the builder; awaiting it yields `payload`. */
+  function builder(payload: unknown, calls: [string, unknown][]) {
+    const b: Record<string, unknown> = {};
+    for (const m of ['select', 'eq', 'or', 'not', 'in', 'order', 'limit', 'filter']) {
+      b[m] = (...args: unknown[]) => {
+        calls.push([m, args]);
+        return b;
+      };
+    }
+    b.maybeSingle = () => Promise.resolve(payload);
+    b.then = (res: (v: unknown) => unknown) => Promise.resolve(payload).then(res);
+    return b;
+  }
+
+  function harness() {
+    const calls: Record<string, [string, unknown][]> = {};
+    from.mockImplementation((table: string) => {
+      calls[table] ??= [];
+      const rows =
+        table === 'players'
+          ? { data: playerRow(), error: null }
+          : { data: [], error: null, count: 0 };
+      return builder(rows, calls[table]!);
+    });
+    return calls;
+  }
+
+  /** The match_type values passed to .eq on one table, in order. */
+  const typeClauses = (calls: [string, unknown][] | undefined) =>
+    (calls ?? [])
+      .filter(([m, a]) => m === 'eq' && Array.isArray(a) && a[0] === 'match_type')
+      .map(([, a]) => (a as unknown[])[1]);
+
+  it('narrows recent form AND the rival to the focused discipline', async () => {
+    const calls = harness();
+    const { resolveProfile } = await import('../discord-profile');
+
+    await resolveProfile(
+      { by: 'playerId', value: 'p1' },
+      { withForm: true, discipline: 'doubles' }
+    );
+
+    // BOTH, not just matches. The rival panel is the other half of the bug --
+    // head_to_head_stats rows are per match_type, so an unnarrowed read hands
+    // back a singles rival under a doubles headline.
+    expect(typeClauses(calls['matches'])).toEqual(['doubles']);
+    expect(typeClauses(calls['head_to_head_stats'])).toEqual(['doubles']);
+  });
+
+  it('narrows nothing when no discipline was asked for', async () => {
+    const calls = harness();
+    const { resolveProfile } = await import('../discord-profile');
+
+    await resolveProfile({ by: 'playerId', value: 'p1' }, { withForm: true });
+
+    // An unfocused card shows both, and a stray clause here would silently
+    // halve every ordinary card's recent form.
+    expect(typeClauses(calls['matches'])).toEqual([]);
+    expect(typeClauses(calls['head_to_head_stats'])).toEqual([]);
+  });
+
+  it('leaves nights alone, which is not a per-discipline figure', async () => {
+    const calls = harness();
+    const { resolveProfile } = await import('../discord-profile');
+
+    await resolveProfile(
+      { by: 'playerId', value: 'p1' },
+      { withForm: true, discipline: 'singles' }
+    );
+
+    // session_attendance has no match_type at all; a filter here would be an
+    // error PostgREST reports as an empty result, i.e. as zero nights.
+    expect(typeClauses(calls['session_attendance'])).toEqual([]);
+  });
+
+  it('maps each of the four focus values onto the right discipline', async () => {
+    const { focusDiscipline } = await import('../discord-profile');
+    expect(focusDiscipline('open_doubles')).toBe('doubles');
+    expect(focusDiscipline('comp_doubles')).toBe('doubles');
+    expect(focusDiscipline('open_singles')).toBe('singles');
+    expect(focusDiscipline('comp_singles')).toBe('singles');
+  });
+});
