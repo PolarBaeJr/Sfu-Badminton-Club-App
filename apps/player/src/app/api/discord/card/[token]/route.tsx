@@ -1,5 +1,6 @@
 import { ImageResponse } from 'next/og';
 import { readCardToken } from '@/lib/discord-card-token';
+import { parseLadderFocus } from '@/lib/discord-profile';
 import { resolveProfile } from '@/lib/discord-profile';
 import { Card, FONTS, W, cardHeight, avatarDataUri } from '@/lib/discord-card';
 
@@ -25,7 +26,7 @@ export const dynamic = 'force-dynamic';
 const gone = () => new Response(null, { status: 404 });
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
@@ -43,7 +44,16 @@ export async function GET(
 
   const avatar = await avatarDataUri(result.profile.avatarUrl);
 
-  return new ImageResponse(<Card profile={result.profile} avatar={avatar} />, {
+  // WHICH LADDER TO HEADLINE, from `/profile type:`. Re-validated here against
+  // the same fixed list of four rather than trusted: this arrives as a query
+  // parameter, so it is whatever the caller typed, and Discord's own choice
+  // list constrains only the well-behaved path. Anything else parses to null
+  // and the card draws its default table -- there is no input that can make
+  // this route say more about a member than the token already allows, because
+  // the focus only picks WHICH of the already-resolved ranks is drawn large.
+  const focus = parseLadderFocus(new URL(request.url).searchParams.get('type'));
+
+  return new ImageResponse(<Card profile={result.profile} avatar={avatar} focus={focus} />, {
     width: W,
     // The renderer's own answer, not a constant: an unranked card is shorter
     // because it has less on it. See cardHeight.

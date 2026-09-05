@@ -28,6 +28,35 @@ import { PRESENT_STATUSES } from './schedule';
  * else is looking.
  */
 
+/**
+ * Which single ladder a card was asked to headline, from `/profile type:`.
+ *
+ * The four ids match /leaderboard's own CategoryId strings deliberately: they
+ * are the names members already see on the tabs, so a card and the website
+ * cannot end up calling the same ladder two different things.
+ */
+export type LadderFocus = 'open_doubles' | 'open_singles' | 'comp_doubles' | 'comp_singles';
+
+export const LADDER_FOCUS: readonly LadderFocus[] = [
+  'open_doubles',
+  'open_singles',
+  'comp_doubles',
+  'comp_singles',
+] as const;
+
+/** The label a focused card puts under its big number. */
+export const FOCUS_LABEL: Record<LadderFocus, string> = {
+  open_doubles: 'OPEN DOUBLES',
+  open_singles: 'OPEN SINGLES',
+  comp_doubles: 'COMP DOUBLES',
+  comp_singles: 'COMP SINGLES',
+};
+
+export function parseLadderFocus(value: string | null | undefined): LadderFocus | null {
+  const v = (value ?? '').trim().toLowerCase();
+  return (LADDER_FOCUS as readonly string[]).includes(v) ? (v as LadderFocus) : null;
+}
+
 export interface LadderLine {
   elo: number;
   provisional: boolean;
