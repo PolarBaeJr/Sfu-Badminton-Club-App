@@ -30,6 +30,28 @@ describe('loadConfig', () => {
     expect(cfg.auditChannelId).toBe('chan1');
   });
 
+  it('hands back a Map, which is the thing every relay iterates', async () => {
+    // ASSERTED ON ITS OWN because the alternative is silent, and was.
+    //
+    // Every relay reads this registry and walks it once per guild. Five of them
+    // walked it with Object.keys(), which on a Map is ALWAYS [] -- so the loop
+    // body never ran, each tick returned a full set of zero counters, and both
+    // the cron job and the bot reported success. Announcements, session pings,
+    // match results, tournament events and the feedback relay were all dead in
+    // production for as long as they had existed, and nothing anywhere said so.
+    //
+    // The suite could not catch it because every relay test mocked loadConfig
+    // with a plain OBJECT, where Object.keys() works. Those mocks are Maps now,
+    // so each relay's own multi-guild test fails if the iteration regresses;
+    // this asserts the contract they are mocking, so a future mock that drifts
+    // back to an object is disagreeing with something written down.
+    mockFetch.mockResolvedValue(PAYLOAD);
+    const cfg = await loadConfig();
+    expect(cfg.registry).toBeInstanceOf(Map);
+    expect(Object.keys(cfg.registry)).toEqual([]);
+    expect([...cfg.registry.keys()]).toEqual(['g1']);
+  });
+
   it('serves the cache inside the TTL and refetches outside it', async () => {
     mockFetch.mockResolvedValue(PAYLOAD);
     let clock = 1_000_000;
