@@ -1,6 +1,6 @@
 import { ImageResponse } from 'next/og';
 import { readCardToken } from '@/lib/discord-card-token';
-import { parseLadderFocus } from '@/lib/discord-profile';
+import { focusDiscipline, parseLadderFocus } from '@/lib/discord-profile';
 import { resolveProfile } from '@/lib/discord-profile';
 import { Card, FONTS, W, cardHeight, avatarDataUri } from '@/lib/discord-card';
 
@@ -34,24 +34,35 @@ export async function GET(
   const playerId = readCardToken(token);
   if (!playerId) return gone();
 
-  // Re-read rather than carrying the numbers in the token: a card fetched a
-  // week after it was posted should show what is true now, and a token that
-  // carried its own data would be a signed snapshot nobody could correct.
-  // withForm: this is the only caller that draws recent form -- see
-  // ResolveOptions. The bot's own route asks for the profile without it.
-  const result = await resolveProfile({ by: 'playerId', value: playerId }, { withForm: true });
-  if ('miss' in result) return gone();
-
-  const avatar = await avatarDataUri(result.profile.avatarUrl);
-
   // WHICH LADDER TO HEADLINE, from `/profile type:`. Re-validated here against
   // the same fixed list of four rather than trusted: this arrives as a query
   // parameter, so it is whatever the caller typed, and Discord's own choice
   // list constrains only the well-behaved path. Anything else parses to null
   // and the card draws its default table -- there is no input that can make
   // this route say more about a member than the token already allows, because
-  // the focus only picks WHICH of the already-resolved ranks is drawn large.
+  // the focus only picks WHICH of the already-resolved ranks is drawn large,
+  // and which of their own matches are drawn under it.
+  //
+  // READ BEFORE THE RESOLVE, which is the whole reason it moved up here. A
+  // doubles card that still listed the member's last three SINGLES games was
+  // the first version of this feature: the badge said one thing and every
+  // panel under it said another. Recent form is a LIMIT 3 in the query, so
+  // narrowing it after the fact would draw one match for somebody who has
+  // twenty -- the resolver has to be told before it reads.
   const focus = parseLadderFocus(new URL(request.url).searchParams.get('type'));
+
+  // Re-read rather than carrying the numbers in the token: a card fetched a
+  // week after it was posted should show what is true now, and a token that
+  // carried its own data would be a signed snapshot nobody could correct.
+  // withForm: this is the only caller that draws recent form -- see
+  // ResolveOptions. The bot's own route asks for the profile without it.
+  const result = await resolveProfile(
+    { by: 'playerId', value: playerId },
+    { withForm: true, discipline: focus ? focusDiscipline(focus) : null }
+  );
+  if ('miss' in result) return gone();
+
+  const avatar = await avatarDataUri(result.profile.avatarUrl);
 
   return new ImageResponse(<Card profile={result.profile} avatar={avatar} focus={focus} />, {
     width: W,

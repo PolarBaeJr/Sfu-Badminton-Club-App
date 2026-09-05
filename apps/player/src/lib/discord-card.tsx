@@ -7,8 +7,9 @@ import type {
   DiscordProfile,
   LadderFocus,
   LadderLine,
+  MatchDiscipline,
 } from './discord-profile';
-import { FOCUS_LABEL } from './discord-profile';
+import { FOCUS_LABEL, focusDiscipline } from './discord-profile';
 import { formatStreak } from './ladder';
 
 /**
@@ -677,7 +678,13 @@ function MatchRow({ match }: { match: CardMatch }) {
  * only ever played casually without a result being entered -- and the block
  * says so in the same voice the Unranked block uses.
  */
-function RecentPanel({ recent }: { recent: CardMatch[] }) {
+function RecentPanel({
+  recent,
+  discipline,
+}: {
+  recent: CardMatch[];
+  discipline: MatchDiscipline | null;
+}) {
   return (
     <div
       style={{
@@ -706,7 +713,7 @@ function RecentPanel({ recent }: { recent: CardMatch[] }) {
               color: MUTE,
             }}
           >
-            No matches on the record yet
+            {discipline ? `No ${discipline} matches on the record yet` : 'No matches on the record yet'}
           </div>
         )}
       </div>
@@ -723,7 +730,13 @@ function RecentPanel({ recent }: { recent: CardMatch[] }) {
  * edge to end against, which is what stops three match rows of different
  * lengths looking ragged.
  */
-function RivalPanel({ rival }: { rival: DiscordProfile['rival'] }) {
+function RivalPanel({
+  rival,
+  discipline,
+}: {
+  rival: DiscordProfile['rival'];
+  discipline: MatchDiscipline | null;
+}) {
   return (
     <div
       style={{
@@ -794,7 +807,7 @@ function RivalPanel({ rival }: { rival: DiscordProfile['rival'] }) {
             color: MUTE,
           }}
         >
-          Nobody played twice yet
+          {discipline ? `Nobody played twice in ${discipline}` : 'Nobody played twice yet'}
         </div>
       )}
     </div>
@@ -1020,6 +1033,14 @@ export function Card({
   const height = cardHeight(profile);
   const focusRank = profile.ranked && focus ? focusedRank(profile, focus) : null;
   const focused = focusRank !== null;
+  // WHICH DISCIPLINE THE BODY IS ABOUT, and it is derived from `focus` rather
+  // than from `focused` on purpose. The route filtered recent form and the
+  // rival on exactly this, before resolving, so anything else here would let
+  // the card's wording disagree with the rows it was handed -- "no matches on
+  // the record yet" under a card whose owner has twenty singles matches.
+  // `focused` is a narrower question (is there a RANK to headline) and governs
+  // the badge alone.
+  const shown: MatchDiscipline | null = focus ? focusDiscipline(focus) : null;
   const bio = cardBio(profile.bio);
 
   return (
@@ -1128,22 +1149,40 @@ export function Card({
           </div>
         ) : null}
 
-        {/* THE GRID. Four panels for a ranked member, one for everyone else. */}
+        {/* THE GRID. Four panels for a ranked member, one for everyone else --
+            and THREE on a focused card, because the discipline that was not
+            asked for is dropped rather than dimmed. StatPanel is flex:1, so
+            the remaining three widen to fill the row and nothing is left
+            hanging; there is no fixed-width gap to patch.
+
+            Dropping it is the same rule the panels below follow. A card
+            headlined OPEN DOUBLES that still carried a SINGLES rating, three
+            singles matches and a singles rival was the bug -- one line of the
+            card was focused and the rest of it was not. */}
         {profile.ranked && doubles && singles ? (
           <div style={{ display: 'flex', gap: 12, marginTop: 22 }}>
-            <StatPanel
-              label="DOUBLES"
-              value={`${doubles.elo}${doubles.provisional ? '*' : ''}`}
-              sub={rankSub(doubles, focused)}
-              sub2={formSub(doubles, focused)}
-              accent
-            />
-            <StatPanel
-              label="SINGLES"
-              value={`${singles.elo}${singles.provisional ? '*' : ''}`}
-              sub={rankSub(singles, focused)}
-              sub2={formSub(singles, focused)}
-            />
+            {shown !== 'singles' ? (
+              <StatPanel
+                label="DOUBLES"
+                value={`${doubles.elo}${doubles.provisional ? '*' : ''}`}
+                sub={rankSub(doubles, focused)}
+                sub2={formSub(doubles, focused)}
+                accent
+              />
+            ) : null}
+            {shown !== 'doubles' ? (
+              <StatPanel
+                label="SINGLES"
+                value={`${singles.elo}${singles.provisional ? '*' : ''}`}
+                sub={rankSub(singles, focused)}
+                sub2={formSub(singles, focused)}
+                // The accent stripe marks the discipline the card is ABOUT. It
+                // is doubles by default and sits on the panel above; on a
+                // singles card that panel is gone, so the stripe moves here
+                // rather than leaving the row with no accent at all.
+                accent={shown === 'singles'}
+              />
+            ) : null}
             <StatPanel
               label="TOURNAMENT"
               value={String(profile.tournamentPoints ?? 0)}
@@ -1179,8 +1218,8 @@ export function Card({
             shape it has always had, one block and the rail. */}
         {profile.ranked ? (
           <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
-            <RecentPanel recent={profile.recent} />
-            <RivalPanel rival={profile.rival} />
+            <RecentPanel recent={profile.recent} discipline={shown} />
+            <RivalPanel rival={profile.rival} discipline={shown} />
           </div>
         ) : null}
 

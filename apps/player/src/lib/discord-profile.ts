@@ -57,6 +57,25 @@ export function parseLadderFocus(value: string | null | undefined): LadderFocus 
   return (LADDER_FOCUS as readonly string[]).includes(v) ? (v as LadderFocus) : null;
 }
 
+/**
+ * `matches.match_type`, which is also the half of a focus that is about WHAT
+ * WAS PLAYED rather than who is counted.
+ */
+export type MatchDiscipline = 'doubles' | 'singles';
+
+/**
+ * THE WHOLE CARD FOLLOWS THIS, not just the badge.
+ *
+ * A focused card that still drew the member's last three singles games under a
+ * DOUBLES headline was the bug -- the badge said one thing and everything under
+ * it said another. `open` vs `comp` does NOT reach this: it changes who a rank
+ * is measured against, not which games were played, so both open and comp
+ * doubles cards draw the same doubles matches.
+ */
+export function focusDiscipline(focus: LadderFocus): MatchDiscipline {
+  return focus.endsWith('doubles') ? 'doubles' : 'singles';
+}
+
 export interface LadderLine {
   elo: number;
   provisional: boolean;
@@ -314,44 +333,75 @@ const NO_FORM: CardForm = { recent: [], rival: null, nights: null };
 async function loadForm(
   supabase: ReturnType<typeof createServiceRoleClient>,
   playerId: string,
-  ladder: LeaderboardRow[]
+  ladder: LeaderboardRow[],
+  // NARROWS BOTH READS, and it has to be applied in the query rather than to
+  // the result: RECENT_LIMIT is a LIMIT, so filtering three already-fetched
+  // rows down to the doubles ones would draw one match for a member who has
+  // twenty. The same argument holds for the rival, whose ordering is by
+  // total_matches across every row this member appears in.
+  discipline: MatchDiscipline | null
 ): Promise<CardForm> {
   const named = new Map(ladder.map((r) => [r.id, r.name]));
 
+  // EACH READ IS SPLIT IN TWO -- filters, then ordering -- so the discipline
+  // clause can be conditional. Two constraints force this shape:
+  //
+  // Narrowing must be an ADDED clause, never a substituted one. The obvious
+  // one-liner, .filter('match_type', discipline ? 'eq' : 'not.is', ...), is
+  // wrong: `not.is null` DROPS rows whose match_type is null, and this file
+  // treats those as singles (`m.match_type ?? 'singles'`) rather than missing.
+  //
+  // And it has to go here rather than after .order/.limit, because those
+  // return a transform builder with no .eq on it. A generic helper that took
+  // the whole chain type-checked but made tsc give up with "type instantiation
+  // is excessively deep" during the player build, which vitest never sees.
+
+  // Based on `matches`, not on `match_participants`, so ORDER BY played_at is
+  // a real ordering -- PostgREST cannot order parent rows by a column of a
+  // to-one embed, and the participant-first form of this query takes three
+  // arbitrary rows and calls them recent. Same reasoning as my-stats.
+  //
+  // CASUAL AND UNRATED MATCHES COUNT. The section says what the member last
+  // played, and a Friday club game is something they played; nothing in the
+  // row is an Elo figure, so there is no rated number for an unrated match to
+  // sit beside and misrepresent.
+  const matchesFilter = supabase
+    .from('matches')
+    .select(
+      'id, played_at, match_type, score_summary, winner_side, participants:match_participants!inner(player_id)'
+    )
+    .eq('participants.player_id', playerId)
+    // A disputed or voided match rendered as a win on an image nobody can
+    // recall is the one kind of wrong this section must not produce.
+    .eq('result_status', 'confirmed')
+    .not('played_at', 'is', null);
+  const matchesQuery = (
+    discipline ? matchesFilter.eq('match_type', discipline) : matchesFilter
+  )
+    .order('played_at', { ascending: false })
+    .limit(RECENT_LIMIT);
+
+  // The CHECK on this table is `player_a_id < player_b_id`, so which column
+  // holds the member is not knowable in advance and neither is which win
+  // count is theirs. Rows are per match_type, which is what lets a focused
+  // card have a doubles rival -- unfocused, a rival is a person and the two
+  // row kinds are added together below.
+  const h2hFilter = supabase
+    .from('head_to_head_stats')
+    .select('player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches')
+    .or(`player_a_id.eq.${playerId},player_b_id.eq.${playerId}`);
+  const h2hQuery = (discipline ? h2hFilter.eq('match_type', discipline) : h2hFilter)
+    .order('total_matches', { ascending: false })
+    .limit(20);
+
   const [matchesRes, h2hRes, nightsRes] = await Promise.all([
-    // Based on `matches`, not on `match_participants`, so ORDER BY played_at is
-    // a real ordering -- PostgREST cannot order parent rows by a column of a
-    // to-one embed, and the participant-first form of this query takes three
-    // arbitrary rows and calls them recent. Same reasoning as my-stats.
-    //
-    // CASUAL AND UNRATED MATCHES COUNT. The section says what the member last
-    // played, and a Friday club game is something they played; nothing in the
-    // row is an Elo figure, so there is no rated number for an unrated match to
-    // sit beside and misrepresent.
-    supabase
-      .from('matches')
-      .select(
-        'id, played_at, match_type, score_summary, winner_side, participants:match_participants!inner(player_id)'
-      )
-      .eq('participants.player_id', playerId)
-      // A disputed or voided match rendered as a win on an image nobody can
-      // recall is the one kind of wrong this section must not produce.
-      .eq('result_status', 'confirmed')
-      .not('played_at', 'is', null)
-      .order('played_at', { ascending: false })
-      .limit(RECENT_LIMIT),
-    // The CHECK on this table is `player_a_id < player_b_id`, so which column
-    // holds the member is not knowable in advance and neither is which win
-    // count is theirs. Rows are per match_type; a rival is a person, so the
-    // two are added together below.
-    supabase
-      .from('head_to_head_stats')
-      .select('player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches')
-      .or(`player_a_id.eq.${playerId},player_b_id.eq.${playerId}`)
-      .order('total_matches', { ascending: false })
-      .limit(20),
+    matchesQuery,
+    h2hQuery,
     // Nights the member was actually there -- not nights on their record.
     // `no_show` and `excused` are rows too. See PRESENT_STATUSES.
+    //
+    // NOT narrowed by discipline, on purpose: a night attended is a night
+    // attended, and there is no doubles-only version of turning up.
     supabase
       .from('session_attendance')
       .select('id', { count: 'exact', head: true })
@@ -492,6 +542,16 @@ export interface ResolveOptions {
    * chooses how much is asked for, not what is allowed.
    */
   withForm?: boolean;
+
+  /**
+   * Narrow recent form and the rival to one discipline. Null draws both.
+   *
+   * TAKEN FROM `/profile type:`, and it is the same choice as the card's focus
+   * rather than a second one -- the route derives it with focusDiscipline so
+   * the two cannot disagree. It only ever REMOVES rows: nothing here can widen
+   * what may be said about a member, which is decided above and unchanged.
+   */
+  discipline?: MatchDiscipline | null;
 }
 
 export async function resolveProfile(
@@ -578,7 +638,10 @@ export async function resolveProfile(
   // `line` is the gate, not `options.withForm` alone: a member off the public
   // ladder never has form fetched for them, whoever asked and for whatever
   // reason. See loadForm.
-  const form = options.withForm && line ? await loadForm(supabase, player.id, ladder) : NO_FORM;
+  const form =
+    options.withForm && line
+      ? await loadForm(supabase, player.id, ladder, options.discipline ?? null)
+      : NO_FORM;
 
   return {
     profile: {
