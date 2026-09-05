@@ -559,11 +559,19 @@ function unavailableLadder(profile: ProfilePayload, type: string): string | null
   const discipline = type.endsWith('_doubles') ? 'doubles' : 'singles';
 
   if (type.startsWith('comp_')) {
-    // Both shapes mean the same thing to the member -- no competitive rank in
+    // Three shapes mean the same thing to the member -- no competitive rank in
     // this discipline -- so they get the same sentence. `side` null is a member
     // who has not played it at all; compRank null is one who has, but not as a
     // competitive member.
-    if (!side || side.compRank === null) {
+    //
+    // == null, NOT === null, and this is load-bearing rather than style. The
+    // field arrives over the wire from the player app, and a player older than
+    // the resolver that added it omits the key entirely -- so `undefined` is
+    // the shape a bot that has rolled ahead of its player actually sees, which
+    // is an ordinary state here and not a hypothetical. A strict check reads
+    // that as "has a competitive rank" and hands back the byte-identical card
+    // this whole function exists to stop.
+    if (!side || side.compRank == null) {
       return `${who} does not have competitive stats in ${discipline}. Run \`/profile\` without a type to see their full card.`;
     }
     return null;

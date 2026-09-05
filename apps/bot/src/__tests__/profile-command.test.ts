@@ -176,6 +176,26 @@ describe('/profile', () => {
     expect(response.file).toBeUndefined();
   });
 
+  it('treats a player app too old to send compRank as no competitive rank', async () => {
+    // NOT the same as compRank: null, and the difference is a live one: an
+    // older player app omits the key, so the value is undefined. A `=== null`
+    // check reads that as a real competitive rank and renders the very card
+    // this refusal exists to stop -- silently, and only on the deployment where
+    // the bot has rolled ahead of its player, which is not a rare shape here.
+    //
+    // The key is DELETED rather than set, because setting it to undefined would
+    // pass a `=== null` check for the wrong reason and is not what the wire
+    // actually carries.
+    const stale = profile();
+    delete (stale.profile.doubles as Record<string, unknown>).compRank;
+    fetchProfile.mockResolvedValue(stale);
+
+    const response = await run('comp_doubles');
+
+    expect(response.data.content).toContain('does not have competitive stats');
+    expect(fetchCard).not.toHaveBeenCalled();
+  });
+
   it('refuses a discipline the member has never played', async () => {
     fetchProfile.mockResolvedValue(profile({ singles: null }));
 
