@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { DISCORD_LINK_TOKEN_REGEX, getAccountStanding } from '@badminton/shared';
-import { getCurrentPlayer } from '@/lib/supabase-server';
+import { getViewer } from '@/lib/supabase-server';
 import { LinkClient } from './link-client';
 import { ConsentShell } from './consent-shell';
 
@@ -25,7 +25,7 @@ export default async function LinkPage({ params }: { params: Promise<{ token: st
     );
   }
 
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) {
     // Middleware already carries the token through sign-in; this is the second
     // line of defence for anyone who reaches the page without a session

@@ -17,7 +17,7 @@ import { LegalFooter } from '@/components/legal-footer';
 import { cookies } from 'next/headers';
 import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, getAccountStanding, type AccountStanding } from '@badminton/shared';
 import { evaluateLegalGate, type LegalAcceptance } from '../lib/legal-gate';
-import { createServiceRoleClient, createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getActiveSeason, getViewer } from '@/lib/supabase-server';
 import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 import { ConfirmProvider, StaleBuildBanner } from "@badminton/ui";
@@ -184,12 +184,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // refuse). Defaults to good standing, which is what a signed-out visitor is.
   let standing: AccountStanding = getAccountStanding(null);
 
-  try {
-    activeSeasonName = (await getActiveSeason())?.name ?? '';
-  } catch {
-    // No active season
-  }
-
   // Theme preference lives in a cookie so we can set data-theme server-side and
   // avoid a flash of the wrong theme. Explicit light/dark render correctly on
   // the server; 'system' (or no cookie) defaults to dark and the inline script
@@ -197,75 +191,97 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const themePref = (await cookies()).get('theme')?.value;
   const initialTheme = themePref === 'light' ? 'light' : 'dark';
 
-  try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      isAuthenticated = true;
-      // Reads deletion_requested_at / waiver_reset_at, which 00032 no longer
-      // exposes to `authenticated`. Server-side and filtered by the session's
-      // user id, so the service role is scoped to the caller's own row.
-      const { data: player } = await createServiceRoleClient()
-        .from('players')
-        // is_banned has to be in the select or getAccountStanding reads it as
-        // undefined and a banned member keeps every control — exactly the bug
-        // this exists to fix. Same for active_flag + deletion_requested_at,
-        // which getAccountStanding now reads too (and which hasConsoleAccess
-        // and DeletionGate already needed). ban_reason is what lets the banner
-        // say WHY rather than just "suspended".
-        .select('id, full_name, avatar_url, status, is_banned, ban_reason, active_flag, role, is_exec, is_trainer, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      standing = getAccountStanding(player);
-      playerName = player?.full_name ?? '';
-      avatarUrl = player?.avatar_url ?? null;
-      playerId = player?.id ?? null;
-      playerStatus = player?.status ?? null;
-      deletionRequestedAt = player?.deletion_requested_at ?? null;
-      // Anyone with ANY console level, which now includes varsity trainers —
-      // the link in the top bar is the only route they have to the console, and
-      // hiding it would leave the new role technically working and practically
-      // unreachable.
-      //
-      // hasConsoleAccess is the shared predicate (@badminton/shared), the same
-      // one the settings page and the admin app use, mirroring
-      // admin_access_level() in 00057: standing first, then level. A banned or
-      // deactivated exec is shown no route in — the console would reject them
-      // anyway, and a link that always errors is worse than no link. Every
-      // column it reads has to be in the select above, or it reads as undefined
-      // and the link silently disappears.
-      isExecOrAdmin = hasConsoleAccess(player);
+  // NEITHER OF THESE WAITS ON THE OTHER, and until now both did. The season is
+  // not a property of the viewer, but it ran first and to completion in front of
+  // everything below purely because of the order this function was written in.
+  const [season, viewer] = await Promise.all([
+    // No active season is the ordinary answer here, not an error.
+    getActiveSeason().catch(() => null),
+    // A signed-out visitor comes back as nulls rather than a throw, so a throw
+    // means something else — an unreachable Supabase, a missing service-role
+    // key. The old code caught that under a comment reading "Not authenticated"
+    // and rendered a signed-out shell to a signed-in member with nothing
+    // anywhere reporting it. Still non-fatal, because chrome is not enforcement
+    // (requirePlayer() re-reads the row and throws), but no longer silent.
+    getViewer().catch((err) => {
+      console.error('Root layout could not load the viewer:', err);
+      return { user: null, player: null } as Awaited<ReturnType<typeof getViewer>>;
+    }),
+  ]);
 
-      // A member needs the waiver gate when any of the four legal documents
-      // lacks a valid acceptance — current version, and for the waiver also
-      // re-signed within the last year (four tiny rows — skipped when no player).
+  activeSeasonName = season?.name ?? '';
+
+  // THE SAME ROW THE PAGE UNDER THIS LAYOUT IS ABOUT TO ASK FOR. getViewer() is
+  // request-scoped, so whichever of the two runs first pays for it and the other
+  // gets it free — see the note on the function. This block used to run its own
+  // narrower select, which meant a different URL, which meant Next could not
+  // collapse the two and every authenticated navigation fetched the row twice.
+  const { user, player } = viewer;
+  isAuthenticated = user !== null;
+
+  // Published to every client control via StandingProvider so none of them has
+  // to re-derive it. getAccountStanding and hasConsoleAccess both read columns
+  // the old hand-written select had to name explicitly — is_banned, active_flag,
+  // deletion_requested_at — and both silently degrade to "no restrictions" on a
+  // column they cannot see. That trap is gone: PLAYER_SELECT is `*`, so there is
+  // no list left to forget a column from.
+  standing = getAccountStanding(player);
+  playerName = player?.full_name ?? '';
+  avatarUrl = player?.avatar_url ?? null;
+  playerId = player?.id ?? null;
+  playerStatus = player?.status ?? null;
+  deletionRequestedAt = player?.deletion_requested_at ?? null;
+  // Anyone with ANY console level, which includes varsity trainers — the link in
+  // the top bar is the only route they have to the console, and hiding it would
+  // leave the role technically working and practically unreachable. Shared
+  // predicate with the settings page and the admin app, mirroring
+  // admin_access_level() in 00057: standing first, then level. A banned or
+  // deactivated exec is shown no route in, because the console would reject them
+  // and a link that always errors is worse than no link.
+  isExecOrAdmin = hasConsoleAccess(player);
+
+  const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
+  singlesElo = (ratings as Record<string, unknown>)?.singles_elo as number ?? null;
+  doublesElo = (ratings as Record<string, unknown>)?.doubles_elo as number ?? null;
+
+  if (player) {
+    try {
+      const supabase = await createServerSupabaseClient();
+      // INDEPENDENT OF EACH OTHER, so they overlap. Both need `player` and
+      // neither needs the other's answer; they were awaited one after the next.
       //
-      // Shares evaluateLegalGate() with the gameplay server actions so the two
-      // can never disagree. When the read fails the actions decline every
-      // mutation, so the chrome must not carry on as if nothing were wrong:
-      // 'unavailable' raises the gate, which is the only screen that tells the
-      // member why the rest of the app has stopped responding to them.
-      if (player) {
-        const gate = await evaluateLegalGate(
+      // The notifications count also used to run for a signed-out visitor with
+      // `player_id` filtered to the empty string — a request that could only
+      // ever fail, on every anonymous page load. Under `if (player)` it does not
+      // run at all, and the count for a visitor stays the 0 it always was.
+      const [gate, unread] = await Promise.all([
+        // A member needs the waiver gate when any of the four legal documents
+        // lacks a valid acceptance — current version, and for the waiver also
+        // re-signed within the last year. Shares evaluateLegalGate() with the
+        // gameplay server actions so the two can never disagree: when the read
+        // fails the actions decline every mutation, so the chrome must not carry
+        // on as if nothing were wrong. 'unavailable' RAISES the gate, which is
+        // the only screen that tells the member why the rest of the app has
+        // stopped responding to them. Do not simplify that mapping away.
+        evaluateLegalGate(
           supabase,
           player as { waiver_reset_at?: string | null; waiver_acceptances?: LegalAcceptance[] | null },
-        );
-        missingLegalDocs = gate.status === 'unavailable' ? LEGAL_DOCUMENT_ORDER.slice() : gate.missing;
-      }
-
-      const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
-      singlesElo = (ratings as Record<string, unknown>)?.singles_elo as number ?? null;
-      doublesElo = (ratings as Record<string, unknown>)?.doubles_elo as number ?? null;
-
-      const { count } = await supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('player_id', player?.id ?? '')
-        .eq('read_flag', false);
-      unreadCount = count ?? 0;
+        ),
+        supabase
+          .from('notifications')
+          .select('*', { count: 'exact', head: true })
+          .eq('player_id', player.id)
+          .eq('read_flag', false),
+      ]);
+      missingLegalDocs = gate.status === 'unavailable' ? LEGAL_DOCUMENT_ORDER.slice() : gate.missing;
+      unreadCount = unread.count ?? 0;
+    } catch (err) {
+      // Same shape as before — the chrome degrades, the page still renders —
+      // but it says so now. Leaving missingLegalDocs empty here lowers the gate;
+      // that is the pre-existing behaviour for a throw, and it is safe because
+      // assertCurrentWaiver() fails CLOSED on the actions themselves.
+      console.error('Root layout could not load the viewer chrome:', err);
     }
-  } catch {
-    // Not authenticated
   }
 
   return (

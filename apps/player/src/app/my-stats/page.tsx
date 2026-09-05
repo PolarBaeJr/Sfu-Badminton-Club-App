@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer, getActiveSeason } from '@/lib/supabase-server';
 import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, formatRelativeTime, clubToday, formatMemberCode, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
@@ -77,7 +77,7 @@ export default async function MyStatsPage({
 }
 
 async function CurrentSeasonStats() {
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();

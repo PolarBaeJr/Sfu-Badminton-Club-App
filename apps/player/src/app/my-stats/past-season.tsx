@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
 import { CLUB_TIMEZONE, selectInChunks } from '@badminton/shared';
 import { clubDayKey } from '@/lib/feed-activity';
@@ -89,7 +89,7 @@ type OtherPlayer = { id: string; full_name: string; avatar_url?: string | null; 
 export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
   if (!UUID.test(seasonId)) redirect('/my-stats');
 
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
