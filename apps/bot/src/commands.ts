@@ -516,32 +516,22 @@ export async function handleLeaderboard(options: CommandOption[] | undefined) {
   });
 }
 
-// Discord abandons an interaction that has not been answered in three seconds
-// and tells the member the application did not respond. Everything /profile
-// does has to fit inside this, which is set under the real limit to leave room
-// for encoding and writing the reply.
-const PROFILE_BUDGET_MS = 2600;
-
-// Below this there is not enough left for a fetch to finish, and starting one
-// anyway only delays the fallback by the time it takes to time out.
-const MIN_CARD_FETCH_MS = 400;
-
-// A CEILING AS WELL AS A FLOOR, because the two failures are not symmetric: a
-// card that does not arrive has the URL fallback right below, and a missed
-// Discord deadline has nothing. A read that succeeds at the last millisecond
-// still leaves a multipart body to encode and write, so the read is not allowed
-// to consume the whole remainder.
+// The card is fetched AFTER the acknowledgement, so this no longer has to fit
+// inside Discord's three seconds -- the interaction token is good for fifteen
+// minutes. It is still bounded, and the bound still matters: the member is
+// looking at a "thinking..." spinner that Discord will happily spin for the
+// full fifteen, so an unbounded read turns a slow render into a message that
+// never arrives. Today's behaviour on a timeout, a link they can open, is worse
+// than a card and far better than a permanent spinner.
 //
-// 1800 IS MEASURED, NOT GUESSED. Timed from inside the staging bot container on
-// the Pi, four consecutive fetches of a real card: 1046, 945, 611, 631ms. Every
-// one of those is a fresh render -- nothing between the bot and the app caches
-// this, so the route's own cache-control never comes into play here -- which
-// makes ~1050ms the honest worst case rather than a cold-start outlier. A
-// ceiling of 1200 sat 150ms above that, so an ordinary slow render would have
-// dropped to the URL fallback intermittently, looking like the feature was
-// broken at random. Raising it to 1800 keeps ~800ms of the budget in reserve
-// for encoding and writing the reply, which is far more than an 85KB body needs.
-const MAX_CARD_FETCH_MS = 1800;
+// EIGHT SECONDS RATHER THAN THE 1800ms THIS REPLACES. That ceiling existed
+// because the read had to finish inside the acknowledgement deadline, and it
+// sat only ~750ms above the measured worst case (1046, 945, 611, 631ms from
+// inside the staging bot container, every one a fresh render) -- close enough
+// that an ordinary slow render dropped to the URL intermittently and looked
+// like the feature was broken at random. Nothing forces it to be tight now, so
+// it is set where only a genuinely stuck render reaches it.
+const CARD_FETCH_MS = 8000;
 
 /**
  * Why a requested `type:` cannot be honoured, or null when it can.
@@ -621,13 +611,24 @@ function unavailableLadder(profile: ProfilePayload, type: string): string | null
  * the channel. Uploading the bytes hands Discord a file it owns and stores, and
  * it also removes the embed frame the card was never designed to sit inside.
  *
- * NOT DEFERRED, deliberately. index.ts defers every command ephemerally, and a
- * deferred /profile would therefore be visible only to the caller — which is
- * the one property this command exists to not have. Making the deferral public
- * instead would publish the four misses below, each of which is ephemeral on
- * purpose.
+ * ANSWERED IN TWO PHASES, and the split is what makes deferring possible at
+ * all. The command has to be deferred: rendering the card is a fresh PNG every
+ * time, and a cold one blows Discord's three seconds and shows the member "the
+ * application did not respond". But DEFERRED_COMMANDS defers ephemerally, and
+ * an ephemeral card is the one property this command exists to not have, while
+ * deferring publicly would publish the five refusals below — each of which is
+ * ephemeral on purpose.
  *
- * The four misses are the app declining on purpose, and each one sends the
+ * Neither, then. The refusals are ALL decided by fetchProfile, one JSON call to
+ * the app; the card fetch and its multipart upload are the slow part and decide
+ * nothing. So the fast half runs BEFORE any acknowledgement and still answers
+ * every refusal immediately and ephemerally, exactly as it did when the whole
+ * command was immediate, and only the hit path acknowledges — publicly, because
+ * by then the answer is known to be a card. Visibility is therefore still
+ * chosen with the answer in hand, which is the whole reason it can be fixed at
+ * acknowledgement time and never revisited.
+ *
+ * The five refusals are the app declining on purpose, and each one sends the
  * member somewhere different. Collapsing them into "something went wrong" would
  * leave someone who mistyped a handle waiting for an outage to end.
  */
@@ -643,7 +644,6 @@ export async function handleProfile(
   // has that ladder at all. Only the bot can say so in words.
   const type = option(options, 'type');
 
-  const started = Date.now();
   const result = await fetchProfile(context.discordUserId, {
     discordUserId: member ? String(member) : null,
     handle: handle ? String(handle) : null,
@@ -707,33 +707,43 @@ export async function handleProfile(
     ? `${result.cardUrl}?type=${encodeURIComponent(String(type))}`
     : result.cardUrl;
 
-  const remaining = PROFILE_BUDGET_MS - (Date.now() - started);
-  const card =
-    remaining >= MIN_CARD_FETCH_MS
-      ? await fetchCard(cardUrl, Math.min(remaining, MAX_CARD_FETCH_MS))
-      : null;
-
-  if (card) {
-    return {
-      type: 4,
-      data: {
-        // Both halves of the pair, and the filename taken from the file rather
-        // than written out again. Discord accepts a declaration that does not
-        // match the part with a 200 and renders the message with no image at
-        // all — the same silent half-success postMessageWithFile guards.
-        attachments: [{ id: 0, filename: card.filename }],
-      },
-      file: card,
-    };
-  }
-
-  // The bytes did not arrive in time. The URL still resolves for whoever opens
-  // it, so the reply degrades to a link rather than to an apology — and the
-  // link is enough on its own now, because the bio and the footnote are on the
-  // card it points at rather than in a body this branch would have to rebuild.
+  // THE ACKNOWLEDGEMENT, and the last decision this function makes. No flags:
+  // the card is public, and a deferred reply's visibility is fixed here and
+  // cannot be changed by the edit that follows. Every return above this line is
+  // ephemeral and immediate; everything below runs after the socket has closed.
   return {
-    type: 4,
-    data: { content: cardUrl },
+    type: 5,
+    finish: async () => {
+      // NEVER THROWS, by construction rather than by a try: fetchCard answers
+      // null on any failure, and the only other work is building an object.
+      // A rejection escaping here is answered publicly with a generic apology,
+      // which is strictly worse than the link this returns instead.
+      const card = await fetchCard(cardUrl, CARD_FETCH_MS);
+
+      if (card) {
+        return {
+          type: 4,
+          data: {
+            // Both halves of the pair, and the filename taken from the file
+            // rather than written out again. Discord accepts a declaration that
+            // does not match the part with a 200 and renders the message with
+            // no image at all — the same silent half-success
+            // postMessageWithFile guards.
+            attachments: [{ id: 0, filename: card.filename }],
+          },
+          file: card,
+        };
+      }
+
+      // The bytes did not arrive. The URL still resolves for whoever opens it,
+      // so the reply degrades to a link rather than to an apology — and the
+      // link is enough on its own now, because the bio and the footnote are on
+      // the card it points at rather than in a body this branch would rebuild.
+      return {
+        type: 4,
+        data: { content: cardUrl },
+      };
+    },
   };
 }
 
@@ -1732,6 +1742,15 @@ export interface BotResponse {
   type: number;
   data?: Record<string, unknown>;
   file?: CardFile;
+  /**
+   * The slow half of a command that acknowledged first — see handleProfile.
+   *
+   * Only ever set beside `type: 5`. index.ts writes the acknowledgement, then
+   * runs this and PATCHes whatever it returns over the "thinking..." message.
+   * It must not throw: a rejection here is answered publicly with a generic
+   * apology, which is worse than any answer it could have returned itself.
+   */
+  finish?: () => Promise<BotResponse>;
 }
 
 export async function dispatch(

@@ -9,9 +9,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // out of the embed footer — a cached public image with a bare `*` on it is the
 // failure, and it outlives the message.
 //
-// The four misses stay ephemeral. They are the reason /profile is not deferred
-// at all (index.ts defers everything ephemerally), so a change that made one of
-// them public would undo the whole shape.
+// The five refusals stay ephemeral and IMMEDIATE. That is the reason /profile
+// cannot join DEFERRED_COMMANDS, which defers everything ephemerally, and the
+// reason its own deferral is safe to make public: by the time it acknowledges,
+// every refusal has already been answered. `ack` below is what holds that line
+// — a deferred reply's visibility is fixed at acknowledgement and cannot be
+// changed by the edit that follows, so a `flags: 64` appearing there would make
+// every card in the club caller-only.
 
 const fetchProfile = vi.fn();
 const fetchCard = vi.fn();
@@ -50,14 +54,32 @@ function profile(over: Record<string, unknown> = {}) {
   };
 }
 
-async function run(type?: string) {
+interface Reply {
+  type: number;
+  data: Record<string, unknown>;
+  file?: typeof CARD;
+  finish?: () => Promise<Reply>;
+}
+
+/** What the member is answered with immediately — a refusal, or the deferral. */
+async function ack(type?: string): Promise<Reply> {
   const { handleProfile } = await import('../commands.js');
   const options = type ? [{ name: 'type', type: 3, value: type }] : undefined;
-  return handleProfile(options as never, CONTEXT) as Promise<{
-    type: number;
-    data: Record<string, unknown>;
-    file?: typeof CARD;
-  }>;
+  const response = (await handleProfile(options as never, CONTEXT)) as unknown as Reply;
+  return { ...response, data: response.data ?? {} };
+}
+
+/**
+ * The message the member ends up looking at.
+ *
+ * Follows the deferral through `finish` where there is one, so every assertion
+ * below stays about the answer rather than about which phase produced it.
+ */
+async function run(type?: string): Promise<Reply> {
+  const first = await ack(type);
+  if (!first.finish) return first;
+  const final = await first.finish();
+  return { ...final, data: final.data ?? {} };
 }
 
 beforeEach(() => {
@@ -113,36 +135,41 @@ describe('/profile', () => {
     expect(response.data.content).toBe('https://app.example/api/discord/card/tok');
   });
 
-  it('skips the card fetch when fetchProfile has already eaten the budget', async () => {
-    // Otherwise the skip and a null card are byte-identical from outside, and a
-    // sign error here would pass every other test in this file. The first
-    // Date.now is `started`; everything after it is the check.
-    const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(2_400);
+  it('acknowledges the card publicly and every refusal ephemerally', async () => {
+    // THE PROPERTY THE WHOLE TWO-PHASE SPLIT EXISTS FOR. A deferred reply's
+    // visibility is fixed at acknowledgement, so `flags: 64` creeping onto the
+    // deferral would silently make every card in the club visible to its caller
+    // alone -- and nothing else in this file would notice, because the edit that
+    // follows carries the same body either way.
+    //
+    // Asserted as a pair, on one profile and one refusal, so it also fails if
+    // the two were ever collapsed into a single shared visibility.
     fetchProfile.mockResolvedValue(profile());
+    const hit = await ack();
+    expect(hit.type).toBe(5);
+    expect(hit.data.flags).toBeUndefined();
 
-    const response = await run();
-
-    expect(fetchCard).not.toHaveBeenCalled();
-    expect(response.data.content).toContain('/api/discord/card/tok');
-    now.mockRestore();
+    fetchProfile.mockResolvedValue({ miss: 'no_such_handle' });
+    const refusal = await ack();
+    expect(refusal.type).toBe(4);
+    expect(refusal.data.flags).toBe(64);
+    // And it never acknowledged at all, so there is nothing to edit later.
+    expect(refusal.finish).toBeUndefined();
   });
 
-  it('caps the card fetch so a slow read cannot eat the send window', async () => {
-    // NOT the whole 2550 that is left. A read returning at the deadline still
-    // leaves a multipart body to encode and write, and a blown deadline has no
-    // fallback while a null card has one.
+  it('still bounds the card fetch now that it runs after the acknowledgement', async () => {
+    // The three-second deadline is already met by the time this runs, so the
+    // bound is no longer about the send window -- it is about the spinner.
+    // Discord will show "thinking..." for the full fifteen-minute token life, so
+    // an unbounded read turns a stuck render into a message that never arrives,
+    // where a bounded one degrades to the link asserted above.
     //
-    // The literal tracks MAX_CARD_FETCH_MS in commands.ts, which is a measured
-    // number rather than a round one -- a real card renders in 611-1046ms from
-    // inside the bot container on the Pi. If you change it there, change it
-    // here, and re-measure rather than picking a new round number.
-    const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(50);
+    // The literal tracks CARD_FETCH_MS in commands.ts.
     fetchProfile.mockResolvedValue(profile());
 
     await run();
 
-    expect(fetchCard).toHaveBeenCalledWith(expect.any(String), 1_800);
-    now.mockRestore();
+    expect(fetchCard).toHaveBeenCalledWith(expect.any(String), 8_000);
   });
 
   it('honours a type the member has, on the card url', async () => {

@@ -32,6 +32,7 @@ export interface DiscordApiOptions {
 }
 
 import type { DiscordRole } from './setup.js';
+import type { CardFile } from './api.js';
 
 const BASE = 'https://discord.com/api/v10';
 
@@ -540,19 +541,51 @@ export async function editDeferredReply(
   applicationId: string,
   interactionToken: string,
   payload: unknown,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  file?: CardFile
 ): Promise<boolean> {
   try {
+    // THE WEBHOOK BODY IS NOT THE CALLBACK BODY. sendMultipart declares the
+    // attachment under `payload_json.data`, because an interaction CALLBACK
+    // nests the message fields one level down. This route does not: it takes a
+    // message directly, so `payload` here is already the unwrapped body and
+    // `attachments` belongs at its top level. Nesting it the callback way is
+    // answered with a 200 and a message that renders without the image.
     const response = await fetchImpl(
       `${BASE}/webhooks/${applicationId}/${interactionToken}/messages/@original`,
-      {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      }
+      file
+        ? {
+            method: 'PATCH',
+            // NO content-type. FormData picks its own boundary and only fetch
+            // knows it; naming multipart/form-data by hand declares a boundary
+            // that is not the one in the body, and Discord rejects that as a
+            // malformed payload. Same trap the role calls above avoid.
+            body: multipartBody(payload, file),
+          }
+        : {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          }
     );
     return response.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * `payload_json` + `files[0]`, the shape every Discord file upload takes.
+ *
+ * Here rather than in multipart.ts because that module's job is writing a
+ * ServerResponse for the interaction callback, and this one hands a body to
+ * fetch. The two differ in where `attachments` sits — see the note above.
+ */
+function multipartBody(payload: unknown, file: CardFile): FormData {
+  const form = new FormData();
+  form.append('payload_json', JSON.stringify(payload));
+  // The view, not its .buffer — a Uint8Array onto a larger pool would otherwise
+  // upload everything behind it.
+  form.append('files[0]', new Blob([file.bytes], { type: file.contentType }), file.filename);
+  return form;
 }
