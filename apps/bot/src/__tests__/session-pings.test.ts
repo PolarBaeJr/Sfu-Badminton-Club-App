@@ -37,7 +37,7 @@ const PING = {
 beforeEach(() => {
   vi.resetAllMocks();
   process.env.DISCORD_BOT_TOKEN = 'bot-token';
-  loadConfig.mockResolvedValue({ registry: { g1: {} }, auditChannelId: null });
+  loadConfig.mockResolvedValue({ registry: new Map([['g1', {}]]), auditChannelId: null });
   fetchDuePings.mockResolvedValue({ pings: [PING] });
   createMessage.mockResolvedValue(true);
   recordPing.mockResolvedValue({ ok: true });
@@ -126,7 +126,7 @@ describe('session pings', () => {
   });
 
   it('carries on to the next guild when one fails', async () => {
-    loadConfig.mockResolvedValue({ registry: { g1: {}, g2: {} }, auditChannelId: null });
+    loadConfig.mockResolvedValue({ registry: new Map([['g1', {}], ['g2', {}]]), auditChannelId: null });
     fetchDuePings
       .mockRejectedValueOnce(new Error('unreachable'))
       .mockResolvedValueOnce({ pings: [PING] });

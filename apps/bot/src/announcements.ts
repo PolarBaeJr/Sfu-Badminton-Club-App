@@ -90,7 +90,7 @@ export async function runAnnouncements(): Promise<AnnouncementRunResult> {
   const { registry } = await loadConfig();
   const api = new DiscordApi({ token });
 
-  for (const guildId of Object.keys(registry)) {
+  for (const guildId of registry.keys()) {
     let actions: AnnouncementAction[];
     let skipped: { announcementId: string; reason: string }[];
     try {

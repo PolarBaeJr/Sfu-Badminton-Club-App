@@ -55,7 +55,7 @@ const POST_ACTION = {
 beforeEach(() => {
   vi.resetAllMocks();
   process.env.DISCORD_BOT_TOKEN = 'bot-token';
-  loadConfig.mockResolvedValue({ registry: { g1: {} }, auditChannelId: null });
+  loadConfig.mockResolvedValue({ registry: new Map([['g1', {}]]), auditChannelId: null });
   fetchMatchResultActions.mockResolvedValue({ actions: [POST_ACTION], skipped: [] });
   postMessage.mockResolvedValue('msg-1');
   editMessage.mockResolvedValue('ok');
@@ -249,7 +249,7 @@ describe('runMatchResults', () => {
   });
 
   it("one guild's failure does not abort the others", async () => {
-    loadConfig.mockResolvedValue({ registry: { g1: {}, g2: {} }, auditChannelId: null });
+    loadConfig.mockResolvedValue({ registry: new Map([['g1', {}], ['g2', {}]]), auditChannelId: null });
     fetchMatchResultActions
       .mockRejectedValueOnce(new Error('503'))
       .mockResolvedValueOnce({ actions: [POST_ACTION], skipped: [] });

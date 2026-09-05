@@ -48,7 +48,7 @@ export async function runSessionPings(): Promise<PingRunResult> {
   const api = new DiscordApi({ token });
   const result: PingRunResult = { posted: 0, failed: 0, skipped: 0 };
 
-  for (const guildId of Object.keys(registry)) {
+  for (const guildId of registry.keys()) {
     let pings: DuePing[];
     try {
       ({ pings } = await fetchDuePings(guildId));

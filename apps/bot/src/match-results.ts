@@ -78,7 +78,7 @@ export async function runMatchResults(): Promise<MatchResultRunResult> {
   const { registry } = await loadConfig();
   const api = new DiscordApi({ token });
 
-  for (const guildId of Object.keys(registry)) {
+  for (const guildId of registry.keys()) {
     let actions: MatchResultAction[];
     let skipped: { matchId: string; reason: string }[];
     let windowCapReached: number | undefined;

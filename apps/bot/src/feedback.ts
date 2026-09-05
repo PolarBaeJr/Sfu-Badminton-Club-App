@@ -197,7 +197,7 @@ export async function runFeedback(): Promise<FeedbackRunResult> {
   const { registry } = await loadConfig();
   const api = new DiscordApi({ token });
 
-  for (const guildId of Object.keys(registry)) {
+  for (const guildId of registry.keys()) {
     let actions: FeedbackAction[];
     let skipped: { sourceId: string; reason: string }[];
     let windowCapReached: number | undefined;

@@ -56,7 +56,7 @@ export async function runTournamentEvents(): Promise<TournamentRunResult> {
   const { registry } = await loadConfig();
   const api = new DiscordApi({ token });
 
-  for (const guildId of Object.keys(registry)) {
+  for (const guildId of registry.keys()) {
     let actions: TournamentEventAction[];
     let skipped: { tournamentId: string; reason: string }[];
     try {
