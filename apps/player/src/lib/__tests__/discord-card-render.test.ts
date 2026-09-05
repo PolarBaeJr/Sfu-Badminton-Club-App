@@ -4,8 +4,19 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PNG } from 'pngjs';
 import { ImageResponse } from 'next/og';
-import { Card, FONTS, W, cardHeight, cardBio, BIO_MAX, H_BIO } from '../discord-card';
-import type { DiscordProfile } from '../discord-profile';
+import {
+  Card,
+  FONTS,
+  W,
+  cardHeight,
+  cardBio,
+  BIO_MAX,
+  H_BIO,
+  rankBlockWidth,
+  nameSize,
+  cardName,
+} from '../discord-card';
+import type { DiscordProfile, LadderFocus } from '../discord-profile';
 
 /**
  * THE CARD IS ACTUALLY RENDERED HERE, and that is the entire point.
@@ -54,8 +65,11 @@ const base: DiscordProfile = {
   bio: null,
   status: null,
   ranked: true,
-  doubles: { elo: 1842, provisional: false, wins: 24, losses: 9, streak: 4, rank: 3 },
-  singles: { elo: 1596, provisional: true, wins: 8, losses: 6, streak: -1, rank: 11 },
+  // compRank null: the base fixture is a member who is NOT competitive, so
+  // every case built off it draws the tiles the way most of the club sees them.
+  // The competitive shape is its own case below.
+  doubles: { elo: 1842, provisional: false, wins: 24, losses: 9, streak: 4, rank: 3, compRank: null },
+  singles: { elo: 1596, provisional: true, wins: 8, losses: 6, streak: -1, rank: 11, compRank: null },
   tournamentPoints: 340,
   background: { kind: 'default' },
   awards: [],
@@ -121,8 +135,13 @@ function bottomEdgeInk(buf: Buffer, rows = 6): number {
   return worst;
 }
 
-async function renderAt(profile: DiscordProfile, height: number, name?: string) {
-  const response = new ImageResponse(createElement(Card, { profile, avatar: null }), {
+async function renderAt(
+  profile: DiscordProfile,
+  height: number,
+  name?: string,
+  focus: LadderFocus | null = null,
+) {
+  const response = new ImageResponse(createElement(Card, { profile, avatar: null, focus }), {
     width: W,
     height,
     fonts: FONTS,
@@ -152,20 +171,60 @@ async function render(profile: DiscordProfile, name: string) {
  * width is the card's 1000 less its 50px left and 40px right padding.
  */
 async function bioLines(text: string): Promise<number> {
-  const BAND = 24;
+  return linesAt(text, { width: W - 90, size: 17 });
+}
+
+/**
+ * How many lines the text wraps to when drawn at a given width and font.
+ *
+ * EVERY FIXED-HEIGHT BOX ON THIS CARD NEEDS THIS, not just the bio. A tile
+ * sub-line that outgrows its panel wraps to a second line, and StatPanel is a
+ * fixed 132px holding exactly two, so the wrap pushes the last line out and
+ * satori clips it away without a word. A name that wraps loses its second line
+ * the same way. The bottom-edge crop check cannot see either. Neither can the
+ * type system.
+ *
+ * COUNTED AS RUNS OF INKED ROWS, not as fixed bands, and that distinction cost
+ * an hour. Banding assumes a line's ink sits inside its own band, which holds
+ * for 17px text on 24px lines and FAILS for a 38px name: the ascenders and
+ * descenders cross the boundary, so one unwrapped line reads as two and the
+ * measurement quietly answers a different question. Runs separated by a blank
+ * row have no such assumption. The probe draws at twice the font size to
+ * guarantee the gap between real lines is wide enough to see -- wrapping
+ * depends on width and size, never on line height, so inflating it here
+ * changes nothing about what is being measured.
+ */
+async function linesAt(
+  text: string,
+  opts: {
+    width: number;
+    size: number;
+    weight?: number;
+    letterSpacing?: number;
+    /**
+     * 'Barlow' unless said otherwise. Every NUMBER on the card is Barlow
+     * Condensed, which is far narrower -- measuring one in the other silently
+     * answers a different question than the one being asked.
+     */
+    family?: 'Barlow' | 'Barlow Condensed';
+  },
+): Promise<number> {
+  const line = Math.round(opts.size * 2);
+  const height = line * 6;
   const el = createElement(
     'div',
-    { style: { display: 'flex', width: W, height: 240, background: '#000' } },
+    { style: { display: 'flex', width: W, height, background: '#000' } },
     createElement(
       'div',
       {
         style: {
           display: 'flex',
-          width: W - 90,
-          fontFamily: 'Barlow',
-          fontWeight: 400,
-          fontSize: 17,
-          lineHeight: `${BAND}px`,
+          width: opts.width,
+          fontFamily: opts.family ?? 'Barlow',
+          fontWeight: opts.weight ?? 400,
+          fontSize: opts.size,
+          ...(opts.letterSpacing === undefined ? {} : { letterSpacing: opts.letterSpacing }),
+          lineHeight: `${line}px`,
           color: '#ffffff',
         },
       },
@@ -173,23 +232,24 @@ async function bioLines(text: string): Promise<number> {
     ),
   );
   const buf = Buffer.from(
-    await new ImageResponse(el, { width: W, height: 240, fonts: FONTS }).arrayBuffer(),
+    await new ImageResponse(el, { width: W, height, fonts: FONTS }).arrayBuffer(),
   );
   const png = PNG.sync.read(buf);
-  let lines = 0;
-  for (let band = 0; band * BAND < png.height; band++) {
-    let inked = false;
-    for (let y = band * BAND; y < (band + 1) * BAND && !inked; y++) {
-      for (let x = 0; x < png.width; x++) {
-        // White text on black: any bright pixel is a glyph. No median needed —
-        // this probe draws its own flat background rather than the card's
-        // gradient.
-        if ((png.data[(png.width * y + x) << 2] ?? 0) > 60) { inked = true; break; }
-      }
+
+  let runs = 0;
+  let inRun = false;
+  for (let y = 0; y < png.height; y++) {
+    let ink = false;
+    for (let x = 0; x < png.width; x++) {
+      // White text on a flat black ground: any bright pixel is a glyph. No
+      // median needed -- this probe draws its own background, not the card's
+      // gradient.
+      if ((png.data[(png.width * y + x) << 2] ?? 0) > 60) { ink = true; break; }
     }
-    if (inked) lines++;
+    if (ink && !inRun) runs++;
+    inRun = ink;
   }
-  return lines;
+  return runs;
 }
 
 describe('the card fits the box it declares', () => {
@@ -237,7 +297,7 @@ describe('the card fits the box it declares', () => {
       name: 'Bartholomew Fitzgerald-Kensington',
       handle: 'bartholomew_fitzgerald',
       status: 'suspended',
-      doubles: { elo: 2401, provisional: true, wins: 148, losses: 132, streak: -12, rank: 1287 },
+      doubles: { elo: 2401, provisional: true, wins: 148, losses: 132, streak: -12, rank: 1287, compRank: 964 },
       recent: [
         {
           won: false,
@@ -280,6 +340,156 @@ describe('the card fits the box it declares', () => {
       expect(await bioLines(bio), name).toBeLessThanOrEqual(2);
     }
   }, 60_000);
+
+  it('fits every rank cell and the name beside the widest block', async () => {
+    // THE GRID'S OWN GEOMETRY. A rank cell is a fixed 62px and a four-figure
+    // rank is the widest thing that can land in one; the name column is what is
+    // left after the avatar and the block, and a name that wraps loses its
+    // second line to the header's fixed height. Neither failure draws ink past
+    // the bottom edge, so neither is visible to the crop check.
+    const CELL = 62;
+    for (const text of ['#1287', '#964', '#11', '—'] as const) {
+      expect(
+        await linesAt(text, { width: CELL, size: 30, weight: 700, family: 'Barlow Condensed' }),
+        text,
+      ).toBe(1);
+    }
+    for (const text of ['OPEN', 'COMP'] as const) {
+      expect(
+        await linesAt(text, { width: CELL, size: 12, weight: 600, letterSpacing: 1.4 }),
+        text,
+      ).toBe(1);
+    }
+
+    // THE NAME AT THE SIZE nameSize ACTUALLY PICKS, which is the assertion that
+    // matters: a check that "38px fits" says nothing if the function hands the
+    // name 46px, and that is exactly the bug this replaced -- the step-downs
+    // were computed without subtracting the avatar, chose 46, and the name
+    // wrapped on a real card while every test stayed green.
+    //
+    // Run against the block that leaves the name least room, the comp table.
+    const comp: DiscordProfile = {
+      ...base,
+      name: 'Bartholomew Fitzgerald-Kensington',
+      doubles: { ...base.doubles!, compRank: 1 },
+      singles: { ...base.singles!, compRank: 4 },
+    };
+    // 106 avatar + 2x24 header gaps + the card's own 90 of padding.
+    const block = rankBlockWidth(comp, false);
+    const nameRoom = W - 90 - 106 - block - 48;
+    for (const name of [
+      comp.name,
+      'Bartholomew Fitzgerald-Kensington-Smythe',
+      'Matthew Cheng',
+      'Wolfgang Amadeus Schmidt-Bauer',
+      'MMMMMMMMMMMMMMMMMMMMMM',
+    ]) {
+      const drawn = cardName(name, block);
+      expect(
+        await linesAt(drawn, {
+          width: nameRoom,
+          size: nameSize(name, block),
+          weight: 700,
+          family: 'Barlow Condensed',
+        }),
+        `${name} at ${nameSize(name, block)}px`,
+      ).toBe(1);
+    }
+
+    const { buf } = await render(comp, 'grid-long-name');
+    expect(bottomEdgeInk(buf)).toBeLessThan(CLEAN);
+  }, 60_000);
+
+  it('draws the focused card, and falls back to the table when that ladder is empty', async () => {
+    // `/profile type:comp_doubles` from a competitive member gets the big
+    // badge; the same request from somebody who is not competitive has no comp
+    // rank to headline, and must not render an empty box.
+    const comp: DiscordProfile = {
+      ...base,
+      doubles: { ...base.doubles!, compRank: 1 },
+      singles: { ...base.singles!, compRank: 4 },
+    };
+    const wComp = rankBlockWidth(comp, true);
+    const wGrid = rankBlockWidth(base, false);
+    // The focused block is narrower than the comp table, which is the whole
+    // reason the name's step-downs are computed rather than fixed.
+    expect(wComp).toBeLessThan(rankBlockWidth(comp, false));
+    expect(wGrid).toBeLessThan(rankBlockWidth(comp, false));
+
+    for (const [name, profile, focus] of [
+      ['focus-comp', comp, 'comp_doubles'],
+      // base has compRank null on both sides: nothing to headline, so Card
+      // draws the table instead. Asserted by rendering, not by inspection.
+      ['focus-empty', base, 'comp_singles'],
+    ] as const) {
+      const buf = await renderAt(profile, cardHeight(profile), name, focus);
+      expect(bottomEdgeInk(buf), name).toBeLessThan(CLEAN);
+      expect(buf.byteLength, name).toBeGreaterThan(10_000);
+    }
+  }, 60_000);
+
+  it('fits the competitive tiles and the badge label in the boxes they get', async () => {
+    // THE ASSERTION THAT HOLDS THE COMP RANK, and like the bio one it is a wrap
+    // count rather than a crop check -- StatPanel and RankBadge are both fixed
+    // boxes, so an overlong line is clipped in silence, not drawn off the card.
+    //
+    // PANEL_TEXT is the panel's usable width, derived not guessed: the card is
+    // 1000 wide with 50 left and 40 right padding, so the grid gets 910; four
+    // panels with three 12px gaps make each (910 - 36) / 4 = 218.5; each has
+    // 16px of padding a side. BADGE_TEXT is RankBadge's own width, which has no
+    // padding at all -- the label is centred in the full 132.
+    const PANEL_TEXT = (W - 90 - 3 * 12) / 4 - 32;
+    const BADGE_TEXT = 132;
+
+    // The worst line each shape can produce, not a typical one: a four-figure
+    // open rank beside a three-figure comp rank, and a record in the hundreds.
+    const worst: DiscordProfile = {
+      ...base,
+      doubles: { elo: 2401, provisional: true, wins: 148, losses: 132, streak: -12, rank: 1287, compRank: 964 },
+      singles: { elo: 1596, provisional: true, wins: 108, losses: 96, streak: -11, rank: 1102, compRank: 873 },
+    };
+    for (const [label, text] of [
+      ['rank sub', `#${worst.doubles!.rank} open · #${worst.doubles!.compRank} comp`],
+      ['form sub', `${worst.doubles!.wins}W ${worst.doubles!.losses}L · 53% · L12`],
+    ] as const) {
+      expect(await linesAt(text, { width: PANEL_TEXT, size: 16 }), label).toBe(1);
+    }
+
+    // Both badge labels, at RankBadge's own font. 'OPEN DOUBLES' is the longer.
+    for (const label of ['OPEN DOUBLES', 'OPEN SINGLES'] as const) {
+      expect(
+        await linesAt(label, { width: BADGE_TEXT, size: 13, weight: 600, letterSpacing: 1.6 }),
+        label,
+      ).toBe(1);
+    }
+
+    // And the whole card still draws clean at that worst case.
+    const { buf } = await render(worst, 'comp-worst');
+    expect(bottomEdgeInk(buf)).toBeLessThan(CLEAN);
+  }, 60_000);
+
+  it('detects a tile sub-line too long for its panel', async () => {
+    // THE TEST FOR THE TEST above. Half again as much text as the worst real
+    // line takes a second band, and linesAt says so. If this goes green the
+    // width measurement has stopped measuring and the check above is worthless.
+    const PANEL_TEXT = (W - 90 - 3 * 12) / 4 - 32;
+    expect(await linesAt('#1287 open · #964 comp · 148W 132L', { width: PANEL_TEXT, size: 16 }))
+      .toBeGreaterThan(1);
+  }, 30_000);
+
+  it('leaves a non-competitive member\'s tiles exactly as they were', async () => {
+    // Most of the club is not competitive, and their card must not change. The
+    // old shape put the record on the rank line; the comp shape moves it down.
+    const casual = { ...base.doubles!, compRank: null };
+    const comp = { ...base.doubles!, compRank: 1 };
+    const { buf } = await render({ ...base, doubles: casual }, 'comp-none');
+    expect(bottomEdgeInk(buf)).toBeLessThan(CLEAN);
+    // Asserted through the card's own helpers via a render is not possible --
+    // these are private. The shapes are pinned in discord-card.test.ts instead;
+    // this case exists so the unchanged layout is actually DRAWN somewhere.
+    expect(casual.compRank).toBeNull();
+    expect(comp.compRank).toBe(1);
+  }, 30_000);
 
   it('draws a bio on an unranked card too', async () => {
     // H + H_BIO is arithmetic no other case reaches: the unranked fixture

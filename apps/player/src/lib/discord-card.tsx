@@ -1,6 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CardAward, CardBackground, CardMatch, DiscordProfile } from './discord-profile';
+import type {
+  CardAward,
+  CardBackground,
+  CardMatch,
+  DiscordProfile,
+  LadderFocus,
+  LadderLine,
+} from './discord-profile';
+import { FOCUS_LABEL } from './discord-profile';
 import { formatStreak } from './ladder';
 
 /**
@@ -334,24 +342,160 @@ function StatPanel({
 }
 
 /**
- * The headline rank, top right.
+ * THE RANKS, TOP RIGHT -- by default every one the member actually holds.
  *
- * THE BETTER OF THE TWO LADDERS, named. A card needs one figure the eye reaches
- * first, and "#3 DOUBLES" is the only fact on here that is both a single number
- * and worth boasting about -- the ratings themselves are already in the grid
- * below, and repeating one of them at four times the size would just be louder,
- * not clearer. Ties go to doubles, which is what the club mostly plays.
+ * This was a single big number: the better of the two ladders, at 58px. That
+ * was wrong about the club. Two elos are ranked FOUR ways on /leaderboard --
+ * Open Singles, Open Doubles, Comp Singles, Comp Doubles, where an open tab and
+ * its comp twin differ only in population and not in rating
+ * (leaderboard-client.tsx:259). A member holds two of those ranks, or four if
+ * they are competitive, and a card showing one of them picked a winner without
+ * saying there had been a contest.
+ *
+ * SO THE DEFAULT IS A TABLE, and the labels are the point of it. Down the side
+ * the two disciplines, across the top the two populations. A rank means nothing
+ * without both, and every earlier version of this block left one of them for
+ * the reader to assume.
+ *
+ * `/profile type:` asks for ONE ladder instead, and that card gets the old big
+ * badge back -- see RankBadge below. The table is what you get when you have
+ * not said which you meant.
+ *
+ * THE COMP COLUMN IS ABSENT, NOT EMPTY, for a member who is not competitive,
+ * which is most of the club. They get a narrower block with one column and the
+ * name beside it gets the width back. That is why RANK_W has two values and why
+ * the name's step-downs are keyed to the same condition.
  */
-function bestLadder(profile: DiscordProfile): { rank: number; label: string } | null {
+const RANK_W_OPEN = 128;
+const RANK_W_BOTH = 196;
+
+/** Whether the member has any comp standing at all. Decides the block's width. */
+export function hasComp(profile: DiscordProfile): boolean {
+  return profile.doubles?.compRank != null || profile.singles?.compRank != null;
+}
+
+/**
+ * How much width the rank block takes off the name line.
+ *
+ * Exported because the name's font step-downs are computed from it rather than
+ * hand-tuned against one layout -- when this block changes width, the name has
+ * to know, and a constant in two places is how that goes wrong silently.
+ */
+export function rankBlockWidth(profile: DiscordProfile, focused: boolean): number {
+  if (focused) return 132;
+  return hasComp(profile) ? RANK_W_BOTH : RANK_W_OPEN;
+}
+
+function RankCell({ text, dim }: { text: string; dim?: boolean }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        width: 62,
+        justifyContent: 'flex-end',
+        fontFamily: 'Barlow Condensed',
+        fontWeight: 700,
+        fontSize: 30,
+        lineHeight: 1,
+        color: dim ? MUTE : INK,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function RankHead({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        width: 62,
+        justifyContent: 'flex-end',
+        fontFamily: 'Barlow',
+        fontWeight: 600,
+        fontSize: 12,
+        letterSpacing: 1.4,
+        color: '#e07070',
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function RankRow({
+  side,
+  rank,
+  compRank,
+  comp,
+}: {
+  side: string;
+  rank: number | null;
+  compRank: number | null;
+  comp: boolean;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div
+        style={{
+          display: 'flex',
+          width: 14,
+          fontFamily: 'Barlow',
+          fontWeight: 600,
+          fontSize: 13,
+          letterSpacing: 1,
+          color: FAINT,
+        }}
+      >
+        {side}
+      </div>
+      {/* An em dash, not a blank. A member can sit on one ladder and not the
+          other, and an empty cell would read as a rendering fault. */}
+      <RankCell text={rank === null ? '—' : `#${rank}`} dim={rank === null} />
+      {comp ? (
+        <RankCell text={compRank === null ? '—' : `#${compRank}`} dim={compRank === null} />
+      ) : null}
+    </div>
+  );
+}
+
+function RankGrid({ profile }: { profile: DiscordProfile }) {
+  const comp = hasComp(profile);
   const { doubles, singles } = profile;
-  if (!doubles && !singles) return null;
-  if (doubles && singles) {
-    return singles.rank < doubles.rank
-      ? { rank: singles.rank, label: 'SINGLES' }
-      : { rank: doubles.rank, label: 'DOUBLES' };
-  }
-  if (doubles) return { rank: doubles.rank, label: 'DOUBLES' };
-  return { rank: singles!.rank, label: 'SINGLES' };
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        width: rankBlockWidth(profile, false),
+        height: 106,
+        justifyContent: 'center',
+        padding: '0 14px',
+        background: 'rgba(204,0,0,0.13)',
+        border: '1px solid rgba(204,0,0,0.45)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', width: 14 }} />
+        <RankHead text="OPEN" />
+        {comp ? <RankHead text="COMP" /> : null}
+      </div>
+      <RankRow
+        side="D"
+        rank={doubles ? doubles.rank : null}
+        compRank={doubles ? doubles.compRank : null}
+        comp={comp}
+      />
+      <RankRow
+        side="S"
+        rank={singles ? singles.rank : null}
+        compRank={singles ? singles.compRank : null}
+        comp={comp}
+      />
+    </div>
+  );
 }
 
 function RankBadge({ rank, label }: { rank: number; label: string }) {
@@ -759,10 +903,123 @@ function record(w: number, l: number) {
   return `${w}W ${l}L`;
 }
 
-export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: string | null }) {
+/**
+ * The two sub-lines of a rating tile. What they carry depends on whether the
+ * RANK BLOCK above has already said it.
+ *
+ *   default (RankGrid drawn):  "24W 9L"              /  "73% · W4"
+ *   focused (RankBadge drawn): "#3 open · #1 comp"   /  "24W 9L · 73% · W4"
+ *
+ * A default card's grid lists every rank the member holds, so repeating one in
+ * the tile underneath is noise -- the tile gives the space back to the record.
+ * A focused card headlines ONE rank, so its tiles are the only place the other
+ * three can appear, and they carry them.
+ *
+ * In the focused shape the record moves down a line rather than a third being
+ * added: StatPanel is a fixed 132px with room for exactly two, and satori CLIPS
+ * a fixed-height box rather than overflowing it, so a third line would vanish
+ * in silence rather than fail anything. Same trap as the bio block; see H_BIO.
+ */
+function rankSub(l: LadderLine, focused: boolean): string {
+  if (!focused) return record(l.wins, l.losses);
+  return l.compRank === null
+    ? `#${l.rank} · ${record(l.wins, l.losses)}`
+    : `#${l.rank} open · #${l.compRank} comp`;
+}
+
+function formSub(l: LadderLine, focused: boolean): string | null {
+  const form = formLine(l.wins, l.losses, l.streak);
+  if (!focused || l.compRank === null) return form;
+  return [record(l.wins, l.losses), form].filter(Boolean).join(' · ');
+}
+
+const AVATAR = 106;
+const HEADER_GAP = 24;
+
+/**
+ * Barlow Condensed 700 costs about this much width per character, as a
+ * fraction of the font size.
+ *
+ * MEASURED, not taken from a spec: 'Bartholomew Fitzgerald-Kensington' inks
+ * 492px at 38px and 751px at 58px, both 0.392 em/char, and 'Matthew Cheng'
+ * reads 0.420. 0.44 is above both with margin for a name whose letters run
+ * wider than either -- a string of capital Ms measures 0.546, which no real
+ * name approaches, and the render test asserts the step-downs hold for the
+ * worst name the card admits rather than trusting this number alone.
+ */
+const NAME_EM = 0.44;
+
+/**
+ * The name's font size, from its length and the width the rank block leaves it.
+ *
+ * MEASURED, NOT TUNED. Barlow Condensed 700 runs about 0.40em per character at
+ * these sizes, so the widest name that fits is roughly width / (0.40 * size).
+ * The render test pins the actual figures at every block width by drawing the
+ * name and counting lines -- a name that wraps is a name whose second line the
+ * fixed-height header clips away in silence.
+ */
+/** What the header leaves the name: the card's own 50+40 padding, the avatar,
+ *  the rank block, and the two gaps the header's flex row puts either side. */
+function nameRoom(blockWidth: number): number {
+  return W - 90 - AVATAR - blockWidth - 2 * HEADER_GAP;
+}
+
+/** The smallest step. Below this the name stops looking like the card's title. */
+const NAME_MIN = 38;
+
+export function nameSize(name: string, blockWidth: number): number {
+  const room = nameRoom(blockWidth);
+  for (const size of [58, 46, NAME_MIN]) {
+    if (name.length * NAME_EM <= room / size) return size;
+  }
+  return NAME_MIN;
+}
+
+/**
+ * The name as drawn, truncated if even the smallest step cannot hold it.
+ *
+ * THE STEP-DOWNS ALONE ARE NOT ENOUGH, which is not obvious and is why this
+ * exists. nameSize bottoms out at 38px, so a name longer than 38px can hold
+ * wraps -- and the header is a fixed 106px, so satori clips the second line
+ * away rather than growing the card. The member's name would simply end
+ * mid-word with nothing to say it had. An ellipsis is the honest version of
+ * the same loss, and unlike the wrap it is visible.
+ *
+ * The threshold is not a character count anybody chose: it is whatever fits at
+ * NAME_MIN in the room the rank block leaves, which differs between the comp
+ * table, the open table and a focused card.
+ */
+export function cardName(name: string, blockWidth: number): string {
+  const max = Math.floor(nameRoom(blockWidth) / (NAME_EM * NAME_MIN));
+  if (name.length <= max) return name;
+  return `${name.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+}
+
+/**
+ * The one rank a focused card headlines, or null when that ladder holds nothing
+ * for this member -- `/profile type:comp_singles` from somebody who is not
+ * competitive, say. A null focus falls back to the table, which is the honest
+ * answer: it shows what they DO hold rather than an empty box.
+ */
+function focusedRank(profile: DiscordProfile, focus: LadderFocus): number | null {
+  const side = focus.endsWith('doubles') ? profile.doubles : profile.singles;
+  if (!side) return null;
+  return focus.startsWith('comp_') ? side.compRank : side.rank;
+}
+
+export function Card({
+  profile,
+  avatar,
+  focus = null,
+}: {
+  profile: DiscordProfile;
+  avatar: string | null;
+  focus?: LadderFocus | null;
+}) {
   const { doubles, singles } = profile;
   const height = cardHeight(profile);
-  const best = profile.ranked ? bestLadder(profile) : null;
+  const focusRank = profile.ranked && focus ? focusedRank(profile, focus) : null;
+  const focused = focusRank !== null;
   const bio = cardBio(profile.bio);
 
   return (
@@ -817,16 +1074,18 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
                 fontWeight: 700,
                 // satori supports neither text-overflow nor a fitted size, and
                 // the card is a fixed 1000px -- so a long name is stepped down
-                // by hand. The rank badge took 156px off this line, so the
-                // thresholds are tighter than they were: Barlow Condensed at
-                // 58px runs about 22 characters in what is left.
-                fontSize: profile.name.length > 30 ? 38 : profile.name.length > 22 ? 46 : 58,
+                // by hand. What is left for it depends on which rank block is
+                // drawn, so the thresholds are computed from that block's own
+                // width rather than pinned to one layout: the widest block (the
+                // comp table) leaves the least room and steps down soonest.
+                // The measured figures are in the render test.
+                fontSize: nameSize(profile.name, rankBlockWidth(profile, focused)),
                 lineHeight: 1,
                 letterSpacing: -0.5,
                 color: INK,
               }}
             >
-              {profile.name}
+              {cardName(profile.name, rankBlockWidth(profile, focused))}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {profile.handle ? <Chip text={`@${profile.handle}`} tone="quiet" /> : null}
@@ -834,7 +1093,11 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
             </div>
           </div>
 
-          {best ? <RankBadge rank={best.rank} label={best.label} /> : null}
+          {focused && focus ? (
+            <RankBadge rank={focusRank} label={FOCUS_LABEL[focus]} />
+          ) : profile.ranked ? (
+            <RankGrid profile={profile} />
+          ) : null}
         </div>
 
         {/* THE MEMBER'S OWN WORDS. Drawn on the card rather than sent as
@@ -871,15 +1134,15 @@ export function Card({ profile, avatar }: { profile: DiscordProfile; avatar: str
             <StatPanel
               label="DOUBLES"
               value={`${doubles.elo}${doubles.provisional ? '*' : ''}`}
-              sub={`#${doubles.rank} · ${record(doubles.wins, doubles.losses)}`}
-              sub2={formLine(doubles.wins, doubles.losses, doubles.streak)}
+              sub={rankSub(doubles, focused)}
+              sub2={formSub(doubles, focused)}
               accent
             />
             <StatPanel
               label="SINGLES"
               value={`${singles.elo}${singles.provisional ? '*' : ''}`}
-              sub={`#${singles.rank} · ${record(singles.wins, singles.losses)}`}
-              sub2={formLine(singles.wins, singles.losses, singles.streak)}
+              sub={rankSub(singles, focused)}
+              sub2={formSub(singles, focused)}
             />
             <StatPanel
               label="TOURNAMENT"

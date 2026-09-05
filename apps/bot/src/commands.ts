@@ -140,6 +140,25 @@ export const COMMAND_DEFINITIONS = [
         // autocomplete on STRING, INTEGER and NUMBER.
         autocomplete: true,
       },
+      {
+        type: 3, // STRING
+        name: 'type',
+        // The club ranks two elos four ways, and by default the card shows the
+        // whole table. This asks it to headline ONE of them instead.
+        description: 'Headline one ladder instead of the whole table',
+        required: false,
+        // CHOICES, not free text, and the values are /leaderboard's own
+        // CategoryId strings. Discord enforces the list on its side, and the
+        // card route re-validates against the same allowlist rather than
+        // trusting it -- the value reaches the route as a query parameter and
+        // a query parameter is whatever the caller says it is.
+        choices: [
+          { name: 'Doubles — open', value: 'open_doubles' },
+          { name: 'Singles — open', value: 'open_singles' },
+          { name: 'Doubles — competitive', value: 'comp_doubles' },
+          { name: 'Singles — competitive', value: 'comp_singles' },
+        ],
+      },
     ],
   },
   {
@@ -540,6 +559,11 @@ export async function handleProfile(
 ): Promise<BotResponse> {
   const member = option(options, 'member');
   const handle = option(options, 'handle');
+  // Passed straight through to the card URL. Not validated here on purpose --
+  // the route that renders is the one that has to be right about this, and a
+  // check in two places is a check that drifts. An unrecognised value there
+  // falls back to the default table.
+  const type = option(options, 'type');
 
   const started = Date.now();
   const result = await fetchProfile(context.discordUserId, {
@@ -582,10 +606,19 @@ export async function handleProfile(
   // The asterisk on a provisional rating is the case that proves it. It is
   // drawn on the panel; the line explaining it is now on the rail beside the
   // club name, so the explanation cannot be separated from the mark.
+  // The chosen ladder rides on the card URL rather than on the token, so it
+  // stays a rendering choice and never touches what the token AUTHORISES. The
+  // token already decides whose card this is and what may be said about them;
+  // a query parameter that could widen that would be a hole. This one cannot --
+  // the route matches it against a fixed list of four and ignores anything else.
+  const cardUrl = type
+    ? `${result.cardUrl}?type=${encodeURIComponent(String(type))}`
+    : result.cardUrl;
+
   const remaining = PROFILE_BUDGET_MS - (Date.now() - started);
   const card =
     remaining >= MIN_CARD_FETCH_MS
-      ? await fetchCard(result.cardUrl, Math.min(remaining, MAX_CARD_FETCH_MS))
+      ? await fetchCard(cardUrl, Math.min(remaining, MAX_CARD_FETCH_MS))
       : null;
 
   if (card) {
@@ -608,7 +641,7 @@ export async function handleProfile(
   // card it points at rather than in a body this branch would have to rebuild.
   return {
     type: 4,
-    data: { content: result.cardUrl },
+    data: { content: cardUrl },
   };
 }
 
