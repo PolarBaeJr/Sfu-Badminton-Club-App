@@ -423,8 +423,10 @@ export interface ResolveOptions {
    *
    * OFF BY DEFAULT because only one of this resolver's two callers draws them.
    * /api/discord/card renders the PNG and wants them; /api/discord/profile
-   * answers the bot, whose embed reads `bio`, the provisional footnote and the
-   * card URL and nothing else. That path is also the one on Discord's
+   * answers the bot, which now sends the card and NOTHING ELSE -- `bio` and the
+   * provisional footnote used to be message text and are drawn into the PNG
+   * instead, so all this payload is still read for is the card URL and the
+   * fields the reply cannot render. That path is also the one on Discord's
    * three-second interaction deadline -- handleProfile replies rather than
    * deferring -- so making it pay for four reads it never renders is how
    * /profile starts timing out, and it would do so first on staging, where

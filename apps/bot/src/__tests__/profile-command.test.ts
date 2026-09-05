@@ -77,7 +77,11 @@ describe('/profile', () => {
     expect(response.data.attachments).toEqual([{ id: 0, filename: 'card.png' }]);
   });
 
-  it('puts the bio and the provisional footnote in the message text', async () => {
+  it('sends the card with no message body, whatever the profile carries', async () => {
+    // THE BIO AND THE FOOTNOTE ARE THE TWO THINGS THAT USED TO BE TYPED HERE,
+    // so this asserts on a profile that would have produced both. They are
+    // drawn on the card now: text beside an image does not survive a forward,
+    // a quote or an embed, and the card has to be complete on its own.
     fetchProfile.mockResolvedValue(
       profile({
         bio: 'Left-handed, plays doubles',
@@ -86,32 +90,26 @@ describe('/profile', () => {
     );
     const response = await run();
 
-    const content = response.data.content as string;
-    expect(content).toContain('Left-handed, plays doubles');
-    // The card draws the asterisk. Without this the image carries a mark
-    // nothing explains, for as long as Discord caches it.
-    expect(content).toContain('* rating still provisional');
+    expect(response.data.content).toBeUndefined();
+    expect(response.data.attachments).toEqual([{ id: 0, filename: 'card.png' }]);
+    // Not just "no content" -- the strings themselves must be gone, or a
+    // refactor that reinstates them under another key passes the line above.
+    const body = JSON.stringify(response.data);
+    expect(body).not.toContain('Left-handed');
+    expect(body).not.toContain('provisional');
   });
 
-  it('omits the footnote when nothing on the card is provisional', async () => {
-    fetchProfile.mockResolvedValue(profile({ bio: 'Just here for the doubles' }));
-    const response = await run();
-
-    expect(response.data.content).toBe('Just here for the doubles');
-  });
-
-  it('falls back to the url when the card cannot be fetched', async () => {
+  it('falls back to the url alone when the card cannot be fetched', async () => {
     // fetchCard answers null for every failure rather than throwing, precisely
-    // so this branch is reachable.
+    // so this branch is reachable. The bio is NOT re-added here: the link
+    // points at the card that already draws it.
     fetchProfile.mockResolvedValue(profile({ bio: 'Doubles only' }));
     fetchCard.mockResolvedValue(null);
     const response = await run();
 
     expect(response.file).toBeUndefined();
     expect(response.data.attachments).toBeUndefined();
-    expect(response.data.content).toBe(
-      'Doubles only\nhttps://app.example/api/discord/card/tok'
-    );
+    expect(response.data.content).toBe('https://app.example/api/discord/card/tok');
   });
 
   it('skips the card fetch when fetchProfile has already eaten the budget', async () => {

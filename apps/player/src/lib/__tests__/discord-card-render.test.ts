@@ -4,7 +4,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PNG } from 'pngjs';
 import { ImageResponse } from 'next/og';
-import { Card, FONTS, W, cardHeight } from '../discord-card';
+import { Card, FONTS, W, cardHeight, cardBio, BIO_MAX, H_BIO } from '../discord-card';
 import type { DiscordProfile } from '../discord-profile';
 
 /**
@@ -143,6 +143,55 @@ async function render(profile: DiscordProfile, name: string) {
   return { buf: await renderAt(profile, height, name), height };
 }
 
+/**
+ * How many 24px lines the bio text actually occupies at the card's own font,
+ * size and usable width.
+ *
+ * Drawn on its own rather than read off the card, because on the card the
+ * third line is already clipped away and there is nothing left to count. The
+ * width is the card's 1000 less its 50px left and 40px right padding.
+ */
+async function bioLines(text: string): Promise<number> {
+  const BAND = 24;
+  const el = createElement(
+    'div',
+    { style: { display: 'flex', width: W, height: 240, background: '#000' } },
+    createElement(
+      'div',
+      {
+        style: {
+          display: 'flex',
+          width: W - 90,
+          fontFamily: 'Barlow',
+          fontWeight: 400,
+          fontSize: 17,
+          lineHeight: `${BAND}px`,
+          color: '#ffffff',
+        },
+      },
+      text,
+    ),
+  );
+  const buf = Buffer.from(
+    await new ImageResponse(el, { width: W, height: 240, fonts: FONTS }).arrayBuffer(),
+  );
+  const png = PNG.sync.read(buf);
+  let lines = 0;
+  for (let band = 0; band * BAND < png.height; band++) {
+    let inked = false;
+    for (let y = band * BAND; y < (band + 1) * BAND && !inked; y++) {
+      for (let x = 0; x < png.width; x++) {
+        // White text on black: any bright pixel is a glyph. No median needed —
+        // this probe draws its own flat background rather than the card's
+        // gradient.
+        if ((png.data[(png.width * y + x) << 2] ?? 0) > 60) { inked = true; break; }
+      }
+    }
+    if (inked) lines++;
+  }
+  return lines;
+}
+
 describe('the card fits the box it declares', () => {
   it('draws a ranked member with nothing running off the bottom', async () => {
     const { buf, height } = await render(base, 'ranked');
@@ -205,6 +254,95 @@ describe('the card fits the box it declares', () => {
     const { buf } = await render(long, 'long-strings');
     expect(bottomEdgeInk(buf)).toBeLessThan(CLEAN);
   }, 30_000);
+
+  it('draws a bio without pushing anything off the bottom', async () => {
+    // BOTH SHAPES, because they are different cards to look at and only one of
+    // them is the common case. A 48-char bio takes one of the block's two lines
+    // and leaves the other empty; the second case fills both. The 24px band
+    // between them is dead space on most real cards, and per the note at the
+    // top of this file dead space is the failure no assertion here can see --
+    // so both are written out for eyes under CARD_RENDER_OUT.
+    for (const [name, bio] of [
+      ['bio', 'Left-handed, plays doubles. Around most Tuesdays.'],
+      [
+        'bio-two-line',
+        'Left-handed, plays doubles. Around most Tuesdays and the odd Friday, ' +
+          'usually on the far courts. Always up for a game with anyone.',
+      ],
+    ] as const) {
+      const withBio: DiscordProfile = { ...base, bio };
+      const { buf, height } = await render(withBio, name);
+      // The block is ADDED to the height, not absorbed into it -- a card that
+      // drew the bio at the old height would crop the rail off instead.
+      expect(height, name).toBe(cardHeight(base) + H_BIO);
+      expect(pngSize(buf), name).toEqual({ width: W, height });
+      expect(bottomEdgeInk(buf), name).toBeLessThan(CLEAN);
+      expect(await bioLines(bio), name).toBeLessThanOrEqual(2);
+    }
+  }, 60_000);
+
+  it('draws a bio on an unranked card too', async () => {
+    // H + H_BIO is arithmetic no other case reaches: the unranked fixture
+    // inherits base's null bio, and every bio case above is ranked. It is also
+    // the case least likely to be caught if it were wrong -- the rail is pinned
+    // with `marginTop: auto`, so a mis-sized short card shows as dead space
+    // above it rather than as ink on the bottom edge.
+    const unrankedWithBio: DiscordProfile = {
+      ...base,
+      ranked: false,
+      doubles: null,
+      singles: null,
+      tournamentPoints: null,
+      recent: [],
+      rival: null,
+      nights: null,
+      bio: 'Just started. Looking for people to hit with on Thursdays.',
+    };
+    const { buf, height } = await render(unrankedWithBio, 'unranked-bio');
+    expect(height).toBe(cardHeight({ ...unrankedWithBio, bio: null }) + H_BIO);
+    expect(pngSize(buf)).toEqual({ width: W, height });
+    expect(bottomEdgeInk(buf)).toBeLessThan(CLEAN);
+  }, 30_000);
+
+  it('fits a bio at the truncation limit into the two lines it is given', async () => {
+    // THE ASSERTION THAT ACTUALLY HOLDS THE BIO BLOCK, and the reason it is not
+    // another bottomEdgeInk check: the bio div is a fixed 48px and satori CLIPS
+    // a flex box rather than overflowing it, so a bio of any length leaves the
+    // bottom edge clean. Measured -- 599 characters reads 1.0, the same as 149.
+    // The crop check has no teeth here at all.
+    //
+    // What a too-long bio does instead is lose its third line in silence, so
+    // what has to be checked is the WRAP: how many 24px bands the text puts ink
+    // in. Raising BIO_MAX past what the width holds fails this and nothing else.
+    //
+    // Both wrap extremes, because they fail in opposite directions: short words
+    // wrap as late as possible and pack the most characters onto a line, long
+    // unbroken ones break early and use the most lines.
+    for (const [label, source] of [
+      ['short words', 'word '.repeat(80)],
+      ['long words', 'Wolfgang Schmidt-Bauer plays '.repeat(20)],
+    ] as const) {
+      const longest = cardBio(source);
+      expect(longest).not.toBeNull();
+      expect(longest!.length, label).toBe(BIO_MAX);
+      expect(await bioLines(longest!), label).toBeLessThanOrEqual(2);
+    }
+  }, 60_000);
+
+  it('detects a bio that needs more lines than the block has', async () => {
+    // THE TEST FOR THE TEST above. Half again as much text as cardBio would
+    // ever pass through takes a third line, and bioLines says so. If this ever
+    // goes green the wrap measurement has stopped measuring and the check above
+    // is worthless.
+    expect(await bioLines('word '.repeat(45).trim())).toBeGreaterThan(2);
+  }, 30_000);
+
+  it('gives a member with no bio no extra height at all', async () => {
+    // The failure this rules out is 66px of empty black under every card
+    // belonging to somebody who never wrote a bio.
+    expect(cardHeight({ ...base, bio: null })).toBe(cardHeight(base));
+    expect(cardHeight({ ...base, bio: '   ' })).toBe(cardHeight(base));
+  });
 
   it('detects a layout that overflows the height it was given', async () => {
     // THE TEST FOR THE TEST. Every assertion above is a card passing a check;
