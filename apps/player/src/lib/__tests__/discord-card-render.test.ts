@@ -256,11 +256,50 @@ describe('the card fits the box it declares', () => {
   }, 30_000);
 
   it('draws a bio without pushing anything off the bottom', async () => {
-    const withBio: DiscordProfile = { ...base, bio: 'Left-handed, plays doubles. Around most Tuesdays.' };
-    const { buf, height } = await render(withBio, 'bio');
-    // The block is ADDED to the height, not absorbed into it -- a card that
-    // drew the bio at the old height would crop the rail off instead.
-    expect(height).toBe(cardHeight(base) + H_BIO);
+    // BOTH SHAPES, because they are different cards to look at and only one of
+    // them is the common case. A 48-char bio takes one of the block's two lines
+    // and leaves the other empty; the second case fills both. The 24px band
+    // between them is dead space on most real cards, and per the note at the
+    // top of this file dead space is the failure no assertion here can see --
+    // so both are written out for eyes under CARD_RENDER_OUT.
+    for (const [name, bio] of [
+      ['bio', 'Left-handed, plays doubles. Around most Tuesdays.'],
+      [
+        'bio-two-line',
+        'Left-handed, plays doubles. Around most Tuesdays and the odd Friday, ' +
+          'usually on the far courts. Always up for a game with anyone.',
+      ],
+    ] as const) {
+      const withBio: DiscordProfile = { ...base, bio };
+      const { buf, height } = await render(withBio, name);
+      // The block is ADDED to the height, not absorbed into it -- a card that
+      // drew the bio at the old height would crop the rail off instead.
+      expect(height, name).toBe(cardHeight(base) + H_BIO);
+      expect(pngSize(buf), name).toEqual({ width: W, height });
+      expect(bottomEdgeInk(buf), name).toBeLessThan(CLEAN);
+      expect(await bioLines(bio), name).toBeLessThanOrEqual(2);
+    }
+  }, 60_000);
+
+  it('draws a bio on an unranked card too', async () => {
+    // H + H_BIO is arithmetic no other case reaches: the unranked fixture
+    // inherits base's null bio, and every bio case above is ranked. It is also
+    // the case least likely to be caught if it were wrong -- the rail is pinned
+    // with `marginTop: auto`, so a mis-sized short card shows as dead space
+    // above it rather than as ink on the bottom edge.
+    const unrankedWithBio: DiscordProfile = {
+      ...base,
+      ranked: false,
+      doubles: null,
+      singles: null,
+      tournamentPoints: null,
+      recent: [],
+      rival: null,
+      nights: null,
+      bio: 'Just started. Looking for people to hit with on Thursdays.',
+    };
+    const { buf, height } = await render(unrankedWithBio, 'unranked-bio');
+    expect(height).toBe(cardHeight({ ...unrankedWithBio, bio: null }) + H_BIO);
     expect(pngSize(buf)).toEqual({ width: W, height });
     expect(bottomEdgeInk(buf)).toBeLessThan(CLEAN);
   }, 30_000);
