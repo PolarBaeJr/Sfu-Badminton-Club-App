@@ -681,6 +681,12 @@ export interface ProfileLadderLine {
   losses: number;
   streak: number;
   rank: number;
+  // Rank among competitive members only, or null for a member who is not one.
+  // Same rating as `rank` -- the two ladders differ by who is counted, not by
+  // how anyone is rated. Mirrored here, unlike the rest of the card's numbers,
+  // because /profile has to know whether a requested `type:` can be honoured
+  // BEFORE it spends the budget rendering a card that would ignore it.
+  compRank: number | null;
 }
 
 export interface ProfilePayload {

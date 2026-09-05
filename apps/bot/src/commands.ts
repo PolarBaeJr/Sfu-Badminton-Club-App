@@ -19,6 +19,7 @@ import {
   writeGuildConfig,
   type CardFile,
   type FeedbackKind,
+  type ProfilePayload,
   type SessionSummary,
   type TournamentSummary,
 } from './api.js';
@@ -525,6 +526,57 @@ const MIN_CARD_FETCH_MS = 400;
 const MAX_CARD_FETCH_MS = 1800;
 
 /**
+ * Why a requested `type:` cannot be honoured, or null when it can.
+ *
+ * THE ONLY PLACE THIS IS DECIDED. The route already falls back to the default
+ * table for a ladder the member is not on, which is the truthful render but an
+ * invisible one -- the bytes are identical to a card with no type at all, which
+ * is how the option came to look broken. Drawing the explanation on the card
+ * instead was tried and dropped: it can only be reached by hand-editing a card
+ * URL, since this returns before one is ever built, and a second copy of the
+ * rule in the renderer is a copy that drifts.
+ *
+ * An unrecognised `type` returns null, deliberately. The route ignores one and
+ * draws the default table, so refusing here would be the bot inventing a miss
+ * the app does not have.
+ */
+function unavailableLadder(profile: ProfilePayload, type: string): string | null {
+  const who = profile.name;
+
+  // Resolved BEFORE the not-ranked case, so that an unrecognised type takes the
+  // same null exit whatever the member's state -- otherwise `type:garbage` on
+  // an unranked member would be refused with a miss the route does not have.
+  const side =
+    type.endsWith('_doubles') ? profile.doubles
+    : type.endsWith('_singles') ? profile.singles
+    : undefined;
+  if (side === undefined) return null;
+
+  if (!profile.ranked) {
+    return `${who} isn't on the club ladder yet — no ranked matches recorded.`;
+  }
+
+  const discipline = type.endsWith('_doubles') ? 'doubles' : 'singles';
+
+  if (type.startsWith('comp_')) {
+    // Both shapes mean the same thing to the member -- no competitive rank in
+    // this discipline -- so they get the same sentence. `side` null is a member
+    // who has not played it at all; compRank null is one who has, but not as a
+    // competitive member.
+    if (!side || side.compRank === null) {
+      return `${who} does not have competitive stats in ${discipline}. Run \`/profile\` without a type to see their full card.`;
+    }
+    return null;
+  }
+
+  if (type.startsWith('open_') && !side) {
+    return `${who} hasn't played any ranked ${discipline} yet. Run \`/profile\` without a type to see their full card.`;
+  }
+
+  return null;
+}
+
+/**
  * A member's profile card.
  *
  * PUBLIC, like /leaderboard and unlike /sessions. The card carries only what
@@ -559,10 +611,10 @@ export async function handleProfile(
 ): Promise<BotResponse> {
   const member = option(options, 'member');
   const handle = option(options, 'handle');
-  // Passed straight through to the card URL. Not validated here on purpose --
-  // the route that renders is the one that has to be right about this, and a
-  // check in two places is a check that drifts. An unrecognised value there
-  // falls back to the default table.
+  // The value itself is NOT validated here -- the route that renders owns that,
+  // and a check in two places is a check that drifts. What is checked here, in
+  // the miss below, is something the route cannot answer: whether the member
+  // has that ladder at all. Only the bot can say so in words.
   const type = option(options, 'type');
 
   const started = Date.now();
@@ -592,6 +644,20 @@ export async function handleProfile(
       default:
         return ephemeral("Couldn't find that member.");
     }
+  }
+
+  // A LADDER THE MEMBER IS NOT ON. Asking for `type:` and getting the default
+  // table back is indistinguishable from the option doing nothing -- the two
+  // renders are byte-identical for a member with no competitive rank, which is
+  // exactly how this was reported. So say it instead of drawing it.
+  //
+  // Text, and ephemeral, unlike every other reply this command sends: the card
+  // is the artifact and this is not a card, it is an answer to the person who
+  // asked. Posting "they have no competitive stats" publicly would also put a
+  // member's absence from a ladder into a channel, which nobody asked for.
+  const focusMiss = type ? unavailableLadder(result.profile, String(type)) : null;
+  if (focusMiss) {
+    return ephemeral(focusMiss);
   }
 
   // NO MESSAGE BODY. Everything this reply says is drawn on the card — the bio
