@@ -19,6 +19,7 @@ import {
   writeGuildConfig,
   fetchDiscordSettings,
   writeDiscordSettings,
+  submitAnnouncement,
   type CardFile,
   type FeedbackKind,
   type ProfilePayload,
@@ -249,6 +250,60 @@ export const COMMAND_DEFINITIONS = [
           { name: 'A tournament', value: 'tournament_feedback' },
           { name: 'Something else', value: 'other' },
         ],
+      },
+    ],
+  },
+  {
+    // EXEC_ONLY, and it is the strongest case for it in this file: everything
+    // else behind that flag reads club data or wires up the server, and this
+    // one WRITES something every member reads. The flag is only half of it --
+    // Discord's command-list filter is not authorization, so the app checks the
+    // caller's own `announcements.create.write` before writing anything. See
+    // the route.
+    name: 'announce',
+    description: 'Post a club announcement to the website',
+    default_member_permissions: EXEC_ONLY,
+    // A guild only. The reply names the channel the relay will post into, and a
+    // DM has no guild for that to mean anything in.
+    dm_permission: false,
+    // THE WORDS COME FROM A MODAL, same as /bug and /feedback and for the same
+    // reason: a slash-command option is one line that truncates at the width of
+    // the input, and an announcement is a paragraph.
+    //
+    // These four cannot move into the modal -- a modal's only component is a
+    // text input, so a choice and three toggles have nowhere to live in one.
+    // They are carried across in the custom_id; there is no file here, so
+    // unlike /bug nothing has to be stashed in memory to survive the round trip.
+    options: [
+      {
+        type: 3, // STRING
+        name: 'type',
+        description: 'How it is badged on the website (defaults to info)',
+        required: false,
+        choices: [
+          { name: 'Info', value: 'info' },
+          { name: 'Warning', value: 'warning' },
+          { name: 'Urgent', value: 'urgent' },
+          { name: 'Event', value: 'event' },
+        ],
+      },
+      {
+        type: 5, // BOOLEAN
+        name: 'pin',
+        description: 'Keep it at the top of the announcements page',
+        required: false,
+      },
+      {
+        type: 5,
+        name: 'draft',
+        description: 'Save it without publishing, to finish in the console',
+        required: false,
+      },
+      {
+        type: 5,
+        name: 'evergreen',
+        description: 'A standing notice (club rules, door code) that outlives this term',
+        required: false,
       },
     ],
   },
@@ -488,7 +543,10 @@ export interface ResolvedAttachment {
 
 export interface CommandOption {
   name: string;
-  value?: string | number;
+  // boolean because Discord sends a BOOLEAN option (type 5) as a real JSON
+  // boolean, not the string "true" -- /announce's three toggles arrive that
+  // way. Reading one through String() would make `false` the truthy "false".
+  value?: string | number | boolean;
   /**
    * Subcommands nest. Discord sends `/rolepicker add role:@X` as a single
    * top-level option named "add" (type 1) whose own `options` carry the real
@@ -1898,6 +1956,216 @@ function modalValue(components: ModalComponent[] | undefined, customId: string):
   return '';
 }
 
+// ---------------------------------------------------------------------------
+// /announce
+// ---------------------------------------------------------------------------
+//
+// The same two-interaction split /bug uses: the command opens a modal, and the
+// submit arrives later as its own interaction carrying the custom_id and the
+// typed values and NOTHING ELSE. The four command options have to survive that
+// gap, and the custom_id is the only field that does.
+//
+// PACKED INTO THE ID RATHER THAN STASHED IN A MAP, which is where /bug's
+// screenshot has to go. A map costs correctness the moment the bot restarts or
+// a second replica takes the submit: the entry is gone and the options silently
+// revert to their defaults. For a screenshot that is a lost picture; for `draft`
+// it would be an announcement published when somebody asked for a draft. Four
+// flags fit in a dozen characters of a hundred-character field, so nothing here
+// needs to be remembered between the two requests.
+
+const ANNOUNCE_MODAL_PREFIX = 'announce:';
+
+type AnnouncementType = 'info' | 'warning' | 'urgent' | 'event';
+const ANNOUNCEMENT_TYPES: readonly AnnouncementType[] = ['info', 'warning', 'urgent', 'event'];
+
+interface AnnounceFlags {
+  type: AnnouncementType;
+  pin: boolean;
+  draft: boolean;
+  evergreen: boolean;
+}
+
+/** `announce:<type>:<pin><draft><evergreen>`, each flag a single 0 or 1. */
+function packAnnounceFlags(f: AnnounceFlags): string {
+  const bit = (on: boolean) => (on ? '1' : '0');
+  return `${ANNOUNCE_MODAL_PREFIX}${f.type}:${bit(f.pin)}${bit(f.draft)}${bit(f.evergreen)}`;
+}
+
+/**
+ * Read the flags back, FAILING CLOSED ON `draft`.
+ *
+ * Everything that reaches here was written by packAnnounceFlags, so a malformed
+ * id means either a build that has changed the format under a modal somebody
+ * still has open, or a caller that is not Discord. Both are answered the same
+ * way, and the direction of the default is the whole point: an unreadable
+ * `draft` bit resolves to DRAFT, never to published. A draft the exec has to go
+ * and publish is a small annoyance; a publish nobody asked for is on the
+ * website and in the announcements channel before anyone can say otherwise.
+ *
+ * `pin` and `evergreen` fail closed to false on the same reasoning -- neither
+ * is recoverable from the reply, both are one edit away in the console.
+ */
+function unpackAnnounceFlags(customId: string): AnnounceFlags {
+  const [, rawType = '', bits = ''] = customId.split(':');
+  const type = ANNOUNCEMENT_TYPES.includes(rawType as AnnouncementType)
+    ? (rawType as AnnouncementType)
+    : 'info';
+
+  if (!/^[01]{3}$/.test(bits)) {
+    return { type, pin: false, draft: true, evergreen: false };
+  }
+  return {
+    type,
+    pin: bits[0] === '1',
+    draft: bits[1] === '1',
+    evergreen: bits[2] === '1',
+  };
+}
+
+/** True for a modal submit this module owns. */
+export function isAnnounceModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(ANNOUNCE_MODAL_PREFIX);
+}
+
+function openAnnounceModal(options: CommandOption[] | undefined) {
+  const rawType = String(option(options, 'type') ?? '');
+  const flags: AnnounceFlags = {
+    type: ANNOUNCEMENT_TYPES.includes(rawType as AnnouncementType)
+      ? (rawType as AnnouncementType)
+      : 'info',
+    pin: option(options, 'pin') === true,
+    draft: option(options, 'draft') === true,
+    evergreen: option(options, 'evergreen') === true,
+  };
+
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id: packAnnounceFlags(flags),
+      title: (flags.draft ? 'Draft an announcement' : 'Post an announcement').slice(
+        0,
+        MODAL_TITLE_MAX
+      ),
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4, // TEXT_INPUT
+              custom_id: 'title',
+              label: 'Headline',
+              style: 1, // SHORT
+              required: true,
+              min_length: 3,
+              // Under the column's own 200 so a headline never arrives needing
+              // to be trimmed by the route.
+              max_length: 150,
+              placeholder: 'Sunday session moved to Gym B',
+            },
+          ],
+        },
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: 'body',
+              label: 'The announcement',
+              style: 2, // PARAGRAPH
+              required: true,
+              min_length: 5,
+              // Discord's own ceiling for a text input is 4000; the route caps
+              // at 3500 and the schema at 5000. The tightest of the three is
+              // enforced HERE, where the writer can still see what they typed.
+              max_length: 3500,
+              placeholder: 'Everyone can read this — on the website and in the announcements channel.',
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * A submitted announcement: file it, and be honest about who it reached.
+ *
+ * THE SECOND PARAGRAPH OF THE SUCCESS REPLY IS THE POINT OF IT. This path files
+ * the announcement and nothing else -- no in-app bell row, no web push -- so an
+ * exec who reads "posted" and walks away believes they have notified the club
+ * when they have not. The route's header explains why it works that way; this
+ * is where the club finds out.
+ */
+export async function handleAnnounceModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+) {
+  const flags = unpackAnnounceFlags(customId);
+  const title = modalValue(components, 'title').trim();
+  const body = modalValue(components, 'body').trim();
+
+  if (!title || !body) {
+    // Discord's min_length should make this unreachable. Checked anyway,
+    // because a blank announcement is worse than a refused one.
+    return ephemeral('An announcement needs a headline and something to say. Try again.');
+  }
+
+  const result = await submitAnnouncement({
+    discordUserId: context.discordUserId,
+    title,
+    body,
+    type: flags.type,
+    pin: flags.pin,
+    draft: flags.draft,
+    evergreen: flags.evergreen,
+  });
+
+  if (!result.ok) {
+    // MATCHED AGAINST A CLOSED SET, never printed. The refusal is a code the
+    // route chose from a union; turning it into a sentence is this file's job,
+    // and interpolating whatever arrived would put an app response body into a
+    // Discord message.
+    switch (result.refusal) {
+      case 'not_linked':
+        return ephemeral(
+          "Run `/link` first — an announcement is filed against your club account, " +
+            "and this Discord account isn't connected to one yet. Nothing was posted."
+        );
+      case 'no_active_season':
+        return ephemeral(
+          "There's no active season right now, so this announcement wouldn't belong to " +
+            'one — and a notice filed against no season shows in every future term. ' +
+            'Run it again with `evergreen: True` if it is a standing notice (club rules, ' +
+            'the door code), or activate a season in the console first. Nothing was posted.'
+        );
+      default:
+        // 'not_permitted', and anything a newer app adds. Deliberately says
+        // nothing about which check failed: a banned exec and a member who
+        // never had the capability get the same sentence.
+        return ephemeral(
+          "You don't have permission to post club announcements. An admin grants that " +
+            'in the console under Permissions. Nothing was posted.'
+        );
+    }
+  }
+
+  if (result.status === 'draft') {
+    return ephemeral(
+      "**Saved as a draft.** Nothing is public yet — nobody can see it on the website " +
+        'and it will not reach the announcements channel until an exec publishes it in ' +
+        'the console.'
+    );
+  }
+
+  return ephemeral(
+    "**Posted.** It's on the website now, and it will appear in the announcements " +
+      'channel within about five minutes.\n\n' +
+      'Nobody was notified — no in-app alert and no push. If members need to be ' +
+      'pinged, publish it from the console instead.'
+  );
+}
+
 export interface ModalComponent {
   type?: number;
   custom_id?: string;
@@ -2025,6 +2293,8 @@ export async function dispatch(
         return await handleTournaments(context);
       case 'rolepicker':
         return await handleRolePicker(options, context);
+      case 'announce':
+        return openAnnounceModal(options);
       case 'bug':
         return openReportModal('bug', options, context);
       case 'feedback':

@@ -6,7 +6,9 @@ import {
   DEFERRED_COMMANDS,
   dispatch,
   handleProfileAutocomplete,
+  handleAnnounceModal,
   handleReportModal,
+  isAnnounceModal,
   handleSelfRoleButton,
   isReportModal,
   isSelfRoleButton,
@@ -520,18 +522,48 @@ const server = createServer(async (req, res) => {
   if (interaction.type === 5 && interaction.data) {
     const customId = interaction.data.custom_id;
 
+    // Same two places a command reads its caller from: a guild submit populates
+    // member.user, a DM submit populates user.
+    const modalContext = {
+      discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+      guildId: interaction.guild_id ?? null,
+    };
+
+    if (isAnnounceModal(customId)) {
+      try {
+        const response = await handleAnnounceModal(
+          customId as string,
+          interaction.data.components,
+          modalContext
+        );
+        return send(res, 200, response);
+      } catch (error) {
+        // "NOTHING WAS POSTED" IS THE LOAD-BEARING HALF. The write either
+        // happened or it did not, and an exec who is told only that something
+        // went wrong will retype the whole announcement -- which is how the
+        // club ends up with two of them. This branch is only reachable before
+        // the app answers or when it answered badly, so the announcement was
+        // not filed; the throw after a successful file would have to come from
+        // rendering the reply, and there is nothing there that can throw.
+        console.error('[bot] announce modal failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: {
+            content:
+              "Couldn't reach the club app just now — nothing was posted. Your words are " +
+              'gone from this box, so copy them somewhere before trying again.',
+            flags: 64,
+          },
+        });
+      }
+    }
+
     if (isReportModal(customId)) {
-      const context = {
-        // Same two places as a command: a guild submit populates member.user, a
-        // DM submit populates user.
-        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
-        guildId: interaction.guild_id ?? null,
-      };
       try {
         const response = await handleReportModal(
           customId as string,
           interaction.data.components,
-          context
+          modalContext
         );
         return send(res, 200, response);
       } catch (error) {
