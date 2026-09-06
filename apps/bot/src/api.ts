@@ -639,6 +639,40 @@ export function submitFeedback(input: {
   return send<{ ok: true; linked: boolean }>('POST', '/api/discord/feedback', input);
 }
 
+// ---- ANNOUNCE --------------------------------------------------------------
+
+/** Why the app declined to file an announcement. Closed set; see the route. */
+export type AnnounceRefusal = 'not_linked' | 'not_permitted' | 'no_active_season';
+
+/**
+ * File a club announcement, or learn why not.
+ *
+ * REFUSALS COME BACK AS A 200 WITH A CODE rather than a 4xx, and that is the
+ * app's decision rather than this client's -- send() turns every non-ok status
+ * into an AppApiError, which dispatch renders as "couldn't reach the club app",
+ * and all three refusals here are the app being reached and answering clearly.
+ * The route's header explains why it answers this way; this signature is the
+ * half of the contract the bot has to honour.
+ *
+ * The `refusal` is matched against the union above at the call site rather than
+ * printed. Nothing the app puts in a response body is ever interpolated into a
+ * Discord message.
+ */
+export function submitAnnouncement(input: {
+  discordUserId: string | null;
+  title: string;
+  body: string;
+  type: 'info' | 'warning' | 'urgent' | 'event';
+  pin: boolean;
+  draft: boolean;
+  evergreen: boolean;
+}): Promise<
+  | { ok: true; announcementId: string; status: 'draft' | 'published' }
+  | { ok: false; refusal: AnnounceRefusal }
+> {
+  return send('POST', '/api/discord/announce', input);
+}
+
 // ---- FEEDBACK RELAY --------------------------------------------------------
 
 export interface FeedbackAction {

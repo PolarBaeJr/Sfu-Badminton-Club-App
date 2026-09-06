@@ -6,7 +6,9 @@ import {
   DEFERRED_COMMANDS,
   dispatch,
   handleProfileAutocomplete,
+  handleAnnounceModal,
   handleReportModal,
+  isAnnounceModal,
   handleSelfRoleButton,
   isReportModal,
   isSelfRoleButton,
@@ -520,18 +522,56 @@ const server = createServer(async (req, res) => {
   if (interaction.type === 5 && interaction.data) {
     const customId = interaction.data.custom_id;
 
+    // Same two places a command reads its caller from: a guild submit populates
+    // member.user, a DM submit populates user.
+    const modalContext = {
+      discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+      guildId: interaction.guild_id ?? null,
+    };
+
+    if (isAnnounceModal(customId)) {
+      try {
+        const response = await handleAnnounceModal(
+          customId as string,
+          interaction.data.components,
+          modalContext
+        );
+        return send(res, 200, response);
+      } catch (error) {
+        // THIS DOES NOT SAY "NOTHING WAS POSTED", AND THE RESTRAINT IS THE POINT.
+        //
+        // The obvious wording is the wrong one. api.ts aborts at 2500ms, inside
+        // the modal submit's own 3-second deadline, and an abort fires against a
+        // request the app may already have COMMITTED -- the row is inserted, the
+        // answer is still in flight, and the fetch gives up. Telling the exec
+        // nothing was posted is then false in the one direction that costs
+        // something: they retype the announcement, and the club gets two of
+        // them, in the channel, in front of everybody.
+        //
+        // A refusal the app made deliberately never reaches here; those come
+        // back as a 200 with a code and are rendered as their own sentence. So
+        // everything that lands in this branch is genuinely unknown, and the
+        // reply says so and names the one place that settles it.
+        console.error('[bot] announce modal failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: {
+            content:
+              "Couldn't get an answer from the club app — I can't tell whether that went " +
+              'through. Check the announcements page before you try again, in case it did. ' +
+              'Your words are gone from this box, so copy them somewhere first.',
+            flags: 64,
+          },
+        });
+      }
+    }
+
     if (isReportModal(customId)) {
-      const context = {
-        // Same two places as a command: a guild submit populates member.user, a
-        // DM submit populates user.
-        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
-        guildId: interaction.guild_id ?? null,
-      };
       try {
         const response = await handleReportModal(
           customId as string,
           interaction.data.components,
-          context
+          modalContext
         );
         return send(res, 200, response);
       } catch (error) {
