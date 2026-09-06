@@ -32,7 +32,7 @@ vi.mock('../discord-api.js', async (importOriginal) => ({
 }));
 
 import { COMMAND_DEFINITIONS, DEFERRED_COMMANDS, dispatch } from '../commands.js';
-import { CHANNEL_SETTINGS, ALL_SETTINGS } from '../settings.js';
+import { CHANNEL_SETTINGS, VALUE_SETTINGS, ALL_SETTINGS } from '../settings.js';
 
 const CTX = { discordUserId: '42', guildId: 'g1' };
 const CHANNEL = '123456789012345678';
@@ -245,6 +245,22 @@ describe('the command definition', () => {
       // fail on the first message the relay tried to post.
       expect(o.channel_types, o.name).toEqual([0, 5]);
     }
+  });
+
+  it('names the tournament options exactly as the specs do', async () => {
+    // THE DRIFT THIS DESIGN IS EXPOSED TO. These options are typed out rather
+    // than generated (they have per-option types and bounds), while the handler
+    // reads them back by spec.option. A rename on one side and not the other is
+    // silent twice over: the handler finds nothing to save, and validateValue's
+    // `default: return null` waves the unknown option through, so the app's 400
+    // reaches the member as "couldn't reach the club app".
+    const config = COMMAND_DEFINITIONS.find((c) => c.name === 'config');
+    const tournament = (config?.options as { name: string; options?: unknown[] }[]).find(
+      (o) => o.name === 'tournament'
+    );
+    const opts = tournament?.options as { name: string }[];
+
+    expect(opts.map((o) => o.name)).toEqual(VALUE_SETTINGS.map((s) => s.option));
   });
 
   it('lets every setting be cleared, including the ones /config channels sets', async () => {

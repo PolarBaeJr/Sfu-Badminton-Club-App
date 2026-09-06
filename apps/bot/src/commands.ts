@@ -1491,6 +1491,10 @@ async function handleConfig(
     const { settings } = await fetchDiscordSettings();
     const start = write.tournament_event_start_time ?? settings.tournament_event_start_time ?? '09:00';
     const end = write.tournament_event_end_time ?? settings.tournament_event_end_time ?? '18:00';
+    // COMPARED AS STRINGS, which is only correct because both went through a
+    // zero-padded HH:MM check -- CLOCK in settings.ts for what arrived here,
+    // and the app's identical one for what came back from it. '9:00' would
+    // sort after '18:00' and this would pass a backwards pair.
     if (end <= start) {
       return ephemeral(
         `A tournament cannot end at **${end}** having started at **${start}** — ` +
