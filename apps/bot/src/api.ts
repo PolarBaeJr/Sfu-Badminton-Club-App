@@ -482,6 +482,35 @@ export async function writeGuildConfig(payload: {
   }
 }
 
+// ---- RUNTIME SETTINGS ------------------------------------------------------
+//
+// The key/value rows every relay reads to decide where it posts. Separate from
+// writeGuildConfig above because that route refuses a payload with no roles in
+// it -- moving the announcement channel is not a role change.
+
+/** Every setting the club has actually set, keyed as it is in the database. */
+export function fetchDiscordSettings(): Promise<{ settings: Record<string, string> }> {
+  return get<{ settings: Record<string, string> }>('/api/discord/settings');
+}
+
+/**
+ * Write settings, or clear them.
+ *
+ * A NULL VALUE DELETES THE KEY, and that is the only way to turn a relay back
+ * off: every one of them treats a missing key as "post nothing", and an empty
+ * string is not the same thing -- it survives the `?? null` that two of the
+ * routes use and would leave a relay pointed at a channel id of ''.
+ */
+export function writeDiscordSettings(
+  settings: Record<string, string | null>
+): Promise<{ ok: true; written: number; cleared: number }> {
+  return send<{ ok: true; written: number; cleared: number }>(
+    'POST',
+    '/api/discord/settings',
+    { settings }
+  );
+}
+
 // ---- ANNOUNCEMENT RELAY ----------------------------------------------------
 
 export interface AnnouncementAction {

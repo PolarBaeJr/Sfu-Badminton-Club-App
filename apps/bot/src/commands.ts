@@ -17,6 +17,8 @@ import {
   AlreadyLinkedError,
   mintLinkToken,
   writeGuildConfig,
+  fetchDiscordSettings,
+  writeDiscordSettings,
   type CardFile,
   type FeedbackKind,
   type ProfilePayload,
@@ -30,6 +32,13 @@ import { loadHandles, matchHandles } from './handles.js';
 import { type ManagedRole } from './roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
+import {
+  ALL_SETTINGS,
+  CHANNEL_SETTINGS,
+  VALUE_SETTINGS,
+  specByOption,
+  validateValue,
+} from './settings.js';
 
 // SFU red, the app's single accent (--red: #c00). Keeps Discord output visually
 // part of the same product rather than Discord-default blurple.
@@ -289,6 +298,72 @@ export const COMMAND_DEFINITIONS = [
     dm_permission: false,
   },
   {
+    name: 'config',
+    description: 'See and change where the club relays post',
+    options: [
+      {
+        type: 1, // SUB_COMMAND
+        name: 'show',
+        description: 'What is configured, and what each relay is doing about it',
+        options: [],
+      },
+      {
+        type: 1,
+        name: 'channels',
+        description: 'Choose where each relay posts',
+        // BUILT FROM THE SPEC LIST rather than typed out, so a setting cannot
+        // exist in /config show and be missing from the thing that sets it.
+        options: CHANNEL_SETTINGS.map((spec) => ({
+          type: 7, // CHANNEL
+          name: spec.option,
+          description: spec.label,
+          required: false,
+          // Text (0) and announcement (5) channels only. The picker would
+          // happily offer a voice channel or a category, and the failure would
+          // arrive later as a relay that 400s every five minutes.
+          channel_types: [0, 5],
+        })),
+      },
+      {
+        type: 1,
+        name: 'tournament',
+        description: 'Times and location for the Discord events I create for tournaments',
+        options: [
+          { type: 3, name: 'start_time', description: 'Start time, 24-hour HH:MM (default 09:00)', required: false },
+          { type: 3, name: 'end_time', description: 'End time, 24-hour HH:MM (default 18:00)', required: false },
+          { type: 3, name: 'location', description: 'Where tournaments are held', required: false },
+          {
+            type: 4, // INTEGER
+            name: 'ping_lead_minutes',
+            description: 'How long before a session to ping (default 60)',
+            required: false,
+            min_value: 5,
+            max_value: 1440,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'clear',
+        description: 'Unset one of these — the relay that reads it goes quiet',
+        options: [
+          {
+            type: 3,
+            name: 'setting',
+            description: 'Which one to unset',
+            required: true,
+            choices: ALL_SETTINGS.map((spec) => ({ name: spec.label, value: spec.option })),
+          },
+        ],
+      },
+    ],
+    // MANAGE_GUILD, the same gate /setup carries and for the same reason: this
+    // decides which channels the bot broadcasts the club's business into, which
+    // is server administration rather than exec tooling.
+    default_member_permissions: MANAGE_GUILD,
+    dm_permission: false,
+  },
+  {
     name: 'rolepicker',
     description: 'Manage the self-serve ping roles members can pick',
     options: [
@@ -377,7 +452,7 @@ export const COMMAND_DEFINITIONS = [
  * nine roles and then write to the app, which is comfortably longer, so it
  * acknowledges first and edits the message when it is actually finished.
  */
-export const DEFERRED_COMMANDS = new Set(['setup']);
+export const DEFERRED_COMMANDS = new Set(['setup', 'config']);
 
 /**
  * Who ran the command, and where.
@@ -1269,6 +1344,180 @@ function parseEmoji(emoji: string) {
   return { name: emoji };
 }
 
+// ---------------------------------------------------------------------------
+// /config
+// ---------------------------------------------------------------------------
+//
+// THE COMMAND THAT ANSWERS "IT IS SET UP BUT NOTHING POSTS".
+//
+// Every relay reads discord_settings, nothing wrote it, and there was no way to
+// see that from anywhere: /setup wires roles and the audit channel and stops,
+// the settings table is service-role only so no member-facing page can touch
+// it, and an unconfigured relay is indistinguishable from a working one from
+// outside — it runs on schedule, answers 200 and posts nothing. `show` is the
+// half that closes that; the rest is the half that fixes it.
+//
+// Deferred (see DEFERRED_COMMANDS) because `channels` posts a message into
+// every channel it was given before saving any of them, which is several round
+// trips to Discord and then one to the app.
+
+/**
+ * Prove the bot can post in a channel by posting in it.
+ *
+ * THE ALTERNATIVE IS A RELAY THAT 403s FOREVER. Discord's channel picker offers
+ * channels by what the CALLER can see, not by what the bot can write to, so a
+ * perfectly reasonable choice can be one the bot has no Send Messages in —
+ * and every relay treats a failed post as a transient error and tries again on
+ * the next tick, quietly, for as long as the setting stands.
+ *
+ * Computing the bot's effective permissions from the role and overwrite lists
+ * would be the tidy version and it is not worth it: it means fetching the
+ * member, the roles and the channel, reimplementing Discord's overwrite
+ * precedence, and being wrong in a way that is invisible. Sending one message
+ * asks the only question that matters and gets Discord's own answer, and it
+ * leaves the club a note in the channel saying what will appear there.
+ */
+async function proveCanPost(
+  api: DiscordApi,
+  channelId: string,
+  label: string
+): Promise<boolean> {
+  return api.createMessage(channelId, {
+    content: `**${label}** will be posted here.`,
+    // No mentions, ever. This lands in a channel the club chose for a relay,
+    // and a setup confirmation that pings a role would be a poor introduction.
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function handleConfig(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+) {
+  if (!context.guildId) return ephemeral('Run this in a server, not a DM.');
+  const { name: sub, options: args } = subcommand(options);
+
+  if (sub === 'show') {
+    const { settings } = await fetchDiscordSettings();
+
+    const line = (spec: (typeof ALL_SETTINGS)[number], asChannel: boolean) => {
+      const value = settings[spec.key];
+      if (!value) return `**${spec.label}** — not set, so ${spec.whenUnset}`;
+      return `**${spec.label}** — ${asChannel ? `<#${value}>` : value}`;
+    };
+
+    return ephemeralEmbed({
+      title: 'Discord relay settings',
+      color: CLUB_RED,
+      description: [
+        CHANNEL_SETTINGS.map((spec) => line(spec, true)).join('\n'),
+        '',
+        VALUE_SETTINGS.map((spec) => line(spec, false)).join('\n'),
+      ].join('\n'),
+      // SAID EVERY TIME, because it is the one thing about this feature that
+      // surprises people: tournaments are the exception. That relay makes
+      // Discord scheduled events rather than posting messages, so it has no
+      // channel to set and runs whether or not anything above is filled in.
+      footer: {
+        text:
+          'Tournaments become Discord events, not messages — that relay runs with no channel. ' +
+          'Change any of these with /config channels or /config tournament.',
+      },
+    });
+  }
+
+  if (sub === 'channels') {
+    const chosen = CHANNEL_SETTINGS.map((spec) => ({
+      spec,
+      channelId: option(args, spec.option),
+    })).filter((c): c is { spec: typeof c.spec; channelId: string } => typeof c.channelId === 'string');
+
+    if (chosen.length === 0) {
+      return ephemeral(
+        'Pick at least one channel. Run **/config show** to see what is set, or ' +
+          '**/config clear** to unset one.'
+      );
+    }
+
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) {
+      console.error('[bot] /config channels: DISCORD_BOT_TOKEN is not set');
+      return ephemeral('I am not configured to post anywhere right now.');
+    }
+    const api = new DiscordApi({ token });
+
+    const write: Record<string, string> = {};
+    const refused: string[] = [];
+    for (const { spec, channelId } of chosen) {
+      if (await proveCanPost(api, channelId, spec.label)) write[spec.key] = channelId;
+      else refused.push(`<#${channelId}> for **${spec.label}**`);
+    }
+
+    // NOTHING IS SAVED UNTIL THE POST SUCCEEDS, and a channel that refused is
+    // left exactly as it was rather than half-set. A club that changes three
+    // channels and gets one wrong keeps the other two.
+    if (Object.keys(write).length > 0) await writeDiscordSettings(write);
+
+    const saved = Object.keys(write).length;
+    const ok = saved > 0 ? `Saved ${saved} channel${saved === 1 ? '' : 's'}.` : 'Nothing saved.';
+    if (refused.length === 0) return ephemeral(`${ok} I posted a note in each one.`);
+
+    return ephemeral(
+      `${ok}\n\nI could not post in ${refused.join(', ')}, so ` +
+        `${refused.length === 1 ? 'it was' : 'they were'} left unchanged. ` +
+        'Give me **View Channel** and **Send Messages** there and run this again.'
+    );
+  }
+
+  if (sub === 'tournament') {
+    const write: Record<string, string> = {};
+    for (const spec of VALUE_SETTINGS) {
+      const raw = option(args, spec.option);
+      if (raw === undefined || raw === null) continue;
+      const value = String(raw).trim();
+      const problem = validateValue(spec.option, value);
+      if (problem) return ephemeral(problem);
+      write[spec.key] = value;
+    }
+
+    if (Object.keys(write).length === 0) {
+      return ephemeral('Nothing to change. Run **/config show** to see what is set.');
+    }
+
+    // A tournament event Discord will accept needs the end after the start, and
+    // checking it here rather than at send time is the difference between one
+    // wrong answer now and a relay that skips every tournament with
+    // `end_before_start` where nobody is reading.
+    const { settings } = await fetchDiscordSettings();
+    const start = write.tournament_event_start_time ?? settings.tournament_event_start_time ?? '09:00';
+    const end = write.tournament_event_end_time ?? settings.tournament_event_end_time ?? '18:00';
+    if (end <= start) {
+      return ephemeral(
+        `A tournament cannot end at **${end}** having started at **${start}** — ` +
+          'Discord rejects an event that ends before it begins, so nothing would be created.'
+      );
+    }
+
+    await writeDiscordSettings(write);
+    return ephemeral(
+      `Saved. Tournament events run **${start}–${end}**` +
+        `${settings.tournament_event_location || write.tournament_event_location ? '' : ' with no location set'}.`
+    );
+  }
+
+  if (sub === 'clear') {
+    const spec = specByOption(String(option(args, 'setting') ?? ''));
+    if (!spec) return ephemeral('I do not know that setting.');
+
+    await writeDiscordSettings({ [spec.key]: null });
+    // Says what stops rather than "cleared", because that is the part the club
+    // needs to have understood before running it.
+    return ephemeral(`Unset **${spec.label}** — from now on ${spec.whenUnset}.`);
+  }
+
+  return ephemeral('Use **/config show**, **/config channels**, **/config tournament** or **/config clear**.');
+}
+
 async function handleRolePicker(
   options: CommandOption[] | undefined,
   context: InteractionContext
@@ -1782,6 +2031,8 @@ export async function dispatch(
         return await handleUnlink(context);
       case 'setup':
         return await handleSetup(options, context);
+      case 'config':
+        return await handleConfig(options, context);
       default:
         return ephemeral('Unknown command.');
     }
