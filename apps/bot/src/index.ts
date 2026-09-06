@@ -538,20 +538,28 @@ const server = createServer(async (req, res) => {
         );
         return send(res, 200, response);
       } catch (error) {
-        // "NOTHING WAS POSTED" IS THE LOAD-BEARING HALF. The write either
-        // happened or it did not, and an exec who is told only that something
-        // went wrong will retype the whole announcement -- which is how the
-        // club ends up with two of them. This branch is only reachable before
-        // the app answers or when it answered badly, so the announcement was
-        // not filed; the throw after a successful file would have to come from
-        // rendering the reply, and there is nothing there that can throw.
+        // THIS DOES NOT SAY "NOTHING WAS POSTED", AND THE RESTRAINT IS THE POINT.
+        //
+        // The obvious wording is the wrong one. api.ts aborts at 2500ms, inside
+        // the modal submit's own 3-second deadline, and an abort fires against a
+        // request the app may already have COMMITTED -- the row is inserted, the
+        // answer is still in flight, and the fetch gives up. Telling the exec
+        // nothing was posted is then false in the one direction that costs
+        // something: they retype the announcement, and the club gets two of
+        // them, in the channel, in front of everybody.
+        //
+        // A refusal the app made deliberately never reaches here; those come
+        // back as a 200 with a code and are rendered as their own sentence. So
+        // everything that lands in this branch is genuinely unknown, and the
+        // reply says so and names the one place that settles it.
         console.error('[bot] announce modal failed:', error);
         return send(res, 200, {
           type: 4,
           data: {
             content:
-              "Couldn't reach the club app just now — nothing was posted. Your words are " +
-              'gone from this box, so copy them somewhere before trying again.',
+              "Couldn't get an answer from the club app — I can't tell whether that went " +
+              'through. Check the announcements page before you try again, in case it did. ' +
+              'Your words are gone from this box, so copy them somewhere first.',
             flags: 64,
           },
         });
