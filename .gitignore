@@ -86,6 +86,14 @@ scripts/*
 # --single-transaction. Untracked, every operator re-derives that by hand.
 !scripts/db-migrate.sh
 
+# The README describes the allowlisted toolchain above — the migration runner,
+# the two generators, the snapshot and its sql/ helpers — and supabase/README.md
+# links to it. Untracked, that link is broken on every fresh checkout and the
+# only account of what `prepare` does versus `apply` lives on one laptop. It
+# documents tracked files only, and names no host or credential that
+# db-migrate.sh does not already carry.
+!scripts/README.md
+
 # Internal working notes / security findings — keep out of the public repo
 docs/sensitive/
 
