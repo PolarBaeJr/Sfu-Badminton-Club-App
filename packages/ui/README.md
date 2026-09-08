@@ -1,6 +1,6 @@
 # `@badminton/ui`
 
-The component library both apps share — ~29 components plus a few React-free
+The component library both apps share — 29 components plus a few React-free
 helpers. Consumed **as TypeScript source** (`main`/`types` point at
 `src/index.ts`, and both apps list the package in `transpilePackages`), so there
 is no build step and no `dist/`.
