@@ -124,7 +124,13 @@ drag the bot higher in the role list and re-run — adoption is idempotent. Role
 permission masks arrive as *decimal strings* because they're 64 bits wide:
 parse with `BigInt`, never `Number`.
 
-**`/setup` is intentionally un-gated by config — it *is* the bootstrap.**
+**`/setup` is gated by Discord's `MANAGE_GUILD`, not by the club's own
+`EXEC_ONLY` gate** — deliberately, because it *is* the bootstrap: it is what
+creates the `@Executives` role the `EXEC_ONLY` commands are later granted to, so
+gating it on that role would leave a fresh server with no way in. Discord
+enforces `default_member_permissions` server-side, so the command isn't even
+visible to anyone else, and it independently refuses to let a bot create or
+assign a role above its own position.
 
 **Nothing in `sync.ts` throws on a predictable failure.** A 403 modifying a
 member whose top role outranks the bot is normal, not an incident; a sweep that

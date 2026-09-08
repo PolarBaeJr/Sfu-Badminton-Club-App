@@ -56,12 +56,24 @@ took the middleware bundle from 208 kB to 371 kB.
 `elo/engine.ts`. A rating change is
 
 ```
-k × formatWeight × eventMultiplier × marginMultiplier
+k × formatWeight × eventMultiplier × eloWeightOverride × marginMultiplier × (actual − expected)
 ```
 
-and those factors **compound** — they are not alternatives, and there is no
-clamp that rescues a bad combination. A single game to 11 lands at **0.52**, not
-at the 0.25 floor people assume from the format weight alone.
+and those factors **compound** — they are not alternatives, and nothing clamps
+the product. Only the resulting *rating* is clamped, to the configured bounds, so
+a bad combination is applied in full and then truncated at the edge.
+
+There are **two format-weight tables and they deliberately disagree**. A match
+that inherits the format enum is priced from `FORMAT_WEIGHTS` (1 game to 11 =
+**0.50**); a match with a typed shape — `games_per_match` / `points_per_game`
+set, which is every custom challenge and everything `knockoutLadder()` stamps —
+is priced from `derivedFormatWeight`, `(target / 21) × 1.25 if best-of`, clamped
+to `[0.25, 1.5]`, so the same 1 game to 11 is **0.5238…**. They agree on the two
+default shapes and split on the two short ones. This mirrors
+`trigger_set_match_weights` in SQL (00031), which picks the same branch, and a
+test locks the disagreement so that “fixing” one side fails loudly instead of
+silently re-pricing every short match. `resolvedFormatWeight()` is the one
+function that picks the branch — go through it rather than indexing a table.
 
 `ELO_SCALE` is **800**, not the classic 400. The ladder's spread is deliberately
 stretched 2x: nominal rating 400, practical ceiling around 1300, and a gap of one

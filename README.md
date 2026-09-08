@@ -48,7 +48,7 @@ anything specific to a part:
 | [`supabase`](supabase/README.md) | schema, migrations, SQL tests |
 | [`scripts`](scripts/README.md) | operator tooling |
 | [`backup`](backup/README.md) | database backups and restore |
-| [`.github`](.github/README.md) | CI |
+| [`.github`](.github/CI.md) | CI |
 | [`docs`](docs/README.md) | all documentation, indexed |
 
 ## Tech stack (short version)

@@ -72,8 +72,12 @@ level. `writeConsoleLevel()` in `lib/actions/permissions.ts` is the only writer
 of those columns, and it is not exported.
 
 Beyond that level, individual capabilities are checked through
-`lib/permissions.ts` and the shared `CAPABILITY_GATES`. `players.portfolio` is a
-dead column — use `permission_role`.
+`lib/permissions.ts` and the shared `CAPABILITY_GATES`. `players.portfolio` does
+not exist: 00086 gave an exec one of four VP portfolios and 00087 dropped the
+column again in the same sitting, replacing it with `permission_role` plus two
+capability arrays. Anything in the docs or in an old branch that still says
+"portfolio" is describing a schema that was never live for long — read
+`permission_role`.
 
 Three rules that have each already cost a bug:
 
