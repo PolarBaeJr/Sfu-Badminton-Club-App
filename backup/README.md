@@ -87,6 +87,37 @@ Once `gcrypt:` works, `backup-db.sh` uploads to it automatically (its default
 
 ## Restoring
 
+> ### ⚠️ Read this before relying on a restore
+>
+> **The dumps these scripts currently produce carry no roles and no grants.**
+> `pg_dump` never emits roles at any flag combination, and the `--no-acl` in the
+> commands below suppresses table privileges as well. Every table in `public`
+> carries two or three explicit ACL entries, so a restore from one of these
+> dumps yields a database in which `anon` and `authenticated` can read
+> **nothing**.
+>
+> That failure is silent, which is what makes it dangerous: a denied PostgREST
+> read comes back as an *empty list*, not an error — so a restored site serves
+> 200s with no data rather than failing loudly.
+>
+> The fix — a nightly `pg_dumpall --globals-only --no-role-passwords` companion
+> file, `--no-acl` dropped from both the dump and the restore, both files
+> treated as one unit, and retention/rsync patterns widened to match — is
+> written and pushed on branch **`fix/backup-globals-and-acls`**, but is **not
+> merged**. Until it is:
+>
+> - restore **globals first**, then the dump, and drop `--no-acl`;
+> - expect step 1 to print `role "anon" already exists` against a fresh Supabase
+>   container and still exit 0 — `pg_dumpall --globals-only` emits bare,
+>   unguarded `CREATE ROLE`. Capture stderr and check that "already exists" is
+>   the *only* error rather than eyeballing the output;
+> - note the restore path on that branch is **reasoned, not exercised** — no
+>   scratch restore has been performed. Inferred is not observed.
+>
+> `_supabase` is deliberately not dumped: all five `_supavisor` tables are empty
+> and their content is pooler state rebuilt from env on startup. Skipping it is
+> correct.
+
 Dumps are Postgres **custom format** (`-Fc`), restored with `pg_restore`.
 
 ```sh
@@ -120,6 +151,11 @@ cat ~/ssd/db-backups/.last-upload        # timestamp of the last VERIFIED upload
 grep -c 'BACKUP UPLOAD FAILED' ~/ssd/db-backups/backup.log
 rclone lsf gcrypt: | sort | tail -5      # is today's dump actually there?
 ```
+
+> **On the Mac mini, that size comparison is broken.** BSD `wc -c` left-pads its
+> count where GNU's does not, so the verify reports a spurious mismatch — and
+> that path exits 1, failing every backup. Fixed on
+> `fix/backup-globals-and-acls`, unmerged.
 
 `backup-db.sh` writes `.last-upload` only after confirming the uploaded object
 exists at the expected size, prints a greppable `BACKUP UPLOAD FAILED` line on
