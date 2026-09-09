@@ -10,6 +10,7 @@ import type { DiscordApi, RoleCallResult } from './discord-api.js';
 import {
   membershipFromRoles,
   roleDiff,
+  type DiffOptions,
   type GuildRegistry,
   type GuildRoleMap,
   type ManagedRole,
@@ -31,8 +32,9 @@ export interface SyncOutcome {
    * The membership the member's OWN roles assert in this guild, or null for
    * "they have not picked, they picked two, or this guild has no such roles".
    *
-   * Read, never written: the three membership roles are excluded from the diff
-   * above. It is here because the caller that walks every linked member is the
+   * Read, never written for an ordinary member: the three membership roles are
+   * excluded from the diff above unless the caller is revoking. It is here
+   * because the caller that walks every linked member is the
    * only place with both this and the app's current value to compare it
    * against, and re-fetching the member's roles to find out would double the
    * sweep's request count.
@@ -52,7 +54,8 @@ export async function syncMemberInGuild(
   guildId: string,
   guildRoles: GuildRoleMap,
   discordUserId: string,
-  desired: Set<ManagedRole> | null
+  desired: Set<ManagedRole> | null,
+  options: DiffOptions = {}
 ): Promise<SyncOutcome> {
   const outcome: SyncOutcome = {
     guildId,
@@ -77,11 +80,13 @@ export async function syncMemberInGuild(
     return outcome;
   }
 
-  // BEFORE the diff is applied, though it makes no difference which side it is
-  // read from: nothing below can add or remove a membership role.
+  // BEFORE the diff is applied, because when the caller is revoking, the diff
+  // below is about to take these roles off — and the caller wants to know what
+  // the member held, not what is left afterwards. (For an ordinary sweep it
+  // makes no difference: nothing below touches them.)
   outcome.membership = membershipFromRoles(guildRoles, current);
 
-  const diff = roleDiff(desired, guildRoles, current);
+  const diff = roleDiff(desired, guildRoles, current, options);
 
   const tally = (result: RoleCallResult, kind: 'added' | 'removed') => {
     if (result === 'ok') outcome[kind] += 1;
@@ -116,12 +121,13 @@ export async function syncMemberEverywhere(
   api: DiscordApi,
   registry: GuildRegistry,
   discordUserId: string,
-  desired: Set<ManagedRole> | null
+  desired: Set<ManagedRole> | null,
+  options: DiffOptions = {}
 ): Promise<SyncOutcome[]> {
   const outcomes: SyncOutcome[] = [];
   for (const [guildId, guildRoles] of registry) {
     outcomes.push(
-      await syncMemberInGuild(api, guildId, guildRoles, discordUserId, desired)
+      await syncMemberInGuild(api, guildId, guildRoles, discordUserId, desired, options)
     );
   }
   return outcomes;

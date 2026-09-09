@@ -111,7 +111,15 @@ export async function reconcile(
         api,
         registry,
         member.discordUserId,
-        member.state ? desiredRoles(member.state) : null
+        member.state ? desiredRoles(member.state) : null,
+        // THE ONE CASE THAT STILL TAKES A MEMBERSHIP ROLE OFF. Picking one is
+        // the member's own call and the sweep leaves it alone; a BAN or a
+        // tombstone is the club withdrawing access, and member-only channel
+        // visibility in this server IS @Internal + @Alumni. Leaving them on
+        // would keep those channels open to exactly the person who was just
+        // removed from them, and would let a tombstone be reported `cleared`
+        // with a role still on the account.
+        { revokeMembership: member.state === null || member.state.isBanned }
       );
     } catch (error) {
       // syncMemberEverywhere already swallows the predictable failures, so
@@ -167,7 +175,11 @@ export async function reconcile(
     // is the same tie-break every time because the registry preserves order.
     // Two servers disagreeing about one member is a configuration the club can
     // see in the audit entry, not something to invent a merge rule for.
-    if (member.state) {
+    //
+    // NOT FOR A BANNED MEMBER, for the same reason the sweep just stripped
+    // their roles: the write-back would put a fee tier onto a row the club has
+    // withdrawn, sourced from a role that is being taken away in the same pass.
+    if (member.state && !member.state.isBanned) {
       const picked = outcomes.find((o) => o.membership !== null)?.membership ?? null;
       if (picked && picked !== member.state.membershipType) {
         summary.membershipUpdates.push({

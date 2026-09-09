@@ -51,8 +51,10 @@ describe('reconcile', () => {
       method === 'GET' ? { status: 200, body: { roles: ['1', '2', '3'] } } : { status: 204 }
     );
     const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
-    // '3' is @Internal, the member's own pick — an unlink does not take it.
-    expect(summary.removed).toBe(2);
+    // All three, '3' (@Internal) included. The sweep leaves a member's own pick
+    // alone; a TOMBSTONE is not a member picking, and reporting the account
+    // `cleared` with @Internal still on it would be a lie the app acts on.
+    expect(summary.removed).toBe(3);
     expect(summary.added).toBe(0);
   });
 
@@ -78,7 +80,7 @@ describe('reconcile', () => {
       method === 'GET' ? { status: 200, body: { roles: ['1', '2', '3'] } } : { status: 403 }
     );
     const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
-    expect(summary.forbidden).toBe(2);
+    expect(summary.forbidden).toBe(3);
     expect(summary.removed).toBe(0);
     expect(summary.cleared).toEqual([]);
   });
@@ -232,11 +234,30 @@ describe('reconcile membership write-back', () => {
   });
 
   it('never writes back for a tombstone', async () => {
-    // There is no player to write to, and the roles are what is left behind.
+    // There is no player to write to, and the role is on its way off anyway.
     const a = api((method) =>
       method === 'GET' ? { status: 200, body: { roles: ['1', '3'] } } : { status: 204 }
     );
     const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
+    expect(summary.membershipUpdates).toEqual([]);
+  });
+
+  it('strips a banned member’s membership role and writes nothing back', async () => {
+    // A ban is the club withdrawing access, not a member picking. Both halves
+    // matter: the role has to come off, AND the fee tier it implies must not be
+    // written onto the row the club has just closed.
+    const removed: string[] = [];
+    const a = api((method, path) => {
+      if (method === 'GET') return { status: 200, body: { roles: ['1', '2', '3'] } };
+      if (method === 'DELETE') removed.push(path.split('/').pop() as string);
+      return { status: 204 };
+    });
+    const summary = await reconcile(
+      a, REGISTRY,
+      [{ discordUserId: 'u1', state: state({ isBanned: true, membershipType: 'external' }) }],
+      () => {}
+    );
+    expect(removed).toContain('3');
     expect(summary.membershipUpdates).toEqual([]);
   });
 });

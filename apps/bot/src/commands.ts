@@ -1225,7 +1225,11 @@ export async function handleUnlink(context: InteractionContext) {
       api,
       registry,
       context.discordUserId,
-      null
+      null,
+      // Including the membership role they picked. /unlink is the member saying
+      // they are done with the club account; leaving @Internal on would leave
+      // the member-only channels open to somebody the app no longer knows.
+      { revokeMembership: true }
     );
     cleared = outcomes.every((o) => !o.forbidden && !o.failed);
     // Only when the strip actually succeeded everywhere. A 403 here is the

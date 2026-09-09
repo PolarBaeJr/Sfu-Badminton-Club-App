@@ -114,11 +114,10 @@ const VP_ROLES = ['finance', 'tournaments', 'internal', 'external'];
  * behind it does:
  *
  *  - A BANNED member keeps only `linked`. A ban is the club withdrawing access;
- *    leaving them holding `@Competitive` would leave the member-only channels
- *    open to exactly the person who was just removed from them. Note that a ban
- *    no longer takes @Internal off them, because the sweep no longer touches
- *    that role at all — a banned member is removed or has their Discord roles
- *    taken by hand, which is what the club did before the bot existed.
+ *    leaving them holding `@Internal` would leave the member-only channels open
+ *    to exactly the person who was just removed from them. The membership roles
+ *    are not in this set at all any more, so the ban takes them off through
+ *    `roleDiff`'s `revokeMembership` instead — see DiffOptions.
  *  - A `pending_approval` member gets no team role. Signing up is not the club
  *    letting you in — the same reason the guard refuses a self-created row that
  *    arrives already approved, and the same reason the owner asked for pending
@@ -206,6 +205,24 @@ export function parseGuildRegistry(raw: string | undefined): GuildRegistry {
   return registry;
 }
 
+export interface DiffOptions {
+  /**
+   * Take the membership roles OFF as well.
+   *
+   * THE ASYMMETRY IS THE POINT, and it is the difference between the two things
+   * that can put a membership role on somebody: a member choosing one, and the
+   * club having granted it. Nothing ever ADDS one — that is the member's own
+   * call now. But a BAN or a tombstone is the club revoking access, not a
+   * member changing their mind, and member-only channel visibility in this
+   * server IS @Internal + @Alumni (see the role table in
+   * docs/design/discord-bot.md §5). Leaving them on would leave the member
+   * channels open to exactly the person who was just removed from them, and
+   * would let a tombstone be reported clean while a role was still on the
+   * account.
+   */
+  revokeMembership?: boolean;
+}
+
 export interface RoleDiff {
   /** Role IDs to add. */
   add: string[];
@@ -226,13 +243,15 @@ export interface RoleDiff {
  * blocklist that a future role could fall outside of.
  *
  * The three membership roles are invisible to it for the same structural
- * reason: the loop is over SWEPT_ROLES. Not added, and — the half that matters
- * — not removed either.
+ * reason: the loop is over SWEPT_ROLES. Never added, and not removed either
+ * unless `revokeMembership` says the club is withdrawing access — see
+ * DiffOptions, which is where that asymmetry is argued.
  */
 export function roleDiff(
   desired: Set<ManagedRole> | null,
   guildRoles: GuildRoleMap,
-  currentRoleIds: readonly string[]
+  currentRoleIds: readonly string[],
+  options: DiffOptions = {}
 ): RoleDiff {
   const held = new Set(currentRoleIds);
   const add: string[] = [];
@@ -245,6 +264,15 @@ export function roleDiff(
     const shouldHold = desired?.has(role) ?? false;
     if (shouldHold && !held.has(id)) add.push(id);
     if (!shouldHold && held.has(id)) remove.push(id);
+  }
+
+  // REMOVAL ONLY, and only when asked. There is no branch anywhere in this
+  // function that can add a membership role.
+  if (options.revokeMembership) {
+    for (const role of MEMBERSHIP_ROLES) {
+      const id = guildRoles[role];
+      if (id && held.has(id)) remove.push(id);
+    }
   }
 
   return { add, remove };

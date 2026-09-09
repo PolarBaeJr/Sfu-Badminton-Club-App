@@ -219,6 +219,16 @@ launch week. So members pick their own in the `/rolepicker`, and the app **follo
   **linked** account only, with an audit row naming Discord as the source.
 - 00221 narrows 00168's both-directions guard to the six roles that are still swept.
 
+**One exception, and it only removes.** A **ban** or a **tombstone** (`/unlink`, a
+deleted player, a queued revocation) still strips all three, via `roleDiff`'s
+`revokeMembership` flag. Picking is the member's call; a ban is the club withdrawing
+access, and member-only channel visibility in this server *is* `Internal` + `Alumni` —
+leaving them on would keep those channels open to exactly the person just removed from
+them, and would let a tombstone be reported `cleared` with a role still attached.
+Nothing anywhere **adds** a membership role any more, revoking included. The write-back
+is skipped for a banned member for the same reason: it would put a fee tier on a row
+the club has just closed.
+
 **What it costs, stated so nobody rediscovers it in a tournament:** `membership_type`
 prices a tournament entry (`quoteEntryFee`) and gates which events a member may enter
 (`isMembershipAllowed`). A member picking `@Internal` is asserting the student fee and

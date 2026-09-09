@@ -17,6 +17,14 @@
 -- premise of the guard is gone for exactly these three, so the guard is narrowed
 -- to exactly the six it still describes.
 --
+-- THE ONE THING THAT STILL TAKES THEM OFF is a BAN or a tombstone — the club
+-- withdrawing access rather than a member changing their mind — because
+-- member-only channel visibility in this server IS @Internal + @Alumni. That is
+-- roleDiff's `revokeMembership`, and it removes only; nothing anywhere adds one
+-- any more. It does not touch the guard above: a banned member clicking the
+-- button gets the role back and loses it again at the next sweep, which is
+-- exactly what a banned member clicking any other button gets today.
+--
 -- THE DIRECTION OF TRAVEL REVERSES FOR THESE THREE, ON PURPOSE. Where the sweep
 -- used to push players.membership_type into Discord, the app now follows what
 -- the member picked: the sweep READS the role and posts it to
@@ -176,7 +184,7 @@ NOTIFY pgrst, 'reload schema';
 --
 -- WHO HOLDS WHAT TODAY. The sweep put a membership role on every approved
 -- linked member before this change, and it will not take them off — it no
--- longer touches them at all. So everybody keeps the role the app gave them,
+-- longer touches them at all unless the member is banned or unlinked. So everybody keeps the role the app gave them,
 -- which is the right starting point: their Discord role and their
 -- membership_type already agree, and the first thing that moves either is a
 -- member clicking a button. Nothing needs backfilling.
