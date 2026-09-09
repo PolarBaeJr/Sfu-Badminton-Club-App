@@ -90,7 +90,7 @@ docker exec -i <db-container> psql -U postgres -c \
   "UPDATE players SET is_exec=TRUE WHERE email='someone@example.com';"
 ```
 
-To re-seed the primary admin from scratch, see `scripts/reseed-admin.sql`.
+To re-seed the primary admin from scratch, see `supabase/One Time Scripts/reseed-admin.sql`.
 
 ---
 
