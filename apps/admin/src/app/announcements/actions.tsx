@@ -13,8 +13,24 @@ import {
   TYPE_OPTIONS,
   type AnnouncementStatus,
   type AnnouncementType,
+  type PostedMapping,
   type TargetAudience,
 } from './announcement-shape';
+import { DiscordPreview } from './discord-preview';
+
+/**
+ * Everything the Discord preview needs that comes off the server rather than
+ * out of the form, threaded down from the page so the composer and the edit
+ * dialog answer the same question the same way.
+ *
+ * Null for a viewer on a club that has never set the relay up — the preview
+ * still draws the embed, and simply says nothing is configured to receive it.
+ */
+export interface DiscordContext {
+  channelConfigured: boolean;
+  /** What the relay links the embed title to. */
+  announcementsUrl: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // Shared form state
@@ -73,6 +89,10 @@ function AnnouncementFields({
   setForm,
   pushReachable,
   showScope,
+  discord,
+  posted,
+  status,
+  updatedAt,
 }: {
   form: AnnouncementFormData;
   setForm: React.Dispatch<React.SetStateAction<AnnouncementFormData>>;
@@ -88,6 +108,18 @@ function AnnouncementFields({
    * change that never happens.
    */
   showScope: boolean;
+  /** null hides the Discord panel entirely — see DiscordContext. */
+  discord: DiscordContext | null;
+  /** The mapping row, when this announcement already has a Discord message. */
+  posted: PostedMapping | null;
+  /**
+   * The status the preview should answer for. The composer passes 'published'
+   * because that is what its primary button does; the edit dialog passes the
+   * row's own, because editing a draft leaves it a draft.
+   */
+  status: AnnouncementStatus;
+  /** null for something being written or saved now — the preview reads it as now. */
+  updatedAt: string | null;
 }) {
   return (
     <div className="flex flex-col gap-[14px]">
@@ -168,6 +200,24 @@ function AnnouncementFields({
           onChange={(v) => setForm((f) => ({ ...f, send_push: v }))}
         />
       </SwitchBlock>
+
+      {/* Under the switches rather than beside the body, because it answers a
+          question about the finished post — including the audience and the
+          expiry, which are set further up. It updates as they are typed. */}
+      {discord && (
+        <DiscordPreview
+          title={form.title}
+          body={form.body}
+          type={form.type}
+          targetAudience={form.target_audience}
+          expiresAt={form.expires_at || null}
+          status={status}
+          channelConfigured={discord.channelConfigured}
+          url={discord.announcementsUrl}
+          posted={posted}
+          updatedAt={updatedAt}
+        />
+      )}
     </div>
   );
 }
@@ -188,7 +238,13 @@ function AnnouncementFields({
  * draft|published (00001:596). A Schedule control would have had nowhere to
  * save what it collected.
  */
-export function Composer({ pushReachable }: { pushReachable: number | null }) {
+export function Composer({
+  pushReachable,
+  discord,
+}: {
+  pushReachable: number | null;
+  discord: DiscordContext | null;
+}) {
   const [form, setForm] = useState<AnnouncementFormData>(EMPTY_FORM);
   const [busy, setBusy] = useState<null | AnnouncementStatus>(null);
   const { toast } = useToast();
@@ -226,7 +282,21 @@ export function Composer({ pushReachable }: { pushReachable: number | null }) {
         <Badge variant="neutral">DRAFT</Badge>
       </div>
 
-      <AnnouncementFields form={form} setForm={setForm} pushReachable={pushReachable} showScope />
+      <AnnouncementFields
+        form={form}
+        setForm={setForm}
+        pushReachable={pushReachable}
+        showScope
+        discord={discord}
+        // Nothing to be mapped to yet, and nothing to be stale — this row does
+        // not exist until the button below is pressed.
+        posted={null}
+        // ALWAYS 'published' here. The preview answers "what happens when this
+        // goes out", and previewing the draft path would only ever say that
+        // drafts are not relayed — which Save draft already means.
+        status="published"
+        updatedAt={null}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -286,11 +356,15 @@ export function AnnouncementRowActions({
   canUpdate,
   canDelete,
   pushReachable,
+  discord,
+  posted,
 }: {
   announcement: RowAnnouncement;
   canUpdate: boolean;
   canDelete: boolean;
   pushReachable: number | null;
+  discord: DiscordContext | null;
+  posted: PostedMapping | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -434,6 +508,15 @@ export function AnnouncementRowActions({
             setForm={setForm}
             pushReachable={pushReachable}
             showScope={false}
+            discord={discord}
+            posted={posted}
+            // The row's STATUS, unlike the composer's fixed 'published': a
+            // draft being edited is still a draft, and saying otherwise here
+            // would promise a Discord post that a Save cannot deliver.
+            status={announcement.status}
+            // null, meaning now — saving this form writes updated_at, so the
+            // lookback question is settled by the act of saving.
+            updatedAt={null}
           />
 
           {isLive && (
