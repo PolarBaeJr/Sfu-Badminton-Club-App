@@ -26,6 +26,7 @@ export const SETTING_LABELS: Record<string, string> = {
   season_settings: 'Season Settings',
   inactivity_rules: 'Inactivity Rules',
   session_attendance: 'Session Attendance',
+  signup_settings: 'Signup Approval',
 };
 
 export const SETTING_DESCRIPTIONS: Record<string, string> = {
@@ -38,6 +39,7 @@ export const SETTING_DESCRIPTIONS: Record<string, string> = {
   season_settings: 'Compression factor for end-of-season Elo normalization',
   inactivity_rules: 'Days of inactivity before auto-marking players inactive',
   session_attendance: 'Check-in window and default session duration',
+  signup_settings: 'Whether a new signup is approved automatically or waits for an exec',
 };
 
 export interface FieldMeta {
@@ -387,6 +389,22 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       type: 'number',
       min: 1,
       step: 1,
+    },
+  },
+  // Backs migration 00220. The row renders without these two entries — an
+  // unmapped key falls through to SettingsForm's raw JSON textarea — but the
+  // switch is the one an exec has to be able to find and flip in a hurry, and
+  // "edit this JSON correctly" is not that.
+  signup_settings: {
+    auto_approve_enabled: {
+      label: 'Approve new signups automatically',
+      hint: 'On: anyone who finishes setup joins the club immediately, with no exec review. Off: they wait in Pending until an exec approves them, which is the normal way in. Intended for the first week of a semester, when the queue is hundreds of people long. Turning it off does not un-approve anyone already in.',
+      type: 'boolean',
+    },
+    auto_approve_status: {
+      label: 'Auto-approved members join as',
+      hint: 'competitive or recreational. Recreational is the default and the cheaper fee tier — both appear on the leaderboard and can challenge, so this only decides which membership they are billed for. Anything else here leaves everyone pending, which is the safe direction.',
+      type: 'text',
     },
   },
 };

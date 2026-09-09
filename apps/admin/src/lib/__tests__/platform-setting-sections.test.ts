@@ -6,10 +6,11 @@ import {
   settingsForSection,
 } from '../platform-setting-sections';
 
-// The nine rows that exist in platform_settings on production (verified
-// 2026-08-06). Pinned here so splitting them across two pages can never lose
-// one: a key that is neither in SETTING_SECTION nor caught by the default would
-// simply stop rendering, with no error anywhere.
+// The rows that exist in platform_settings on production (nine verified
+// 2026-08-06; signup_settings added by migration 00220 on 2026-09-09). Pinned
+// here so splitting them across two pages can never lose one: a key that is
+// neither in SETTING_SECTION nor caught by the default would simply stop
+// rendering, with no error anywhere.
 const PRODUCTION_KEYS = [
   'challenge_rules',
   'inactivity_rules',
@@ -18,6 +19,7 @@ const PRODUCTION_KEYS = [
   'season_settings',
   'session_attendance',
   'session_caps',
+  'signup_settings',
   'tournament_bonuses',
   'walkover_rules',
 ];
