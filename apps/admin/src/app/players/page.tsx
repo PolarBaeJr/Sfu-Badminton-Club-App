@@ -150,7 +150,13 @@ export default async function PlayersPage({
   // action they offer asks for a players.*.write — so a trainer is not shown
   // queues they cannot act on, and a stale link falls back to the roster rather
   // than erroring.
-  const MODERATION_TABS = ['attention', 'incomplete', 'permissions', 'suspended', 'inactive'];
+  //
+  // `all` is one of them, which is the non-obvious entry. It sounds like the
+  // least privileged tab in the strip and lists the most: an unfiltered roster
+  // is Competitive and Recreational PLUS the suspended, the banned and the
+  // unfinished signups — exactly the rows the other five queues were gated to
+  // withhold. Leaving it open would be a way round every one of them.
+  const MODERATION_TABS = ['all', 'attention', 'incomplete', 'permissions', 'suspended', 'inactive'];
   const tab = !canModerate && MODERATION_TABS.includes(requestedTab) ? 'competitive' : requestedTab;
   const supabase = createAdminClient();
 
@@ -160,7 +166,19 @@ export default async function PlayersPage({
     .order('created_at', { ascending: false })
     .limit(500);
 
-  if (tab === 'competitive') {
+  if (tab === 'all') {
+    // NO FILTER, and that is the whole tab. Every other tab answers a question
+    // ("who is competitive", "who is waiting on us"); this one answers none, so
+    // an exec working through the roster end to end — changing a batch of
+    // memberships, checking who is missing a waiver — does it in one list
+    // instead of six.
+    //
+    // The 500-row cap on the query above therefore bites here first. It is not
+    // raised, because the honest thing already happens: `total` below is the
+    // tab's real count, so a roster past 500 reads "showing 500 of 620" rather
+    // than claiming completeness. Raising the cap without paging the query
+    // would only move where it lies.
+  } else if (tab === 'competitive') {
     // Show all active players (not recreational, suspended, or pending)
     query = query.not('status', 'in', '("recreational","suspended","pending_approval")');
   } else if (tab === 'recreational') {
@@ -269,6 +287,10 @@ export default async function PlayersPage({
   // writing a varsity note about, so they get the two tabs that list people who
   // actually play, and are not shown queues they cannot act on.
   const tabs = [
+    // First, and only for somebody who may moderate — see MODERATION_TABS. It
+    // is not the default tab: Competitive is what an exec wants on arrival, and
+    // "everybody, unsorted" is a tool you reach for rather than one you land in.
+    ...(canModerate ? [{ id: 'all', label: 'All', count: forCount.length }] : []),
     { id: 'competitive', label: 'Competitive', count: compCount },
     { id: 'recreational', label: 'Recreational', count: recCount },
     ...(canModerate ? [

@@ -96,3 +96,32 @@ describe('rosterActionsFor', () => {
     expect(rosterActionsFor('attention', {}, { isAdmin: true }).map((a) => a.kind)).toEqual(['edit']);
   });
 });
+
+// ---- THE ALL TAB ----
+//
+// It has no case in rosterActionsFor and must not grow one: its rows arrive in
+// every state at once, so the per-row default branch is the only one that can
+// be right for all of them.
+
+describe('the All tab', () => {
+  it('offers Ban to an ordinary member and Unban to a banned one', () => {
+    expect(rosterActionsFor('all', { status: 'competitive' })).toEqual([
+      { kind: 'edit' },
+      { kind: 'ban' },
+      { kind: 'inactive' },
+    ]);
+    expect(rosterActionsFor('all', { status: 'competitive', is_banned: true })).toEqual([
+      { kind: 'edit' },
+      { kind: 'unban' },
+    ]);
+  });
+
+  it('withholds Inactive from a suspended member, the same as the roster tabs', () => {
+    // The club owner's rule — a suspended member must not be markable inactive,
+    // because they can be taken off Suspended. It has to hold on a tab that
+    // lists them beside everybody else, which is exactly where it is easiest to
+    // lose.
+    const actions = rosterActionsFor('all', { status: 'suspended' });
+    expect(actions.map((a) => a.kind)).not.toContain('inactive');
+  });
+});
