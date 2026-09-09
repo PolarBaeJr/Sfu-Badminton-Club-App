@@ -308,6 +308,54 @@ export const COMMAND_DEFINITIONS = [
     ],
   },
   {
+    // EXEC_ONLY, and read /announce's note above first — this is the same
+    // reasoning with none of the safety rails. /announce writes a row the
+    // console can edit, unpublish or delete, badged as an announcement, and the
+    // relay says where it came from. This posts arbitrary words in the club's
+    // own voice, indistinguishable from anything else the bot says, and Discord
+    // has no undo. Two things make that acceptable rather than reckless:
+    //
+    //   Discord's own permissions still apply. The bot cannot post where it
+    //   cannot post, and cannot mention @everyone unless the club has given it
+    //   that permission in that channel.
+    //
+    //   Every use writes an audit entry QUOTING THE MESSAGE, so a message that
+    //   is later deleted is still readable in the audit channel. A bot that can
+    //   speak for the club with no record of who moved its mouth is the thing
+    //   worth not building.
+    //
+    // Unlike every other EXEC_ONLY command there is no app-side capability
+    // check, because there is no app call: nothing here reads or writes club
+    // data. The gate is Discord's, which is the same gate that decides who can
+    // type in the channel by hand.
+    name: 'say',
+    description: 'Post a message as the club bot',
+    default_member_permissions: EXEC_ONLY,
+    // A guild only. There is no channel to default to in a DM, and speaking as
+    // the club in a DM is not a thing the club does.
+    dm_permission: false,
+    // THE WORDS COME FROM A MODAL, for /announce's reason and one more: a slash
+    // option cannot carry a line break, and the whole point of this command is
+    // posting something that reads like a person wrote it.
+    options: [
+      {
+        type: 7, // CHANNEL
+        name: 'channel',
+        description: 'Where to post it (defaults to this channel)',
+        required: false,
+        // Text (0) and announcement (5), same as /config. The picker would
+        // otherwise offer a category and the post would 400.
+        channel_types: [0, 5],
+      },
+      {
+        type: 5, // BOOLEAN
+        name: 'ping',
+        description: 'Let @mentions in the message actually notify people (default: no)',
+        required: false,
+      },
+    ],
+  },
+  {
     name: 'link',
     description: 'Connect your Discord account to your club account',
     options: [],
@@ -521,6 +569,13 @@ export const DEFERRED_COMMANDS = new Set(['setup', 'config']);
 export interface InteractionContext {
   discordUserId: string | null;
   guildId: string | null;
+  /**
+   * Where the command was typed. Only /say reads it, and only as the default
+   * for its optional `channel` option — "post it here" is the overwhelmingly
+   * common case and making it the one thing you have to fill in every time is
+   * how a quick command stops being quick.
+   */
+  channelId?: string | null;
   /** Both only present for a deferred command; see DEFERRED_COMMANDS. */
   applicationId?: string | null;
   interactionToken?: string | null;
@@ -2166,6 +2221,162 @@ export async function handleAnnounceModal(
   );
 }
 
+// ---------------------------------------------------------------------------
+// /say
+// ---------------------------------------------------------------------------
+//
+// The two-interaction split /announce uses, and the same reason for packing the
+// options into the custom_id rather than a map: a modal submit arrives as its
+// own request carrying the id and the typed text and nothing else, and a map
+// entry is gone the moment the bot restarts or a second replica takes the
+// submit. Here the loss would be worse than a reverted flag — the channel would
+// be unknown and the message would have nowhere to go.
+
+const SAY_MODAL_PREFIX = 'say:';
+
+/** `say:<channelId>:<ping bit>`. */
+function packSay(channelId: string, ping: boolean): string {
+  return `${SAY_MODAL_PREFIX}${channelId}:${ping ? '1' : '0'}`;
+}
+
+/**
+ * Read it back, FAILING CLOSED ON `ping`.
+ *
+ * Anything malformed means a build that changed the format under a modal
+ * somebody still has open, or a caller that is not Discord. Either way an
+ * unreadable ping bit resolves to NO mentions: a message that should have
+ * pinged and did not is a follow-up, and a ping nobody asked for has already
+ * buzzed every phone in the server.
+ */
+function unpackSay(customId: string): { channelId: string; ping: boolean } {
+  const [, channelId = '', bit = ''] = customId.split(':');
+  return { channelId, ping: bit === '1' };
+}
+
+/** True for a modal submit this module owns. */
+export function isSayModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SAY_MODAL_PREFIX);
+}
+
+export function openSayModal(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): BotResponse {
+  // The picker gives a channel id as the option value; "here" is the fallback.
+  const chosen = option(options, 'channel');
+  const channelId = chosen ? String(chosen) : String(context.channelId ?? '');
+  const ping = option(options, 'ping') === true;
+
+  if (!channelId) {
+    // Unreachable through Discord — a guild command always has a channel — but
+    // a modal whose id has no channel in it would open, take the words and
+    // throw them away on submit.
+    return ephemeral("Couldn't work out which channel to post in. Pick one with `channel:`.");
+  }
+
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id: packSay(channelId, ping),
+      title: 'Post as the club'.slice(0, MODAL_TITLE_MAX),
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4, // TEXT_INPUT
+              custom_id: 'body',
+              label: 'What should I say?',
+              style: 2, // PARAGRAPH
+              required: true,
+              min_length: 1,
+              // Discord refuses a message over 2000 characters. Enforced here,
+              // where the writer can still see and cut what they typed, rather
+              // than as a 400 after the modal has closed and eaten the words.
+              max_length: 2000,
+              placeholder: 'Posted exactly as typed, as the bot. Nobody sees that you sent it.',
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * A submitted /say: post it, and write down who said it.
+ *
+ * ORDER MATTERS. The message goes out first and the audit entry second, so an
+ * audit channel the bot cannot post in — misconfigured, deleted, permissions
+ * changed — costs the club its record and not its message. postAuditEntry
+ * already swallows its own failures for that reason.
+ */
+export async function handleSayModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const { channelId, ping } = unpackSay(customId);
+  const body = modalValue(components, 'body').trim();
+
+  if (!channelId) {
+    return ephemeral("That message had no channel attached to it — run `/say` again.");
+  }
+  if (!body) {
+    // Discord's min_length should make this unreachable. Checked anyway: a
+    // blank message from the club bot is a mystery nobody can explain later.
+    return ephemeral('There was nothing to post. Try again.');
+  }
+
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.error('[bot] /say: DISCORD_BOT_TOKEN is not set');
+    return ephemeral("I'm not configured to post right now. Nothing was posted.");
+  }
+
+  const api = new DiscordApi({ token });
+  const messageId = await api.postMessage(channelId, {
+    content: body,
+    // THE DEFAULT IS SILENCE. An empty `parse` turns every @here, @everyone and
+    // @role in the text into plain text — they still READ as mentions, they
+    // just do not notify. Without this a stray @everyone typed into a paragraph
+    // buzzes the whole server, and there is no way to take that back.
+    allowed_mentions: ping
+      ? { parse: ['users', 'roles', 'everyone'] }
+      : { parse: [] },
+  });
+
+  if (!messageId) {
+    return ephemeral(
+      `Discord refused that — check I can post in <#${channelId}>. Nothing was posted.`
+    );
+  }
+
+  try {
+    const { auditChannelId } = await loadConfig();
+    await postAuditEntry(api, auditChannelId, {
+      kind: 'say',
+      discordUserId: context.discordUserId,
+      guildId: context.guildId,
+      channelId,
+      messageId,
+      body,
+      pinged: ping,
+    });
+  } catch (error) {
+    // The message is already posted. A failure to record it is worth a line in
+    // the log and nothing else — telling the exec their message did not go out
+    // would be false.
+    console.error('[bot] /say: could not write the audit entry:', error);
+  }
+
+  return ephemeral(
+    `**Posted** in <#${channelId}>${ping ? ' — mentions were allowed to notify.' : '.'}\n\n` +
+      'It shows as coming from me, not from you. The audit channel has a copy with your name on ' +
+      'it, so an exec can always find out who asked.'
+  );
+}
+
 export interface ModalComponent {
   type?: number;
   custom_id?: string;
@@ -2295,6 +2506,8 @@ export async function dispatch(
         return await handleRolePicker(options, context);
       case 'announce':
         return openAnnounceModal(options);
+      case 'say':
+        return openSayModal(options, context);
       case 'bug':
         return openReportModal('bug', options, context);
       case 'feedback':

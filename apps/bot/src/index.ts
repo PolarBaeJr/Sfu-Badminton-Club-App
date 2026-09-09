@@ -8,7 +8,9 @@ import {
   handleProfileAutocomplete,
   handleAnnounceModal,
   handleReportModal,
+  handleSayModal,
   isAnnounceModal,
+  isSayModal,
   handleSelfRoleButton,
   isReportModal,
   isSelfRoleButton,
@@ -384,6 +386,8 @@ const server = createServer(async (req, res) => {
     member?: { user?: { id?: string }; roles?: string[] };
     user?: { id?: string };
     guild_id?: string;
+    // Where it was typed. /say's `channel` option defaults to it.
+    channel_id?: string;
     // Only sent for real interactions, not for the PING probe.
     application_id?: string;
     token?: string;
@@ -402,6 +406,8 @@ const server = createServer(async (req, res) => {
     const context = {
       discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
       guildId: interaction.guild_id ?? null,
+      // /say defaults to the channel it was typed in.
+      channelId: interaction.channel_id ?? null,
       applicationId: interaction.application_id ?? null,
       interactionToken: interaction.token ?? null,
       attachments: interaction.data.resolved?.attachments ?? null,
@@ -527,6 +533,7 @@ const server = createServer(async (req, res) => {
     const modalContext = {
       discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
       guildId: interaction.guild_id ?? null,
+      channelId: interaction.channel_id ?? null,
     };
 
     if (isAnnounceModal(customId)) {
@@ -560,6 +567,32 @@ const server = createServer(async (req, res) => {
               "Couldn't get an answer from the club app — I can't tell whether that went " +
               'through. Check the announcements page before you try again, in case it did. ' +
               'Your words are gone from this box, so copy them somewhere first.',
+            flags: 64,
+          },
+        });
+      }
+    }
+
+    if (isSayModal(customId)) {
+      try {
+        const response = await handleSayModal(
+          customId as string,
+          interaction.data.components,
+          modalContext
+        );
+        return send(res, 200, response);
+      } catch (error) {
+        // Unlike the announce branch this one CAN say nothing was posted: the
+        // handler talks to Discord and nothing else, it returns its own refusal
+        // for a channel Discord would not take, and a throw from it is a bug
+        // here rather than an answer lost in flight.
+        console.error('[bot] say modal failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: {
+            content:
+              'Something went wrong posting that, and nothing was sent. Your words are gone ' +
+              'from this box, so copy them somewhere before you try again.',
             flags: 64,
           },
         });

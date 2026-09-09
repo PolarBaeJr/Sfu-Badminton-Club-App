@@ -72,10 +72,42 @@ export type AuditEvent =
       reason: 'linked' | 'unlinked' | 'resynced';
       discordUserIds: string[];
       summary: SweepSummary;
+    }
+  // /say. THE ONLY VARIANT THAT CARRIES NO SweepSummary, because it is the only
+  // one that is not about roles — and it is here rather than in a log file
+  // because a bot that can speak in the club's own voice with no record of who
+  // moved its mouth is the thing worth not building. The message is quoted in
+  // full: the point of the entry is being able to read what was said without
+  // having to still be able to find it, and /say messages get deleted.
+  | {
+      kind: 'say';
+      discordUserId: string | null;
+      guildId: string | null;
+      channelId: string;
+      messageId: string | null;
+      body: string;
+      pinged: boolean;
     };
 
 function mention(discordUserId: string): string {
   return `<@${discordUserId}>`;
+}
+
+/**
+ * The posted text as a blockquote, truncated with the remainder STATED for the
+ * reason memberLines() gives: a silent cap reads as the whole message.
+ *
+ * Every line is prefixed, not just the first — Discord's `>` quotes one line,
+ * and a multi-line /say would otherwise break out of the quote and render as
+ * the audit channel saying it.
+ */
+function quoted(body: string): string {
+  const limit = 1200;
+  const shown = body.length > limit ? `${body.slice(0, limit)}…` : body;
+  const lines = shown.split('\n').map((line) => `> ${line}`).join('\n');
+  return body.length > limit
+    ? `${lines}\n\n_(truncated — ${body.length} characters were posted)_`
+    : lines;
 }
 
 /** `+2 -1`, or `refused` / `failed` when that is the whole story. */
@@ -149,8 +181,38 @@ const MEMBER_TITLES: Record<'linked' | 'unlinked' | 'resynced', string> = {
  * timestamp.
  */
 export function buildAuditEmbed(event: AuditEvent, now: Date): Embed {
-  const didWork = event.summary.added > 0 || event.summary.removed > 0;
   const timestamp = now.toISOString();
+
+  // FIRST, because it is the one event with no summary to read. `didWork` below
+  // dereferences event.summary unconditionally and would throw on this one.
+  if (event.kind === 'say') {
+    return {
+      title: 'Message posted as the club',
+      description:
+        `${event.discordUserId ? mention(event.discordUserId) : 'Someone'} posted in ` +
+        `<#${event.channelId}>${event.pinged ? ' **with mentions allowed**' : ''}:\n\n` +
+        quoted(event.body),
+      // Club red rather than green: nothing went wrong, but an exec speaking in
+      // the club's voice is not routine bookkeeping and should not read as it.
+      color: COLOR_CLUB_RED,
+      // A jump link needs the guild id in the first slot; `@me` there is the DM
+      // form and resolves to nothing in a server. No guild, no link — a broken
+      // link in an audit entry is worse than no link.
+      fields:
+        event.messageId && event.guildId
+          ? [
+              {
+                name: 'Message',
+                value: `https://discord.com/channels/${event.guildId}/${event.channelId}/${event.messageId}`,
+                inline: false,
+              },
+            ]
+          : undefined,
+      timestamp,
+    };
+  }
+
+  const didWork = event.summary.added > 0 || event.summary.removed > 0;
 
   if (event.kind === 'sweep') {
     return {
