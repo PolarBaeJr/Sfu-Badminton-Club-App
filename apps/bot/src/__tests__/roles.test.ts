@@ -177,7 +177,7 @@ describe('roleDiff', () => {
   // desiredRoles() alone would have made the sweep STRIP them every night —
   // roleDiff removes anything held that is named and not wanted — so the
   // exclusion has to be in the iteration, and this asserts it from both sides.
-  it('neither adds nor removes a membership role, in any state', () => {
+  it('neither adds nor removes a membership role, in any ordinary state', () => {
     for (const state of [
       member({ status: 'competitive' }),
       member({ status: 'pending_approval' }),
@@ -191,11 +191,38 @@ describe('roleDiff', () => {
     }
   });
 
-  it('leaves a membership role alone even for somebody who is not linked', () => {
-    // An unlink strips everything the club granted. It does not strip what the
-    // member chose — the app simply stops reading it back.
-    const diff = roleDiff(null, guild, ['3']);
-    expect(diff.remove).not.toContain('3');
+  // ---- THE ASYMMETRY ----
+  //
+  // Never added; removed only when the CLUB is withdrawing access rather than
+  // the member changing their mind. Member-only channel visibility in this
+  // server IS @Internal + @Alumni, so a ban or a tombstone that left them on
+  // would leave those channels open to exactly the person just removed from
+  // them. reconcile passes revokeMembership for both.
+
+  it('takes a membership role off when the caller is revoking', () => {
+    const diff = roleDiff(desiredRoles(member({ isBanned: true })), guild, ['1', '3'], {
+      revokeMembership: true,
+    });
+    expect(diff.remove).toContain('3');
+  });
+
+  it('strips a membership role from a tombstone', () => {
+    const diff = roleDiff(null, guild, ['3'], { revokeMembership: true });
+    expect(diff.remove).toContain('3');
+  });
+
+  it('still never ADDS one, even while revoking', () => {
+    // There is no branch anywhere that puts a membership role on somebody. The
+    // revoking flag is a removal, not a switch back to the old behaviour.
+    const diff = roleDiff(desiredRoles(member({ membershipType: 'internal' })), guild, [], {
+      revokeMembership: true,
+    });
+    expect(diff.add).not.toContain('3');
+  });
+
+  it('does not remove a membership role the member does not hold', () => {
+    const diff = roleDiff(null, guild, ['1'], { revokeMembership: true });
+    expect(diff.remove).toEqual(['1']);
   });
 
   it('never touches a role the guild has not configured', () => {
@@ -210,10 +237,13 @@ describe('roleDiff', () => {
   it('strips every swept role when the member is not linked', () => {
     const diff = roleDiff(null, guild, ['1', '2', '3', '4', '99']);
     expect(diff.add).toEqual([]);
-    // '3' is @Internal, the member's own; '99' is a role the registry does not
-    // name at all. Both survive, for different reasons.
+    // '3' is @Internal, the member's own, and this call is not revoking; '99'
+    // is a role the registry does not name at all. Both survive, for different
+    // reasons — and '99' survives even when revoking, because a blocklist was
+    // never how this works.
     expect(diff.remove.sort()).toEqual(['1', '2', '4']);
     expect(diff.remove).not.toContain('99');
+    expect(roleDiff(null, guild, ['99'], { revokeMembership: true }).remove).toEqual([]);
   });
 
   it('skips a role this guild does not have rather than failing', () => {

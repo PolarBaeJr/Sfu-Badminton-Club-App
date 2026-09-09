@@ -86,12 +86,15 @@ describe('/unlink', () => {
     const { handleUnlink } = await import('../commands.js');
     const reply = await handleUnlink({ discordUserId: '123456789', guildId: null });
 
-    // null desired state = strip every managed role.
+    // null desired state = strip every managed role, AND the membership role
+    // they picked: an account the app no longer knows must not keep the role
+    // that opens the member-only channels.
     expect(syncMemberEverywhere).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       '123456789',
-      null
+      null,
+      { revokeMembership: true }
     );
     expect(clearRevocations).toHaveBeenCalledWith(['123456789']);
     expect(reply.data.content).toContain('removed');
