@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { clearRevocations, fetchLinkedMembers } from './api.js';
+import { clearRevocations, fetchLinkedMembers, setMembership } from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
 import {
@@ -110,6 +110,19 @@ async function runSweep(res: ServerResponse, trigger: 'scheduled' | 'manual') {
       console.error('[bot] could not clear revocations:', error);
     }
 
+    // What members picked for themselves, pushed back into the app. Same
+    // posture as the revocations above and for the same reason: it runs after
+    // the roles are settled, and a failure here must not turn a good sweep into
+    // a 500. Nothing is lost by dropping it — the next sweep reads the same
+    // roles and reports the same disagreement.
+    try {
+      if (summary.membershipUpdates.length > 0) {
+        await setMembership(summary.membershipUpdates);
+      }
+    } catch (error) {
+      console.error('[bot] could not write back membership:', error);
+    }
+
     // One entry per sweep, never one per member — see rule 3 in audit.ts. It is
     // awaited rather than fired off, so a sweep that has answered 200 has
     // already been written down; the alternative loses the last entry whenever
@@ -173,6 +186,19 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
       await clearRevocations(summary.cleared);
     } catch (error) {
       console.error('[bot] could not clear revocations:', error);
+    }
+
+    // What members picked for themselves, pushed back into the app. Same
+    // posture as the revocations above and for the same reason: it runs after
+    // the roles are settled, and a failure here must not turn a good sweep into
+    // a 500. Nothing is lost by dropping it — the next sweep reads the same
+    // roles and reports the same disagreement.
+    try {
+      if (summary.membershipUpdates.length > 0) {
+        await setMembership(summary.membershipUpdates);
+      }
+    } catch (error) {
+      console.error('[bot] could not write back membership:', error);
     }
 
     await postAuditEntry(api, auditChannelId, {

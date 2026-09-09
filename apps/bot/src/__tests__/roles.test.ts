@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   desiredRoles,
+  membershipFromRoles,
   parseGuildRegistry,
   roleDiff,
   MANAGED_ROLES,
+  MEMBERSHIP_ROLES,
+  SWEPT_ROLES,
   type MemberState,
 } from '../roles.js';
 
@@ -38,14 +41,15 @@ describe('desiredRoles', () => {
     expect(desiredRoles(member())).toContain('linked');
   });
 
-  it('maps membership_type to exactly one membership role', () => {
-    expect(desiredRoles(member({ membershipType: 'internal' })).has('internal')).toBe(true);
-    expect(desiredRoles(member({ membershipType: 'alumni' })).has('alumni')).toBe(true);
-    expect(desiredRoles(member({ membershipType: 'external' })).has('external')).toBe(true);
-
-    const alumni = desiredRoles(member({ membershipType: 'alumni' }));
-    expect(alumni.has('internal')).toBe(false);
-    expect(alumni.has('external')).toBe(false);
+  // THE INVERSE OF THE TEST THAT USED TO BE HERE. membership_type no longer
+  // decides a Discord role: members pick their own, and the app follows.
+  it('asserts no membership role, whatever membership_type says', () => {
+    for (const type of MEMBERSHIP_ROLES) {
+      const roles = desiredRoles(member({ membershipType: type }));
+      for (const role of MEMBERSHIP_ROLES) {
+        expect(roles.has(role), `${type} must not assert @${role}`).toBe(false);
+      }
+    }
   });
 
   it('maps status to the team roles', () => {
@@ -105,9 +109,8 @@ describe('desiredRoles', () => {
     expect([...roles]).toEqual(['linked']);
   });
 
-  it('gives a pending signup no membership or team role', () => {
+  it('gives a pending signup no team role', () => {
     const roles = desiredRoles(member({ status: 'pending_approval', membershipType: 'internal' }));
-    expect(roles.has('internal')).toBe(false);
     expect(roles.has('competitive')).toBe(false);
     expect(roles.has('recreation')).toBe(false);
     expect(roles.has('linked')).toBe(true);
@@ -158,6 +161,7 @@ describe('roleDiff', () => {
 
   it('adds what is missing and removes what is no longer earned', () => {
     const desired = desiredRoles(member({ status: 'competitive', isExec: false }));
+    // Holds @Executives (not earned) and @Internal (the member's own).
     const diff = roleDiff(desired, guild, ['2', '3']);
     expect(diff.add.sort()).toEqual(['1', '4']);
     expect(diff.remove).toEqual(['2']);
@@ -169,6 +173,31 @@ describe('roleDiff', () => {
     expect(diff).toEqual({ add: [], remove: [] });
   });
 
+  // THE ONE THAT MATTERS MOST IN THIS FILE. Dropping the membership roles from
+  // desiredRoles() alone would have made the sweep STRIP them every night —
+  // roleDiff removes anything held that is named and not wanted — so the
+  // exclusion has to be in the iteration, and this asserts it from both sides.
+  it('neither adds nor removes a membership role, in any state', () => {
+    for (const state of [
+      member({ status: 'competitive' }),
+      member({ status: 'pending_approval' }),
+      member({ isBanned: true }),
+      member({ isExec: true }),
+    ]) {
+      const held = roleDiff(desiredRoles(state), guild, ['3']);
+      expect(held.remove).not.toContain('3');
+      const absent = roleDiff(desiredRoles(state), guild, []);
+      expect(absent.add).not.toContain('3');
+    }
+  });
+
+  it('leaves a membership role alone even for somebody who is not linked', () => {
+    // An unlink strips everything the club granted. It does not strip what the
+    // member chose — the app simply stops reading it back.
+    const diff = roleDiff(null, guild, ['3']);
+    expect(diff.remove).not.toContain('3');
+  });
+
   it('never touches a role the guild has not configured', () => {
     // '99' is Admin, or any unrelated server role. It is not in the map, so it
     // is invisible to the diff rather than protected by a blocklist.
@@ -178,10 +207,12 @@ describe('roleDiff', () => {
     expect(diff.add).not.toContain('99');
   });
 
-  it('strips every managed role when the member is not linked', () => {
+  it('strips every swept role when the member is not linked', () => {
     const diff = roleDiff(null, guild, ['1', '2', '3', '4', '99']);
     expect(diff.add).toEqual([]);
-    expect(diff.remove.sort()).toEqual(['1', '2', '3', '4']);
+    // '3' is @Internal, the member's own; '99' is a role the registry does not
+    // name at all. Both survive, for different reasons.
+    expect(diff.remove.sort()).toEqual(['1', '2', '4']);
     expect(diff.remove).not.toContain('99');
   });
 
@@ -190,5 +221,44 @@ describe('roleDiff', () => {
     const desired = desiredRoles(member({ isExec: true, status: 'competitive' }));
     const diff = roleDiff(desired, sparse, []);
     expect(diff.add).toEqual(['1']);
+  });
+});
+
+describe('SWEPT_ROLES', () => {
+  it('is every managed role except the three the member picks', () => {
+    expect([...SWEPT_ROLES]).toEqual(
+      MANAGED_ROLES.filter((r) => !(MEMBERSHIP_ROLES as readonly string[]).includes(r))
+    );
+    for (const role of MEMBERSHIP_ROLES) {
+      // Still MANAGED — the registry has to be able to name it, or the
+      // write-back has no way to know which role id means @Alumni.
+      expect(MANAGED_ROLES).toContain(role);
+      expect(SWEPT_ROLES).not.toContain(role);
+    }
+  });
+});
+
+describe('membershipFromRoles', () => {
+  const guild = { linked: '1', internal: '3', alumni: '5', external: '6' };
+
+  it('reads the one membership role the member holds', () => {
+    expect(membershipFromRoles(guild, ['1', '3'])).toBe('internal');
+    expect(membershipFromRoles(guild, ['5'])).toBe('alumni');
+    expect(membershipFromRoles(guild, ['6', '99'])).toBe('external');
+  });
+
+  it('answers null when the member has not picked one', () => {
+    expect(membershipFromRoles(guild, [])).toBeNull();
+    expect(membershipFromRoles(guild, ['1', '99'])).toBeNull();
+  });
+
+  it('answers null rather than guessing when two are held', () => {
+    // The app can store one membership. Two is a mistake a human can see and
+    // fix; picking one here would quietly change somebody's fee tier.
+    expect(membershipFromRoles(guild, ['3', '5'])).toBeNull();
+  });
+
+  it('answers null for a guild that has not configured the roles', () => {
+    expect(membershipFromRoles({ linked: '1' }, ['1', '3', '5'])).toBeNull();
   });
 });

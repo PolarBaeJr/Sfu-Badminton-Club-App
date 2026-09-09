@@ -20,6 +20,7 @@ import {
   fetchDiscordSettings,
   writeDiscordSettings,
   submitAnnouncement,
+  setMembership,
   type CardFile,
   type FeedbackKind,
   type ProfilePayload,
@@ -30,7 +31,7 @@ import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
 import { loadHandles, matchHandles } from './handles.js';
-import { type ManagedRole } from './roles.js';
+import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipRole } from './roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
 import {
@@ -1721,9 +1722,11 @@ async function handleRolePicker(
             title: 'Get pinged for the sessions you care about',
             color: CLUB_RED,
             description:
-              'Pick the nights you want a heads-up for. Click again to turn one off.\n\n' +
-              'These are just notification roles — they do not change what you can ' +
-              'sign up for.',
+              'Pick what you want. Click again to turn one off.\n\n' +
+              'Most of these are notification roles and change nothing else. The ' +
+              'exception is your membership — **Internal**, **Alumni** or ' +
+              '**External** — which the website reads back, so picking one sets ' +
+              'your tournament entry fee and which events you can enter.',
           },
         ],
         components: pickerComponents(roles),
@@ -1790,11 +1793,119 @@ export async function handleSelfRoleButton(
     return ephemeral(`Couldn't change **${offered.label}** just now. Try again in a moment.`);
   }
 
+  // ---- MEMBERSHIP ROLES, WHICH ARE NOT PING ROLES --------------------------
+  //
+  // @Internal / @Alumni / @External say who a member is, so picking one has a
+  // consequence on the website: it is what prices a tournament entry and what
+  // decides which events they may enter. Everything below runs only for those
+  // three; an ordinary ping role falls straight past it to the reply.
+  const guildRoles = await guildRolesFor(context.guildId);
+  const membership = membershipRoleFor(roleId, guildRoles);
+
+  if (membership && !holds) {
+    // ONE MEMBERSHIP AT A TIME. membership_type is a single value, and a member
+    // holding both @Alumni and @Internal is a state the app cannot store — so
+    // the other two come off here rather than being resolved by a guess later.
+    // Failures are deliberately ignored: the app write below is the part that
+    // matters, and a role that would not come off is visible in the server.
+    await removeOtherMembershipRoles(
+      api,
+      context.guildId,
+      context.discordUserId,
+      guildRoles,
+      membership,
+      currentRoleIds
+    );
+
+    let linkedToApp = true;
+    try {
+      const result = await setMembership([
+        { discordUserId: context.discordUserId, membershipType: membership },
+      ]);
+      linkedToApp = result.skipped === 0;
+    } catch (error) {
+      // The role is already on. Saying "that failed" would be wrong, and
+      // silently pretending the website updated would be worse — so the reply
+      // says exactly which half landed, and the nightly sweep repairs the rest
+      // by reading this same role back.
+      console.error('[bot] membership write-back failed:', error);
+      return ephemeral(
+        `Added **${offered.label}**.\n\n` +
+          'I could not update the website just now — it will catch up on the ' +
+          'next nightly sync.'
+      );
+    }
+
+    return ephemeral(
+      linkedToApp
+        ? `Added **${offered.label}** — the website now has you as **${membership}**, ` +
+            'which is what decides your tournament entry fee and which events you can enter.'
+        : `Added **${offered.label}**.\n\n` +
+            'Your Discord account is not linked to the website yet, so this only ' +
+            'changed your role here. Run **/link** and it will follow.'
+    );
+  }
+
+  if (membership && holds) {
+    // Toggling one OFF leaves the website alone on purpose. There is no "no
+    // membership" to write — the column always holds one of the three — and
+    // guessing a default would quietly move somebody's fee tier as a side
+    // effect of tidying their roles.
+    return ephemeral(
+      `Removed **${offered.label}**.\n\n` +
+        'The website still has your membership as it was — pick another one to ' +
+        'change it.'
+    );
+  }
+
   return ephemeral(
     holds
       ? `Removed **${offered.label}** — you won't be pinged for those any more.`
       : `Added **${offered.label}** — you'll be pinged for those.`
   );
+}
+
+/**
+ * This guild's role map, or an empty one if the config cannot be read.
+ *
+ * Degrading to empty is right HERE and nowhere else in this bot: an empty map
+ * names no membership role, so the button behaves as an ordinary ping role and
+ * the website is left alone. The sweep, which reads the same roles nightly with
+ * `force: true`, is what repairs it.
+ */
+async function guildRolesFor(guildId: string): Promise<GuildRoleMap> {
+  try {
+    const { registry } = await loadConfig();
+    return registry.get(guildId) ?? {};
+  } catch (error) {
+    console.error('[bot] could not read the role map for a self-role click:', error);
+    return {};
+  }
+}
+
+/** Which membership this role id IS in this guild, if any. */
+function membershipRoleFor(roleId: string, guildRoles: GuildRoleMap): MembershipRole | null {
+  for (const role of MEMBERSHIP_ROLES) {
+    if (guildRoles[role] === roleId) return role;
+  }
+  return null;
+}
+
+async function removeOtherMembershipRoles(
+  api: DiscordApi,
+  guildId: string,
+  discordUserId: string,
+  guildRoles: GuildRoleMap,
+  keep: MembershipRole,
+  currentRoleIds: readonly string[]
+): Promise<void> {
+  const held = new Set(currentRoleIds);
+  for (const role of MEMBERSHIP_ROLES) {
+    if (role === keep) continue;
+    const id = guildRoles[role];
+    if (!id || !held.has(id)) continue;
+    await api.removeRole(guildId, discordUserId, id);
+  }
 }
 
 // ---------------------------------------------------------------------------
