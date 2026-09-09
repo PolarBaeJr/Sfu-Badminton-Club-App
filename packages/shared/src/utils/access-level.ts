@@ -252,21 +252,24 @@ export const CAPABILITIES = [
   // there is no Discord page to open — the panel lives on this one, behind
   // this one's key.
   //
-  // ADMIN-ONLY FOR NOW, which is to say it is in neither EXEC_BASELINE nor
-  // EXEC_ASSIGNABLE. Two reasons, and the second is the load-bearing one:
+  // IT BELONGS TO VP EXTERNAL, who already holds every other announcement
+  // write. The club owner asked for that directly, and it is the coherent
+  // answer: the person who decides what the club says to its members should
+  // not have to ask somebody else to say it in the one place most members
+  // actually read.
   //
-  //   - it is the one comms act in the console with no undo and no reach
-  //     afterwards. Unpublishing takes an announcement down; nothing here can
-  //     take a Discord message back;
-  //   - the four VP portfolios are SEEDED ROWS (00104), and editable-roles
-  //     tests read that migration as text. Widening a portfolio is therefore a
-  //     schema change and a re-seed, not an edit to a constant — and doing it
-  //     as an afterthought to a different feature is how "reset to shipped
-  //     default" ends up restoring something that was never shipped.
+  // IT IS STILL NOT IN EXEC_BASELINE. This is the one comms act in the console
+  // with no undo and no reach afterwards — unpublishing takes an announcement
+  // down, nothing here takes a Discord message back — so it is held by a named
+  // job, not by everyone who happens to be an exec.
   //
-  // Handing it to VP External — who already holds every other announcement
-  // write — is a migration that re-seeds that baseline row, plus the two
-  // additions here. It is a deliberate act, not a line in this list.
+  // AND IT COST A MIGRATION, which is the part worth remembering. The four VP
+  // portfolios are SEEDED ROWS (00104) and editable-roles.test.ts reads that
+  // file as text, so widening one is a re-seed (00224) and not an edit to this
+  // constant. The re-seed also has to reach the people already holding the
+  // role: assigning a built-in COPIES its capabilities onto the player row
+  // (00104), so a baseline the migration widens and holders it does not is a
+  // portfolio that grants something nobody in it can do.
   'announcements.page',
   'announcements.create.write',
   'announcements.update.write',
@@ -741,6 +744,9 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
     'announcements.create.write',
     'announcements.update.write',
     'announcements.delete.write',
+    // Saying it in Discord as well as on the website. The one capability here
+    // with no undo, which is why it is a named job's and not every exec's.
+    'announcements.discord.write',
     'legal.page',
     'legal.reacceptance.write',
   ],
@@ -840,13 +846,6 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
   // would make "admin-only" mean "admin-only forever" rather than "not handed
   // out by default".
   //
-  // IT IS IN NO BASELINE AND NO VP JOB. Speaking as the club in Discord is the
-  // one comms act in the console with no undo — unpublishing takes an
-  // announcement down, and nothing takes a Discord message back — so it is
-  // reachable exactly two ways, both deliberate: an explicit per-person grant,
-  // or a baseline somebody deliberately puts it in. That is the same posture
-  // `players.consoleaccess.write` has above, and for the same reason.
-  'announcements.discord.write',
 ];
 
 // DELIBERATELY STILL OUT OF REACH, and each for its own reason:
@@ -923,6 +922,11 @@ export const EXEC_ASSIGNABLE: readonly Capability[] = [
   'announcements.create.write',
   'announcements.update.write',
   'announcements.delete.write',
+  // VP External's, by the owner's decision — see the capability's own comment
+  // above and the re-seed in 00224. Listed here rather than in
+  // OFFERABLE_BEYOND_EXEC because EDITOR_OFFERABLE is the union of the two and
+  // a string in both would be a duplicate the invariants reject.
+  'announcements.discord.write',
   'tournaments.page',
   'tournaments.manage.create.write',
   'tournaments.manage.update.write',

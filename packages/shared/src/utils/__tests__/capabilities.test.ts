@@ -271,13 +271,18 @@ describe('baselines', () => {
   // order — it is repointed rather than rewritten, because the SET did not
   // change, only which constant holds it. That is the anti-widening claim: what
   // an admin may hand out is exactly what an exec used to hold by default.
-  // STILL 73, and `announcements.discord.write` is why that is worth a note
-  // rather than silence. It is capability 120 and it is in NEITHER baseline —
-  // admin-only, so the set an admin may hand out did not move. The reasoning is
-  // at its declaration in access-level.ts; the short version is that the four VP
-  // portfolios are seeded rows in an applied migration, so widening one is a
-  // re-seed rather than an edit to a constant.
-  it('leaves exactly 73 capabilities assignable, pinned one by one', () => {
+  // 74 SINCE 00224, AND EXACTLY ONE ENTRY IS NOT PART OF THE TRANSCRIPTION.
+  // `announcements.discord.write` is capability 120 and the owner asked for it
+  // to belong to VP External. A VP portfolio is by construction a subset of
+  // this list, so the request and "this list never grows" could not both be
+  // kept. It sits with the other announcement capabilities below and carries
+  // its own note, so the one entry that is NOT a transcription says so where
+  // somebody reading the list will see it.
+  //
+  // WHAT THE ANTI-WIDENING CLAIM STILL SAYS: nobody gained anything by being an
+  // exec. EXEC_BASELINE — the read-only floor, which is what the owner's "exec
+  // baseline shouldn't really be too much" was about — is untouched at twelve.
+  it('leaves exactly 74 capabilities assignable, pinned one by one', () => {
     expect([...EXEC_ASSIGNABLE]).toEqual([
       'players.page',
       'players.read',
@@ -308,6 +313,10 @@ describe('baselines', () => {
       'announcements.create.write',
       'announcements.update.write',
       'announcements.delete.write',
+      // NOT PART OF THE TRANSCRIPTION — see the note above. 00224 put it in
+      // VP External at the owner's request; every other entry here is
+      // something an unrestricted exec could already do.
+      'announcements.discord.write',
       'tournaments.page',
       'tournaments.manage.create.write',
       'tournaments.manage.update.write',
@@ -353,7 +362,7 @@ describe('baselines', () => {
       'legal.page',
       'legal.reacceptance.write',
     ]);
-    expect(EXEC_ASSIGNABLE.length).toBe(73);
+    expect(EXEC_ASSIGNABLE.length).toBe(74);
     // NOBODY HOLDS IT BY DEFAULT, which is the difference between this list and
     // the one above. It is a ceiling on what may be assigned, never a grant.
     expect(effectiveCapabilities('exec', UNRESTRICTED).size).toBe(EXEC_BASELINE.length);
@@ -583,9 +592,11 @@ describe('ROLE_DEFAULTS', () => {
     expect(new Set(fromRoles).size, 'two roles claim the same capability').toBe(fromRoles.length);
     expect([...fromRoles].sort()).toEqual([...EXEC_ASSIGNABLE].sort());
     // The arithmetic, so "exactly" is a sum somebody can check rather than a
-    // word: finance 3, tournaments 51, internal 13, external 6, custom 0.
-    expect(PERMISSION_ROLES.map((role) => ROLE_DEFAULTS[role].length)).toEqual([3, 51, 13, 6, 0]);
-    expect(fromRoles.length).toBe(73);
+    // word: finance 3, tournaments 51, internal 13, external 7, custom 0.
+    // External went 6 -> 7 in 00224, the only movement any of these four has
+    // had since they were derived from the old SECTION_PORTFOLIO map.
+    expect(PERMISSION_ROLES.map((role) => ROLE_DEFAULTS[role].length)).toEqual([3, 51, 13, 7, 0]);
+    expect(fromRoles.length).toBe(74);
   });
 
   // THE OTHER HALF OF THE PARTITION, AND IT IS NEW. The four roles cover the
@@ -596,7 +607,10 @@ describe('ROLE_DEFAULTS', () => {
   it('hands back, through the four roles, every write the baseline gave up', () => {
     const floor = new Set<Capability>(EXEC_BASELINE);
     const lost = EXEC_ASSIGNABLE.filter((capability) => !floor.has(capability));
-    expect(lost.length).toBe(61);
+    // 61 writes an exec actually lost, plus `announcements.discord.write`,
+    // which no exec ever had — it is outside the floor for the same arithmetic
+    // reason without ever having been taken away from anyone.
+    expect(lost.length).toBe(62);
     const fromRoles = new Set(PERMISSION_ROLES.flatMap((role) => [...ROLE_DEFAULTS[role]]));
     for (const capability of lost) {
       expect(fromRoles.has(capability), `${capability} is in no VP job`).toBe(true);
@@ -615,12 +629,15 @@ describe('ROLE_DEFAULTS', () => {
     ]);
   });
 
-  it('gives external the announcements and the legal documents', () => {
+  it('gives external the announcements, Discord, and the legal documents', () => {
     expect([...ROLE_DEFAULTS.external]).toEqual([
       'announcements.page',
       'announcements.create.write',
       'announcements.update.write',
       'announcements.delete.write',
+      // 00224, at the owner's request. The one capability in any portfolio with
+      // no undo — nothing takes a posted Discord message back.
+      'announcements.discord.write',
       'legal.page',
       'legal.reacceptance.write',
     ]);
@@ -702,7 +719,7 @@ describe('EDITOR_OFFERABLE', () => {
   // constants is that a widening lands in the wrong one and reaches every exec
   // in the club without anybody choosing it.
   it('leaves the assignable set exactly as it was', () => {
-    expect(EXEC_ASSIGNABLE.length).toBe(73);
+    expect(EXEC_ASSIGNABLE.length).toBe(74);
     const offerableOnly = [...EDITOR_OFFERABLE].filter(
       (capability) => !new Set<Capability>(EXEC_ASSIGNABLE).has(capability),
     );

@@ -64,6 +64,33 @@ const MIGRATION = readFileSync(
   'utf8',
 );
 
+// THE SHIPPED DEFAULT IS A CHAIN, NOT A FILE, and 00224 is the first link past
+// the seed: the owner asked for `announcements.discord.write` to be VP
+// External's, and a built-in portfolio is a seeded ROW, so widening one is a
+// migration. Reading only 00104 would now assert that ROLE_DEFAULTS is wrong.
+//
+// AMENDMENTS ARE LISTED, NOT GLOBBED. A test that swept the migrations
+// directory for anything touching permission_baselines would keep passing while
+// silently absorbing whatever the next migration did — which is the opposite of
+// what reading the migration as text is for. Each link is added here by hand,
+// by whoever writes it, which is the moment to think about it.
+const AMENDMENTS: { role: string; adds: readonly string[]; sql: string }[] = [
+  {
+    role: 'external',
+    adds: ['announcements.discord.write'],
+    sql: readFileSync(
+      join(__dirname, '../../../../../supabase/migrations/00224_vp_external_may_speak_in_discord.sql'),
+      'utf8',
+    ),
+  },
+];
+
+/** What the migration CHAIN says a role ships with, sorted. */
+function shippedByMigrations(role: string, seeded: string[]): string[] {
+  const added = AMENDMENTS.filter((a) => a.role === role).flatMap((a) => [...a.adds]);
+  return [...new Set([...seeded, ...added])].sort();
+}
+
 // ---------------------------------------------------------------------------
 // THE CEILING
 // ---------------------------------------------------------------------------
@@ -73,12 +100,24 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
   // from the call sites, which is the half that cannot be fooled by editing a
   // constant and its test together.
   //
-  // 73 IS STILL 73; ONLY THE CONSTANT HOLDING IT IS NAMED DIFFERENTLY. Asserting
-  // `EXEC_BASELINE.length === 12` here would have pinned the floor while
-  // claiming to guard the transcription, which is the exact substitution this
-  // assertion exists to catch.
-  it('leaves the assignable set exactly where it was', () => {
-    expect(EXEC_ASSIGNABLE.length).toBe(73);
+  // IT WAS 73 FOR THE WHOLE OF THE TRANSCRIPTION'S LIFE, and 74 since the owner
+  // put `announcements.discord.write` in VP External (00224). That is the ONLY
+  // entry here that was not something an unrestricted exec could do the day
+  // composition shipped, and it is here because a VP portfolio is by
+  // construction a subset of this list — so "give VP External this capability"
+  // and "this list never grows" could not both be kept, and the owner chose.
+  //
+  // WHAT DID NOT CHANGE IS THE THING THE OWNER'S RULE WAS ABOUT: EXEC_BASELINE,
+  // the read-only floor, is still twelve. Nobody gained anything by being an
+  // exec; one named job gained one capability by being given it. Asserting
+  // `EXEC_BASELINE.length === 12` HERE would have pinned the floor while
+  // claiming to guard the transcription, which is the substitution the next
+  // assertion exists to catch — so both are pinned, separately.
+  it('leaves the assignable set at the transcription plus the one named addition', () => {
+    expect(EXEC_ASSIGNABLE.length).toBe(74);
+    // Named, so growing this list is a diff somebody reads rather than a number
+    // somebody bumps.
+    expect(EXEC_ASSIGNABLE).toContain('announcements.discord.write');
   });
 
   // AND THE FLOOR, WHICH IS THE THING THAT DID MOVE, pinned next to it so the
@@ -97,10 +136,15 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
   });
 
   // THE WIDENING, NAMED. Four reads on /fees — the club's books, which is what
-  // the owner asked Finance to be able to see — one write since 00105, and a
-  // second since the console learned to speak in Discord. If this list grows,
-  // this assertion is the diff somebody has to read.
-  it('adds exactly the four finance reads and the two admin-only writes', () => {
+  // the owner asked Finance to be able to see — and one write since 00105. If
+  // this list grows, this assertion is the diff somebody has to read.
+  //
+  // `announcements.discord.write` WAS BRIEFLY HERE and is not any more: 00223
+  // shipped it admin-only, above the assignable set, and 00224 moved it into VP
+  // External at the owner's request, which put it INSIDE that set. A capability
+  // in both lists would be a duplicate in EDITOR_OFFERABLE, since the ceiling
+  // is their union.
+  it('adds exactly the four finance reads and the one admin-only write', () => {
     // AGAINST EXEC_ASSIGNABLE, because "added" means "beyond what an exec could
     // already do". Measured against the narrowed floor instead, this list would
     // be 66 entries long and would stop being the reviewable diff it exists to
@@ -109,7 +153,6 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
     const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     const added = [...EDITOR_OFFERABLE].filter((capability) => !exec.has(capability));
     expect(added.sort()).toEqual([
-      'announcements.discord.write',
       'fees.clubfees.read',
       'fees.netposition.read',
       'fees.otherincome.read',
@@ -135,28 +178,22 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
     }
   });
 
-  // THE TWO WRITES, EACH NAMED. The ceiling is what bounds an ADMIN, whom grant
+  // THE ONE WRITE, NAMED. The ceiling is what bounds an ADMIN, whom grant
   // closure cannot bound, so every write on this list is a thing an admin may
-  // hand to somebody who is not one — which is why a third arriving here has to
-  // be a diff somebody reads rather than a number that moved.
+  // hand to somebody who is not one — which is why a second arriving here has
+  // to be a diff somebody reads rather than a number that moved.
   //
   //   - players.consoleaccess.write (00105) — "also make role change a
   //     permission". It hands out a LEVEL, bounded by closure inside
   //     setConsoleAccess and refused outright for admin.
-  //   - announcements.discord.write (00223) — speaking as the club in its
-  //     Discord channel. It hands out no access at all; what makes it belong
-  //     beside the other is that it is the one comms act with no undo.
-  it('adds exactly two writes, and names both', () => {
-    // EXEC_ASSIGNABLE: "one write" counts writes the CEILING added, and all
-    // sixty-one writes an exec used to hold by default are still inside it.
+  it('adds exactly one write, and names it', () => {
+    // EXEC_ASSIGNABLE: "one write" counts writes the CEILING added, and every
+    // write an exec used to hold by default is still inside it.
     const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     const writes = [...EDITOR_OFFERABLE].filter(
       (capability) => !exec.has(capability) && capability.endsWith('.write'),
     );
-    expect(writes.sort()).toEqual([
-      'announcements.discord.write',
-      'players.consoleaccess.write',
-    ]);
+    expect(writes.sort()).toEqual(['players.consoleaccess.write']);
   });
 
   // THE ONES THAT STAY OUT, each named so opening it is deliberate. These are
@@ -306,7 +343,44 @@ describe('00104 seeds what ROLE_DEFAULTS says', () => {
   }
 
   it.each([...BUILTIN_PERMISSION_ROLES])('seeds %s with its shipped default', (role) => {
-    expect(seededCapabilities(role)).toEqual([...ROLE_DEFAULTS[role]].sort());
+    expect(shippedByMigrations(role, seededCapabilities(role))).toEqual(
+      [...ROLE_DEFAULTS[role]].sort(),
+    );
+  });
+
+  // THE SEED ITSELF DID NOT MOVE, which is the half the chain above could
+  // otherwise hide. 00104 is an APPLIED migration on production: if this ever
+  // fails, somebody edited a file the database has already run, and the two
+  // have silently disagreed ever since.
+  it('leaves 00104 saying exactly what it said the day it was applied', () => {
+    expect(seededCapabilities('external')).toEqual([
+      'announcements.create.write',
+      'announcements.delete.write',
+      'announcements.page',
+      'announcements.update.write',
+      'legal.page',
+      'legal.reacceptance.write',
+    ]);
+    // The other three have no amendment yet, so for them the seed and the
+    // constant are still the same claim — asserted here so that stays true by
+    // accident rather than by nobody looking.
+    for (const role of ['finance', 'tournaments', 'internal'] as const) {
+      expect(seededCapabilities(role)).toEqual([...ROLE_DEFAULTS[role]].sort());
+    }
+  });
+
+  // EVERY AMENDMENT ACTUALLY WRITES WHAT IT CLAIMS. The list above is prose
+  // until something reads the SQL, and an amendment that named a capability its
+  // migration never stored would make "reset to shipped default" hand out
+  // something no database has.
+  it.each(AMENDMENTS)('$role amendment stores what it says it stores', ({ adds, sql }) => {
+    for (const capability of adds) {
+      expect(sql).toContain(`'${capability}'`);
+    }
+    // Appended, never rewritten: the row is editable and an overwrite would
+    // discard whatever the club changed. This is the shape that guarantees it.
+    expect(sql).toMatch(/capabilities\s*\|\|\s*ARRAY\[/);
+    expect(sql).not.toMatch(/SET capabilities\s*=\s*ARRAY\[/);
   });
 
   it.each([...BUILTIN_PERMISSION_ROLES])('seeds %s under its pinned id', (role) => {
@@ -339,7 +413,9 @@ describe('00104 seeds what ROLE_DEFAULTS says', () => {
   // shippedDefaultFor() is what reset() calls, so it has to be the same thing
   // the seed wrote and not a second reading of it.
   it.each([...BUILTIN_PERMISSION_ROLES])('resets %s to that same set', (role) => {
-    expect([...shippedDefaultFor(role)].sort()).toEqual(seededCapabilities(role));
+    expect([...shippedDefaultFor(role)].sort()).toEqual(
+      shippedByMigrations(role, seededCapabilities(role)),
+    );
   });
 });
 

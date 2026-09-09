@@ -280,16 +280,21 @@ describe('what may go in a baseline', () => {
     // AND STILL BOUNDED BY SOMETHING NAMED. The point of the old assertion was
     // that the widest composition is a set somebody enumerated, not "everything"
     // — so it is restated as the gap: the four finance reads and, since 00105,
-    // the console-access write, and since 00223 the Discord send. Nothing else.
+    // the console-access write. Nothing else.
+    //
+    // `announcements.discord.write` is NOT in this gap, and that is the change
+    // 00224 made: it shipped above the assignable set in 00223 and moved INSIDE
+    // it when the owner gave it to VP External, so it is no longer something
+    // the ceiling adds — it is something an admin may hand out.
+    //
     // MEASURED AGAINST EXEC_ASSIGNABLE, NOT THE FLOOR. "The gap" means what the
     // ceiling added beyond what an exec could already do; the narrowed baseline
     // would make it sixty-seven entries and this assertion would stop naming the
-    // six capabilities somebody actually enumerated, which is its whole job.
+    // five capabilities somebody actually enumerated, which is its whole job.
     const beyond = [...composed].filter(
       (capability) => !(EXEC_ASSIGNABLE as readonly Capability[]).includes(capability),
     );
     expect(beyond.sort()).toEqual([
-      'announcements.discord.write',
       'fees.clubfees.read',
       'fees.netposition.read',
       'fees.otherincome.read',
