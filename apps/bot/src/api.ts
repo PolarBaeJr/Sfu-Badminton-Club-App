@@ -162,6 +162,24 @@ export function removeSelfRole(guildId: string, roleId: string): Promise<{ ok: t
   return send<{ ok: true }>('DELETE', `/api/discord/self-roles?${params}`);
 }
 
+/**
+ * Tell the app what a member picked for themselves in Discord.
+ *
+ * The ONE call in this file that runs Discord -> app. The app decides whether
+ * the account is linked at all and refuses to write anything but membership_type
+ * — see apps/player/src/app/api/discord/membership/route.ts for why that is a
+ * boundary worth being pedantic about.
+ */
+export function setMembership(
+  updates: readonly { discordUserId: string; membershipType: 'internal' | 'alumni' | 'external' }[]
+): Promise<{ ok: true; updated: number; unchanged: number; skipped: number; failed: number }> {
+  return send<{ ok: true; updated: number; unchanged: number; skipped: number; failed: number }>(
+    'POST',
+    '/api/discord/membership',
+    { updates }
+  );
+}
+
 export interface DuePing {
   sessionId: string;
   channelId: string;

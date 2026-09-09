@@ -22,6 +22,9 @@ export const SETTING_SECTION: Record<string, PlatformSettingsSection> = {
   season_settings: 'ratings',
 
   // Accounts — anything that governs what a member's account may do.
+  // Signup approval leads the section: it is the switch that decides whether
+  // there is an approval queue at all, and declaration order is render order.
+  signup_settings: 'accounts',
   challenge_rules: 'accounts',
   repeat_opponent_caps: 'accounts',
   session_caps: 'accounts',

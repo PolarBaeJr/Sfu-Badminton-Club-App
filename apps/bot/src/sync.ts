@@ -7,7 +7,14 @@
 // and reported; the sweep keeps going.
 
 import type { DiscordApi, RoleCallResult } from './discord-api.js';
-import { roleDiff, type GuildRegistry, type GuildRoleMap, type ManagedRole } from './roles.js';
+import {
+  membershipFromRoles,
+  roleDiff,
+  type GuildRegistry,
+  type GuildRoleMap,
+  type ManagedRole,
+  type MembershipRole,
+} from './roles.js';
 
 export interface SyncOutcome {
   guildId: string;
@@ -20,6 +27,17 @@ export interface SyncOutcome {
   failed: number;
   /** True when the member is not in this guild — nothing was attempted. */
   absent: boolean;
+  /**
+   * The membership the member's OWN roles assert in this guild, or null for
+   * "they have not picked, they picked two, or this guild has no such roles".
+   *
+   * Read, never written: the three membership roles are excluded from the diff
+   * above. It is here because the caller that walks every linked member is the
+   * only place with both this and the app's current value to compare it
+   * against, and re-fetching the member's roles to find out would double the
+   * sweep's request count.
+   */
+  membership: MembershipRole | null;
 }
 
 /**
@@ -43,6 +61,7 @@ export async function syncMemberInGuild(
     forbidden: 0,
     failed: 0,
     absent: false,
+    membership: null,
   };
 
   let current: string[] | null;
@@ -57,6 +76,10 @@ export async function syncMemberInGuild(
     outcome.absent = true;
     return outcome;
   }
+
+  // BEFORE the diff is applied, though it makes no difference which side it is
+  // read from: nothing below can add or remove a membership role.
+  outcome.membership = membershipFromRoles(guildRoles, current);
 
   const diff = roleDiff(desired, guildRoles, current);
 

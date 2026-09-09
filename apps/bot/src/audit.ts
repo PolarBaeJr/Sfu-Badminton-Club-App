@@ -72,10 +72,42 @@ export type AuditEvent =
       reason: 'linked' | 'unlinked' | 'resynced';
       discordUserIds: string[];
       summary: SweepSummary;
+    }
+  // /say. THE ONLY VARIANT THAT CARRIES NO SweepSummary, because it is the only
+  // one that is not about roles — and it is here rather than in a log file
+  // because a bot that can speak in the club's own voice with no record of who
+  // moved its mouth is the thing worth not building. The message is quoted in
+  // full: the point of the entry is being able to read what was said without
+  // having to still be able to find it, and /say messages get deleted.
+  | {
+      kind: 'say';
+      discordUserId: string | null;
+      guildId: string | null;
+      channelId: string;
+      messageId: string | null;
+      body: string;
+      pinged: boolean;
     };
 
 function mention(discordUserId: string): string {
   return `<@${discordUserId}>`;
+}
+
+/**
+ * The posted text as a blockquote, truncated with the remainder STATED for the
+ * reason memberLines() gives: a silent cap reads as the whole message.
+ *
+ * Every line is prefixed, not just the first — Discord's `>` quotes one line,
+ * and a multi-line /say would otherwise break out of the quote and render as
+ * the audit channel saying it.
+ */
+function quoted(body: string): string {
+  const limit = 1200;
+  const shown = body.length > limit ? `${body.slice(0, limit)}…` : body;
+  const lines = shown.split('\n').map((line) => `> ${line}`).join('\n');
+  return body.length > limit
+    ? `${lines}\n\n_(truncated — ${body.length} characters were posted)_`
+    : lines;
 }
 
 /** `+2 -1`, or `refused` / `failed` when that is the whole story. */
@@ -119,6 +151,30 @@ function memberLines(changes: readonly MemberChange[]): string | undefined {
   return lines.join('\n');
 }
 
+/**
+ * The members who changed their own membership, for the entry's body.
+ *
+ * Separate from memberLines because it describes a different kind of event: not
+ * "the sweep changed this member's roles" but "this member changed something
+ * and the website followed". Capped the same way, and for the same reason.
+ */
+function membershipLines(summary: SweepSummary): string | undefined {
+  if (summary.membershipUpdates.length === 0) return undefined;
+  const shown = summary.membershipUpdates.slice(0, MAX_LISTED_MEMBERS);
+  const lines = shown.map((u) => `${mention(u.discordUserId)} — membership set to **${u.membershipType}** (picked in Discord)`);
+  const hidden = summary.membershipUpdates.length - shown.length;
+  if (hidden > 0) lines.push(`…and ${hidden} more (see the sweep response body)`);
+  return lines.join('\n');
+}
+
+/** Everything the entry has to say, or undefined when it has nothing. */
+function sweepDescription(summary: SweepSummary): string | undefined {
+  const parts = [memberLines(summary.changes), membershipLines(summary)].filter(
+    (part): part is string => part !== undefined
+  );
+  return parts.length === 0 ? undefined : parts.join('\n\n');
+}
+
 function countFields(summary: SweepSummary): { name: string; value: string; inline: boolean }[] {
   return [
     { name: 'Members swept', value: String(summary.members), inline: true },
@@ -131,6 +187,19 @@ function countFields(summary: SweepSummary): { name: string; value: string; inli
       : []),
     ...(summary.failed ? [{ name: 'Failed', value: String(summary.failed), inline: true }] : []),
     ...(summary.absent ? [{ name: 'Not in server', value: String(summary.absent), inline: true }] : []),
+    // Not a role the sweep changed — a membership the sweep READ off Discord
+    // and sent back to the app. Named as its own field rather than folded into
+    // "Roles added" because it is the one number here describing a write to
+    // players, and an exec scanning the log should see that it happened.
+    ...(summary.membershipUpdates.length
+      ? [
+          {
+            name: 'Membership updated',
+            value: String(summary.membershipUpdates.length),
+            inline: true,
+          },
+        ]
+      : []),
   ];
 }
 
@@ -149,15 +218,48 @@ const MEMBER_TITLES: Record<'linked' | 'unlinked' | 'resynced', string> = {
  * timestamp.
  */
 export function buildAuditEmbed(event: AuditEvent, now: Date): Embed {
-  const didWork = event.summary.added > 0 || event.summary.removed > 0;
   const timestamp = now.toISOString();
+
+  // FIRST, because it is the one event with no summary to read. `didWork` below
+  // dereferences event.summary unconditionally and would throw on this one.
+  if (event.kind === 'say') {
+    return {
+      title: 'Message posted as the club',
+      description:
+        `${event.discordUserId ? mention(event.discordUserId) : 'Someone'} posted in ` +
+        `<#${event.channelId}>${event.pinged ? ' **with mentions allowed**' : ''}:\n\n` +
+        quoted(event.body),
+      // Club red rather than green: nothing went wrong, but an exec speaking in
+      // the club's voice is not routine bookkeeping and should not read as it.
+      color: COLOR_CLUB_RED,
+      // A jump link needs the guild id in the first slot; `@me` there is the DM
+      // form and resolves to nothing in a server. No guild, no link — a broken
+      // link in an audit entry is worse than no link.
+      fields:
+        event.messageId && event.guildId
+          ? [
+              {
+                name: 'Message',
+                value: `https://discord.com/channels/${event.guildId}/${event.channelId}/${event.messageId}`,
+                inline: false,
+              },
+            ]
+          : undefined,
+      timestamp,
+    };
+  }
+
+  const didWork =
+    event.summary.added > 0 ||
+    event.summary.removed > 0 ||
+    event.summary.membershipUpdates.length > 0;
 
   if (event.kind === 'sweep') {
     return {
       title:
         event.trigger === 'scheduled' ? 'Nightly role sync' : 'Role sync (manually triggered)',
       description:
-        memberLines(event.summary.changes) ??
+        sweepDescription(event.summary) ??
         'Every linked member already had the right roles. Nothing to change.',
       color: colorFor(event.summary, didWork),
       fields: countFields(event.summary),
@@ -228,6 +330,10 @@ export function summaryFromOutcomes(
   const summary: SweepSummary = {
     cleared: [],
     changes: [],
+    // Always empty here. This rolls up ONE member's sync, and deciding whether
+    // their picked role disagrees with the app needs the app's value, which the
+    // outcomes do not carry. The sweep is where that comparison happens.
+    membershipUpdates: [],
     members: 1,
     added: 0,
     removed: 0,

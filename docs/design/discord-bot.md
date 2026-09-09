@@ -195,9 +195,35 @@ Sync to **these**, don't invent a parallel set:
 | `Executives` | `players.is_exec` | VP is a subset of this |
 | `Competitive Team` | `players.status = 'competitive'` | |
 | `Recreation Team` | `players.status = 'recreational'` | |
-| `Internal` | `players.membership_type = 'internal'` | |
-| `Alumni` | `players.membership_type = 'alumni'` | Member access, same as internal |
-| `External` | `players.membership_type = 'external'` | Another club / university — not a member |
+| `Internal` | **the member's own pick** → `players.membership_type = 'internal'` | Reversed 2026-09-09 — see below |
+| `Alumni` | **the member's own pick** → `players.membership_type = 'alumni'` | Member access, same as internal |
+| `External` | **the member's own pick** → `players.membership_type = 'external'` | Another club / university — not a member |
+
+#### The three membership roles now run the other way — 2026-09-09
+
+Everything else in this table is derived: the app decides, the sweep pushes it into
+Discord, and §5's "one direction only" rule holds because reading any of them back
+would let anyone with Manage Roles promote themselves inside the club.
+
+The club moved `Internal` / `Alumni` / `External` across deliberately. They say who a
+member *is* — an SFU student, a graduate, a visitor — rather than naming a permission
+the club grants, and asking an exec to set each one by hand did not scale past
+launch week. So members pick their own in the `/rolepicker`, and the app **follows**:
+
+- `roleDiff()` iterates `SWEPT_ROLES` (= `MANAGED_ROLES` minus `MEMBERSHIP_ROLES`), so
+  the nightly sweep neither adds nor removes them. Dropping them from `desiredRoles()`
+  alone would have been worse than doing nothing — a role the diff names and does not
+  want is one it *removes*.
+- The sweep **reads** the role it finds and reports any disagreement with the app;
+  `POST /api/discord/membership` writes `membership_type` and nothing else, for a
+  **linked** account only, with an audit row naming Discord as the source.
+- 00221 narrows 00168's both-directions guard to the six roles that are still swept.
+
+**What it costs, stated so nobody rediscovers it in a tournament:** `membership_type`
+prices a tournament entry (`quoteEntryFee`) and gates which events a member may enter
+(`isMembershipAllowed`). A member picking `@Internal` is asserting the student fee and
+student-only eligibility for themselves. The audit row is what makes that visible and
+correctable; an exec's console edit holds until the member picks again.
 
 Two roles in this spec do **not** exist yet and need creating: **`@Linked`** and
 **`@Session Staff`**.

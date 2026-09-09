@@ -20,6 +20,7 @@ import {
   fetchDiscordSettings,
   writeDiscordSettings,
   submitAnnouncement,
+  setMembership,
   type CardFile,
   type FeedbackKind,
   type ProfilePayload,
@@ -30,7 +31,7 @@ import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
 import { loadHandles, matchHandles } from './handles.js';
-import { type ManagedRole } from './roles.js';
+import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipRole } from './roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
 import {
@@ -308,6 +309,54 @@ export const COMMAND_DEFINITIONS = [
     ],
   },
   {
+    // EXEC_ONLY, and read /announce's note above first — this is the same
+    // reasoning with none of the safety rails. /announce writes a row the
+    // console can edit, unpublish or delete, badged as an announcement, and the
+    // relay says where it came from. This posts arbitrary words in the club's
+    // own voice, indistinguishable from anything else the bot says, and Discord
+    // has no undo. Two things make that acceptable rather than reckless:
+    //
+    //   Discord's own permissions still apply. The bot cannot post where it
+    //   cannot post, and cannot mention @everyone unless the club has given it
+    //   that permission in that channel.
+    //
+    //   Every use writes an audit entry QUOTING THE MESSAGE, so a message that
+    //   is later deleted is still readable in the audit channel. A bot that can
+    //   speak for the club with no record of who moved its mouth is the thing
+    //   worth not building.
+    //
+    // Unlike every other EXEC_ONLY command there is no app-side capability
+    // check, because there is no app call: nothing here reads or writes club
+    // data. The gate is Discord's, which is the same gate that decides who can
+    // type in the channel by hand.
+    name: 'say',
+    description: 'Post a message as the club bot',
+    default_member_permissions: EXEC_ONLY,
+    // A guild only. There is no channel to default to in a DM, and speaking as
+    // the club in a DM is not a thing the club does.
+    dm_permission: false,
+    // THE WORDS COME FROM A MODAL, for /announce's reason and one more: a slash
+    // option cannot carry a line break, and the whole point of this command is
+    // posting something that reads like a person wrote it.
+    options: [
+      {
+        type: 7, // CHANNEL
+        name: 'channel',
+        description: 'Where to post it (defaults to this channel)',
+        required: false,
+        // Text (0) and announcement (5), same as /config. The picker would
+        // otherwise offer a category and the post would 400.
+        channel_types: [0, 5],
+      },
+      {
+        type: 5, // BOOLEAN
+        name: 'ping',
+        description: 'Let @mentions in the message actually notify people (default: no)',
+        required: false,
+      },
+    ],
+  },
+  {
     name: 'link',
     description: 'Connect your Discord account to your club account',
     options: [],
@@ -521,6 +570,13 @@ export const DEFERRED_COMMANDS = new Set(['setup', 'config']);
 export interface InteractionContext {
   discordUserId: string | null;
   guildId: string | null;
+  /**
+   * Where the command was typed. Only /say reads it, and only as the default
+   * for its optional `channel` option — "post it here" is the overwhelmingly
+   * common case and making it the one thing you have to fill in every time is
+   * how a quick command stops being quick.
+   */
+  channelId?: string | null;
   /** Both only present for a deferred command; see DEFERRED_COMMANDS. */
   applicationId?: string | null;
   interactionToken?: string | null;
@@ -1666,9 +1722,11 @@ async function handleRolePicker(
             title: 'Get pinged for the sessions you care about',
             color: CLUB_RED,
             description:
-              'Pick the nights you want a heads-up for. Click again to turn one off.\n\n' +
-              'These are just notification roles — they do not change what you can ' +
-              'sign up for.',
+              'Pick what you want. Click again to turn one off.\n\n' +
+              'Most of these are notification roles and change nothing else. The ' +
+              'exception is your membership — **Internal**, **Alumni** or ' +
+              '**External** — which the website reads back, so picking one sets ' +
+              'your tournament entry fee and which events you can enter.',
           },
         ],
         components: pickerComponents(roles),
@@ -1735,11 +1793,119 @@ export async function handleSelfRoleButton(
     return ephemeral(`Couldn't change **${offered.label}** just now. Try again in a moment.`);
   }
 
+  // ---- MEMBERSHIP ROLES, WHICH ARE NOT PING ROLES --------------------------
+  //
+  // @Internal / @Alumni / @External say who a member is, so picking one has a
+  // consequence on the website: it is what prices a tournament entry and what
+  // decides which events they may enter. Everything below runs only for those
+  // three; an ordinary ping role falls straight past it to the reply.
+  const guildRoles = await guildRolesFor(context.guildId);
+  const membership = membershipRoleFor(roleId, guildRoles);
+
+  if (membership && !holds) {
+    // ONE MEMBERSHIP AT A TIME. membership_type is a single value, and a member
+    // holding both @Alumni and @Internal is a state the app cannot store — so
+    // the other two come off here rather than being resolved by a guess later.
+    // Failures are deliberately ignored: the app write below is the part that
+    // matters, and a role that would not come off is visible in the server.
+    await removeOtherMembershipRoles(
+      api,
+      context.guildId,
+      context.discordUserId,
+      guildRoles,
+      membership,
+      currentRoleIds
+    );
+
+    let linkedToApp = true;
+    try {
+      const result = await setMembership([
+        { discordUserId: context.discordUserId, membershipType: membership },
+      ]);
+      linkedToApp = result.skipped === 0;
+    } catch (error) {
+      // The role is already on. Saying "that failed" would be wrong, and
+      // silently pretending the website updated would be worse — so the reply
+      // says exactly which half landed, and the nightly sweep repairs the rest
+      // by reading this same role back.
+      console.error('[bot] membership write-back failed:', error);
+      return ephemeral(
+        `Added **${offered.label}**.\n\n` +
+          'I could not update the website just now — it will catch up on the ' +
+          'next nightly sync.'
+      );
+    }
+
+    return ephemeral(
+      linkedToApp
+        ? `Added **${offered.label}** — the website now has you as **${membership}**, ` +
+            'which is what decides your tournament entry fee and which events you can enter.'
+        : `Added **${offered.label}**.\n\n` +
+            'Your Discord account is not linked to the website yet, so this only ' +
+            'changed your role here. Run **/link** and it will follow.'
+    );
+  }
+
+  if (membership && holds) {
+    // Toggling one OFF leaves the website alone on purpose. There is no "no
+    // membership" to write — the column always holds one of the three — and
+    // guessing a default would quietly move somebody's fee tier as a side
+    // effect of tidying their roles.
+    return ephemeral(
+      `Removed **${offered.label}**.\n\n` +
+        'The website still has your membership as it was — pick another one to ' +
+        'change it.'
+    );
+  }
+
   return ephemeral(
     holds
       ? `Removed **${offered.label}** — you won't be pinged for those any more.`
       : `Added **${offered.label}** — you'll be pinged for those.`
   );
+}
+
+/**
+ * This guild's role map, or an empty one if the config cannot be read.
+ *
+ * Degrading to empty is right HERE and nowhere else in this bot: an empty map
+ * names no membership role, so the button behaves as an ordinary ping role and
+ * the website is left alone. The sweep, which reads the same roles nightly with
+ * `force: true`, is what repairs it.
+ */
+async function guildRolesFor(guildId: string): Promise<GuildRoleMap> {
+  try {
+    const { registry } = await loadConfig();
+    return registry.get(guildId) ?? {};
+  } catch (error) {
+    console.error('[bot] could not read the role map for a self-role click:', error);
+    return {};
+  }
+}
+
+/** Which membership this role id IS in this guild, if any. */
+function membershipRoleFor(roleId: string, guildRoles: GuildRoleMap): MembershipRole | null {
+  for (const role of MEMBERSHIP_ROLES) {
+    if (guildRoles[role] === roleId) return role;
+  }
+  return null;
+}
+
+async function removeOtherMembershipRoles(
+  api: DiscordApi,
+  guildId: string,
+  discordUserId: string,
+  guildRoles: GuildRoleMap,
+  keep: MembershipRole,
+  currentRoleIds: readonly string[]
+): Promise<void> {
+  const held = new Set(currentRoleIds);
+  for (const role of MEMBERSHIP_ROLES) {
+    if (role === keep) continue;
+    const id = guildRoles[role];
+    if (!id || !held.has(id)) continue;
+    await api.removeRole(guildId, discordUserId, id);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2166,6 +2332,162 @@ export async function handleAnnounceModal(
   );
 }
 
+// ---------------------------------------------------------------------------
+// /say
+// ---------------------------------------------------------------------------
+//
+// The two-interaction split /announce uses, and the same reason for packing the
+// options into the custom_id rather than a map: a modal submit arrives as its
+// own request carrying the id and the typed text and nothing else, and a map
+// entry is gone the moment the bot restarts or a second replica takes the
+// submit. Here the loss would be worse than a reverted flag — the channel would
+// be unknown and the message would have nowhere to go.
+
+const SAY_MODAL_PREFIX = 'say:';
+
+/** `say:<channelId>:<ping bit>`. */
+function packSay(channelId: string, ping: boolean): string {
+  return `${SAY_MODAL_PREFIX}${channelId}:${ping ? '1' : '0'}`;
+}
+
+/**
+ * Read it back, FAILING CLOSED ON `ping`.
+ *
+ * Anything malformed means a build that changed the format under a modal
+ * somebody still has open, or a caller that is not Discord. Either way an
+ * unreadable ping bit resolves to NO mentions: a message that should have
+ * pinged and did not is a follow-up, and a ping nobody asked for has already
+ * buzzed every phone in the server.
+ */
+function unpackSay(customId: string): { channelId: string; ping: boolean } {
+  const [, channelId = '', bit = ''] = customId.split(':');
+  return { channelId, ping: bit === '1' };
+}
+
+/** True for a modal submit this module owns. */
+export function isSayModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SAY_MODAL_PREFIX);
+}
+
+export function openSayModal(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): BotResponse {
+  // The picker gives a channel id as the option value; "here" is the fallback.
+  const chosen = option(options, 'channel');
+  const channelId = chosen ? String(chosen) : String(context.channelId ?? '');
+  const ping = option(options, 'ping') === true;
+
+  if (!channelId) {
+    // Unreachable through Discord — a guild command always has a channel — but
+    // a modal whose id has no channel in it would open, take the words and
+    // throw them away on submit.
+    return ephemeral("Couldn't work out which channel to post in. Pick one with `channel:`.");
+  }
+
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id: packSay(channelId, ping),
+      title: 'Post as the club'.slice(0, MODAL_TITLE_MAX),
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4, // TEXT_INPUT
+              custom_id: 'body',
+              label: 'What should I say?',
+              style: 2, // PARAGRAPH
+              required: true,
+              min_length: 1,
+              // Discord refuses a message over 2000 characters. Enforced here,
+              // where the writer can still see and cut what they typed, rather
+              // than as a 400 after the modal has closed and eaten the words.
+              max_length: 2000,
+              placeholder: 'Posted exactly as typed, as the bot. Nobody sees that you sent it.',
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * A submitted /say: post it, and write down who said it.
+ *
+ * ORDER MATTERS. The message goes out first and the audit entry second, so an
+ * audit channel the bot cannot post in — misconfigured, deleted, permissions
+ * changed — costs the club its record and not its message. postAuditEntry
+ * already swallows its own failures for that reason.
+ */
+export async function handleSayModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const { channelId, ping } = unpackSay(customId);
+  const body = modalValue(components, 'body').trim();
+
+  if (!channelId) {
+    return ephemeral("That message had no channel attached to it — run `/say` again.");
+  }
+  if (!body) {
+    // Discord's min_length should make this unreachable. Checked anyway: a
+    // blank message from the club bot is a mystery nobody can explain later.
+    return ephemeral('There was nothing to post. Try again.');
+  }
+
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.error('[bot] /say: DISCORD_BOT_TOKEN is not set');
+    return ephemeral("I'm not configured to post right now. Nothing was posted.");
+  }
+
+  const api = new DiscordApi({ token });
+  const messageId = await api.postMessage(channelId, {
+    content: body,
+    // THE DEFAULT IS SILENCE. An empty `parse` turns every @here, @everyone and
+    // @role in the text into plain text — they still READ as mentions, they
+    // just do not notify. Without this a stray @everyone typed into a paragraph
+    // buzzes the whole server, and there is no way to take that back.
+    allowed_mentions: ping
+      ? { parse: ['users', 'roles', 'everyone'] }
+      : { parse: [] },
+  });
+
+  if (!messageId) {
+    return ephemeral(
+      `Discord refused that — check I can post in <#${channelId}>. Nothing was posted.`
+    );
+  }
+
+  try {
+    const { auditChannelId } = await loadConfig();
+    await postAuditEntry(api, auditChannelId, {
+      kind: 'say',
+      discordUserId: context.discordUserId,
+      guildId: context.guildId,
+      channelId,
+      messageId,
+      body,
+      pinged: ping,
+    });
+  } catch (error) {
+    // The message is already posted. A failure to record it is worth a line in
+    // the log and nothing else — telling the exec their message did not go out
+    // would be false.
+    console.error('[bot] /say: could not write the audit entry:', error);
+  }
+
+  return ephemeral(
+    `**Posted** in <#${channelId}>${ping ? ' — mentions were allowed to notify.' : '.'}\n\n` +
+      'It shows as coming from me, not from you. The audit channel has a copy with your name on ' +
+      'it, so an exec can always find out who asked.'
+  );
+}
+
 export interface ModalComponent {
   type?: number;
   custom_id?: string;
@@ -2295,6 +2617,8 @@ export async function dispatch(
         return await handleRolePicker(options, context);
       case 'announce':
         return openAnnounceModal(options);
+      case 'say':
+        return openSayModal(options, context);
       case 'bug':
         return openReportModal('bug', options, context);
       case 'feedback':
