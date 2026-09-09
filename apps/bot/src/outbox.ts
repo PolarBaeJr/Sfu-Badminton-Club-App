@@ -1,4 +1,5 @@
 import { claimOutboxMessages, recordOutboxResult, type OutboxMessage } from './api.js';
+import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
 
@@ -19,6 +20,13 @@ import { DiscordApi } from './discord-api.js';
 // SECOND. A crash in between leaves the row claimed, and the claim expires
 // after ten minutes, so the worst case is a duplicate somebody mentions rather
 // than a club message that silently never went out.
+//
+// AND IT WRITES THE SAME AUDIT ENTRY /say DOES. That is not decoration: /say's
+// own argument is that a bot which can speak for the club with no record of who
+// moved its mouth is the thing worth not building, and a console that could do
+// it silently would be the back door around that argument. The row in
+// audit_logs is not enough on its own — an exec reading the Discord audit
+// channel would see club messages appear from nowhere.
 
 export interface OutboxRunResult {
   sent: number;
@@ -62,6 +70,22 @@ function payloadFor(message: OutboxMessage) {
   return { content: message.content ?? '', allowed_mentions };
 }
 
+/**
+ * What the audit entry quotes.
+ *
+ * An embed is two fields and the entry has to read as one message, so the title
+ * leads and the body follows. Not truncated here — postAuditEntry's own quoting
+ * caps it and SAYS it capped it, which is the behaviour /say already relies on.
+ */
+function auditBody(message: OutboxMessage): string {
+  if (message.embed) {
+    return message.embed.body
+      ? `**${message.embed.title}**\n${message.embed.body}`
+      : `**${message.embed.title}**`;
+  }
+  return message.content ?? '';
+}
+
 export async function runOutbox(): Promise<OutboxRunResult> {
   const result: OutboxRunResult = { sent: 0, failed: 0 };
 
@@ -71,7 +95,7 @@ export async function runOutbox(): Promise<OutboxRunResult> {
     return result;
   }
 
-  const { registry } = await loadConfig();
+  const { registry, auditChannelId } = await loadConfig();
   const api = new DiscordApi({ token });
 
   for (const guildId of registry.keys()) {
@@ -108,6 +132,27 @@ export async function runOutbox(): Promise<OutboxRunResult> {
       }
 
       result.sent += 1;
+
+      // BEFORE the write-back, and deliberately: if this process is about to
+      // die, the entry naming who spoke is worth more than the row that closes
+      // the send. The duplicate that a lost write-back can cause is visible;
+      // an unattributed club message is not.
+      try {
+        await postAuditEntry(api, auditChannelId, {
+          kind: 'console_message',
+          requestedBy: message.requestedBy,
+          guildId,
+          channelId: message.channelId,
+          messageId: discordMessageId,
+          body: auditBody(message),
+          pinged: message.ping,
+        });
+      } catch (error) {
+        // The message is already posted. Failing to record it must not turn a
+        // good send into a failed one.
+        console.error(`[bot] outbox: could not write the audit entry for ${message.id}:`, error);
+      }
+
       try {
         await recordOutboxResult({ id: message.id, discordMessageId });
       } catch (error) {

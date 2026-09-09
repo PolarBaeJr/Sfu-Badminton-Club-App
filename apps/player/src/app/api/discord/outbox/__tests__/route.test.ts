@@ -23,6 +23,8 @@ interface Call {
 
 let calls: Call[] = [];
 let selectRows: Record<string, unknown>[] = [];
+let playerRows: Record<string, unknown>[] = [];
+let playerError: { message: string } | null = null;
 let updateRows: Record<string, unknown>[] = [];
 let selectError: { message: string } | null = null;
 let updateError: { message: string } | null = null;
@@ -50,7 +52,11 @@ vi.mock('@/lib/supabase-server', () => ({
       select: (..._a: unknown[]) => {
         const call: Call = { table, op: 'select', filters: [] };
         calls.push(call);
-        return builder(call, () => selectRows, () => selectError);
+        return builder(
+          call,
+          () => (table === 'players' ? playerRows : selectRows),
+          () => (table === 'players' ? playerError : selectError)
+        );
       },
       update: (payload: Record<string, unknown>) => {
         const call: Call = { table, op: 'update', filters: [], payload };
@@ -70,6 +76,8 @@ beforeEach(() => {
   process.env.DISCORD_SERVICE_SECRET = 'test-secret';
   calls = [];
   selectRows = [];
+  playerRows = [];
+  playerError = null;
   updateRows = [];
   selectError = null;
   updateError = null;
@@ -231,5 +239,60 @@ describe('recording what Discord did', () => {
     // 200 here would hide the one failure that produces a duplicate.
     updateError = { message: 'row locked' };
     expect((await POST(post({ id: 'o1', discordMessageId: 'm1' }))).status).toBe(503);
+  });
+});
+
+// WHO ASKED. The bot writes an audit entry for every message it posts on the
+// console's behalf, for the same reason /say does — a bot that speaks for the
+// club with no record of who moved its mouth is the thing worth not building —
+// and the bot has no players table. The name has to come from here or the
+// entry cannot say anything.
+describe('attribution', () => {
+  const claimed = (extra: Record<string, unknown> = {}) => {
+    selectRows = [{ id: 'o1' }];
+    updateRows = [
+      {
+        id: 'o1',
+        channel_id: 'c1',
+        content: 'Doors open at seven.',
+        embed_title: null,
+        embed_body: null,
+        embed_type: null,
+        ping: false,
+        attempts: 0,
+        requested_by: 'p1',
+        ...extra,
+      },
+    ];
+  };
+
+  it('resolves the requester to a name the bot can print', async () => {
+    claimed();
+    playerRows = [{ id: 'p1', full_name: 'Priya Raman' }];
+
+    const body = (await (await GET(get())).json()) as { messages: { requestedBy: string }[] };
+    expect(body.messages[0]?.requestedBy).toBe('Priya Raman');
+  });
+
+  it('hands back a claim with no requester rather than failing', async () => {
+    // ON DELETE SET NULL (00222): the exec who queued it left the club. The
+    // message is still queued and still has to go out.
+    claimed({ requested_by: null });
+    const body = (await (await GET(get())).json()) as { messages: { requestedBy: null }[] };
+    expect(body.messages[0]?.requestedBy).toBeNull();
+  });
+
+  it('still returns the claim when the name lookup fails', async () => {
+    // THE ROWS ARE ALREADY CLAIMED at this point. A 503 here would strand them
+    // for the full ten minutes over a missing display name — the claim is the
+    // expensive thing to lose, the name is not.
+    claimed();
+    playerError = { message: 'relation does not exist' };
+
+    const res = await GET(get());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { messages: { id: string; requestedBy: null }[] };
+    expect(body.messages[0]?.id).toBe('o1');
+    expect(body.messages[0]?.requestedBy).toBeNull();
   });
 });

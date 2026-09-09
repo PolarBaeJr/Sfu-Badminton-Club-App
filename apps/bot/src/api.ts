@@ -582,6 +582,12 @@ export interface OutboxMessage {
   /** Whether mentions in the text are allowed to notify. Default is silence. */
   ping: boolean;
   attempts: number;
+  /**
+   * The name of the exec who asked for it, for the audit entry. Null when the
+   * row's requester was deleted, or when the app could not resolve the name —
+   * the entry still gets written, it just cannot say who.
+   */
+  requestedBy: string | null;
 }
 
 /**

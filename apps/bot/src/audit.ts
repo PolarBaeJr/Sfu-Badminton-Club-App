@@ -87,6 +87,23 @@ export type AuditEvent =
       messageId: string | null;
       body: string;
       pinged: boolean;
+    }
+  // The console's half of /say (00222). THE SAME ACT FROM A DIFFERENT DOOR, so
+  // it gets the same entry: the reason /say writes one is that speaking as the
+  // club with no record of who asked is the thing worth not building, and an
+  // admin console that could do it silently would be exactly that back door.
+  //
+  // The actor is a NAME, not a mention, and that is the honest rendering: the
+  // person who clicked Send in the console may not be in this server at all,
+  // and a <@id> built from a player id would render as a broken mention.
+  | {
+      kind: 'console_message';
+      requestedBy: string | null;
+      guildId: string | null;
+      channelId: string;
+      messageId: string | null;
+      body: string;
+      pinged: boolean;
     };
 
 function mention(discordUserId: string): string {
@@ -220,13 +237,24 @@ const MEMBER_TITLES: Record<'linked' | 'unlinked' | 'resynced', string> = {
 export function buildAuditEmbed(event: AuditEvent, now: Date): Embed {
   const timestamp = now.toISOString();
 
-  // FIRST, because it is the one event with no summary to read. `didWork` below
-  // dereferences event.summary unconditionally and would throw on this one.
-  if (event.kind === 'say') {
+  // FIRST, because these are the events with no summary to read. `didWork`
+  // below dereferences event.summary unconditionally and would throw on them.
+  if (event.kind === 'say' || event.kind === 'console_message') {
+    // ONE RENDERER FOR BOTH DOORS. /say and the console queue produce the same
+    // message in the same channel, and an entry that described them differently
+    // would make the two look like different acts. Only the actor line and the
+    // footer differ, because only the actor and the door do.
+    const actor =
+      event.kind === 'say'
+        ? event.discordUserId
+          ? mention(event.discordUserId)
+          : 'Someone'
+        : (event.requestedBy ?? 'Someone in the console');
+
     return {
       title: 'Message posted as the club',
       description:
-        `${event.discordUserId ? mention(event.discordUserId) : 'Someone'} posted in ` +
+        `${actor} posted in ` +
         `<#${event.channelId}>${event.pinged ? ' **with mentions allowed**' : ''}:\n\n` +
         quoted(event.body),
       // Club red rather than green: nothing went wrong, but an exec speaking in
@@ -245,6 +273,12 @@ export function buildAuditEmbed(event: AuditEvent, now: Date): Embed {
               },
             ]
           : undefined,
+      // Named, because "who asked" and "how they asked" are different questions
+      // and an exec reading the channel should not have to infer the second.
+      footer:
+        event.kind === 'console_message'
+          ? { text: 'Sent from the admin console' }
+          : { text: 'Sent with /say' },
       timestamp,
     };
   }

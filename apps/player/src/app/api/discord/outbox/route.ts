@@ -49,6 +49,7 @@ interface OutboxRow {
   embed_type: string | null;
   ping: boolean;
   attempts: number;
+  requested_by: string | null;
 }
 
 export async function GET(request: Request) {
@@ -103,7 +104,9 @@ export async function GET(request: Request) {
     .is('failed_at', null)
     .lt('attempts', MAX_ATTEMPTS)
     .or(`claimed_at.is.null,claimed_at.lt.${staleClaim}`)
-    .select('id, channel_id, content, embed_title, embed_body, embed_type, ping, attempts');
+    .select(
+      'id, channel_id, content, embed_title, embed_body, embed_type, ping, attempts, requested_by'
+    );
 
   if (claimError) {
     console.error('[discord] outbox claim failed:', claimError.message);
@@ -111,6 +114,34 @@ export async function GET(request: Request) {
   }
 
   const rows = (claimed ?? []) as OutboxRow[];
+
+  // WHO ASKED, resolved here because the bot has no players table and the audit
+  // entry it writes has to name somebody. A message posted in the club's voice
+  // with no record of who moved its mouth is the thing /say exists not to be,
+  // and the console must not be the back door around that.
+  //
+  // A SECOND READ RATHER THAN AN EMBED on the UPDATE above: the claim is the one
+  // statement in this file that must not fail for an avoidable reason, and it is
+  // already the least-travelled PostgREST path here. This read runs only when
+  // there is something to post.
+  //
+  // ITS FAILURE IS NOT THIS REQUEST'S FAILURE. The rows are already claimed; a
+  // 503 now would strand them for the full CLAIM_MINUTES. A missing name costs
+  // an audit entry that says "someone in the console", which is still the entry.
+  const requesterIds = [...new Set(rows.map((r) => r.requested_by).filter((v): v is string => !!v))];
+  const names = new Map<string, string>();
+  if (requesterIds.length > 0) {
+    const { data: players, error: nameError } = await supabase
+      .from('players')
+      .select('id, full_name')
+      .in('id', requesterIds);
+    if (nameError) {
+      console.error('[discord] outbox requester lookup failed:', nameError.message);
+    }
+    for (const p of (players ?? []) as { id: string; full_name: string | null }[]) {
+      if (p.full_name) names.set(p.id, p.full_name);
+    }
+  }
 
   return NextResponse.json({
     messages: rows.map((r) => ({
@@ -122,6 +153,7 @@ export async function GET(request: Request) {
         : null,
       ping: r.ping,
       attempts: r.attempts,
+      requestedBy: (r.requested_by && names.get(r.requested_by)) || null,
     })),
   });
 }
