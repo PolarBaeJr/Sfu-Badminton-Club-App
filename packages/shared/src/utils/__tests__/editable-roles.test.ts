@@ -97,17 +97,19 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
   });
 
   // THE WIDENING, NAMED. Four reads on /fees — the club's books, which is what
-  // the owner asked Finance to be able to see — and, since 00105, one write. If
-  // this list grows, this assertion is the diff somebody has to read.
-  it('adds exactly the four finance reads and the console-access write', () => {
+  // the owner asked Finance to be able to see — one write since 00105, and a
+  // second since the console learned to speak in Discord. If this list grows,
+  // this assertion is the diff somebody has to read.
+  it('adds exactly the four finance reads and the two admin-only writes', () => {
     // AGAINST EXEC_ASSIGNABLE, because "added" means "beyond what an exec could
     // already do". Measured against the narrowed floor instead, this list would
     // be 66 entries long and would stop being the reviewable diff it exists to
-    // be — the five below would be lost among sixty-one writes that are not
+    // be — the six below would be lost among sixty-one writes that are not
     // widenings at all, merely capabilities that now arrive by assignment.
     const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     const added = [...EDITOR_OFFERABLE].filter((capability) => !exec.has(capability));
     expect(added.sort()).toEqual([
+      'announcements.discord.write',
       'fees.clubfees.read',
       'fees.netposition.read',
       'fees.otherincome.read',
@@ -133,18 +135,28 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
     }
   });
 
-  // THE ONE WRITE, AND IT IS ALONE. 00105 — "also make role change a
-  // permission". A second write arriving on this list is the diff this pins:
-  // the ceiling is what bounds an ADMIN, whom grant closure cannot bound, so
-  // every write on it is a thing an admin may hand to somebody who is not one.
-  it('adds exactly one write, and it is the console-access one', () => {
+  // THE TWO WRITES, EACH NAMED. The ceiling is what bounds an ADMIN, whom grant
+  // closure cannot bound, so every write on this list is a thing an admin may
+  // hand to somebody who is not one — which is why a third arriving here has to
+  // be a diff somebody reads rather than a number that moved.
+  //
+  //   - players.consoleaccess.write (00105) — "also make role change a
+  //     permission". It hands out a LEVEL, bounded by closure inside
+  //     setConsoleAccess and refused outright for admin.
+  //   - announcements.discord.write (00223) — speaking as the club in its
+  //     Discord channel. It hands out no access at all; what makes it belong
+  //     beside the other is that it is the one comms act with no undo.
+  it('adds exactly two writes, and names both', () => {
     // EXEC_ASSIGNABLE: "one write" counts writes the CEILING added, and all
     // sixty-one writes an exec used to hold by default are still inside it.
     const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     const writes = [...EDITOR_OFFERABLE].filter(
       (capability) => !exec.has(capability) && capability.endsWith('.write'),
     );
-    expect(writes).toEqual(['players.consoleaccess.write']);
+    expect(writes.sort()).toEqual([
+      'announcements.discord.write',
+      'players.consoleaccess.write',
+    ]);
   });
 
   // THE ONES THAT STAY OUT, each named so opening it is deliberate. These are

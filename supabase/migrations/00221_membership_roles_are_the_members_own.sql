@@ -60,7 +60,11 @@ AS $$
   SELECT p_role_name IN ('internal', 'alumni', 'external');
 $$;
 
-REVOKE ALL ON FUNCTION public.discord_role_is_member_chosen(text) FROM PUBLIC;
+-- PUBLIC IS NOT ENOUGH, and this is the trap 00126 and 00187 already paid for:
+-- Supabase grants EXECUTE to `anon` and `authenticated` by default, and
+-- REVOKE ... FROM PUBLIC does NOT remove a grant made to a named role. Both have
+-- to be named or the function stays callable by anybody with the anon key.
+REVOKE ALL ON FUNCTION public.discord_role_is_member_chosen(text) FROM PUBLIC, anon, authenticated;
 
 -- ---- 1. MANAGED -> SELF-SERVE ---------------------------------------------
 --
@@ -138,8 +142,8 @@ CREATE TRIGGER discord_managed_role_not_self_serve_trg
   BEFORE INSERT OR UPDATE ON public.discord_guild_roles
   FOR EACH ROW EXECUTE FUNCTION public.discord_managed_role_not_self_serve();
 
-REVOKE ALL ON FUNCTION public.discord_self_role_not_managed()       FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.discord_managed_role_not_self_serve() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.discord_self_role_not_managed()       FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.discord_managed_role_not_self_serve() FROM PUBLIC, anon, authenticated;
 
 COMMIT;
 

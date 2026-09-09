@@ -10,6 +10,7 @@ import {
   type DiscordContext,
   type RowAnnouncement,
 } from './actions';
+import { DiscordSend, type OutboxRow } from './discord-send';
 import {
   audienceLabel,
   bylineName,
@@ -206,6 +207,12 @@ export default async function AnnouncementsPage() {
   const canUpdate = may('announcements.update.write');
   const canDelete = may('announcements.delete.write');
 
+  // A SEPARATE KEY FROM THE THREE ABOVE, and not a fourth way to write an
+  // announcement. This one reaches the club's Discord channel — a different
+  // audience by a different route, and nothing on this page can take a posted
+  // Discord message back the way unpublishing takes an announcement down.
+  const canSendDiscord = may('announcements.discord.write');
+
   // THE ROSTER IS A DIFFERENT AREA, and every number on this screen drawn from
   // `players` is behind its key. This gate is around the AWAIT, not around the
   // JSX: a fetch that runs and is then conditionally rendered still ships its
@@ -284,6 +291,46 @@ export default async function AnnouncementsPage() {
   };
 
   const now = Date.now();
+
+  // THE GATE IS AROUND THE AWAIT, not around the JSX — the same rule the roster
+  // reads follow above. A query that runs and is then conditionally rendered
+  // still ships its rows in the RSC payload, and these rows quote what the club
+  // said in its own channel.
+  const outboxRows: OutboxRow[] = canSendDiscord
+    ? await supabase
+        .from('discord_outbox')
+        .select(
+          'id, created_at, channel_id, content, embed_title, ping, sent_at, failed_at, last_error',
+        )
+        .order('created_at', { ascending: false })
+        .limit(5)
+        .then(({ data }) =>
+          (
+            (data ?? []) as {
+              id: string;
+              created_at: string;
+              channel_id: string;
+              content: string | null;
+              embed_title: string | null;
+              ping: boolean;
+              sent_at: string | null;
+              failed_at: string | null;
+              last_error: string | null;
+            }[]
+          ).map((r) => ({
+            id: r.id,
+            createdAt: r.created_at,
+            channelId: r.channel_id,
+            // One line, whichever shape it was. The full text is in the audit
+            // log; this list exists to answer "did it go out", not to re-read
+            // the message.
+            preview: (r.content ?? r.embed_title ?? '').slice(0, 140),
+            ping: r.ping,
+            state: r.sent_at ? 'sent' : r.failed_at ? 'failed' : 'queued',
+            error: r.last_error,
+          })),
+        )
+    : [];
 
   // Three roster-derived reads, all behind `players.read`, all skipped
   // outright when it is not held.
@@ -454,6 +501,12 @@ export default async function AnnouncementsPage() {
               <p className="mt-4 text-xs text-[var(--text-muted)] leading-relaxed">
                 {lastPost.title} · {audienceLabel(lastPost.target_audience)}
               </p>
+            </Card>
+          )}
+
+          {canSendDiscord && (
+            <Card className="p-5">
+              <DiscordSend channelConfigured={channelConfigured} recent={outboxRows} />
             </Card>
           )}
 

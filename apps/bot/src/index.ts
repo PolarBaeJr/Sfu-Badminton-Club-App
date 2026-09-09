@@ -25,6 +25,7 @@ import { reconcile } from './reconcile.js';
 import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
 import { runAnnouncements } from './announcements.js';
+import { runOutbox } from './outbox.js';
 import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
@@ -303,13 +304,39 @@ const server = createServer(async (req, res) => {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
     }
+    // TWO JOBS, TWO try/catch BLOCKS, ONE TICK.
+    //
+    // The console's outbox (00222) rides this tick rather than getting a
+    // pg_cron job of its own, because a new job would need an owner to run SQL
+    // on production — a step that sits undone while the feature looks shipped.
+    //
+    // But they must not be able to abort each other. A relay that throws would
+    // otherwise leave a queued message unsent with nothing saying why, and an
+    // outbox failure would stop announcements syncing — neither has anything
+    // to do with the other, and each reports its own counts.
+    let announcements: Awaited<ReturnType<typeof runAnnouncements>> | null = null;
+    let outbox: Awaited<ReturnType<typeof runOutbox>> | null = null;
+
     try {
-      const result = await runAnnouncements();
-      return send(res, 200, result);
+      announcements = await runAnnouncements();
     } catch (error) {
       console.error('[bot] announcement relay failed:', error);
+    }
+
+    try {
+      outbox = await runOutbox();
+    } catch (error) {
+      console.error('[bot] outbox drain failed:', error);
+    }
+
+    // A 500 only when BOTH halves fell over, which is the shape that means the
+    // tick achieved nothing. One half failing is reported in the body and in
+    // the log, and pg_cron keeps calling either way.
+    if (!announcements && !outbox) {
       return send(res, 500, { error: 'announcements_failed' });
     }
+
+    return send(res, 200, { ...(announcements ?? {}), outbox });
   }
 
   // The match result relay, driven by pg_cron every 10 minutes. Slower than

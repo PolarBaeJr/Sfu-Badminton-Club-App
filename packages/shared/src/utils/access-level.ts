@@ -239,13 +239,46 @@ export const CAPABILITIES = [
   'challenges.expire.write',
 
   // ---- announcements -----------------------------------------------------
+  //
+  // `announcements.discord.write` is NOT a fourth way to write an
+  // announcement. It queues a message into the club's Discord channel — the
+  // console's half of the bot's /say — and it is separate from the three above
+  // because it reaches a different audience by a different route: a member who
+  // never opens the website is in that channel, and nothing on this page can
+  // take a Discord message back the way unpublishing takes an announcement
+  // down. The three writes above all lead somewhere the console still owns.
+  //
+  // It is NOT a new AREA. `discord` as an area would need its own `.page`, and
+  // there is no Discord page to open — the panel lives on this one, behind
+  // this one's key.
+  //
+  // ADMIN-ONLY FOR NOW, which is to say it is in neither EXEC_BASELINE nor
+  // EXEC_ASSIGNABLE. Two reasons, and the second is the load-bearing one:
+  //
+  //   - it is the one comms act in the console with no undo and no reach
+  //     afterwards. Unpublishing takes an announcement down; nothing here can
+  //     take a Discord message back;
+  //   - the four VP portfolios are SEEDED ROWS (00104), and editable-roles
+  //     tests read that migration as text. Widening a portfolio is therefore a
+  //     schema change and a re-seed, not an edit to a constant — and doing it
+  //     as an afterthought to a different feature is how "reset to shipped
+  //     default" ends up restoring something that was never shipped.
+  //
+  // Handing it to VP External — who already holds every other announcement
+  // write — is a migration that re-seeds that baseline row, plus the two
+  // additions here. It is a deliberate act, not a line in this list.
   'announcements.page',
   'announcements.create.write',
   'announcements.update.write',
   'announcements.delete.write',
+  'announcements.discord.write',
 
   // ---- tournaments -------------------------------------------------------
-  // The largest area by a distance: 44 of the 117. Four groups, and the split
+  // The largest area by a distance — more capabilities than the next three
+  // areas together. (No headcount here on purpose: the one that used to be
+  // written down said 117 against a list that had grown to 119, which is what
+  // a number in a comment does. capabilities.test.ts pins the real one.) Four
+  // groups, and the split
   // matters — running a draw, entering results and handling entry money are
   // three different jobs that happen to share a section.
   //
@@ -800,6 +833,20 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
   // given the ability to make somebody a varsity trainer without also being made
   // an admin. It cannot be given the ability to make an admin.
   'players.consoleaccess.write',
+
+  // THE SECOND WRITE ON THIS LIST, and it is here for the same structural
+  // reason: a capability outside this ceiling cannot be granted, cannot be put
+  // in a baseline and is not even RENDERED by either editor, so leaving it out
+  // would make "admin-only" mean "admin-only forever" rather than "not handed
+  // out by default".
+  //
+  // IT IS IN NO BASELINE AND NO VP JOB. Speaking as the club in Discord is the
+  // one comms act in the console with no undo — unpublishing takes an
+  // announcement down, and nothing takes a Discord message back — so it is
+  // reachable exactly two ways, both deliberate: an explicit per-person grant,
+  // or a baseline somebody deliberately puts it in. That is the same posture
+  // `players.consoleaccess.write` has above, and for the same reason.
+  'announcements.discord.write',
 ];
 
 // DELIBERATELY STILL OUT OF REACH, and each for its own reason:

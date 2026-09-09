@@ -20,7 +20,7 @@ import {
 } from '../access-level';
 import { CAPABILITY_GATES, ENFORCEMENT_POINTS } from '../capability-gates';
 
-// 119 capabilities is 119 promises that something is enforced. This suite is
+// 120 capabilities is 120 promises that something is enforced. This suite is
 // what keeps the vocabulary closed: it pins the list literally, refuses the
 // shapes that would let one capability quietly imply another, and asserts that
 // every one of them names a place in the app that reads it.
@@ -29,9 +29,18 @@ const resourceOf = (capability: string) => capability.split('.').slice(0, -1);
 const modeOf = (capability: string) => capability.split('.').at(-1)!;
 
 describe('the capability vocabulary', () => {
-  it('is exactly 119 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(119);
-    expect(new Set(CAPABILITIES).size).toBe(119);
+  // 119 BECAME 120 with `announcements.discord.write` — the console's half of
+  // the bot's /say. It is a new capability rather than a reuse of
+  // `announcements.create.write` because it reaches a different audience by a
+  // different route: a member who never opens the website is in that channel,
+  // and nothing the console offers can take a posted Discord message back the
+  // way unpublishing takes an announcement down.
+  //
+  // It is NOT a new AREA, and the test below is why that matters — a `discord`
+  // area would need a `discord.page`, and there is no Discord page to open.
+  it('is exactly 120 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(120);
+    expect(new Set(CAPABILITIES).size).toBe(120);
   });
 
   it('has 16 areas, every one of them used', () => {
@@ -156,7 +165,7 @@ describe('CAPABILITY_GATES', () => {
   // The failure it guards against is the opposite one — a site disappearing
   // while the entry claiming it stays. `tournaments.draw.participants.remove.write`
   // itself survives, still gated on removeParticipantFromEvent, and no
-  // capability was added or removed there: CAPABILITIES is 119 above, and the
+  // capability was added or removed there: CAPABILITIES is 120 above, and the
   // one added by `players.consoleaccess.write` is the 134th site — setConsoleAccess,
   // which no other capability claims.
   // 133 BECAME 137 over two changes to the Court Management tab.
@@ -164,23 +173,25 @@ describe('CAPABILITY_GATES', () => {
   // setMatchCourt (136), then setMatchLive (137) once it turned out that
   // `tournament_matches.status = 'live'` had no writer anywhere in either app —
   // see 00136. Three new sites, NO new capability and none removed: CAPABILITIES
-  // is still 119 above. All three are the desk answering or acting on "are you
+  // is still 120 above. All three are the desk answering or acting on "are you
   // here", which is why they merged rather than minting keys; the reason is
   // argued in that entry's `merged` prose, which this file's next test requires.
   //
   // Score entry deliberately did NOT join them, even though it now sits on the
   // same tab: tournaments.results.* is a different act by a different person and
   // keeps its own gate.
-  it('names 137 distinct enforcement points, none of them claimed twice', () => {
+  // 137 BECAME 138 with `announcements.discord.write`, one capability and one
+  // site: queueDiscordMessage. Nothing merged and nothing moved.
+  it('names 138 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(137);
-    expect(new Set(sites).size).toBe(137);
-    expect(ENFORCEMENT_POINTS).toBe(137);
+    expect(sites.length).toBe(138);
+    expect(new Set(sites).size).toBe(138);
+    expect(ENFORCEMENT_POINTS).toBe(138);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -260,6 +271,12 @@ describe('baselines', () => {
   // order — it is repointed rather than rewritten, because the SET did not
   // change, only which constant holds it. That is the anti-widening claim: what
   // an admin may hand out is exactly what an exec used to hold by default.
+  // STILL 73, and `announcements.discord.write` is why that is worth a note
+  // rather than silence. It is capability 120 and it is in NEITHER baseline —
+  // admin-only, so the set an admin may hand out did not move. The reasoning is
+  // at its declaration in access-level.ts; the short version is that the four VP
+  // portfolios are seeded rows in an applied migration, so widening one is a
+  // re-seed rather than an edit to a constant.
   it('leaves exactly 73 capabilities assignable, pinned one by one', () => {
     expect([...EXEC_ASSIGNABLE]).toEqual([
       'players.page',
@@ -766,11 +783,11 @@ describe('EDITOR_OFFERABLE', () => {
 // ---------------------------------------------------------------------------
 
 describe('permits', () => {
-  it('makes an admin a superuser BY LEVEL, holding all 119', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 120', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(119);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(120);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {
@@ -1059,7 +1076,7 @@ describe('resolvePermissions', () => {
   // AN ADMIN GETS NO FLOOR EITHER, and the reason is not symmetry. BASELINES
   // .admin is ALL_CAPABILITIES — a level short-circuit written as a set, not
   // anything anybody was granted — so merging it would make the resolver answer
-  // 119 for a composition that cannot exist, since both write paths refuse an
+  // 120 for a composition that cannot exist, since both write paths refuse an
   // admin target outright. permits() never reads it, so the only thing such a
   // value could do is mislead an editor preview.
   it('gives an ADMIN no floor, because their baseline is a short-circuit', () => {

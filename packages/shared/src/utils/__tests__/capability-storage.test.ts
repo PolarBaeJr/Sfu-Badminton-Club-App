@@ -50,20 +50,21 @@ describe('the migrations and the vocabulary', () => {
   // them anywhere else would fail on a missing marker rather than on a real
   // disagreement.
   // ...00097 adds `tournaments.draw.waivers.read`, reaching 117, 00098 adds
-  // `tournaments.draw.entrycounts.read`, reaching 118, and 00105 adds
-  // `players.consoleaccess.write`, reaching 119. THE LIVE LIST IS THE LAST ONE,
+  // `tournaments.draw.entrycounts.read`, reaching 118, 00105 adds
+  // `players.consoleaccess.write`, reaching 119, and 00223 adds
+  // `announcements.discord.write`, reaching 120. THE LIVE LIST IS THE LAST ONE,
   // and only the last one.
-  const vocabularySql = migration('00105_');
+  const vocabularySql = migration('00223_');
   // The previous link stays pinned under its own name rather than being
   // overwritten by the pointer above. If `vocabularySql` simply moved on, the
   // hop that used to be asserted would silently become a longer one and the
   // link in between would stop being checked at all — the chain would still look
   // unbroken while having a gap in it. So each hop keeps its own name and each
   // gets its own assertion.
-  const prevVocabularySql = migration('00098_');
+  const prevVocabularySql = migration('00105_');
   // ...and the one before that, for the same reason. This was
-  // `prevVocabularySql` until 00105 landed.
-  const priorVocabularySql = migration('00097_');
+  // `prevVocabularySql` until 00223 landed.
+  const priorVocabularySql = migration('00098_');
   // The RENAME lives in 00088 and stays pinned there. Following it forward
   // would look like it still passed while quietly checking nothing: no later
   // migration renames anything, so `dropped` would be empty and the mapping
@@ -132,9 +133,9 @@ describe('the migrations and the vocabulary', () => {
 
   // ...nor in 00105, which adds `players.consoleaccess.write`. Every hop from
   // the last RENAME (00088) to the live list is asserted individually: 00088 ->
-  // 00089 -> 00097 -> 00098 -> 00105. Adding a migration means adding a hop
-  // here, which is the price of the chain staying a chain.
-  it('removes nothing in 00105 either, which is why it needs no rewrite', () => {
+  // 00089 -> 00097 -> 00098 -> 00105 -> 00223. Adding a migration means adding a
+  // hop here, which is the price of the chain staying a chain.
+  it('removes nothing in 00223 either, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(prevVocabularySql, 'players_permission_vocabulary_check');
     const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
     expect(before.filter((capability) => !after.has(capability))).toEqual([]);
@@ -144,9 +145,20 @@ describe('the migrations and the vocabulary', () => {
   // set-equality above. A vocabulary CHECK that does not admit it means the
   // database refuses every row granting it, which is a capability the editor
   // offers and the save rejects.
-  it('admits players.consoleaccess.write, which is what 00105 is for', () => {
+  it('admits announcements.discord.write, which is what 00223 is for', () => {
     const before = new Set(arrayLiteralAfter(prevVocabularySql, 'players_permission_vocabulary_check'));
     const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
+    expect(before.has('announcements.discord.write')).toBe(false);
+    expect(after.has('announcements.discord.write')).toBe(true);
+  });
+
+  // The hop this one replaced, kept rather than overwritten. The pointer moving
+  // forward must not retire the assertion it used to make — 00105's own string
+  // would otherwise stop being checked the moment 00223 landed, and the chain
+  // would look unbroken with a gap in it.
+  it('admits players.consoleaccess.write, which is what 00105 was for', () => {
+    const before = new Set(arrayLiteralAfter(priorVocabularySql, 'players_permission_vocabulary_check'));
+    const after = new Set(arrayLiteralAfter(prevVocabularySql, 'players_permission_vocabulary_check'));
     expect(before.has('players.consoleaccess.write')).toBe(false);
     expect(after.has('players.consoleaccess.write')).toBe(true);
   });
@@ -198,10 +210,10 @@ describe('the migrations and the vocabulary', () => {
     // missing function rather than on a real disagreement, and following the
     // vocabulary assertion back to 00093 would check a list that is no longer
     // the live one. The vocabulary pointer moves with every migration that
-    // re-adds the CHECK — 00097, then 00098, now 00105 — while the guard pointer
-    // stays where the function is defined.
+    // re-adds the CHECK — 00097, 00098, 00105, now 00223 — while the guard
+    // pointer stays where the function is defined.
     const baselineGuardSql = migration('00093_');
-    const baselineSql = migration('00105_');
+    const baselineSql = migration('00223_');
 
     it('pins the same vocabulary the players columns pin', () => {
       const stored = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');

@@ -569,6 +569,50 @@ export function recordAnnouncementPost(input: {
   return send<{ ok: true }>('POST', '/api/discord/announcements', input);
 }
 
+// ---------------------------------------------------------------------------
+// The outbox — messages the console asked for (00222)
+// ---------------------------------------------------------------------------
+
+export interface OutboxMessage {
+  id: string;
+  channelId: string;
+  /** A plain message, exactly like /say. Null when this is an embed. */
+  content: string | null;
+  embed: { title: string; body: string; type: string } | null;
+  /** Whether mentions in the text are allowed to notify. Default is silence. */
+  ping: boolean;
+  attempts: number;
+}
+
+/**
+ * CLAIM the next few, do not merely read them.
+ *
+ * The endpoint takes the claim in the same statement it returns the rows, so
+ * calling this TAKES OWNERSHIP: whatever comes back is this process's to post,
+ * and no other replica will be given it for ten minutes. Anything claimed and
+ * not resolved through recordOutboxResult comes back into the pool then.
+ */
+export function claimOutboxMessages(guildId: string): Promise<{ messages: OutboxMessage[] }> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/outbox?${params}`);
+}
+
+/**
+ * Say what Discord did. Exactly one of the two outcomes.
+ *
+ * `discordMessageId` closes the row for good. `error` spends one attempt and
+ * releases the claim, so a transient refusal is retried and a permanent one
+ * stops after three with the reason still readable in the console — which is
+ * the only thing that will get it fixed.
+ */
+export function recordOutboxResult(input: {
+  id: string;
+  discordMessageId?: string;
+  error?: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/outbox', input);
+}
+
 /** Forget a mapping, after the Discord message is gone. */
 export function clearAnnouncementPost(
   announcementId: string,

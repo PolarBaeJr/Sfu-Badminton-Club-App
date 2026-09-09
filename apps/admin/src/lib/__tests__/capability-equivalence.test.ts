@@ -170,6 +170,11 @@ const TODAY: Row[] = [
   { capability: 'announcements.create.write',          admin: T, exec: T, trainer: F, was: "getExecOrAdmin('external') — announcements.ts:69" },
   { capability: 'announcements.update.write',          admin: T, exec: T, trainer: F, was: "getExecOrAdmin('external') — announcements.ts:137" },
   { capability: 'announcements.delete.write',          admin: T, exec: T, trainer: F, was: "getExecOrAdmin('external') — announcements.ts:189" },
+  // NEW, NOT A TRANSCRIPTION. There was no console way to speak in Discord
+  // before 00222, so `was` names the act it is equivalent to rather than a call
+  // site that existed: /say, which Discord itself gates on MANAGE_GUILD. Admin
+  // only — an exec ✗ here is the whole posture, not an oversight.
+  { capability: 'announcements.discord.write',         admin: T, exec: F, trainer: F, was: 'no console equivalent — /say, gated by Discord MANAGE_GUILD' },
 
   // ---- tournaments · manage --------------------------------------------
   { capability: 'tournaments.page',                    admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('tournaments') — tournaments/[id]/page.tsx:18" },
