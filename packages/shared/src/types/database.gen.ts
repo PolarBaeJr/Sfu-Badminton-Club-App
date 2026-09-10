@@ -9,12 +9,12 @@
 //
 // which is:
 //
-//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-staging-db --database postgres --label staging
+//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-db --database postgres --label production
 //
-// SOURCE DATABASE: staging — container "supabase-staging-db" on ssh host
+// SOURCE DATABASE: production — container "supabase-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 67 tables, 2 views and 26 enums.
+// Covers 68 tables, 2 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -765,6 +765,71 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      discord_outbox: {
+        Row: {
+          attempts: number
+          channel_id: string
+          claimed_at: string | null
+          content: string | null
+          created_at: string
+          discord_message_id: string | null
+          embed_body: string | null
+          embed_title: string | null
+          embed_type: string | null
+          failed_at: string | null
+          guild_id: string
+          id: string
+          last_error: string | null
+          ping: boolean
+          requested_by: string | null
+          sent_at: string | null
+        }
+        Insert: {
+          attempts?: number
+          channel_id: string
+          claimed_at?: string | null
+          content?: string | null
+          created_at?: string
+          discord_message_id?: string | null
+          embed_body?: string | null
+          embed_title?: string | null
+          embed_type?: string | null
+          failed_at?: string | null
+          guild_id: string
+          id?: string
+          last_error?: string | null
+          ping?: boolean
+          requested_by?: string | null
+          sent_at?: string | null
+        }
+        Update: {
+          attempts?: number
+          channel_id?: string
+          claimed_at?: string | null
+          content?: string | null
+          created_at?: string
+          discord_message_id?: string | null
+          embed_body?: string | null
+          embed_title?: string | null
+          embed_type?: string | null
+          failed_at?: string | null
+          guild_id?: string
+          id?: string
+          last_error?: string | null
+          ping?: boolean
+          requested_by?: string | null
+          sent_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discord_outbox_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       discord_role_revocations: {
         Row: {
@@ -3918,6 +3983,10 @@ export type Database = {
       derived_format_weight: {
         Args: { p_best_of: number; p_target: number }
         Returns: number
+      }
+      discord_role_is_member_chosen: {
+        Args: { p_role_name: string }
+        Returns: boolean
       }
       dispute_match_result: {
         Args: {
