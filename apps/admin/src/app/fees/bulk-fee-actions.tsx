@@ -20,12 +20,12 @@ import {
  * The season fee, settled for several members at once.
  *
  * THE CASE THIS EXISTS FOR is the first night of a term. A queue at the door
- * hands over cash, and the console had one dialog per person — with the same
+ * hands over cash, and the console had one dialog per person, with the same
  * "cash" in the method box every time.
  *
  * NO AMOUNT FIELD, AND THAT IS THE WHOLE DESIGN. bulkMarkFeesPaid deliberately
  * omits amount_cents, so markFeePaid falls back to the season's per-status fee
- * for each member — competitive or recreational, read off their own row. One
+ * for each member: competitive or recreational, read off their own row. One
  * shared Amount box here would bill thirty people one number and overwrite
  * thirty real prices, and the audit rows would agree with it. A custom amount is
  * a statement about one person and stays in that person's row dialog. Method and
@@ -35,7 +35,7 @@ import {
  * THREE BUTTONS, ONE SELECTION, THREE DIFFERENT ELIGIBLE STATES. Mark Paid and
  * Waive want an unpaid row; Mark Unpaid reverses a paid or waived one. `states`
  * is what lets each dialog say how many of the selection it will really touch,
- * and it is used for nothing else — see lib/fee-bulk-eligibility. Every selected
+ * and it is used for nothing else. See lib/fee-bulk-eligibility. Every selected
  * id is sent and the server refuses the rest per record, by name.
  */
 export function BulkFeeActions({
@@ -75,7 +75,7 @@ export function BulkFeeActions({
   const willWaive = countEligible(ids, states, 'waive');
   const willMarkUnpaid = countEligible(ids, states, 'markUnpaid');
 
-  // "4 of the 9 selected" — and the remainder said out loud rather than left for
+  // "4 of the 9 selected", with the remainder said out loud rather than left for
   // the officer to find in the toast afterwards.
   const scope = (eligible: number, whatTheRestAre: string) =>
     eligible === ids.length
@@ -165,7 +165,7 @@ export function BulkFeeActions({
         )}
       </SelectionBar>
 
-      {/* Outside the bar — it is `sticky z-20` and therefore a stacking context,
+      {/* Outside the bar, because it is `sticky z-20` and therefore a stacking context,
           so a `fixed z-50` overlay nested inside it would sit under the console's
           own chrome. */}
       <Dialog open={paidOpen} onClose={() => setPaidOpen(false)} title="Mark fees paid">
@@ -174,14 +174,15 @@ export function BulkFeeActions({
             Records the {seasonName} fee as paid for everyone on this list.{' '}
             <strong className="text-[var(--text-primary)]">
               Each member is charged their own rate
-            </strong>{' '}
-            — the season’s competitive or recreational price, whichever applies to
-            them. There is no amount to type here on purpose; to record a
-            different figure for somebody, use Mark Paid on their own row.
+            </strong>
+            : the season&rsquo;s competitive or recreational price, whichever
+            applies to them. There is no amount to type here on purpose; to
+            record a different figure for somebody, use Mark Paid on their own
+            row.
           </p>
           <p className="text-sm text-[var(--text-muted)]">{scope(willMarkPaid, 'already paid or waived')}</p>
           <SelectionSummary noun="member" />
-          {/* The shared method fields, unmodified — the one part of a payment
+          {/* The shared method fields, unmodified: the one part of a payment
               that genuinely is the same for the whole queue. */}
           <PaymentMethodFields value={payment} onChange={setPayment} disabled={running} />
           <div className="flex justify-end gap-2">
@@ -206,7 +207,7 @@ export function BulkFeeActions({
         <div className="space-y-4">
           <p className="text-[var(--text-secondary)]">
             {mode === 'waive'
-              ? `Writes off the ${seasonName} fee for everyone on this list — they drop out of the outstanding count. A member whose fee is already waived is left exactly as they are: re-waiving would replace the date it was waived and the officer who waived it.`
+              ? `Writes off the ${seasonName} fee for everyone on this list, so they drop out of the outstanding count. A member whose fee is already waived is left exactly as they are: re-waiving would replace the date it was waived and the officer who waived it.`
               : `Reverses the ${seasonName} fee for everyone on this list, whether it was paid or waived. The amount stays on the record; only the payment is cleared.`}
           </p>
           <p className="text-sm text-[var(--text-muted)]">
