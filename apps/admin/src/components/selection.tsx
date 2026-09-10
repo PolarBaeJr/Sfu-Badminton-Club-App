@@ -198,7 +198,14 @@ export function SelectionBar({ noun, children }: { noun: string; children: React
 
   return (
     <div className="sticky bottom-0 z-20 -mx-1 px-1 pb-1">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border border-[var(--color-accent)] bg-[var(--bg-secondary)] px-4 py-3 shadow-lg">
+      {/* --bg-elevated, and it has to be a token that EXISTS. This was
+          --bg-secondary, which the admin theme has never defined (globals.css
+          declares primary/surface/card/elevated and nothing else), so the
+          declaration was dropped and the bar rendered fully transparent — the
+          rows it is sitting on top of read straight through the selection
+          count. An invalid custom property is not a visible failure anywhere:
+          no build error, no console warning, just no background. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border border-[var(--color-accent)] bg-[var(--bg-elevated)] px-4 py-3 shadow-lg">
         <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--text-primary)]">
           {selectedItems.length} {plural} selected
           {hiddenCount > 0 && (

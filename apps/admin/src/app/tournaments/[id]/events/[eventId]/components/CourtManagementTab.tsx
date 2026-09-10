@@ -429,7 +429,7 @@ function DeskRow({
         ? { text: 'Next up', style: tint('--color-accent', 14, 50) }
         : state === 'callable'
           ? { text: 'Ready to call', style: undefined, cls: 'border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-secondary)]' }
-          : { text: 'Waiting', style: undefined, cls: 'border-[var(--border)] text-[var(--text-dim)]' };
+          : { text: 'Waiting', style: undefined, cls: 'border-[var(--border)] text-[var(--text-muted)]' };
 
   return (
     <div
@@ -465,12 +465,12 @@ function DeskRow({
               wonders whether something is broken, which is how the READY label
               got reported as a bug in the first place. */}
           {state === 'waiting' && (
-            <p className="text-[11px] text-[var(--text-dim)] mt-0.5">
+            <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
               Waiting on an earlier result to fill {!a.entryId && !b.entryId ? 'both slots' : 'a slot'}.
             </p>
           )}
         </div>
-        <span className={`shrink-0 text-sm font-semibold ${label ? 'text-[var(--color-accent)]' : 'text-[var(--text-dim)]'}`}>
+        <span className={`shrink-0 text-sm font-semibold ${label ? 'text-[var(--color-accent)]' : 'text-[var(--text-muted)]'}`}>
           {label ?? 'No court'}
         </span>
       </div>
@@ -625,7 +625,7 @@ function CourtField({ matchId, current, disabled }: { matchId: string; current: 
             if (e.key === 'Escape') { setValue(current); e.currentTarget.blur(); }
           }}
           placeholder="Court — e.g. 3"
-          className="flex-1 min-w-0 min-h-[44px] px-3 bg-[var(--bg-surface)] border border-[var(--border)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-dim)] focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-60"
+          className="flex-1 min-w-0 min-h-[44px] px-3 bg-[var(--bg-surface)] border border-[var(--border)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-60"
         />
         {pending && <Loader2 className="w-4 h-4 animate-spin text-[var(--text-muted)]" aria-hidden />}
       </label>
