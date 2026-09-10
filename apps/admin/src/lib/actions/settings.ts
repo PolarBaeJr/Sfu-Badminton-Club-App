@@ -46,6 +46,18 @@ export async function updatePlatformSettings(
   const admin = await requireCapability('platform.settings.write');
   const adminClient = createAdminClient();
 
+  // EVERY KEY IS CHECKED BEFORE ANY KEY IS WRITTEN, in two passes.
+  //
+  // There is no transaction here — each key is a separate PostgREST call — so
+  // a refusal raised halfway down a multi-key save leaves the keys before it
+  // written and the keys after it untouched, and the officer sees only an error
+  // toast. /accounts saves several keys at once, so that is a real shape. The
+  // reason floor above was already all-or-nothing by being checked first; the
+  // two per-key guards below would not have been, so they are hoisted to join
+  // it. A write that fails at the database is still partial, and cannot be made
+  // otherwise from here — but that is an outage, not a payload we could have
+  // rejected.
+  const checked: { key: string; value: Record<string, unknown>; stored: unknown }[] = [];
   for (const update of updates) {
     const { data: oldSetting } = await adminClient
       .from('platform_settings')
@@ -53,6 +65,51 @@ export async function updatePlatformSettings(
       .eq('key', update.key)
       .single();
 
+    // AN UNKNOWN KEY IS A REFUSAL, NOT A NO-OP. `.update().eq('key', ...)`
+    // matches zero rows and returns no error, so an invented or misspelled key
+    // used to sail all the way through and still write an audit row announcing
+    // a change that never happened. `updates` is a client-controlled POST field
+    // (see reference_server_action_params), so "no UI sends a bad key" is not
+    // the same statement as "no caller does".
+    if (!oldSetting) {
+      throw new ExpectedError(`There is no platform setting called "${update.key}".`);
+    }
+    const stored = (oldSetting.value ?? {}) as Record<string, unknown>;
+
+    // EVERY WRITE HERE REPLACES THE WHOLE JSONB BLOB, so a payload that is
+    // missing a key DELETES that key. Both callers know it and both spread the
+    // saved blob before overlaying their edits (ratings-form.tsx:265,
+    // platform-settings-form.tsx:106) — which is exactly why this has been
+    // invisible: the only two flows that exist happen to send a superset. The
+    // two that are not flows are the ones that bite. A stale tab holds a blob
+    // from before somebody else's save and writes their keys back out of
+    // existence; and a hand-rolled POST of
+    // `[{key:'rating_defaults', value:{tier_advanced_elo:9999}}]` wipes the
+    // K-factors, the bounds and the two other tiers, with no error and a
+    // perfectly ordinary-looking audit row.
+    //
+    // REFUSED RATHER THAN MERGED, and the difference matters. A server-side
+    // shallow merge would make both of those harmless, and would also make key
+    // DELETION impossible AND SILENT — the raw JSON <Textarea> that /ratings
+    // offers for an unplaced key (ratings-form.tsx:422) is a deliberate
+    // whole-blob editor, so an admin who removes a line there would watch it
+    // reappear and be told nothing. Naming the keys covers both audiences: the
+    // stale tab gets "reload", the deliberate deleter gets told where deletion
+    // actually lives. Nothing in the app deletes a settings key — only
+    // migrations add them — so there is no flow this costs.
+    const dropped = Object.keys(stored).filter((field) => !(field in update.value));
+    if (dropped.length > 0) {
+      throw new ExpectedError(
+        `Saving "${update.key}" would delete ${dropped.length === 1 ? 'the setting' : 'the settings'} `
+          + `${dropped.join(', ')}, which this form has no way to have meant. Reload the page and `
+          + `make the change again — if a key really should be removed, that is a migration, not a save.`
+      );
+    }
+
+    checked.push({ key: update.key, value: update.value, stored: oldSetting.value ?? null });
+  }
+
+  for (const update of checked) {
     const { error } = await adminClient
       .from('platform_settings')
       .update({
@@ -73,7 +130,10 @@ export async function updatePlatformSettings(
       action_type: 'platform_setting_updated',
       target_type: 'platform_setting',
       target_id: null,
-      old_value: oldSetting?.value ?? null,
+      // `stored` was read in the checking pass above, not re-read here — one
+      // read per key, and the value the guard actually judged is the value the
+      // audit row reports as the "before".
+      old_value: update.stored,
       new_value: update.value,
       // Key FIRST. With target_id null this is the only place it appears, and
       // the /audit table truncates the reason cell at max-w-xs — "Platform
