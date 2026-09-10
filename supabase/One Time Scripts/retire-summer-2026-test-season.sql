@@ -23,7 +23,8 @@
 -- ORDER (sections 1 and 2 are independent; run 0 first either way)
 --   0. SECTION 0: read-only. Confirms every premise below still holds.
 --   1. SECTION 1: close out the tournament. Events first, then the parent.
---   2. SECTION 2: put the three moved ratings back to the ladder floor.
+--   2. SECTION 2: put the three moved ratings back on their seed (Aditya to
+--                  the advanced 1200, the other two to the 400 floor).
 --   3. SECTION 3: OPTIONAL. Unrate the season's matches. Read its caveat;
 --                  it does less than it sounds like it does.
 --   4. SECTION 4: read-only. Verify.
@@ -62,8 +63,9 @@ SELECT (SELECT sum(singles_matches_played) FROM public.ratings) AS sum_singles_p
        (SELECT sum(doubles_matches_played) FROM public.ratings) AS sum_doubles_played,
        (SELECT count(*) FROM public.match_participants)         AS participant_rows;
 
-\echo '--- 0d. the three rows SECTION 2 will rewrite. skill_tier must be NULL on all three ---'
-\echo '---     (a NULL tier is why the floor is 400 and not 800/1200) ---'
+\echo '--- 0d. the three rows SECTION 2 will rewrite. Expect skill_tier NULL on all three ---'
+\echo '---     A NULL tier is why two of them return to 400. Aditya is the exception: ---'
+\echo '---     the owner states he IS advanced, so SECTION 2 records the tier and seeds 1200. ---'
 SELECT r.player_id, p.full_name, p.skill_tier,
        r.singles_elo, r.doubles_elo,
        r.singles_matches_played, r.doubles_matches_played
@@ -142,13 +144,27 @@ COMMIT;
 
 
 -- ============================================================
--- SECTION 2: put the three moved ratings back on the ladder floor.
+-- SECTION 2: put the three moved ratings back on their seed.
 --
--- 400 rather than a tier seed because all three carry skill_tier = NULL: they
--- were never tier-seeded, so there is no higher band to return them to. The
--- five members sitting at 800/800 and 1200/1200 ARE tier seeds and this
--- statement must not touch them, which is why it names three ids rather than
--- filtering on a rating value.
+-- TWO DIFFERENT SEEDS, and this is the whole point of the section. All three
+-- carry skill_tier = NULL, so on the data alone all three would return to the
+-- 400 floor. The owner corrected that on 2026-09-10: Aditya IS advanced, the
+-- tier was simply never recorded because he signed up before the tier picker
+-- existed. So he returns to the advanced seed of 1200 and the other two return
+-- to 400. The tier is written as well as the rating, otherwise the claim behind
+-- the number is missing and the pair disagree.
+--
+-- The five members already sitting at 800/800 and 1200/1200 ARE tier seeds and
+-- must not be touched, which is why this names ids rather than filtering on a
+-- rating value.
+--
+-- EVERY COUNTER, not just the rating. The first version of this section reset
+-- singles_elo, the provisional flags and matches_played, and left wins, losses,
+-- points, games and streaks behind. That produced a live leaderboard showing a
+-- provisional member at 400 with a 2-1 record and zero matches played, which is
+-- self-contradictory on the page members actually read. The seed values are read
+-- off an untouched row rather than assumed: k_factor stays 80/64, because that
+-- is what every seeded row carries including the ones nothing has moved.
 --
 -- WHY NOT activate_season('full'): it rewrites EVERY row in `ratings` to
 -- default_elo (00068:99-106), flattening those 800/1200 seeds, and nothing
@@ -162,14 +178,50 @@ COMMIT;
 -- recompute_player_stats, and none of the three writes `ratings` (checked
 -- against pg_proc.prosrc, 2026-09-09). Nothing will put these numbers back.
 --
--- This also clears Aditya's doubles_elo of 1500, which is UNEXPLAINED: it sits
--- on 0 doubles matches, is not a tier seed, and audit_logs holds no manual
+-- This also clears Aditya's doubles_elo of 1500, which was UNEXPLAINED: it sat
+-- on 0 doubles matches, was not a tier seed, and audit_logs holds no manual
 -- rating edit anywhere (the only rating entries are 7 self_rating_seeded rows).
 -- 1500 is the stale MAX_ELO code constant, which is suggestive, not proof.
 -- ============================================================
 
 BEGIN;
 
+-- The claim behind the 1200 below. Owner-asserted, not derived from the data:
+-- nothing in the DB records a tier for him either way.
+UPDATE public.players
+   SET skill_tier = 'advanced'
+ WHERE id = 'ee871221-4fa7-4083-a156-a0d0e9a3d4aa';  -- Aditya Kulkarni
+-- Expect: UPDATE 1
+
+-- Aditya, to the advanced seed.
+UPDATE public.ratings
+   SET singles_elo             = 1200,
+       doubles_elo             = 1200,
+       singles_provisional     = TRUE,
+       doubles_provisional     = TRUE,
+       singles_matches_played  = 0,
+       doubles_matches_played  = 0,
+       singles_wins            = 0,
+       singles_losses          = 0,
+       doubles_wins            = 0,
+       doubles_losses          = 0,
+       singles_points_scored   = 0,
+       singles_points_allowed  = 0,
+       doubles_points_scored   = 0,
+       doubles_points_allowed  = 0,
+       singles_games_won       = 0,
+       singles_games_lost      = 0,
+       doubles_games_won       = 0,
+       doubles_games_lost      = 0,
+       current_singles_streak  = 0,
+       best_singles_streak     = 0,
+       current_doubles_streak  = 0,
+       best_doubles_streak     = 0,
+       updated_at              = NOW()
+ WHERE player_id = 'ee871221-4fa7-4083-a156-a0d0e9a3d4aa';  -- was 1423 / 1500
+-- Expect: UPDATE 1
+
+-- The other two, to the 400 floor. Both genuinely have no tier.
 UPDATE public.ratings
    SET singles_elo             = 400,
        doubles_elo             = 400,
@@ -177,13 +229,28 @@ UPDATE public.ratings
        doubles_provisional     = TRUE,
        singles_matches_played  = 0,
        doubles_matches_played  = 0,
+       singles_wins            = 0,
+       singles_losses          = 0,
+       doubles_wins            = 0,
+       doubles_losses          = 0,
+       singles_points_scored   = 0,
+       singles_points_allowed  = 0,
+       doubles_points_scored   = 0,
+       doubles_points_allowed  = 0,
+       singles_games_won       = 0,
+       singles_games_lost      = 0,
+       doubles_games_won       = 0,
+       doubles_games_lost      = 0,
+       current_singles_streak  = 0,
+       best_singles_streak     = 0,
+       current_doubles_streak  = 0,
+       best_doubles_streak     = 0,
        updated_at              = NOW()
  WHERE player_id IN (
-   'ee871221-4fa7-4083-a156-a0d0e9a3d4aa',  -- Aditya Kulkarni   1423 / 1500
-   'ba250ca7-a097-4a3a-a499-715380eccadf',  -- Matthew Cheng     1235 / 400
-   'c0bced90-4a39-4e8b-b1b5-ae8a75bdb517'   -- wui KI Cheng      1217 / 400
+   'ba250ca7-a097-4a3a-a499-715380eccadf',  -- Matthew Cheng     was 1235 / 400
+   'c0bced90-4a39-4e8b-b1b5-ae8a75bdb517'   -- wui KI Cheng      was 1217 / 400
  );
--- Expect: UPDATE 3
+-- Expect: UPDATE 2
 
 COMMIT;
 
@@ -250,3 +317,26 @@ SELECT p.full_name, r.singles_elo, r.doubles_elo
 SELECT sum(singles_matches_played) AS sum_singles,
        sum(doubles_matches_played) AS sum_doubles
   FROM public.ratings;
+
+\echo '--- 4f. no record left behind the cleared counters. Expect 0 rows ---'
+\echo '---     Catches the first-pass miss: a 2-1 record beside 0 matches played. ---'
+SELECT p.full_name, r.singles_wins, r.singles_losses,
+       r.doubles_wins, r.doubles_losses,
+       r.singles_points_scored, r.singles_games_won,
+       r.current_singles_streak, r.best_singles_streak
+  FROM public.ratings r
+  JOIN public.players p ON p.id = r.player_id
+ WHERE (r.singles_wins, r.singles_losses, r.doubles_wins, r.doubles_losses,
+        r.singles_points_scored, r.singles_points_allowed,
+        r.doubles_points_scored, r.doubles_points_allowed,
+        r.singles_games_won, r.singles_games_lost,
+        r.doubles_games_won, r.doubles_games_lost,
+        r.current_singles_streak, r.best_singles_streak,
+        r.current_doubles_streak, r.best_doubles_streak)
+    <> (0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0);
+
+\echo '--- 4g. Aditya seeded advanced, tier and rating agreeing. Expect advanced / 1200 / 1200 ---'
+SELECT p.full_name, p.skill_tier, r.singles_elo, r.doubles_elo
+  FROM public.players p
+  JOIN public.ratings r ON r.player_id = p.id
+ WHERE p.id = 'ee871221-4fa7-4083-a156-a0d0e9a3d4aa';
