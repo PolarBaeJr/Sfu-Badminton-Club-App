@@ -473,6 +473,11 @@ async function applyPlayerPermissions(
 
   revalidatePath('/permissions');
   revalidatePath('/players');
+  // THIS PATH BECAME LOAD-BEARING when the editor was embedded on the member's
+  // own detail page: the panel there IS this row, so a stale copy would show the
+  // capabilities as they were before the save that just landed. setConsoleAccess
+  // has always revalidated it — only the capability-write path was missing it.
+  revalidatePath(`/players/${playerId}`);
   // The sidebar and the dashboard are both filtered by what the viewer holds,
   // so the person whose access just changed must not keep a cached copy of the
   // old answer.
