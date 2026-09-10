@@ -11,7 +11,9 @@ import {
   handleSayModal,
   isAnnounceModal,
   isSayModal,
+  handleGuideButton,
   handleSelfRoleButton,
+  isGuideButton,
   isReportModal,
   isSelfRoleButton,
   type CommandOption,
@@ -707,6 +709,26 @@ const server = createServer(async (req, res) => {
         return send(res, 200, response);
       } catch (error) {
         console.error('[bot] self-role button failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: { content: 'Something went wrong. Please try again.', flags: 64 },
+        });
+      }
+    }
+
+    // The guide message's buttons. The same two fields as above and no role
+    // list, because nothing here toggles a role. Order against the self-role
+    // block is a readability choice only: the two prefixes are disjoint.
+    if (isGuideButton(customId)) {
+      const context = {
+        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+        guildId: interaction.guild_id ?? null,
+      };
+      try {
+        const response = await handleGuideButton(customId as string, context);
+        return send(res, 200, response);
+      } catch (error) {
+        console.error('[bot] guide button failed:', error);
         return send(res, 200, {
           type: 4,
           data: { content: 'Something went wrong. Please try again.', flags: 64 },

@@ -547,6 +547,26 @@ export const COMMAND_DEFINITIONS = [
     default_member_permissions: EXEC_ONLY,
     dm_permission: false,
   },
+  {
+    // One word, for /sessionpost's reason: Discord command names are
+    // ^[-_\p{L}\p{N}]{1,32}$ and lowercase. A sibling rather than a subcommand
+    // because there is nothing to be a sibling OF: this posts one fixed message
+    // and has no add/remove/list to sit beside.
+    name: 'guidepost',
+    description: 'Post the help guide, with buttons, into this channel',
+    options: [],
+    // EXEC_ONLY, on /sessionpost's argument at the top of this file: it writes a
+    // message into a shared channel under the club's name. Not MANAGE_GUILD,
+    // because posting a help guide is session-running work rather than server
+    // administration. No app-side capability check to pair it with because
+    // nothing here reads or writes club data: the buttons carry no authority,
+    // they only open the same flows /link, /bug and /feedback open for every
+    // member already.
+    default_member_permissions: EXEC_ONLY,
+    // A guild only. The reply is a public channel message and a DM has no
+    // channel for that to mean anything in.
+    dm_permission: false,
+  },
 ];
 
 /**
@@ -1460,6 +1480,104 @@ function parseEmoji(emoji: string) {
   const custom = /^<?a?:?([\w~]+):(\d+)>?$/.exec(emoji);
   if (custom) return { name: custom[1], id: custom[2], animated: emoji.startsWith('<a:') };
   return { name: emoji };
+}
+
+// ---------------------------------------------------------------------------
+// /guidepost
+// ---------------------------------------------------------------------------
+//
+// THE MESSAGE FOR PEOPLE WHO DO NOT KNOW THERE ARE COMMANDS. Everything this
+// bot offers a member is behind a slash command they have to know the name of,
+// which is fine for the people who read the announcement and invisible to
+// everyone else. This posts one public message whose buttons open the three
+// flows a new member actually needs.
+//
+// STYLE IS LOAD-BEARING. These buttons are style 1 and style 2 with a
+// custom_id, never style 5. Style 5 is the LINK style used in handleLink; it
+// requires a url and cannot carry a custom_id, so a style 5 button here would
+// look right, render happily and emit no interaction at all when clicked.
+//
+// The custom_id suffix is a FIXED KEYWORD rather than configuration, which is
+// what makes the message safe to leave in a channel forever: unlike a picker
+// button there is nothing to revalidate, so a guide:link clicked in a year does
+// exactly what it does today.
+
+/** Prefix on every guide button's custom_id. `guide:<keyword>`. */
+const GUIDE_PREFIX = 'guide:';
+
+function guideComponents() {
+  return [
+    {
+      type: 1, // ACTION_ROW
+      components: [
+        {
+          type: 2, // BUTTON
+          style: 1, // PRIMARY -- the one thing to do first
+          label: 'Connect my account',
+          custom_id: `${GUIDE_PREFIX}link`,
+        },
+        {
+          type: 2,
+          style: 2, // SECONDARY
+          label: 'Report a bug',
+          custom_id: `${GUIDE_PREFIX}bug`,
+        },
+        {
+          type: 2,
+          style: 2,
+          label: 'Send feedback',
+          custom_id: `${GUIDE_PREFIX}feedback`,
+        },
+      ],
+    },
+  ];
+}
+
+function handleGuidePost(context: InteractionContext) {
+  if (!context.guildId) {
+    return ephemeral('Run this in a server, not a DM.');
+  }
+
+  // PUBLIC on purpose, and the only public reply this command has. Like
+  // /rolepicker post it OMITS flags rather than setting 0: a guide only the
+  // exec who posted it can see is no guide at all.
+  //
+  // Not deferred, and MUST NOT be added to DEFERRED_COMMANDS: a deferred
+  // acknowledgement fixes the reply's visibility as ephemeral, so deferring
+  // this would hide it from the channel. There is nothing to defer for anyway,
+  // because nothing here makes a network call.
+  return {
+    type: 4,
+    data: {
+      embeds: [
+        {
+          title: 'Getting started here',
+          color: CLUB_RED,
+          description:
+            'You do not need to know any commands to use this. Click a button below and I will ' +
+            'reply where only you can see it. Nobody else in this channel sees your reply.\n\n' +
+            '**Connect my account** joins your Discord account to your club account on the ' +
+            'website. Do this one first. Once the two are joined, your roles in this server are ' +
+            "set for you from the club's own records, and the bot can show you your profile and " +
+            'your sessions.\n\n' +
+            '**Report a bug** opens a small form for anything on the website that is not ' +
+            'working. Say what you were doing and what happened. It goes to the exec team.\n\n' +
+            '**Send feedback** opens the same kind of form for ideas, requests, or anything else ' +
+            'you want the club to hear.',
+          // NOT decoration. A button carries no options, so the bug and
+          // feedback buttons cannot offer the screenshot the slash commands do.
+          // Saying so is the difference between a limitation and a member
+          // filing a bug report about a missing feature.
+          footer: {
+            text:
+              'To attach a screenshot, type /bug in the message box instead. This form takes ' +
+              'words only for now.',
+          },
+        },
+      ],
+      components: guideComponents(),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2577,6 +2695,57 @@ export function isSelfRoleButton(customId: string | undefined | null): boolean {
   return typeof customId === 'string' && customId.startsWith(SELF_ROLE_PREFIX);
 }
 
+/** True for a guide button click. */
+export function isGuideButton(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(GUIDE_PREFIX);
+}
+
+/**
+ * A member clicked one of the guide message's buttons.
+ *
+ * Written HERE rather than beside guideComponents so that openReportModal and
+ * handleLink are both already in scope in reading order. Declarations hoist, so
+ * either position runs.
+ *
+ * IT OWNS ITS OWN FAILURES. dispatch's catch covers slash commands only and
+ * there is no equivalent on the component path, so an AppApiError from the mint
+ * would otherwise leave here as a rejection and be answered with the generic
+ * apology index.ts keeps for a bug in this file.
+ *
+ * The three buttons do exactly what /link, /bug and /feedback do, with no
+ * options to carry: openReportModal is given `undefined` for the option list,
+ * which is why the screenshot the slash command offers is not on this path.
+ */
+export async function handleGuideButton(customId: string, context: InteractionContext) {
+  const action = customId.slice(GUIDE_PREFIX.length);
+  try {
+    switch (action) {
+      case 'link':
+        // AWAITED rather than returned bare: a bare return hands the promise
+        // back before the catch below can see it reject.
+        return await handleLink(context);
+      // These two return bare, which is safe only because openReportModal is
+      // synchronous. Make it async and they escape the catch below the way a
+      // bare handleLink would.
+      case 'bug':
+        return openReportModal('bug', undefined, context);
+      case 'feedback':
+        return openReportModal(null, undefined, context);
+      default:
+        return ephemeral(
+          'That button is from an older version of this message. Ask an exec to post a fresh one.'
+        );
+    }
+  } catch (err) {
+    console.error(`[bot] guide button ${action} failed:`, err);
+    return ephemeral(
+      err instanceof AppApiError
+        ? "Couldn't reach the club app just now. Try again in a moment."
+        : 'Something went wrong. Please try again.'
+    );
+  }
+}
+
 /**
  * What a handler answers Discord with.
  *
@@ -2619,6 +2788,8 @@ export async function dispatch(
         return await handleTournaments(context);
       case 'rolepicker':
         return await handleRolePicker(options, context);
+      case 'guidepost':
+        return handleGuidePost(context);
       case 'announce':
         return openAnnounceModal(options);
       case 'say':
