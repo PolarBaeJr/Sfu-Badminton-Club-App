@@ -19,11 +19,11 @@ import {
   approvePlayer,
   updatePlayer,
 } from './players';
-import { archiveSession, deleteSession } from './sessions';
+import { archiveSession, deleteSession, patchSession } from './sessions';
 import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 import { normalizeBulkIds, runBulk, type BulkOutcome } from '../bulk';
-import type { AdminPlayerUpdateInput } from '@badminton/shared';
+import type { AdminPlayerUpdateInput, SessionPatchInput } from '@badminton/shared';
 
 /**
  * Let in several pending signups at once.
@@ -70,6 +70,35 @@ export async function bulkUpdatePlayers(
     const targets = normalizeBulkIds(ids);
     await requireCapability('players.update.write');
     return runBulk(targets, (id) => updatePlayer(id, data));
+  });
+}
+
+/**
+ * The same edit to several nights.
+ *
+ * THE CLUB OWNER'S ASK: "no way to mass edit sessions?", asked over six Friday
+ * rows all reading TIME NOT SET. Fixing that meant opening a dialog, retyping
+ * the whole night and a reason, six times.
+ *
+ * `patch` is one partial payload for the whole selection. A key it does not
+ * carry is not written at all, and a key carrying `null` clears that column —
+ * the three-state shape sessionPatchSchema exists for, and the reason this loops
+ * patchSession rather than updateSession, which reads an absent time as "clear".
+ *
+ * The reason is a third argument rather than a key in the payload (the shape
+ * bulkUpdatePlayers uses) because that is how updateSession, archiveSession and
+ * deleteSession all take it — and because it keeps the schema a pure column
+ * allowlist that .strict() can police.
+ */
+export async function bulkUpdateSessions(
+  ids: string[],
+  patch: SessionPatchInput,
+  reason: string,
+): Promise<ActionResult<BulkOutcome>> {
+  return runAction(async () => {
+    const targets = normalizeBulkIds(ids);
+    await requireCapability('sessions.update.write');
+    return runBulk(targets, (id) => patchSession(id, patch, reason));
   });
 }
 

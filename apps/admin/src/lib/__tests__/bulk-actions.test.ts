@@ -92,6 +92,7 @@ vi.mock('@badminton/shared', async (importOriginal) => ({
 import {
   bulkApprovePlayers,
   bulkUpdatePlayers,
+  bulkUpdateSessions,
   bulkArchiveSessions,
   bulkDeleteSessions,
 } from '../actions/bulk';
@@ -307,5 +308,145 @@ describe('sessions', () => {
       expect(res.data.failures[0]!.error).toMatch(/needs a reason/i);
     }
     expect((store.db.sessions ?? []).every((s) => s.status === 'open')).toBe(true);
+  });
+});
+
+describe('the same edit to several nights', () => {
+  // The club owner's ask: "no way to mass edit sessions?", over six Friday rows
+  // all reading TIME NOT SET.
+  //
+  // THESE ROWS ARE SEEDED HERE, NOT IN THE SHARED beforeEach, and their ids are
+  // real uuids on purpose: patchSession parses the id (the archive/delete pair
+  // never did), so the 's-1'/'s-2' the other blocks use would come back as
+  // invalid-uuid refusals. Their assertions count the sessions table, so the
+  // rows cannot be added globally either.
+  const FRI_1 = '11111111-1111-4111-8111-111111111111';
+  const FRI_2 = '22222222-2222-4222-8222-222222222222';
+  const NIGHTS = [FRI_1, FRI_2];
+  const WHY = 'Gym double-booked, moved to Central';
+  const night = (id: string) => (store.db.sessions ?? []).find((s) => s.id === id)!;
+
+  beforeEach(() => {
+    (store.db.sessions ??= []).push(
+      { id: FRI_1, status: 'open', name: 'Friday Drop-in', date: '2026-09-11', start_time: null, end_time: null, location: 'West Gym', track: 'all', notes: 'Bring the good nets' },
+      { id: FRI_2, status: 'open', name: 'Friday Drop-in', date: '2026-09-18', start_time: null, end_time: null, location: 'West Gym', track: 'all', notes: 'Ladder night' },
+    );
+  });
+
+  it('writes only the fields it was given, to each night', async () => {
+    const res = await bulkUpdateSessions(NIGHTS, { location: 'Central Gym' }, WHY);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data).toMatchObject({ attempted: 2, succeeded: 2, failures: [] });
+    expect(NIGHTS.map((id) => night(id).location)).toEqual(['Central Gym', 'Central Gym']);
+    // The keys the dialog left on "leave as they are" were never in the patch,
+    // so they are not in the UPDATE either. This is the whole difference from
+    // updateSession, which would have blanked all three.
+    expect(NIGHTS.every((id) => night(id).start_time === null)).toBe(true);
+    expect(NIGHTS.every((id) => night(id).name === 'Friday Drop-in')).toBe(true);
+    expect(night(FRI_1).notes).toBe('Bring the good nets');
+    expect(auditsOf('session_updated')).toHaveLength(2);
+  });
+
+  it('sets a time on nights that had none — the TIME NOT SET case', async () => {
+    const res = await bulkUpdateSessions(NIGHTS, { start_time: '19:00', end_time: '21:00' }, WHY);
+
+    expect(res.ok).toBe(true);
+    expect(NIGHTS.map((id) => night(id).start_time)).toEqual(['19:00', '19:00']);
+    expect(NIGHTS.map((id) => night(id).end_time)).toEqual(['21:00', '21:00']);
+  });
+
+  it('clears a time to NULL, and says so in the audit row', async () => {
+    night(FRI_1).start_time = '18:00';
+    night(FRI_2).start_time = '18:00';
+
+    const res = await bulkUpdateSessions(NIGHTS, { start_time: null }, WHY);
+
+    expect(res.ok).toBe(true);
+    // An explicit null really reaches the column. Were "clear" collapsed into
+    // "leave alone" anywhere along the way, both rows would still read 18:00 and
+    // the toast would still be green.
+    expect(NIGHTS.every((id) => night(id).start_time === null)).toBe(true);
+    // And the log says start_time: null rather than omitting the key — the same
+    // "what was actually written" rule updateSession follows.
+    const entry = auditsOf('session_updated')[0]!;
+    expect(entry.new_value).toEqual({ start_time: null });
+  });
+
+  it('refuses a night that would end before it starts, and writes nothing', async () => {
+    // The cross-field case no schema and no DB CHECK can catch: only end_time is
+    // in the patch, and start_time is in the row.
+    night(FRI_1).start_time = '19:00';
+    night(FRI_1).end_time = '21:00';
+
+    const res = await bulkUpdateSessions([FRI_1], { end_time: '17:00' }, WHY);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.succeeded).toBe(0);
+      expect(res.data.failures[0]!.error).toMatch(/after start time/i);
+    }
+    expect(night(FRI_1).end_time).toBe('21:00');
+  });
+
+  it('carries the one typed reason onto every row it writes', async () => {
+    await bulkUpdateSessions(NIGHTS, { track: 'competitive' }, WHY);
+
+    const rows = auditsOf('session_updated');
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.reason === WHY)).toBe(true);
+  });
+
+  it('asks for the same capability the single-record edit asks for', async () => {
+    store.gateCalls = [];
+    await bulkUpdateSessions([FRI_1], { location: 'Central Gym' }, WHY);
+    expect(new Set(store.gateCalls)).toEqual(new Set(['sessions.update.write']));
+  });
+
+  it('writes nothing at all for an officer without the capability', async () => {
+    store.gateError = 'Admin or exec access required';
+
+    const res = await bulkUpdateSessions(NIGHTS, { location: 'Central Gym' }, WHY);
+
+    expect(res.ok).toBe(false);
+    expect(NIGHTS.every((id) => night(id).location === 'West Gym')).toBe(true);
+    expect(auditsOf('session_updated')).toHaveLength(0);
+  });
+
+  it('arrives as two named refusals when the reason is too short', async () => {
+    const res = await bulkUpdateSessions(NIGHTS, { location: 'Central Gym' }, 'x');
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.succeeded).toBe(0);
+      expect(res.data.failures).toHaveLength(2);
+      expect(res.data.failures[0]!.error).toMatch(/needs a reason/i);
+    }
+    expect(NIGHTS.every((id) => night(id).location === 'West Gym')).toBe(true);
+  });
+
+  it('refuses a column that is not on the allowlist, and leaves the row alone', async () => {
+    // Every exported argument of a 'use server' function is a client-controlled
+    // POST field, so this is reachable by a hand-rolled request. Asserted on the
+    // STORED ROW, not just the error string: a schema that stripped the key
+    // instead of rejecting it, or an UPDATE built by spreading the payload,
+    // would both fail here.
+    const res = await bulkUpdateSessions([FRI_1], { date: '2026-01-01' } as never, WHY);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.succeeded).toBe(0);
+    expect(night(FRI_1).date).toBe('2026-09-11');
+    expect(auditsOf('session_updated')).toHaveLength(0);
+  });
+
+  it('refuses a patch that asks for nothing', async () => {
+    const res = await bulkUpdateSessions(NIGHTS, {}, WHY);
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.succeeded).toBe(0);
+      expect(res.data.failures[0]!.error).toMatch(/nothing to change/i);
+    }
+    expect(auditsOf('session_updated')).toHaveLength(0);
   });
 });
