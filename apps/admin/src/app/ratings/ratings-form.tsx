@@ -272,7 +272,14 @@ export function RatingsForm({
             value[field] = raw === true;
             continue;
           }
-          if (meta && meta.type === 'text') {
+          // `select` rides with `text` in both places this file asks. This
+          // screen's bespoke three-column layout draws no select today — the
+          // only one in FIELD_META is signup_settings, which lands on /accounts
+          // — but the fallback below is a NUMBER, so a select arriving here
+          // without this line would be parsed as one and refused as "must be a
+          // number". Cheaper to answer the question now than to leave a trap
+          // for whoever adds the second select.
+          if (meta && (meta.type === 'text' || meta.type === 'select')) {
             value[field] = raw;
             continue;
           }
@@ -339,7 +346,7 @@ export function RatingsForm({
     const current = (edits[key]?.[field] as string | undefined) ?? original;
     return (
       <Input
-        type={meta && meta.type === 'text' ? 'text' : 'number'}
+        type={meta && (meta.type === 'text' || meta.type === 'select') ? 'text' : 'number'}
         value={current}
         min={meta?.min}
         max={meta?.max}

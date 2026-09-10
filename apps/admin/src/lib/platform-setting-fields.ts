@@ -45,11 +45,22 @@ export const SETTING_DESCRIPTIONS: Record<string, string> = {
 export interface FieldMeta {
   label: string;
   hint: string;
-  type: 'number' | 'boolean' | 'text';
+  type: 'number' | 'boolean' | 'text' | 'select';
   min?: number;
   max?: number;
   step?: number;
   nullable?: boolean;
+  /**
+   * The closed set of values, for `type: 'select'` only.
+   *
+   * A setting with a fixed vocabulary was a free-text box until now, and the
+   * cost of that showed up in the hint rather than the control: the field had
+   * to end by explaining what happens when you type something that is not one
+   * of the two allowed words. The database still refuses a bad value the same
+   * way — see the WARNING branch in 00220 — this just stops the console being
+   * able to produce one.
+   */
+  options?: readonly { value: string; label: string }[];
 }
 
 export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
@@ -403,8 +414,16 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
     },
     auto_approve_status: {
       label: 'Auto-approved members join as',
-      hint: 'competitive or recreational. Recreational is the default and the cheaper fee tier — both appear on the leaderboard and can challenge, so this only decides which membership they are billed for. Anything else here leaves everyone pending, which is the safe direction.',
-      type: 'text',
+      // The hint no longer has to end by warning about typos. It used to say
+      // "Anything else here leaves everyone pending, which is the safe
+      // direction" — true, and still true of the database, but it was the
+      // control apologising for itself. A closed set is a closed control.
+      hint: 'Recreational is the default and the cheaper fee tier. Both appear on the leaderboard and can challenge, so this only decides which membership they are billed for.',
+      type: 'select',
+      options: [
+        { value: 'recreational', label: 'Recreational' },
+        { value: 'competitive', label: 'Competitive' },
+      ],
     },
   },
 };
