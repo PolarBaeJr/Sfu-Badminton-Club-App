@@ -181,11 +181,22 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
   },
   rating_defaults: {
     default_elo: {
-      label: 'Starting rating',
-      // Three jobs, one number, on purpose — see 00055. Saying only "assigned
-      // to new players" hid the fact that editing this also moves the floor a
-      // season reset compresses everyone toward.
-      hint: 'Assigned to every new member on approval. It is also the bottom of the ladder: a full season reset writes this value, and a soft reset compresses every rating toward it.',
+      // NOT "Starting rating", which is what this said and is the one thing it
+      // does not do. Every path that creates a rating row writes a literal 400
+      // and reads no setting at all: create_player_with_rating (00003:887,
+      // redefined at 00023:89 and 00132:548) spells the number out, and the
+      // approval trigger (00220:310) inserts `(player_id)` alone and takes the
+      // ratings.singles_elo column DEFAULT 400 from 00001:190. So an admin who
+      // set this to 600 expecting new members to start at 600 got new members
+      // at 400, with nothing anywhere saying otherwise — and the fields that DO
+      // decide a new member's rating sit two sections down under New members.
+      // The label was the whole of the confusion, so it is the label that moved.
+      label: 'Ladder baseline',
+      // Two real jobs — 00055 for the compression baseline, 00127:184 for the
+      // sentinel. The sentinel is the non-obvious one: apply_skill_tier_seed
+      // has no match counter to consult, so "has anyone decided this rating
+      // yet" is answered by comparing it to this number.
+      hint: 'The bottom of the ladder: a full season reset writes this value, and a soft reset compresses every rating toward it. It also defines what an untouched rating looks like, which is how a skill tier tells "nobody has decided yet" apart from a rating an exec set by hand. It does NOT set a new member\'s rating — the three tier fields under New members do that.',
       type: 'number',
       min: 0,
       step: 1,
@@ -258,7 +269,10 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
     },
     tier_beginner_elo: {
       label: 'Beginner starting rating',
-      hint: 'Assigned to a member who picks Beginner at signup. Normally the same as the starting rating above, so the tier changes nothing for a true beginner.',
+      // "the starting rating above" until the field above stopped claiming to
+      // be one. Named rather than pointed at, because the two are now in
+      // different sections and "above" would be a direction, not a reference.
+      hint: 'Assigned to a member who picks Beginner at signup. Normally the same as the ladder baseline, so the tier changes nothing for a true beginner.',
       type: 'number',
       min: 0,
       step: 50,
@@ -347,7 +361,10 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
     // activate_season until 00055.
     tier_size: {
       label: 'Tier size (Elo points)',
-      hint: 'Soft reset never drops a player below the bottom of the tier they earned. The ladder floor itself is the starting rating above.',
+      // Also said "the starting rating above". It was already the weaker of the
+      // two references — this is a different settings key in a different
+      // section, so "above" was never pointing at anything adjacent.
+      hint: 'Soft reset never drops a player below the bottom of the tier they earned. The ladder floor itself is the ladder baseline, under The formula.',
       type: 'number',
       min: 1,
       step: 25,
