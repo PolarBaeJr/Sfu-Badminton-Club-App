@@ -32,6 +32,7 @@ the answer.
 | `/leaderboard` | Club ladder (see §2) | No |
 | `/profile [@member] [handle]` | A member's profile card, rendered as a PNG (see §2) | No |
 | `/feedback` | Submit feedback to the exec team | No |
+| `/discord` | The club invite link plus its QR code. **Exec only, and the reply is ephemeral** so the bot never posts the invite into a channel on an exec's behalf | No |
 
 **There is no separate waitlist command, because the RSVP list *is* the waitlist.**
 Sessions carry no capacity column; RSVP is uncapped by design and court space is
