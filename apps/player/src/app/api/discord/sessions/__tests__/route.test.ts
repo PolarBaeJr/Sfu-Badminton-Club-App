@@ -14,18 +14,49 @@ const SCHEDULE = [
   { id: 'rec-1', name: 'Casual drop-in', track: 'recreational', date: '2026-09-04' },
 ];
 
+// Twenty-four open nights across two tracks, which is more than the route
+// returns. Two tracks rather than one because a count taken before the caller's
+// narrowing and one taken after can only be told apart by a fixture where the
+// two answers differ: 24 against 12.
+const LONG_SCHEDULE = [
+  ...Array.from({ length: 12 }, (_, i) => ({
+    id: `long-all-${i}`,
+    name: 'Club night',
+    track: 'all',
+    date: '2026-09-01',
+  })),
+  ...Array.from({ length: 12 }, (_, i) => ({
+    id: `long-comp-${i}`,
+    name: 'Competitive practice',
+    track: 'competitive',
+    date: '2026-09-01',
+  })),
+];
+
 const linkMaybeSingle = vi.fn();
 let capturedTracks: string[] = [];
+let schedule: { id: string; name: string; track: string; date: string }[] = SCHEDULE;
 
 function sessionsBuilder() {
-  let rows = SCHEDULE;
+  let rows = schedule;
   let refused: { code: string; message: string } | null = null;
+  let cap = Infinity;
+  // Only answered when the route asks for it, exactly as PostgREST does: a
+  // response carries a total because the request said `count`, so a route that
+  // stopped asking has to fail a test rather than quietly report the cap.
+  let counting = false;
   const builder: any = {
-    select: () => builder,
+    select: (_columns: string, options?: { count?: string }) => {
+      counting = options?.count === 'exact';
+      return builder;
+    },
     eq: () => builder,
     or: () => builder,
+    limit: (n: number) => {
+      cap = n;
+      return builder;
+    },
     order: () => builder,
-    limit: () => builder,
     in(column: string, values: string[]) {
       if (column === 'track') {
         capturedTracks = [...values];
@@ -40,10 +71,21 @@ function sessionsBuilder() {
       }
       return builder;
     },
+    // FILTER, THEN COUNT, THEN SLICE, in that order. The route calls .limit()
+    // before the track filter is appended to the same builder, and the real
+    // server applies neither until the request runs. Truncating inside limit()
+    // would narrow an already-shortened list and count the wrong set, which
+    // would leave the visibility assertions below passing for no reason.
     then: (resolve: (v: unknown) => unknown) =>
-      Promise.resolve(refused ? { data: null, error: refused } : { data: rows, error: null }).then(
-        resolve
-      ),
+      Promise.resolve(
+        refused
+          ? { data: null, error: refused, count: null }
+          : {
+              data: rows.slice(0, cap),
+              error: null,
+              count: counting ? rows.length : null,
+            }
+      ).then(resolve),
   };
   return builder;
 }
@@ -76,13 +118,20 @@ async function tracksFor(discordUserId?: string) {
   const body = (await (await GET(req(discordUserId))).json()) as {
     sessions: { id: string }[];
     linked: boolean;
+    total: number;
   };
-  return { tracks: capturedTracks, ids: body.sessions.map((s) => s.id), linked: body.linked };
+  return {
+    tracks: capturedTracks,
+    ids: body.sessions.map((s) => s.id),
+    linked: body.linked,
+    total: body.total,
+  };
 }
 
 beforeEach(() => {
   process.env.DISCORD_SERVICE_SECRET = 'test-secret';
   capturedTracks = [];
+  schedule = SCHEDULE;
   linkMaybeSingle.mockReset();
   linkMaybeSingle.mockResolvedValue({ data: null, error: null });
 });
@@ -153,5 +202,55 @@ describe('GET /api/discord/sessions — who sees which track', () => {
     expect(linked).toBe(false);
     expect(tracks).toEqual(['all']);
     expect(ids).toEqual(['all-1']);
+  });
+});
+
+// The route returns at most MAX_SESSIONS rows, so `total` is the only thing in
+// the payload that can tell a caller the list is short. /sessionpost publishes
+// it into a channel, where a post of ten out of twenty-eight reads as the club
+// saying it runs ten nights.
+describe('GET /api/discord/sessions: how many there really are', () => {
+  it('reports the total alongside the sessions', async () => {
+    linkMaybeSingle.mockResolvedValue({ data: { players: { status: 'competitive' } }, error: null });
+    const { ids, total } = await tracksFor('666');
+    expect(total).toBe(ids.length);
+  });
+
+  it('counts every matching night, not the ones it returned', async () => {
+    // 24 match, 10 come back. A total taken from the rows would say 10, which
+    // is the defect: the post would claim the cap is the whole schedule.
+    schedule = LONG_SCHEDULE;
+    linkMaybeSingle.mockResolvedValue({ data: { players: { status: 'competitive' } }, error: null });
+    const { ids, total } = await tracksFor('777');
+    expect(ids).toHaveLength(10);
+    expect(total).toBe(24);
+  });
+
+  it('reports zero when nothing is open', async () => {
+    schedule = [];
+    const { ids, total } = await tracksFor(undefined);
+    expect(ids).toEqual([]);
+    expect(total).toBe(0);
+  });
+
+  // THE ONE THAT MATTERS. The total is counted after the caller's narrowing, so
+  // it describes the schedule they are allowed to see. Counted before it, the
+  // number would tell an unlinked Discord user how many competitive nights the
+  // club runs, which is the fact the row list is filtered to withhold.
+  it('scopes the total to what the caller may see', async () => {
+    schedule = LONG_SCHEDULE;
+
+    linkMaybeSingle.mockResolvedValue({ data: { players: { status: 'competitive' } }, error: null });
+    const member = await tracksFor('888');
+
+    linkMaybeSingle.mockResolvedValue({ data: null, error: null });
+    const stranger = await tracksFor('999');
+
+    // Both are capped at 10 rows, so the leak would be invisible in the list.
+    expect(member.ids).toHaveLength(10);
+    expect(stranger.ids).toHaveLength(10);
+
+    expect(member.total).toBe(24);
+    expect(stranger.total).toBe(12);
   });
 });

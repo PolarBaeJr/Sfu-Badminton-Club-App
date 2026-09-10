@@ -94,7 +94,15 @@ export async function GET(request: Request) {
 
   const query = supabase
     .from('sessions')
-    .select('id, name, date, start_time, end_time, starts_at, ends_at, location, status, track')
+    // count:'exact' because MAX_SESSIONS means the rows CANNOT answer "how many
+    // are there": row 11 is never fetched, so a caller counting what arrived
+    // would report the cap. PostgREST counts against the filters and ignores the
+    // limit, and the narrowing below is applied to this same builder, so the
+    // total is scoped to what this caller may see. That scoping is the point:
+    // an unnarrowed count would publish how many private-track nights exist.
+    .select('id, name, date, start_time, end_time, starts_at, ends_at, location, status, track', {
+      count: 'exact',
+    })
     .eq('status', 'open')
     // ends_at is GENERATED and is NULL for exactly one real case (00110): a
     // session with a start time and no end time, which closes at starts_at plus
@@ -107,7 +115,7 @@ export async function GET(request: Request) {
     .order('starts_at', { ascending: true })
     .limit(MAX_SESSIONS);
 
-  const { data: sessions, error } = await (linked
+  const { data: sessions, error, count } = await (linked
     ? onVisibleTracks(query, status)
     : onPublicTracks(query));
 
@@ -120,7 +128,7 @@ export async function GET(request: Request) {
   // `linked` travels with the payload so the bot can tell an unlinked caller WHY
   // their list is short, instead of them seeing a thin schedule and concluding
   // the club has nothing on.
-  if (rows.length === 0) return NextResponse.json({ sessions: [], linked });
+  if (rows.length === 0) return NextResponse.json({ sessions: [], linked, total: 0 });
 
   // Attendee counts come from the RPC rather than a join so the bot and the
   // website agree on what "going" counts as.
@@ -147,6 +155,10 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     linked,
+    // Falls back to the rows on a null count so the bot degrades to "showing
+    // 10" rather than announcing "showing 10 of 0", which is the one wrong
+    // number a truncation notice must never print.
+    total: count ?? rows.length,
     sessions: rows.map((s) => ({
       id: s.id,
       name: s.name,

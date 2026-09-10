@@ -312,14 +312,24 @@ export function fetchHandles(): Promise<{ members: ClubHandle[] }> {
  * The id is required rather than optional so a new call site cannot quietly
  * omit it and get the unlinked view for everybody — the compiler asks. Pass
  * null only where there genuinely is no caller.
+ *
+ * `total` is how many sessions MATCHED, which the app caps the rows at ten of,
+ * so it is the only way a reply can say the list is short.
  */
-export function fetchSessions(
+export async function fetchSessions(
   discordUserId: string | null
-): Promise<{ sessions: SessionSummary[]; linked: boolean }> {
-  return get<{ sessions: SessionSummary[]; linked: boolean }>(
-    '/api/discord/sessions',
-    discordUserId
-  );
+): Promise<{ sessions: SessionSummary[]; linked: boolean; total: number }> {
+  const body = await get<{
+    sessions: SessionSummary[];
+    linked: boolean;
+    total?: number;
+  }>('/api/discord/sessions', discordUserId);
+
+  // Optional on the wire, required in the model. The bot and the app deploy
+  // independently, so the bot can be running against an image that predates
+  // `total`; defaulting to the rows that arrived makes that read as "this is
+  // all of them" rather than printing a truncation that is not happening.
+  return { ...body, total: body.total ?? body.sessions.length };
 }
 
 /** Which servers to manage, their role ids, and where the audit log goes. */
