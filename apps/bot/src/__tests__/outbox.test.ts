@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const claimOutboxMessages = vi.fn();
 const recordOutboxResult = vi.fn();
 const postMessage = vi.fn();
+const editMessage = vi.fn();
 const createMessage = vi.fn();
 const loadConfig = vi.fn();
 
@@ -36,6 +37,7 @@ vi.mock('../discord-api.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../discord-api.js')>()),
   DiscordApi: class {
     postMessage = postMessage;
+    editMessage = editMessage;
     createMessage = createMessage;
   },
 }));
@@ -47,8 +49,15 @@ const MESSAGE = {
   embed: null,
   ping: false,
   attempts: 0,
+  // Null is every message that has never been posted, which is every message
+  // this file tested before editing existed.
+  discordMessageId: null as string | null,
   requestedBy: 'Priya Raman',
 };
+
+/** The embed the console queues, and the colour the club pins for `urgent`. */
+const EMBED = { title: 'Courts closed', body: 'Gym booked.', type: 'urgent' };
+const INTERNAL = '<@&111111111111111111>';
 
 /** The audit embed the run wrote, or undefined. */
 function auditEmbed(): { title: string; description: string; footer?: { text: string } } | undefined {
@@ -65,6 +74,10 @@ beforeEach(() => {
   createMessage.mockResolvedValue(true);
   claimOutboxMessages.mockResolvedValue({ messages: [MESSAGE] });
   postMessage.mockResolvedValue('m1');
+  // `vi.resetAllMocks()` above clears return values as well as calls, so every
+  // mock needs its default here or an edit resolves undefined and reads as a
+  // refusal.
+  editMessage.mockResolvedValue('ok');
   recordOutboxResult.mockResolvedValue({ ok: true });
 });
 
@@ -120,6 +133,138 @@ describe('runOutbox', () => {
     expect(payload.embeds[0]?.title).toBe('Courts closed');
     // The same literal the shared module and the announcement relay pin.
     expect(payload.embeds[0]?.color).toBe(0xe74c3c);
+  });
+
+  it('sends an embed with NOTHING added to it, byte for byte', async () => {
+    // THE REGRESSION GUARD THAT MATTERS MOST, and it is `toEqual` rather than
+    // `objectContaining` on purpose: the property being protected is that no
+    // key was ADDED, and a partial match cannot see an extra `roles` beside
+    // `parse`. Every embed the club has ever queued goes down this branch.
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...MESSAGE, content: null, embed: EMBED }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    await runOutbox();
+
+    expect(postMessage.mock.calls[0]?.[1]).toEqual({
+      embeds: [{ title: 'Courts closed', description: 'Gym booked.', color: 0xe74c3c }],
+      allowed_mentions: { parse: [] },
+    });
+  });
+
+  it('puts the ping line above the embed, in one message', async () => {
+    // The only shape that both looks like a notice and reaches a phone:
+    // `content` renders ABOVE the embed, and it is the only field Discord will
+    // notify from. There is no second message and nothing posts below.
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...MESSAGE, content: INTERNAL, embed: EMBED, ping: true }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    await runOutbox();
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = postMessage.mock.calls[0]?.[1] as {
+      content: string;
+      embeds: { title: string }[];
+      allowed_mentions: { parse: string[]; roles?: string[] };
+    };
+    expect(payload.content).toBe(INTERNAL);
+    expect(payload.embeds[0]?.title).toBe('Courts closed');
+    // Named roles and nothing else. An explicit `roles` array beside a
+    // non-empty `parse` is a Discord API error.
+    expect(payload.allowed_mentions).toEqual({ parse: [], roles: ['111111111111111111'] });
+  });
+
+  it('CANNOT REACH @everyone through the ping line', async () => {
+    // Typed into the line by hand, on a row whose ping is on. It renders as a
+    // mention and rings nobody, because `parse` stays empty and only the ids
+    // the console resolved are ever named.
+    claimOutboxMessages.mockResolvedValue({
+      messages: [
+        { ...MESSAGE, content: `@everyone ${INTERNAL}`, embed: EMBED, ping: true },
+      ],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    await runOutbox();
+
+    expect(
+      (postMessage.mock.calls[0]?.[1] as { allowed_mentions: unknown }).allowed_mentions,
+    ).toEqual({ parse: [], roles: ['111111111111111111'] });
+  });
+
+  it('names no roles at all on a combined row whose ping is off', async () => {
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...MESSAGE, content: INTERNAL, embed: EMBED, ping: false }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    await runOutbox();
+
+    expect(
+      (postMessage.mock.calls[0]?.[1] as { allowed_mentions: unknown }).allowed_mentions,
+    ).toEqual({ parse: [] });
+  });
+
+  it('posts a message Discord has never seen, and never edits it', async () => {
+    // The regression guard for every row that exists today: no message id
+    // means no edit, whatever else is on the row.
+    const { runOutbox } = await import('../outbox.js');
+    await runOutbox();
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(editMessage).not.toHaveBeenCalled();
+  });
+
+  it('edits the message a re-queued row already is', async () => {
+    // An edit keeps the message's place in the channel, its permalink and its
+    // replies, and notifies nobody again. Posting here would leave the club
+    // saying the same thing twice, the wrong version first.
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...MESSAGE, content: 'Doors open at eight.', discordMessageId: 'm1' }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 1, failed: 0 });
+
+    expect(editMessage).toHaveBeenCalledWith(
+      'c1',
+      'm1',
+      expect.objectContaining({ content: 'Doors open at eight.' }),
+    );
+    expect(postMessage).not.toHaveBeenCalled();
+    // The row still has to be closed, or the next tick edits it all over again
+    // every five minutes for as long as it exists.
+    expect(recordOutboxResult).toHaveBeenCalledWith({ id: 'o1', discordMessageId: 'm1' });
+  });
+
+  it('REFUSES to repost a message somebody deleted', async () => {
+    // The dangerous path. A 404 on the PATCH means an exec removed the message
+    // on purpose, and quietly putting it back is the worst thing this file
+    // could do.
+    editMessage.mockResolvedValue('gone');
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...MESSAGE, discordMessageId: 'm1' }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 0, failed: 1 });
+
+    // Asserted explicitly, because the absence is the property.
+    expect(postMessage).not.toHaveBeenCalled();
+    const [call] = recordOutboxResult.mock.calls as [[{ id: string; error: string }]];
+    expect(call[0].error).toMatch(/gone from Discord/);
+    expect(call[0]).not.toHaveProperty('discordMessageId');
+    // Nothing was said, so there is nothing to attribute.
+    expect(createMessage).not.toHaveBeenCalled();
+  });
+
+  it('records a refused edit with a reason and spends an attempt', async () => {
+    editMessage.mockResolvedValue('failed');
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...MESSAGE, discordMessageId: 'm1' }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 0, failed: 1 });
+
+    const [call] = recordOutboxResult.mock.calls as [[{ id: string; error: string }]];
+    expect(call[0].error).toMatch(/channel/i);
   });
 
   it('records a refusal with a reason rather than dropping it', async () => {

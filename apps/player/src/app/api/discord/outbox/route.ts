@@ -50,6 +50,15 @@ interface OutboxRow {
   ping: boolean;
   attempts: number;
   requested_by: string | null;
+  /**
+   * The message this row already became in Discord, when it has been posted.
+   *
+   * IT IS WHAT TURNS A POST INTO AN EDIT. The console re-queues a sent row with
+   * new text and leaves this alone, so a claimed row carrying an id is a
+   * correction to a message members can already read, and the bot PATCHes it
+   * instead of posting a second copy underneath the first.
+   */
+  discord_message_id: string | null;
 }
 
 export async function GET(request: Request) {
@@ -105,7 +114,7 @@ export async function GET(request: Request) {
     .lt('attempts', MAX_ATTEMPTS)
     .or(`claimed_at.is.null,claimed_at.lt.${staleClaim}`)
     .select(
-      'id, channel_id, content, embed_title, embed_body, embed_type, ping, attempts, requested_by'
+      'id, channel_id, content, embed_title, embed_body, embed_type, ping, attempts, requested_by, discord_message_id'
     );
 
   if (claimError) {
@@ -153,6 +162,7 @@ export async function GET(request: Request) {
         : null,
       ping: r.ping,
       attempts: r.attempts,
+      discordMessageId: r.discord_message_id,
       requestedBy: (r.requested_by && names.get(r.requested_by)) || null,
     })),
   });

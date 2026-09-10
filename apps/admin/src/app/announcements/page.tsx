@@ -9,8 +9,10 @@ import {
   type DiscordContext,
   type RowAnnouncement,
 } from './actions';
-import { DiscordRecent, type OutboxRow } from './discord-send';
+import { readOutboxRows, type OutboxRow } from '@/lib/discord-outbox';
+import { DiscordRecent } from './discord-send';
 import { ComposerSwitch } from './composer-switch';
+import { DiscordConsoleProvider } from './discord-console-context';
 import {
   DISCORD_CHANNEL_SETTINGS,
   audienceLabel,
@@ -341,41 +343,11 @@ export default async function AnnouncementsPage() {
   // reads follow above. A query that runs and is then conditionally rendered
   // still ships its rows in the RSC payload, and these rows quote what the club
   // said in its own channel.
-  const outboxRows: OutboxRow[] = canSendDiscord
-    ? await supabase
-        .from('discord_outbox')
-        .select(
-          'id, created_at, channel_id, content, embed_title, ping, sent_at, failed_at, last_error',
-        )
-        .order('created_at', { ascending: false })
-        .limit(5)
-        .then(({ data }) =>
-          (
-            (data ?? []) as {
-              id: string;
-              created_at: string;
-              channel_id: string;
-              content: string | null;
-              embed_title: string | null;
-              ping: boolean;
-              sent_at: string | null;
-              failed_at: string | null;
-              last_error: string | null;
-            }[]
-          ).map((r) => ({
-            id: r.id,
-            createdAt: r.created_at,
-            channelId: r.channel_id,
-            // One line, whichever shape it was. The full text is in the audit
-            // log; this list exists to answer "did it go out", not to re-read
-            // the message.
-            preview: (r.content ?? r.embed_title ?? '').slice(0, 140),
-            ping: r.ping,
-            state: r.sent_at ? 'sent' : r.failed_at ? 'failed' : 'queued',
-            error: r.last_error,
-          })),
-        )
-    : [];
+  //
+  // THE SELECT AND THE MAPPING LIVE IN `lib/discord-outbox` because the list
+  // asks the same question again from the browser while a row is queued, and
+  // two copies of this query would drift the day a column is added.
+  const outboxRows: OutboxRow[] = canSendDiscord ? await readOutboxRows(supabase) : [];
 
   // Three roster-derived reads, all behind `players.read`, all skipped
   // outright when it is not held.
@@ -476,50 +448,57 @@ export default async function AnnouncementsPage() {
         {/* ---------------------------------------------------------------- */}
         {/* LEFT — the composer, and what Discord already has                */}
         {/* ---------------------------------------------------------------- */}
-        <div className="flex flex-col gap-5">
-          <Card className="p-5">
-            {/* `modes.length > 0`, NOT `canCreate` — and that is a deliberate
-                behaviour change. Until now a viewer holding
-                `announcements.discord.write` but not
-                `announcements.create.write` was told writing was not part of
-                their access in this column, while a working Discord composer
-                sat in the other one. The refusal below now means "neither
-                composer", not "not the website composer". */}
-            {modes.length > 0 ? (
-              <ComposerSwitch
-                modes={modes}
-                pushReachable={pushReachable}
-                discord={discord}
-                channelConfigured={channelConfigured}
-                // GATED HERE TOO, not only at the read. Props to a client
-                // component are serialised into the RSC payload whether or not
-                // the component renders, so a viewer without the Discord key
-                // would otherwise be shipped the club's channel ids. The roles
-                // beside it need no gate: their query never ran.
-                channels={canSendDiscord ? discordChannels : []}
-                roleNames={discordRoleNames}
-              />
-            ) : (
-              // Withheld, not empty. A blank left column on the widest half of
-              // the screen reads as a page that failed to load.
-              <div className="flex flex-col gap-2">
-                <span className={`${MICRO} text-[var(--mute)]`}>New post</span>
-                <p className="text-sm text-[var(--text-secondary)]">
-                  Writing announcements is not part of your access. You can read what the club has
-                  posted below.
-                </p>
-              </div>
-            )}
-          </Card>
-
-          {/* Its own card, below whichever composer is showing, so a queued or
-              failed row stays visible in both modes. */}
-          {canSendDiscord && outboxRows.length > 0 && (
+        {/* THE PROVIDER WRAPS BOTH CARDS AND RENDERS NO ELEMENT OF ITS OWN.
+            Pressing Edit in the recent list has to fill the composer above it,
+            and the two are siblings; this is the only thing they share. The
+            cards below stay server-rendered, because children handed to a
+            client component are not made into client components. */}
+        <DiscordConsoleProvider>
+          <div className="flex flex-col gap-5">
             <Card className="p-5">
-              <DiscordRecent recent={outboxRows} />
+              {/* `modes.length > 0`, NOT `canCreate`, and that is a deliberate
+                  behaviour change. Until now a viewer holding
+                  `announcements.discord.write` but not
+                  `announcements.create.write` was told writing was not part of
+                  their access in this column, while a working Discord composer
+                  sat in the other one. The refusal below now means "neither
+                  composer", not "not the website composer". */}
+              {modes.length > 0 ? (
+                <ComposerSwitch
+                  modes={modes}
+                  pushReachable={pushReachable}
+                  discord={discord}
+                  channelConfigured={channelConfigured}
+                  // GATED HERE TOO, not only at the read. Props to a client
+                  // component are serialised into the RSC payload whether or not
+                  // the component renders, so a viewer without the Discord key
+                  // would otherwise be shipped the club's channel ids. The roles
+                  // beside it need no gate: their query never ran.
+                  channels={canSendDiscord ? discordChannels : []}
+                  roleNames={discordRoleNames}
+                />
+              ) : (
+                // Withheld, not empty. A blank left column on the widest half of
+                // the screen reads as a page that failed to load.
+                <div className="flex flex-col gap-2">
+                  <span className={`${MICRO} text-[var(--mute)]`}>New post</span>
+                  <p className="text-sm text-[var(--text-secondary)]">
+                    Writing announcements is not part of your access. You can read what the club has
+                    posted below.
+                  </p>
+                </div>
+              )}
             </Card>
-          )}
-        </div>
+
+            {/* Its own card, below whichever composer is showing, so a queued or
+                failed row stays visible in both modes. */}
+            {canSendDiscord && outboxRows.length > 0 && (
+              <Card className="p-5">
+                <DiscordRecent recent={outboxRows} />
+              </Card>
+            )}
+          </div>
+        </DiscordConsoleProvider>
 
         {/* ---------------------------------------------------------------- */}
         {/* RIGHT — reach, then the posted list                              */}

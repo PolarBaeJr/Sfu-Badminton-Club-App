@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveRoleMentions } from '../discord-mentions';
+import { resolveRoleMentions, resolveRoleNames } from '../discord-mentions';
 
 // The role map as a real guild has it: the DB's spelling, and an 18-digit
 // snowflake, because the length of the id is what decides whether an expanded
@@ -94,5 +94,42 @@ describe('resolveRoleMentions', () => {
     // same row, and one mention of it named twice is still one role.
     const { matched } = resolve('@Session Staff and @session-staff and @internal');
     expect(matched).toEqual(['internal', 'session_staff']);
+  });
+});
+
+// The ping line's half: role names somebody PICKED, not names they typed. None
+// of the prose handling above applies, and the one thing they share is the
+// normalisation that makes `Session Staff` and `session_staff` one role.
+describe('resolveRoleNames', () => {
+  it('turns picked names into ids, however they were spelled', () => {
+    const picked = resolveRoleNames(['Session Staff', 'internal'], ROLES);
+
+    expect(picked.ids).toEqual(['222222222222222222', '111111111111111111']);
+    // The database's spellings, which is what the audit entry has to quote.
+    expect(picked.matched).toEqual(['session_staff', 'internal']);
+    expect(picked.unknown).toEqual([]);
+  });
+
+  it('names an unknown role instead of quietly dropping it', () => {
+    // A dropped ping role is a message that looks like it notifies and rings
+    // nobody, which is the failure the ping line exists to remove. The caller
+    // refuses the whole message on one of these.
+    const picked = resolveRoleNames(['internal', 'varsity'], ROLES);
+
+    expect(picked.unknown).toEqual(['varsity']);
+    expect(picked.ids).toEqual(['111111111111111111']);
+  });
+
+  it('cannot reach @everyone, because it is not a row in the map', () => {
+    expect(resolveRoleNames(['everyone', '@everyone', 'here'], ROLES).ids).toEqual([]);
+  });
+
+  it('asks for the same role once, however many times it was sent', () => {
+    // A server action is an HTTP endpoint, and the same name three ways is
+    // still one line above the embed.
+    const picked = resolveRoleNames(['internal', 'Internal', ' internal ', ''], ROLES);
+
+    expect(picked.ids).toEqual(['111111111111111111']);
+    expect(picked.unknown).toEqual([]);
   });
 });
