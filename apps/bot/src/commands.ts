@@ -1103,7 +1103,7 @@ export async function handleSessions(context: InteractionContext) {
  * are rate-limited by being tied to a session actually starting.
  */
 export async function handleSessionPost(): Promise<BotResponse> {
-  const { sessions } = await fetchSessions(null);
+  const { sessions, total } = await fetchSessions(null);
 
   // EPHEMERAL, unlike the success case. "There is nothing to post" is feedback
   // for the exec who ran the command, not a notice the channel needs -- and a
@@ -1114,6 +1114,14 @@ export async function handleSessionPost(): Promise<BotResponse> {
       'No club-wide sessions are open right now, so there is nothing to post.'
     );
   }
+
+  // The app caps the list, so on a schedule of twenty-eight a silent post reads
+  // as the club announcing it runs ten sessions. Only said when it is true: a
+  // complete list is the common case and must look exactly as it always has.
+  const footer =
+    total > sessions.length
+      ? `Showing the next ${sessions.length} of ${total} club-wide sessions. Full schedule on the website.`
+      : 'RSVP on the website';
 
   return {
     type: 4,
@@ -1126,7 +1134,7 @@ export async function handleSessionPost(): Promise<BotResponse> {
           // No "run /link to see your track" line here. That footer is advice
           // for one reader looking at their own narrowed list; on a club-wide
           // post it would imply this list is narrowed, which it is not.
-          footer: { text: 'RSVP on the website' },
+          footer: { text: footer },
         },
       ],
     },
