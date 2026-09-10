@@ -162,4 +162,9 @@ export {
   bulkUpdateSessions,
   bulkArchiveSessions,
   bulkDeleteSessions,
+  bulkMarkFeesPaid,
+  bulkWaiveFees,
+  bulkMarkFeesUnpaid,
+  bulkMarkTournamentFeesPaid,
+  bulkMarkTournamentFeesUnpaid,
 } from './actions/bulk';

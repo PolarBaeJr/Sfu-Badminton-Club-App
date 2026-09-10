@@ -434,23 +434,50 @@ export async function markTournamentFeeUnpaid(tournamentId: string, playerId: st
     .eq('player_id', playerId)
     .eq('fee_type', 'tournament')
     .single();
-  if (!oldFee) throw new Error('Fee record not found');
+  // EXPECTED, NOT A FAULT — the same three changes markFeeUnpaid took in
+  // actions/fees.ts, applied to its mirror here. This was a plain Error, and its
+  // message is not in EXPECTED_DB_GUARDS, so an entrant who simply has no
+  // entry-fee row was filed in Sentry as a defect. A bulk bar loops this action
+  // over a whole roster, which makes "somebody on the list has no row" the
+  // ordinary case rather than a corner of it.
+  if (!oldFee) {
+    throw new ExpectedError(
+      'There is no entry fee recorded for that member, so there is nothing to reverse.',
+    );
+  }
+
+  // NOTHING TO REVERSE. Without this the update below clears three fields that
+  // are already null, matches its row, reports success, and files a
+  // tournament_fee_marked_unpaid entry for a reversal that reversed nothing — an
+  // audit log that says a payment was undone when there was never a payment is
+  // worse than no entry at all, because it is the record somebody would reason
+  // from. The page renders this control only over a paid row ("Mark Unpaid") or
+  // a waived one ("Unwaive"), so no rendered control reaches this branch; a
+  // stale selection reaches it easily. Same wording as the dues-side twin.
+  if (oldFee.paid_at === null) {
+    throw new ExpectedError('That entry fee is already unpaid, so there is nothing to reverse.');
+  }
 
   // The row STAYS, with only the payment fields cleared — the entry itself is
   // still a fact, and the member still owes for it. Same as markFeeUnpaid,
   // including the compare-and-swap: see the comment there for why an unguarded
   // `WHERE id = ...` lets a stale Mark Unpaid erase a newer payment without
   // leaving any sign of it in the audit trail.
-  const unpaidQuery = adminClient
+  //
+  // One predicate rather than the `.is('paid_at', null)` / `.eq(…)` pair this
+  // used to choose between: the refusal above means paid_at was non-null when it
+  // was read, so the null arm is unreachable by construction.
+  const { data: cleared, error } = await adminClient
     .from('club_fees')
     .update({ paid_at: null, marked_by: null, method: null })
-    .eq('id', oldFee.id);
-  const { data: cleared, error } = await (
-    oldFee.paid_at === null ? unpaidQuery.is('paid_at', null) : unpaidQuery.eq('paid_at', oldFee.paid_at)
-  ).select('id');
+    .eq('id', oldFee.id)
+    .eq('paid_at', oldFee.paid_at)
+    .select('id');
   if (error) throw new Error(error.message);
   if (!cleared || cleared.length === 0) {
-    throw new Error('This fee was changed by someone else while you were working on it. Reload and try again.');
+    // Expected for the same reason the not-found above is: losing a race is this
+    // guard working, and it was being reported to Sentry as though it were not.
+    throw new ExpectedError('This fee was changed by someone else while you were working on it. Reload and try again.');
   }
 
   await logAdminAudit(adminClient, {

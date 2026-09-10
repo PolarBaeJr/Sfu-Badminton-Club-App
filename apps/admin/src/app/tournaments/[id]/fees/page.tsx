@@ -1,12 +1,16 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { Card, Badge, AvatarChip, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
 import { unwrap, quoteEntryFee, selectInChunks } from '@badminton/shared';
+import { RowSelectCheckbox, SelectAllCheckbox, SelectionProvider } from '@/components/selection';
 import { isWaivedFee } from '@/lib/fee-status';
+import type { FeeRowState } from '@/lib/fee-bulk-eligibility';
 import type { TournamentFeeTier, ClubFee, Player, MembershipType } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { TournamentFeeActions } from './tournament-fee-actions';
+import { BulkTournamentFeeActions } from './bulk-tournament-fee-actions';
 
 /** Card identity line: the same avatar + name + email the Player cell shows. */
 function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: string) {
@@ -25,7 +29,18 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   const { id } = await params;
   // Entry money is its own capability, in nobody's baseline — defence in depth
   // beyond the middleware gate, which asks the same question about the route.
-  await requireCapability('tournaments.fees.read');
+  const viewer = await requireCapability('tournaments.fees.read');
+  // The two bulk controls are the two capabilities, one apiece — the same rule
+  // /sessions and /fees follow. Which of the two buttons appears is answered
+  // again inside the bar, and again per record by the actions themselves. The
+  // gate above is still the only thing that decides who reads this page.
+  const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(level, viewer);
+  const may = (capability: Capability) => permits(level, permissions, capability);
+  const bulkCan = {
+    markPaid: may('tournaments.fees.markpaid.write'),
+    markUnpaid: may('tournaments.fees.markunpaid.write'),
+  };
   const supabase = createAdminClient();
 
   const { data: tournament } = await supabase.from('tournaments').select('id, name').eq('id', id).single();
@@ -134,6 +149,37 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   const waivedCount = players.filter((p) => stateOf(feeByPlayer.get(p.id)).waived).length;
   const outstandingCount = players.length - paidCount - waivedCount;
 
+  // WHAT IS SELECTABLE, and `items` / `visibleIds` have to agree with which rows
+  // actually carry a checkbox or SelectAllCheckbox ticks rows that have none.
+  // Every row of this table is one entrant and every one of them is selectable,
+  // withdrawn entries included — their fee is still on the books, which is the
+  // whole reason they are on the page. `visibleIds` is the lot because this table
+  // has no client-side filter: everything it holds is on screen. Keyed by PLAYER
+  // id, since that plus the tournament is what the actions take.
+  const selectableEntrants = players.map((p) => ({ id: p.id, label: p.full_name }));
+  // AND THERE HAS TO BE SOMETHING TO SELECT: a tournament nobody owes for renders
+  // "No players owe fees" under an otherwise empty table, and a select-all box
+  // above that has nothing to tick.
+  const canBulk = (bulkCan.markPaid || bulkCan.markUnpaid) && selectableEntrants.length > 0;
+  // The same paid/waived flags each row renders from, as a map for the bulk bar.
+  // A SNAPSHOT, used only to say how many of a selection an action applies to and
+  // to grey out a button that applies to none of it — never to filter the ids
+  // that are sent. See lib/fee-bulk-eligibility for why that distinction matters.
+  //
+  // AN ENTRANT WITH NO LEDGER ROW READS AS 'unpaid' HERE — stateOf() takes an
+  // undefined fee and reports neither paid nor waived — so Mark Paid counts them
+  // as eligible and the dialog can say "All N selected." That count is honest:
+  // the action really will record a payment for them. The PRICE it records is the
+  // known exception — with no row there is no snapshot to keep, so it falls back
+  // to this tournament's is_default tier rather than their membership's tier,
+  // which the single-row dialog would have used. Stated in full, with why it is
+  // not fixed, in lib/actions/bulk.ts.
+  const feeStates: Record<string, FeeRowState> = {};
+  for (const p of players) {
+    const { paid, waived } = stateOf(feeByPlayer.get(p.id));
+    feeStates[p.id] = waived ? 'waived' : paid ? 'paid' : 'unpaid';
+  }
+
   return (
     <div className="space-y-6">
       <Link href={`/tournaments/${id}`} className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors rounded">
@@ -172,6 +218,11 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
       </div>
 
       {/* Fee Table */}
+      {/* THE PROVIDER, THE TABLE AND THE BAR, in that order — the shape /sessions
+          uses. The provider goes round both because the checkboxes the server
+          renders inside the rows read it from where they land, and the bar reads
+          the same selection back out. */}
+      <SelectionProvider items={selectableEntrants} visibleIds={selectableEntrants.map((e) => e.id)}>
       <Card padding={false}>
         <ResponsiveTable
           cards={players.map((player) => {
@@ -187,14 +238,19 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
             return (
               <TableCard
                 key={player.id}
-                title={personTitle(
-                  player.full_name,
-                  // Says WHY somebody with no live entry is on the list, rather
-                  // than leaving an exec to wonder.
-                  liveEntrants.has(player.id) ? player.email ?? '' : 'Withdrawn · fee still on the books',
-                  player.avatar_url,
-                  player.id,
-                )}
+                title={
+                  <div className="flex items-center gap-3">
+                    {canBulk && <RowSelectCheckbox id={player.id} label={player.full_name} />}
+                    {personTitle(
+                      player.full_name,
+                      // Says WHY somebody with no live entry is on the list, rather
+                      // than leaving an exec to wonder.
+                      liveEntrants.has(player.id) ? player.email ?? '' : 'Withdrawn · fee still on the books',
+                      player.avatar_url,
+                      player.id,
+                    )}
+                  </div>
+                }
                 value={owedCents != null ? `$${(owedCents / 100).toFixed(2)}` : '-'}
                 badges={
                   <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
@@ -225,6 +281,11 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
           <table className="w-full">
             <thead>
               <tr className="border-b border-[var(--border)]">
+                {canBulk && (
+                  <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase w-px">
+                    <SelectAllCheckbox noun="entrant" />
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Player</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Tier</th>
@@ -243,6 +304,11 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                 const owedCents = quote.amountCents;
                 return (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
+                    {canBulk && (
+                      <td className="px-4 py-3 w-px">
+                        <RowSelectCheckbox id={player.id} label={player.full_name} />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <AvatarChip name={player.full_name} src={player.avatar_url} size="sm" id={player.id} />
@@ -293,6 +359,15 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
           <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this tournament</p>
         )}
       </Card>
+      {canBulk && (
+        <BulkTournamentFeeActions
+          tournamentId={id}
+          states={feeStates}
+          canMarkPaid={bulkCan.markPaid}
+          canMarkUnpaid={bulkCan.markUnpaid}
+        />
+      )}
+      </SelectionProvider>
     </div>
   );
 }
