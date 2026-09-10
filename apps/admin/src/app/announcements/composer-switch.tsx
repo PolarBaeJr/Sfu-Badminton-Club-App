@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Tabs } from '@badminton/ui';
 import { Composer, type DiscordContext } from './actions';
 import { DiscordSend } from './discord-send';
+import { useDiscordConsole } from './discord-console-context';
 import {
   COMPOSER_MODE_LABELS,
   showsModeSelector,
@@ -36,6 +37,19 @@ export function ComposerSwitch({
   roleNames: string[];
 }) {
   const [mode, setMode] = useState<ComposerMode>(modes[0] ?? 'website');
+  const { pending } = useDiscordConsole();
+
+  // EDITING A DISCORD MESSAGE HAS TO SHOW THE DISCORD COMPOSER. The Edit button
+  // is in the card below this one, and without this an exec who was writing a
+  // website post would press it and watch nothing happen: the fields would fill
+  // in behind a `display:none`.
+  //
+  // `pending` alone in the dependency list, deliberately. `modes` is a fresh
+  // array on every render, so including it would re-run this after each one and
+  // pin the tab strip to Discord for as long as an edit is open.
+  useEffect(() => {
+    if (pending) setMode('discord');
+  }, [pending]);
 
   return (
     // The rhythm both composers already use internally (actions.tsx:279,

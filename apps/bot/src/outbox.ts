@@ -42,6 +42,29 @@ const COLORS: Record<string, number> = {
 };
 const COLOR_DEFAULT = 0x95a5a6;
 
+/** The mentions the console already resolved, taken back out of the text. */
+const ROLE_MENTION = /<@&(\d+)>/g;
+
+/**
+ * The roles a ping line is allowed to notify, read from the line itself.
+ *
+ * DERIVED FROM THE TEXT RATHER THAN CARRIED BESIDE IT, which is what makes it
+ * impossible for the words and the notification to disagree: the console
+ * resolves a picked role name to `<@&id>` before it writes the row, so the only
+ * roles in this list are the ones a reader can see named.
+ *
+ * Discord caps `allowed_mentions.roles` at 100, and going over is a 400 rather
+ * than a truncation, so the slice is the difference between nine mentions and a
+ * refused message.
+ */
+function roleIdsIn(text: string): string[] {
+  ROLE_MENTION.lastIndex = 0;
+  const ids = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = ROLE_MENTION.exec(text)) !== null) ids.add(match[1]!);
+  return [...ids].slice(0, 100);
+}
+
 function payloadFor(message: OutboxMessage) {
   // THE DEFAULT IS SILENCE, and it is the same argument /say makes. An empty
   // `parse` turns every @here, @everyone and @role in the text into plain text
@@ -52,10 +75,40 @@ function payloadFor(message: OutboxMessage) {
     ? { parse: ['users', 'roles', 'everyone'] }
     : { parse: [] as string[] };
 
+  // A PING LINE AND AN EMBED, IN ONE MESSAGE, and it must be tested before the
+  // embed-only branch below or it would never be reached.
+  //
+  // This is the only shape that can both look like a notice and reach a phone.
+  // `content` renders ABOVE the embed and is the only field Discord notifies
+  // from: a mention inside embed text never rings anybody, whatever
+  // allowed_mentions says. There is no way to put content below an embed and no
+  // second message involved.
+  if (message.embed && message.content) {
+    return {
+      content: message.content,
+      embeds: [
+        {
+          title: message.embed.title.slice(0, 256),
+          description: message.embed.body.slice(0, 4096) || undefined,
+          color: COLORS[message.embed.type] ?? COLOR_DEFAULT,
+        },
+      ],
+      // NAMED ROLES AND NOTHING ELSE, never `parse: ['everyone']`. An explicit
+      // `roles` array beside a non-empty `parse` is a Discord API error, and an
+      // empty `parse` is what makes an `@everyone` typed anywhere in this line
+      // incapable of ringing: it renders, and it reaches nobody.
+      allowed_mentions: message.ping
+        ? { parse: [] as string[], roles: roleIdsIn(message.content) }
+        : { parse: [] as string[] },
+    };
+  }
+
   if (message.embed) {
     return {
-      // No content field, so there is nothing for Discord to parse a mention
-      // out of even before allowed_mentions is considered.
+      // No content field IN THIS SHAPE, so there is nothing for Discord to
+      // parse a mention out of even before allowed_mentions is considered. It
+      // is not a statement about embeds in general any more: the branch above
+      // gives one a line that does notify, and it is the only way to.
       embeds: [
         {
           title: message.embed.title.slice(0, 256),
@@ -111,7 +164,32 @@ export async function runOutbox(): Promise<OutboxRunResult> {
     }
 
     for (const message of messages) {
-      const discordMessageId = await api.postMessage(message.channelId, payloadFor(message));
+      // AN EDIT IS A PATCH OF THE MESSAGE ALREADY IN THE CHANNEL, never a
+      // second copy of it. A row that carries a Discord message id has been
+      // posted once and re-queued by the console with new words, so posting
+      // here would leave the club saying the same thing twice, the wrong
+      // version first.
+      //
+      // A MESSAGE SOMEBODY DELETED BY HAND IS REFUSED AND SAID SO, not
+      // reposted. 'gone' is a 404 on the PATCH, which means an exec removed the
+      // message on purpose; silently putting it back is the worst thing this
+      // file could do. It is recorded as a failure, so the attempt budget
+      // retires the row rather than retrying it forever.
+      let discordMessageId: string | null;
+      let refusal: string | null = null;
+      if (message.discordMessageId) {
+        const outcome = await api.editMessage(
+          message.channelId,
+          message.discordMessageId,
+          payloadFor(message)
+        );
+        discordMessageId = outcome === 'ok' ? message.discordMessageId : null;
+        if (outcome === 'gone') {
+          refusal = 'That message is gone from Discord, so there was nothing to edit.';
+        }
+      } else {
+        discordMessageId = await api.postMessage(message.channelId, payloadFor(message));
+      }
 
       if (!discordMessageId) {
         result.failed += 1;
@@ -122,8 +200,9 @@ export async function runOutbox(): Promise<OutboxRunResult> {
           await recordOutboxResult({
             id: message.id,
             error:
+              refusal ??
               `Discord refused the message (attempt ${message.attempts + 1}). ` +
-              'Check the bot can post in that channel.',
+                'Check the bot can post in that channel.',
           });
         } catch (error) {
           console.error(`[bot] outbox: could not record the failure of ${message.id}:`, error);

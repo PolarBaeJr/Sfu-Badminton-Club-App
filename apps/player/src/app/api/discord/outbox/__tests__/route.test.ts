@@ -182,6 +182,46 @@ describe('claiming', () => {
     });
     expect(messages[0]?.ping).toBe(true);
   });
+
+  it('carries the message id through, which is the whole of what an edit needs', async () => {
+    // The console re-queues a sent row with new words and leaves its
+    // `discord_message_id` alone. Without it here the bot cannot tell a
+    // correction from a new notice, and it posts a second copy of the club's
+    // message underneath the first.
+    selectRows = [{ id: 'o1' }, { id: 'o2' }];
+    updateRows = [
+      {
+        id: 'o1',
+        channel_id: 'c1',
+        content: 'Doors open at eight.',
+        embed_title: null,
+        embed_body: null,
+        embed_type: null,
+        ping: false,
+        attempts: 0,
+        discord_message_id: 'm1',
+      },
+      {
+        id: 'o2',
+        channel_id: 'c1',
+        content: 'Doors open at seven.',
+        embed_title: null,
+        embed_body: null,
+        embed_type: null,
+        ping: false,
+        attempts: 0,
+        discord_message_id: null,
+      },
+    ];
+
+    const { messages } = (await (await GET(get())).json()) as {
+      messages: { discordMessageId: string | null }[];
+    };
+    expect(messages[0]?.discordMessageId).toBe('m1');
+    // Null rather than absent, so "never posted" is a value the bot reads and
+    // not a field it has to guess at.
+    expect(messages[1]?.discordMessageId).toBeNull();
+  });
 });
 
 describe('recording what Discord did', () => {

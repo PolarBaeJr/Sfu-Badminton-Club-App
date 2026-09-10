@@ -583,6 +583,15 @@ export interface OutboxMessage {
   ping: boolean;
   attempts: number;
   /**
+   * The message this row already is in Discord, or null when it is new.
+   *
+   * THE ONLY SIGNAL THAT A CLAIMED ROW IS AN EDIT. The console re-queues a sent
+   * row with new text and keeps this id, so a row that carries one is a
+   * correction to a message members can already read: it is PATCHed in place,
+   * never posted a second time underneath the first.
+   */
+  discordMessageId: string | null;
+  /**
    * The name of the exec who asked for it, for the audit entry. Null when the
    * row's requester was deleted, or when the app could not resolve the name —
    * the entry still gets written, it just cannot say who.

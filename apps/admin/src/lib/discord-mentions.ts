@@ -129,3 +129,48 @@ export function resolveRoleMentions(
 
   return { text: out, matched: [...matched].sort() };
 }
+
+/**
+ * Turn role names somebody PICKED into ids, rather than names they typed.
+ *
+ * The ping line above an embed is built from a picker, not from prose, so none
+ * of the scanning above applies: there is no surrounding sentence to protect
+ * and no two-word backoff to make. What it does share is the normalisation, and
+ * that is the whole reason this lives here. `roleKey` is what makes
+ * `Session Staff`, `session_staff` and `session-staff` one role, and a second
+ * copy of that rule in the action would be a second answer to the same
+ * question.
+ *
+ * AN UNKNOWN NAME COMES BACK NAMED, never dropped. The caller refuses the whole
+ * message on one: a silently dropped ping role is a message that looks sent and
+ * rings nobody, which is the exact failure the ping line exists to remove.
+ * Duplicates and blanks are dropped, because those are the same request twice.
+ */
+export function resolveRoleNames(
+  names: string[],
+  roles: GuildRole[],
+): { ids: string[]; matched: string[]; unknown: string[] } {
+  const byKey = new Map<string, GuildRole>();
+  for (const role of roles) byKey.set(roleKey(role.role_name), role);
+
+  const ids: string[] = [];
+  const matched: string[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+
+  for (const name of names) {
+    const key = roleKey(name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+
+    const role = byKey.get(key);
+    if (!role) {
+      unknown.push(name);
+      continue;
+    }
+    ids.push(role.role_id);
+    matched.push(role.role_name);
+  }
+
+  return { ids, matched, unknown };
+}
