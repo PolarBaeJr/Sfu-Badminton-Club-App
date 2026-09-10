@@ -5,6 +5,7 @@ import {
   audienceLabel,
   bylineName,
   reachPercent,
+  relayChip,
   tallyOpens,
   typeBadge,
 } from '../../app/announcements/announcement-shape';
@@ -137,5 +138,62 @@ describe('tallyOpens', () => {
 
   it('has nothing to count when nothing is published', () => {
     expect([...tallyOpens([receipt('a')], []).entries()]).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Discord chip
+// ---------------------------------------------------------------------------
+
+describe('relayChip', () => {
+  const NOW = Date.parse('2026-09-09T12:00:00Z');
+  const hoursAgo = (h: number) => new Date(NOW - h * 3600_000).toISOString();
+  const ctx = { now: NOW, channelConfigured: true, posted: null };
+  const row = {
+    status: 'published',
+    target_audience: 'all',
+    expires_at: null as string | null,
+    updated_at: hoursAgo(1),
+    title: 'Courts closed',
+    body: 'Gym booked.',
+    type: 'info',
+  };
+
+  it('says a fresh published post is queued', () => {
+    expect(relayChip(row, ctx)).toBe('Queued');
+  });
+
+  it('says nothing at all about a draft', () => {
+    // The DRAFT badge sits beside it. A second label saying the same thing in
+    // different words is noise on every row of a list.
+    expect(relayChip({ ...row, status: 'draft' }, ctx)).toBeNull();
+  });
+
+  it('calls a narrowly-addressed post website only, not failed', () => {
+    // It is a decision, not a fault, and the wording has to carry that.
+    expect(relayChip({ ...row, target_audience: 'competitive' }, ctx)).toBe('Website only');
+  });
+
+  it('says NOT SENT for a relayable post the lookback cannot reach', () => {
+    // The row a chip reading only `relayable` would call Queued forever.
+    expect(relayChip({ ...row, updated_at: hoursAgo(100) }, ctx)).toBe('Not sent');
+  });
+
+  it('distinguishes a message that is in the channel from one that needs editing', () => {
+    const posted = { syncedTitle: row.title, syncedBody: row.body, syncedType: 'info' };
+    expect(relayChip(row, { ...ctx, posted })).toBe('In channel');
+    expect(relayChip({ ...row, title: 'Moved' }, { ...ctx, posted })).toBe('Edit due');
+  });
+
+  it('warns that a narrowed post already in the channel is coming down', () => {
+    const posted = { syncedTitle: row.title, syncedBody: row.body, syncedType: 'info' };
+    expect(relayChip({ ...row, target_audience: 'competitive' }, { ...ctx, posted })).toBe(
+      'Coming down',
+    );
+  });
+
+  it('says nothing when no channel is configured', () => {
+    // "We could not find out" and "it is not in Discord" must not read the same.
+    expect(relayChip(row, { ...ctx, channelConfigured: false })).toBeNull();
   });
 });

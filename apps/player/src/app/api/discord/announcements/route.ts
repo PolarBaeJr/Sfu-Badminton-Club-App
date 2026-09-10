@@ -1,4 +1,9 @@
 import { NextResponse } from 'next/server';
+import {
+  ANNOUNCEMENT_BODY_MAX,
+  ANNOUNCEMENT_LOOKBACK_HOURS,
+  announcementRelayVerdict,
+} from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -64,11 +69,14 @@ interface MappingRow {
 //
 // Three days rather than one so a bot down over a weekend delays the relay
 // instead of dropping it.
-const LOOKBACK_HOURS = 72;
-
-// Discord truncates an embed description at 4096 characters and refuses the
-// message outright past it. Built to fit rather than sent hopefully.
-const MAX_BODY = 4000;
+//
+// Both of these live in @badminton/shared rather than here, because the admin
+// console's Discord preview has to answer "will this actually appear" and the
+// lookback is half that answer — an announcement republished from last week is
+// relayable and still never picked up. A preview with its own copy of the
+// number would be believed and would be wrong.
+const LOOKBACK_HOURS = ANNOUNCEMENT_LOOKBACK_HOURS;
+const MAX_BODY = ANNOUNCEMENT_BODY_MAX;
 
 // How many mapped messages one tick will look at, and it is a SAFETY BOUND
 // rather than a performance one.
@@ -277,9 +285,11 @@ export async function GET(request: Request) {
   for (const a of byId.values()) {
     const existing = mapped.get(a.id) ?? null;
 
-    const expired = a.expires_at !== null && Date.parse(a.expires_at) <= now;
-    const addressedToEveryone = a.target_audience === 'all';
-    const relayable = a.status === 'published' && addressedToEveryone && !expired;
+    // THE PREDICATE ITSELF IS SHARED (announcementRelayVerdict). The console
+    // renders the same call next to the composer, so "who may see this" is
+    // answered once and shown in the place somebody is deciding it, rather than
+    // discovered by publishing and going to look at the channel.
+    const { relayable, reason } = announcementRelayVerdict(a, now);
 
     if (!relayable) {
       if (existing) {
@@ -298,13 +308,13 @@ export async function GET(request: Request) {
           type: existing.synced_type,
           url: null,
         });
-      } else if (a.status === 'published' && !addressedToEveryone) {
+      } else if (reason) {
         // Named rather than dropped in silence. "I published it and nothing
         // appeared" is otherwise an unanswerable question, and the answer here
-        // is a decision rather than a fault.
-        skipped.push({ announcementId: a.id, reason: 'narrow_audience' });
-      } else if (a.status === 'published' && expired) {
-        skipped.push({ announcementId: a.id, reason: 'expired' });
+        // is a decision rather than a fault. A DRAFT gets no reason and is not
+        // reported, which is what it was before: nobody is surprised that an
+        // unpublished announcement is not in Discord.
+        skipped.push({ announcementId: a.id, reason });
       }
       continue;
     }
