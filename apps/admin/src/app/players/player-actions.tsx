@@ -9,16 +9,23 @@ import { removePlayer, updatePlayer, updatePlayerFlags, approvePlayer, banPlayer
 import { isApprovalEdit } from '@/lib/player-approval';
 import type { PlayerEditRow } from '@/lib/player-edit-row';
 
-// NO CONSOLE-ACCESS CONTROL HERE ANY MORE. This dialog carried the same four-way
-// select the member detail form did, and both posted role / is_exec / is_trainer
+// NO CONSOLE-ACCESS CONTROL IN THIS DIALOG. It carried the same four-way select
+// the member detail form did, and both posted role / is_exec / is_trainer
 // through updatePlayer under nothing but an `isAdmin` check. The club owner took
 // it off — "as its only admins who will be mainly editing permissions" — and
-// /permissions is where it is decided, because setConsoleAccess is the only path
-// with a self-edit refusal, an admin-target refusal, grant closure in both
-// directions and composition clearing. updatePlayer refuses the three columns
-// outright now, so this is enforcement rather than a control that stopped being
-// drawn. lib/console-access.ts is therefore imported by /permissions and
-// /accounts only.
+// updatePlayer refuses the three columns outright now, so this is enforcement
+// rather than a control that stopped being drawn.
+//
+// THE ROSTER HAS ONE AGAIN, AND IT IS NOT THIS ONE COMING BACK. The owner has
+// since asked to "edit access from the player menu too, but only to people who
+// have permission to do edits on the player menu", and ./console-access-actions
+// answers that by calling setConsoleAccess — the /permissions action — rather
+// than by widening updatePlayer. So the level is still set in exactly one place;
+// it is now reachable from two, gated on players.consoleaccess.write in both.
+// What made the old control wrong was the writer it used, not the screen it was
+// on: setConsoleAccess is the only path with a self-edit refusal, an
+// admin-target refusal, grant closure in both directions and composition
+// clearing.
 
 interface Props {
   // One button per mode; /players decides WHICH modes a row gets from the tab
