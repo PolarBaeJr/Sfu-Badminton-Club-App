@@ -51,6 +51,13 @@ describe('isPublicPath', () => {
       expect(isPublicPath('/unsubscribe/confirm')).toBe(true);
     });
 
+    // The anonymous caller here is Discord's image proxy, fetching the QR out
+    // of the /discord embed with none of our cookies. Gated, it follows the 307
+    // to /login and the embed renders blank with nothing logged.
+    it('lets the Discord invite QR through for the image proxy', () => {
+      expect(isPublicPath('/qr/discord.png')).toBe(true);
+    });
+
     it('lets passkey sign-in through but not passkey registration', () => {
       expect(isPublicPath('/api/passkey/login/options')).toBe(true);
       expect(isPublicPath('/api/passkey/register/options')).toBe(false);

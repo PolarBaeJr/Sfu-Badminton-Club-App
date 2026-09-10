@@ -49,6 +49,12 @@ export function isPublicPath(pathname: string): boolean {
     // API ONLY: /link/<token> is a PAGE and must stay gated — needing a session
     // is the entire point of it.
     pathname.startsWith('/api/discord/') ||
+    // The Discord invite QR the bot's /discord embed points at. Discord's image
+    // proxy fetches it anonymously, with none of our cookies, so gating it
+    // turns the fetch into a 307 to /login and the embed renders blank with
+    // nothing logged. The matcher in middleware.ts excludes it too; this is the
+    // second of the two independent guards, and the testable one.
+    pathname.startsWith('/qr/') ||
     pathname === '/leaderboard'
   );
 }

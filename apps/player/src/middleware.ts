@@ -172,7 +172,12 @@ export const config = {
   // api/health/ likewise: the container healthcheck runs inside the container
   // with no session, so a gated probe would 307 to /login and — since the check
   // now requires exactly 200 — mark a perfectly good container unhealthy.
+  //
+  // qr/ is the same shape of caller again: /discord puts the QR in an embed and
+  // Discord's image PROXY fetches it, anonymously and with no cookie of ours.
+  // Gated, that fetch follows the 307 to /login, gets HTML under a 200, and the
+  // embed renders blank with nothing logged anywhere.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/|api/health/|api/discord/card/).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/|qr/|api/health/|api/discord/card/).*)',
   ],
 };

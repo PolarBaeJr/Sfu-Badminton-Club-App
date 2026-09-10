@@ -46,6 +46,21 @@ import {
 // part of the same product rather than Discord-default blurple.
 const CLUB_RED = 0xcc0000;
 
+// THE CLUB'S OWN SUBDOMAIN, NEVER A discord.gg CODE. The subdomain is a
+// Cloudflare 301 at the club's own domain, and that redirect IS the indirection
+// layer: a Discord invite expires, gets revoked, or is rotated after a raid,
+// and the new code is one DNS record away. A raw discord.gg code printed on a
+// poster or frozen into a pinned embed cannot be reprinted when that happens,
+// so the poster quietly becomes a dead end nobody reports.
+const DISCORD_INVITE_URL = 'https://discord.sfubadminton.com';
+// Served by the player app, not by the bot: the bot image copies only
+// package.json and dist (see the Dockerfile), so it has no bytes to upload.
+// The file is apps/player/public/qr/discord.png, and what it encodes is the
+// SUBDOMAIN above, not the discord.gg code behind it. That is what carries the
+// argument above through to the picture: rotate the invite and a printed poster
+// still resolves, because the image never named the code it points at.
+const DISCORD_QR_PATH = '/qr/discord.png';
+
 const LADDER_LABEL: Record<string, string> = {
   singles: 'Singles',
   doubles: 'Doubles',
@@ -567,6 +582,24 @@ export const COMMAND_DEFINITIONS = [
     // channel for that to mean anything in.
     dm_permission: false,
   },
+  {
+    name: 'discord',
+    description: 'Show the club Discord invite link and its QR code',
+    // NO OPTIONS, on purpose and by instruction. The club has one invite, so
+    // there is nothing to parameterise, and an option or a subcommand here
+    // would only invite a second invite to exist.
+    options: [],
+    // EXEC_ONLY, on /guidepost's argument: this is the link an exec pastes into
+    // a slide or a poster, and handing every member a one-keystroke way to
+    // spray it is how an invite ends up somewhere the club did not put it. No
+    // app-side capability check to pair it with, like /say and /guidepost,
+    // because nothing here reads or writes club data.
+    default_member_permissions: EXEC_ONLY,
+    // LOAD-BEARING, not copied boilerplate. default_member_permissions is a
+    // GUILD-ONLY filter and has no meaning in a DM, so without this line any
+    // member could DM the bot and the exec gate above would be decorative.
+    dm_permission: false,
+  },
 ];
 
 /**
@@ -575,6 +608,10 @@ export const COMMAND_DEFINITIONS = [
  * Discord gives an interaction 3 seconds to be acknowledged. /setup can create
  * nine roles and then write to the app, which is comfortably longer, so it
  * acknowledges first and edits the message when it is actually finished.
+ *
+ * /discord MUST NEVER BE ADDED TO THIS SET. It makes no network call of any
+ * kind, so there is nothing to defer for, and deferring buys a second HTTP
+ * round trip to Discord to say the same thing a few hundred milliseconds later.
  */
 export const DEFERRED_COMMANDS = new Set(['setup', 'config']);
 
@@ -1578,6 +1615,44 @@ function handleGuidePost(context: InteractionContext) {
       components: guideComponents(),
     },
   };
+}
+
+/**
+ * /discord: the invite, as a link and as a picture of the link.
+ *
+ * No guildId check, unlike /guidepost above: that one refuses in a DM because
+ * its reply is a public channel message, and this reply is ephemeral and says
+ * the same thing wherever it is run. The branch would be unreachable.
+ */
+function handleDiscordInvite(): BotResponse {
+  // Built against APP_PUBLIC_URL because Discord's image proxy fetches from
+  // OUTSIDE the cluster, so the in-cluster APP_API_URL would be unreachable.
+  // Same split, and the same reason, as the profile card's URL.
+  let qrUrl: string | null = null;
+  try {
+    const base = process.env.APP_PUBLIC_URL;
+    if (base) qrUrl = new URL(DISCORD_QR_PATH, base).toString();
+  } catch {
+    // A missing or unparseable base is NOT fatal here, unlike /profile where
+    // the URL is the entire answer. The link below is the useful half on its
+    // own, so this degrades to a link rather than to an apology.
+  }
+
+  return ephemeralEmbed({
+    title: 'Join the club Discord',
+    color: CLUB_RED,
+    description:
+      // The URL is printed as text AS WELL AS encoded in the image, because the
+      // two are not substitutes: a link can be copied into a message or a
+      // slide, and a QR code cannot be copied into anything.
+      `**${DISCORD_INVITE_URL}**\n\n` +
+      'Scan the code, or send the link. It works on a poster, a slide or a phone screen.',
+    ...(qrUrl ? { image: { url: qrUrl } } : {}),
+    // Not decoration. An ephemeral reply vanishes on a client reload, and an
+    // exec who cannot find it again reads that as the bot having lost the
+    // message rather than as Discord doing what it always does.
+    footer: { text: 'Only you can see this. Run /discord again any time.' },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2790,6 +2865,8 @@ export async function dispatch(
         return await handleRolePicker(options, context);
       case 'guidepost':
         return handleGuidePost(context);
+      case 'discord':
+        return handleDiscordInvite();
       case 'announce':
         return openAnnounceModal(options);
       case 'say':
