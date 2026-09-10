@@ -22,6 +22,30 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // The assertions are on the SURVIVING ROW and on the audit entry, not on "it
 // threw": the point is never to lose the number, and a refusal that still
 // overwrote would pass a throw-only test.
+//
+// THREE MORE OF THE SAME SHAPE, covered here because they were found while the
+// two fee ledgers were about to grow bulk (multi-select) bars. A bulk bar is a
+// LOOP over the single-record action, which makes "the caller omitted the
+// optional arguments, over a selection that has gone stale" the ordinary case
+// rather than the odd one:
+//
+//   * waiveFee permitted a re-waive, calling it idempotent. It is not: the write
+//     sets a fresh paid_at and marked_by, so a second waive destroys the date the
+//     waiver was granted and the officer who granted it.
+//   * markFeeUnpaid reported a member with no dues row as a Sentry FAULT, and it
+//     "reversed" an already-unpaid row — clearing three already-null fields,
+//     reporting success, and filing a fee_marked_unpaid audit entry for a
+//     reversal that reversed nothing.
+//   * markTournamentFeePaid derived the amount BEFORE reading the existing row,
+//     so a call naming neither a tier nor an amount re-priced that row from the
+//     tournament's default tier. ensureEntryFees seeds those rows from the
+//     member's REAL tier, so a $25 external snapshot came back as the $15 default
+//     with nothing anywhere to show it had changed.
+//
+// Two of the three were unreachable from a rendered control, which is why they
+// survived. The third was reachable narrowly: the Amount field is optional, so
+// clearing it on a row carrying no tier_id sent neither field. Every one of them
+// is reachable from a loop.
 
 type Row = Record<string, unknown>;
 type Op = 'select' | 'update' | 'insert';
@@ -105,13 +129,17 @@ vi.mock('../audit', () => ({
   },
 }));
 
-import { markFeePaid } from '../actions/fees';
+import { ExpectedError } from '@badminton/shared';
+import { markFeePaid, waiveFee, markFeeUnpaid } from '../actions/fees';
 import { markTournamentFeePaid } from '../actions/tournament-fees';
 
 const TOURNAMENT = '11111111-1111-4111-8111-111111111111';
 const PLAYER = '33333333-3333-4333-8333-333333333333';
 const SEASON = '99999999-9999-4999-8999-999999999999';
 const MEMBER_TIER = '44444444-4444-4444-8444-444444444444';
+// Not the default, and priced ABOVE it — so a fallback that reaches for the
+// default is visible in the amount AND in the tier, not just one of them.
+const EXTERNAL_TIER = '55555555-5555-4555-8555-555555555555';
 
 const duesRow = () => (store.db.club_fees ?? []).find((r) => r.fee_type === 'dues');
 const entryRow = () => (store.db.club_fees ?? []).find((r) => r.fee_type === 'tournament');
@@ -129,6 +157,7 @@ beforeEach(() => {
     tournaments: [{ id: TOURNAMENT, season_id: SEASON }],
     tournament_fee_tiers: [
       { id: MEMBER_TIER, tournament_id: TOURNAMENT, name: 'Member', amount_cents: 1500, is_default: true },
+      { id: EXTERNAL_TIER, tournament_id: TOURNAMENT, name: 'External', amount_cents: 2500, is_default: false },
     ],
   };
 });
@@ -150,6 +179,16 @@ function paidEntryFee() {
   });
 }
 
+// What ensureEntryFees actually files: the liability priced from the member's
+// own tier, which for an external entrant is not the tournament's default.
+function unpaidEntryFeeFromTier() {
+  store.db.club_fees!.push({
+    id: 'fee-entry-1', fee_type: 'tournament', tournament_id: TOURNAMENT,
+    player_id: PLAYER, season_id: SEASON, amount_cents: 2500, paid_at: null,
+    method: null, reference: null, tier_id: EXTERNAL_TIER,
+  });
+}
+
 function unpaidDues() {
   store.db.club_fees!.push({
     id: 'fee-dues-1', fee_type: 'dues', player_id: PLAYER, season_id: SEASON,
@@ -162,6 +201,16 @@ function paidDues(extra: Row = {}) {
     id: 'fee-dues-1', fee_type: 'dues', player_id: PLAYER, season_id: SEASON,
     amount_cents: 10000, paid_at: '2026-08-01T00:00:00.000Z', method: 'cash',
     reference: 'envelope', ...extra,
+  });
+}
+
+// A granted waiver, carrying the two fields a re-waive would rewrite: the date
+// it was granted and the officer who granted it.
+function waivedDues() {
+  store.db.club_fees!.push({
+    id: 'fee-dues-1', fee_type: 'dues', player_id: PLAYER, season_id: SEASON,
+    amount_cents: 0, paid_at: '2026-08-01T00:00:00.000Z', marked_by: 'admin-original',
+    method: 'waived', reference: null,
   });
 }
 
@@ -268,9 +317,10 @@ describe('markFeePaid does not overwrite a recorded payment', () => {
     expect(auditRows('fee_marked_paid')).toHaveLength(0);
   });
 
-  // A waiver is a paid row with amount_cents 0 and method 'waived'. waiveFee may
-  // re-waive one because that destroys nothing; recording a PAYMENT over one
-  // replaces the club's decision not to charge, which is a fact of its own.
+  // A waiver is a paid row with amount_cents 0 and method 'waived'. Recording a
+  // PAYMENT over one replaces the club's decision not to charge, which is a fact
+  // of its own — and waiveFee refuses a re-waive for a reason of its own, which
+  // the waiveFee block further down covers.
   it('refuses to record a payment over a waived fee, and says it is waived', async () => {
     paidDues({ amount_cents: 0, method: 'waived', reference: null });
 
@@ -309,5 +359,226 @@ describe('markFeePaid does not overwrite a recorded payment', () => {
     expect(entry).toBeTruthy();
     expect((entry!.old_value as Row).paid_at).toBeNull();
     expect((entry!.old_value as Row).id).toBe('fee-dues-1');
+  });
+});
+
+// A CALLER THAT NAMES NEITHER A TIER NOR AN AMOUNT IS RECORDING PAYMENT OF WHAT
+// THE ROW ALREADY SAYS, not asking for a fresh price. The amount used to be
+// derived before `existing` was read, which meant the no-tier-no-amount path
+// could only reach for the tournament's default tier — and the update then wrote
+// it over the snapshot ensureEntryFees had taken from the member's real tier.
+describe('markTournamentFeePaid does not re-price an existing snapshot', () => {
+  // THE REGRESSION THAT MATTERS. $25 owed off the External tier, marked paid with
+  // no arguments: the row must still say $25 External afterwards.
+  it('keeps the row\'s own amount and tier when neither is supplied', async () => {
+    unpaidEntryFeeFromTier();
+
+    await markTournamentFeePaid({ tournament_id: TOURNAMENT, player_id: PLAYER });
+
+    expect(entryRow()!.paid_at).toBeTruthy();
+    expect(entryRow()!.amount_cents).toBe(2500);
+    expect(entryRow()!.tier_id).toBe(EXTERNAL_TIER);
+    // And the audit entry agrees, so the ledger and the log cannot disagree
+    // about which price was taken.
+    expect((auditRows('tournament_fee_marked_paid')[0]!.new_value as Row).amount_cents).toBe(2500);
+  });
+
+  // The default tier is still the answer when there is nothing else to go on.
+  it('falls back to the default tier when there is no existing row', async () => {
+    await markTournamentFeePaid({ tournament_id: TOURNAMENT, player_id: PLAYER });
+
+    expect(entryRow()!.amount_cents).toBe(1500);
+    expect(entryRow()!.tier_id).toBe(MEMBER_TIER);
+  });
+
+  // `existing?.amount_cents != null` and not `existing != null`: a row can exist
+  // and carry no price at all, and that one genuinely has to be priced.
+  it('falls back to the default tier when the existing row carries no amount', async () => {
+    store.db.club_fees!.push({
+      id: 'fee-entry-1', fee_type: 'tournament', tournament_id: TOURNAMENT,
+      player_id: PLAYER, season_id: SEASON, amount_cents: null, paid_at: null,
+      method: null, reference: null, tier_id: null,
+    });
+
+    await markTournamentFeePaid({ tournament_id: TOURNAMENT, player_id: PLAYER });
+
+    expect(entryRow()!.amount_cents).toBe(1500);
+    expect(entryRow()!.tier_id).toBe(MEMBER_TIER);
+  });
+
+  // Preferring the row must not have turned into ignoring the caller: an
+  // operator correcting the figure at the desk still outranks the snapshot.
+  it('lets an explicit amount override the row\'s snapshot', async () => {
+    unpaidEntryFeeFromTier();
+
+    await markTournamentFeePaid({ tournament_id: TOURNAMENT, player_id: PLAYER, amount_cents: 1500 });
+
+    expect(entryRow()!.amount_cents).toBe(1500);
+  });
+
+  it('lets an explicitly named tier override the row\'s snapshot', async () => {
+    unpaidEntryFeeFromTier();
+
+    await markTournamentFeePaid({ tournament_id: TOURNAMENT, player_id: PLAYER, tier_id: MEMBER_TIER });
+
+    expect(entryRow()!.amount_cents).toBe(1500);
+    expect(entryRow()!.tier_id).toBe(MEMBER_TIER);
+  });
+
+  // The tier/tournament pair check moved BELOW the existing-row read, so it has
+  // to be shown still running over a row that exists — the ordering that the
+  // reorder could have broken without any other test noticing.
+  it('still refuses a tier from another tournament over an existing row', async () => {
+    unpaidEntryFeeFromTier();
+    store.db.tournament_fee_tiers!.push({
+      id: '66666666-6666-4666-8666-666666666666',
+      tournament_id: '77777777-7777-4777-8777-777777777777',
+      name: 'Other cup', amount_cents: 9900, is_default: true,
+    });
+
+    await expect(
+      markTournamentFeePaid({
+        tournament_id: TOURNAMENT, player_id: PLAYER,
+        tier_id: '66666666-6666-4666-8666-666666666666',
+      }),
+    ).rejects.toThrow(/does not belong to this tournament/i);
+
+    expect(entryRow()!.paid_at).toBeNull();
+    expect(entryRow()!.amount_cents).toBe(2500);
+    expect(auditRows('tournament_fee_marked_paid')).toHaveLength(0);
+  });
+});
+
+// A RE-WAIVE IS NOT IDEMPOTENT. It was permitted on the grounds that writing
+// $0/waived over $0/waived destroys nothing — but the write also sets a fresh
+// paid_at and marked_by, so the second waive replaces the date the club granted
+// the waiver and the officer who granted it with today and whoever clicked. That
+// is a silent rewrite of who decided what, and when.
+describe('waiveFee refuses a row that is already waived', () => {
+  it('refuses, and leaves the original date and officer in place', async () => {
+    waivedDues();
+
+    await expect(waiveFee({ player_id: PLAYER, season_id: SEASON })).rejects.toThrow(/already waived/i);
+
+    expect(duesRow()!.paid_at).toBe('2026-08-01T00:00:00.000Z');
+    expect(duesRow()!.marked_by).toBe('admin-original');
+    // No fee_waived entry either: a log that records a decision nobody made is
+    // the half of this defect the row assertions above cannot see.
+    expect(auditRows('fee_waived')).toHaveLength(0);
+  });
+
+  // Operator-facing, so it must not reach Sentry.
+  it('refuses as an ExpectedError', async () => {
+    waivedDues();
+
+    await expect(waiveFee({ player_id: PLAYER, season_id: SEASON })).rejects.toBeInstanceOf(ExpectedError);
+  });
+
+  // Refusing on paid_at alone must not have made the ordinary case harder: this
+  // is what "Skip (Waive)" does on every unpaid row on /fees.
+  it('still waives a genuinely unpaid row', async () => {
+    unpaidDues();
+
+    await waiveFee({ player_id: PLAYER, season_id: SEASON });
+
+    expect(duesRow()!.method).toBe('waived');
+    expect(duesRow()!.amount_cents).toBe(0);
+    expect(duesRow()!.paid_at).toBeTruthy();
+    expect(auditRows('fee_waived')).toHaveLength(1);
+  });
+
+  it('still inserts a waiver where the member has no fee row at all', async () => {
+    await waiveFee({ player_id: PLAYER, season_id: SEASON });
+
+    expect(duesRow()!.method).toBe('waived');
+    expect(duesRow()!.amount_cents).toBe(0);
+    expect(auditRows('fee_waived')[0]!.old_value).toBeNull();
+  });
+
+  // Unchanged behaviour, kept because the guard it belongs to was rewritten: a
+  // recorded payment is still refused, and still named in the message so the
+  // operator knows what they were about to overwrite with $0.00.
+  it('still refuses a recorded payment and names the amount', async () => {
+    paidDues();
+
+    await expect(waiveFee({ player_id: PLAYER, season_id: SEASON }))
+      .rejects.toThrow(/already recorded as paid \(\$100\.00\)/i);
+
+    expect(duesRow()!.amount_cents).toBe(10000);
+    expect(duesRow()!.method).toBe('cash');
+    expect(auditRows('fee_waived')).toHaveLength(0);
+  });
+});
+
+// REVERSING NOTHING IS NOT A REVERSAL, and a member with no dues row is not a
+// fault. Neither refusal is reachable from /fees — it renders this control only
+// over a paid row ("Mark Unpaid") or a waived one ("Unwaive") — and both are
+// reachable from a loop over a stale selection.
+describe('markFeeUnpaid refuses when there is nothing to reverse', () => {
+  it('refuses an already-unpaid row and writes no audit entry', async () => {
+    unpaidDues();
+
+    await expect(markFeeUnpaid(PLAYER, SEASON)).rejects.toThrow(/already unpaid/i);
+
+    // The audit row is the whole point: the old code cleared three already-null
+    // fields, matched its row, and filed fee_marked_unpaid for a payment that
+    // never existed.
+    expect(auditRows('fee_marked_unpaid')).toHaveLength(0);
+  });
+
+  it('refuses an already-unpaid row as an ExpectedError', async () => {
+    unpaidDues();
+
+    await expect(markFeeUnpaid(PLAYER, SEASON)).rejects.toBeInstanceOf(ExpectedError);
+  });
+
+  // A plain Error here, with a message absent from EXPECTED_DB_GUARDS, filed
+  // every unbilled member in Sentry as a defect. Asserted by TYPE: a message
+  // match passes for a plain Error too, which is exactly the defect.
+  it('reports a missing dues row as an ExpectedError, not a fault', async () => {
+    await expect(markFeeUnpaid(PLAYER, SEASON)).rejects.toBeInstanceOf(ExpectedError);
+    await expect(markFeeUnpaid(PLAYER, SEASON)).rejects.toThrow(/no season fee recorded/i);
+  });
+
+  it('still reverses a recorded payment', async () => {
+    paidDues();
+
+    await markFeeUnpaid(PLAYER, SEASON);
+
+    expect(duesRow()!.paid_at).toBeNull();
+    expect(duesRow()!.method).toBeNull();
+    expect(duesRow()!.marked_by).toBeNull();
+    // The amount stays — the entry is still a fact and the member still owes it.
+    expect(duesRow()!.amount_cents).toBe(10000);
+    expect((auditRows('fee_marked_unpaid')[0]!.old_value as Row).amount_cents).toBe(10000);
+  });
+
+  // The compare-and-swap is one predicate now that the null arm is unreachable,
+  // and losing the race is the guard working — so it is an ExpectedError too,
+  // where it used to be a plain one filed in Sentry as a defect.
+  it('refuses as an ExpectedError when another desk changes the payment first', async () => {
+    paidDues();
+    store.beforeUpdate = ({ table }) => {
+      if (table !== 'club_fees') return;
+      store.beforeUpdate = null;
+      duesRow()!.paid_at = '2026-08-02T00:00:00.000Z';
+    };
+
+    await expect(markFeeUnpaid(PLAYER, SEASON)).rejects.toBeInstanceOf(ExpectedError);
+
+    expect(duesRow()!.paid_at).toBe('2026-08-02T00:00:00.000Z');
+    expect(auditRows('fee_marked_unpaid')).toHaveLength(0);
+  });
+
+  // "Unwaive", the only way to redo a waiver now that a re-waive is refused.
+  it('still removes a waiver', async () => {
+    waivedDues();
+
+    await markFeeUnpaid(PLAYER, SEASON);
+
+    expect(duesRow()!.paid_at).toBeNull();
+    expect(duesRow()!.method).toBeNull();
+    expect(duesRow()!.marked_by).toBeNull();
+    expect((auditRows('fee_marked_unpaid')[0]!.old_value as Row).method).toBe('waived');
   });
 });

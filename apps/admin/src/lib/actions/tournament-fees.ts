@@ -222,57 +222,6 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
   const admin = await requireCapability('tournaments.fees.markpaid.write');
   const adminClient = createAdminClient();
 
-  // Snapshot the amount: explicit input, else the chosen tier's amount, else the
-  // tournament's default tier's amount. Records the tier that determined it.
-  let tierId = input.tier_id ?? null;
-  let amountCents = input.amount_cents ?? null;
-
-  if (tierId) {
-    // club_fees.tier_id is a plain FK to tournament_fee_tiers(id)
-    // (00001), which constrains the tier to exist and nothing more — a tier
-    // belonging to a DIFFERENT tournament is a perfectly valid row as far as
-    // Postgres is concerned. The lookup used to be keyed on the id alone, so
-    // passing tournament B's tier id while marking a fee for tournament A
-    // copied B's price onto A's fee and stored B's tier against it. This
-    // filters on the pair, so a tier from another tournament simply is not
-    // found.
-    //
-    // Checked whenever a tier is named, not only when the amount has to be
-    // derived from it. The old code skipped the lookup entirely when an
-    // explicit amount was supplied, which meant the one input path that never
-    // validated the tier was also the one that stored it verbatim.
-    const { data: tier } = await adminClient
-      .from('tournament_fee_tiers')
-      .select('id, amount_cents')
-      .eq('id', tierId)
-      .eq('tournament_id', input.tournament_id)
-      .maybeSingle();
-    if (!tier) throw new ExpectedError('That fee tier does not belong to this tournament.');
-    if (amountCents == null) amountCents = tier.amount_cents;
-  } else if (amountCents == null) {
-    const { data: tier } = await adminClient
-      .from('tournament_fee_tiers')
-      .select('id, amount_cents')
-      .eq('tournament_id', input.tournament_id)
-      .eq('is_default', true)
-      .maybeSingle();
-    tierId = tier?.id ?? null;
-    amountCents = tier?.amount_cents ?? null;
-  }
-
-  // WHICH SEASON THIS MONEY COUNTS TOWARD, stamped on rather than joined.
-  // Entry fees used to reach a season through tournaments.season_id at read
-  // time; club_fees carries the season itself, the same rule 00069 arrived at
-  // for reinstatements and 00073 built in from the start. Nullable, because
-  // tournaments.season_id is (00001) — a tournament outside every season is a
-  // real row, and refusing to record its money would be worse than recording it
-  // unattached.
-  const { data: tournament } = await adminClient
-    .from('tournaments')
-    .select('season_id')
-    .eq('id', input.tournament_id)
-    .maybeSingle();
-
   // READ, THEN UPDATE OR INSERT — see the note in actions/fees.ts. 00094's
   // uniqueness is a partial index (… WHERE fee_type = 'tournament'), which
   // PostgREST cannot infer as an upsert arbiter.
@@ -305,16 +254,92 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
   // and a stale tab is a client that still thinks the row is unpaid.
   //
   // A WAIVED ROW IS REFUSED TOO. isWaivedFee is paid_at plus method 'waived',
-  // which this test catches on paid_at alone — deliberately. waiveFee permits a
-  // re-waive because writing $0/waived over $0/waived destroys nothing; marking
-  // a waived entry PAID would replace the club's record that it had decided not
-  // to charge, which is a different fact and not one to lose silently.
+  // which this test catches on paid_at alone — deliberately. Marking a waived
+  // entry PAID would replace the club's record that it had decided not to
+  // charge, which is a different fact and not one to lose silently. waiveFee
+  // refuses a re-waive on the same test, for a reason of its own: writing
+  // $0/waived over $0/waived is not the no-op it looks like, because it rewrites
+  // paid_at and marked_by along with them.
   if (existing?.paid_at) {
     throw new ExpectedError(
       `That entry fee is already recorded as paid ($${((existing.amount_cents ?? 0) / 100).toFixed(2)}). ` +
         'Mark it unpaid first if you really mean to record a different payment.',
     );
   }
+
+  // Snapshot the amount: explicit input, else the chosen tier's amount, else
+  // whatever the existing row already holds, else the tournament's default
+  // tier's amount. Records the tier that determined it.
+  //
+  // DERIVED AFTER `existing` IS READ, and the row's own snapshot now outranks
+  // the default tier. This used to sit above that read, so a caller naming
+  // NEITHER a tier nor an amount fell through to the tournament's is_default
+  // tier and the update below wrote it over whatever the row held. But a caller
+  // who names neither field is asking to record payment of the amount already
+  // on the row — not to have a price re-derived from scratch — and re-deriving
+  // is exactly what substituted the default: ensureEntryFees seeds these rows
+  // from the member's REAL tier, so a $15 internal member's unpaid row came back
+  // priced at the $25 external default, silently, with the audit entry agreeing.
+  //
+  // The dialog already works this way — quoteEntryFee prefills it off the ledger
+  // row precisely because "the ledger outranks the tier list", and this is the
+  // server finally agreeing with it rather than contradicting it one layer down.
+  // It was reachable from the UI, narrowly: the Amount field is optional, so
+  // clearing it on a row that carries no tier_id sent neither field and re-priced
+  // the row from the default. A loop over a roster sends neither by default.
+  let tierId = input.tier_id ?? null;
+  let amountCents = input.amount_cents ?? null;
+
+  if (tierId) {
+    // club_fees.tier_id is a plain FK to tournament_fee_tiers(id)
+    // (00001), which constrains the tier to exist and nothing more — a tier
+    // belonging to a DIFFERENT tournament is a perfectly valid row as far as
+    // Postgres is concerned. The lookup used to be keyed on the id alone, so
+    // passing tournament B's tier id while marking a fee for tournament A
+    // copied B's price onto A's fee and stored B's tier against it. This
+    // filters on the pair, so a tier from another tournament simply is not
+    // found.
+    //
+    // Checked whenever a tier is named, not only when the amount has to be
+    // derived from it. The old code skipped the lookup entirely when an
+    // explicit amount was supplied, which meant the one input path that never
+    // validated the tier was also the one that stored it verbatim.
+    const { data: tier } = await adminClient
+      .from('tournament_fee_tiers')
+      .select('id, amount_cents')
+      .eq('id', tierId)
+      .eq('tournament_id', input.tournament_id)
+      .maybeSingle();
+    if (!tier) throw new ExpectedError('That fee tier does not belong to this tournament.');
+    if (amountCents == null) amountCents = tier.amount_cents;
+  } else if (amountCents == null && existing?.amount_cents != null) {
+    // The row's own price, and the tier that set it — including a null tier_id,
+    // which is a row priced without one rather than a row waiting for a price.
+    tierId = existing.tier_id;
+    amountCents = existing.amount_cents;
+  } else if (amountCents == null) {
+    const { data: tier } = await adminClient
+      .from('tournament_fee_tiers')
+      .select('id, amount_cents')
+      .eq('tournament_id', input.tournament_id)
+      .eq('is_default', true)
+      .maybeSingle();
+    tierId = tier?.id ?? null;
+    amountCents = tier?.amount_cents ?? null;
+  }
+
+  // WHICH SEASON THIS MONEY COUNTS TOWARD, stamped on rather than joined.
+  // Entry fees used to reach a season through tournaments.season_id at read
+  // time; club_fees carries the season itself, the same rule 00069 arrived at
+  // for reinstatements and 00073 built in from the start. Nullable, because
+  // tournaments.season_id is (00001) — a tournament outside every season is a
+  // real row, and refusing to record its money would be worse than recording it
+  // unattached.
+  const { data: tournament } = await adminClient
+    .from('tournaments')
+    .select('season_id')
+    .eq('id', input.tournament_id)
+    .maybeSingle();
 
   const payment = {
     tier_id: tierId,
