@@ -4,8 +4,10 @@ import {
   TYPE_OPTIONS,
   audienceLabel,
   bylineName,
+  composerModes,
   reachPercent,
   relayChip,
+  showsModeSelector,
   tallyOpens,
   typeBadge,
 } from '../../app/announcements/announcement-shape';
@@ -195,5 +197,63 @@ describe('relayChip', () => {
   it('says nothing when no channel is configured', () => {
     // "We could not find out" and "it is not in Discord" must not read the same.
     expect(relayChip(row, { ...ctx, channelConfigured: false })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which composers the one left-hand card offers
+// ---------------------------------------------------------------------------
+//
+// `announcements.create.write` and `announcements.discord.write` are separate
+// keys reaching separate audiences, so all four combinations are reachable. This
+// is the only place the choice is made — the card calls showsModeSelector rather
+// than counting the modes itself, so what is asserted here is the rule and not a
+// copy of it.
+describe('composerModes', () => {
+  it('offers both, website first, when both keys are held', () => {
+    const modes = composerModes({ canCreate: true, canSendDiscord: true });
+
+    expect(modes).toEqual(['website', 'discord']);
+    // The default mode is the website post: it is the audience every member is
+    // in, and a Discord message cannot be taken back.
+    expect(modes[0]).toBe('website');
+    expect(showsModeSelector(modes)).toBe(true);
+  });
+
+  it('offers only the website composer, with no strip, for create alone', () => {
+    const modes = composerModes({ canCreate: true, canSendDiscord: false });
+
+    expect(modes).toEqual(['website']);
+    // A lone pill the viewer cannot navigate away from is noise, so the card
+    // draws the composer exactly as it did before.
+    expect(showsModeSelector(modes)).toBe(false);
+  });
+
+  it('offers only the Discord composer, with no strip, for discord alone', () => {
+    // THE CASE WHOSE RENDERING CHANGES. This viewer used to be told writing was
+    // not part of their access in the left column while a working Discord
+    // composer sat in the right one. Now the left card IS the Discord composer
+    // and there is no refusal, because the refusal means "neither composer".
+    const modes = composerModes({ canCreate: false, canSendDiscord: true });
+
+    expect(modes).toEqual(['discord']);
+    expect(showsModeSelector(modes)).toBe(false);
+  });
+
+  it('offers nothing when neither key is held', () => {
+    const modes = composerModes({ canCreate: false, canSendDiscord: false });
+
+    // Empty is what makes the page draw the withheld message.
+    expect(modes).toEqual([]);
+    expect(showsModeSelector(modes)).toBe(false);
+  });
+
+  it('keeps the order stable regardless of how the capabilities are given', () => {
+    // The tab strip's left-to-right order is this array's order, so it must not
+    // depend on the shape of the object handed in.
+    expect(composerModes({ canSendDiscord: true, canCreate: true })).toEqual([
+      'website',
+      'discord',
+    ]);
   });
 });

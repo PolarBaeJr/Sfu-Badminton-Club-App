@@ -194,3 +194,44 @@ export function relayChip(
       return row.status === 'published' ? 'Website only' : null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Which composers the left card offers
+// ---------------------------------------------------------------------------
+
+export type ComposerMode = 'website' | 'discord';
+
+export const COMPOSER_MODE_LABELS: Record<ComposerMode, string> = {
+  website: 'Website post',
+  discord: 'Discord message',
+};
+
+/**
+ * THE ONLY PLACE THE FOUR CAPABILITY CASES ARE DECIDED.
+ *
+ * `announcements.create.write` and `announcements.discord.write` are separate
+ * keys reaching separate audiences by separate routes (see page.tsx:210-214),
+ * and since 00224 the second rides on External — so a viewer holding one and
+ * not the other is a live case rather than a hypothetical one.
+ *
+ * Website first when both are held, deliberately: it is the audience every
+ * member is in, and a Discord message cannot be taken back.
+ */
+export function composerModes(caps: {
+  canCreate: boolean;
+  canSendDiscord: boolean;
+}): ComposerMode[] {
+  const modes: ComposerMode[] = [];
+  if (caps.canCreate) modes.push('website');
+  if (caps.canSendDiscord) modes.push('discord');
+  return modes;
+}
+
+/**
+ * A one-option strip is never drawn — the same call the fees page makes about
+ * its ledger tabs (app/fees/page.tsx:424-426): a lone pill the viewer cannot
+ * navigate away from is noise.
+ */
+export function showsModeSelector(modes: ComposerMode[]): boolean {
+  return modes.length > 1;
+}
