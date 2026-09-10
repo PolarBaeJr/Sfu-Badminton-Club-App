@@ -73,9 +73,25 @@ export function ConsoleAccessActions({
   const clears = !(live(current) && live(access));
   const changed = access !== current;
 
+  // SEEDED ON OPEN, NOT RESET ON CLOSE, and the difference is a real defect
+  // rather than a preference. useState does not re-initialise when `current`
+  // changes, and a reset written into close() captures the value from the render
+  // that defined it — the level as it was BEFORE the change. After a successful
+  // none -> executive the router.refresh() makes `current` 'executive' while
+  // `access` sits at the stale 'none', so reopening the dialog would show None
+  // already selected, already counted as a change, with the reason box open and
+  // Apply pointed straight back at the level they had just left.
+  //
+  // /permissions does not hit this because it drops the selection on success and
+  // the panel unmounts. A roster row cannot drop itself, so it seeds instead.
+  const openDialog = () => {
+    setAccess(current);
+    setReason('');
+    setOpen(true);
+  };
+
   const close = () => {
     setOpen(false);
-    setAccess(current);
     setReason('');
   };
 
@@ -98,7 +114,7 @@ export function ConsoleAccessActions({
 
   return (
     <>
-      <Button variant="ghost" onClick={() => setOpen(true)} disabled={isPending}>
+      <Button variant="ghost" onClick={openDialog} disabled={isPending}>
         Access
       </Button>
 
