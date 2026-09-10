@@ -207,6 +207,20 @@ export interface DiscordChannelOption {
 }
 
 /**
+ * One guild role, as both the ping picker and the preview need it.
+ *
+ * TWO CONSUMERS, ONE SHAPE. The picker wants the name, because names are what
+ * the send path resolves; the preview wants the id, because a chip is drawn
+ * from `<@&id>` and there is nothing else to look a name up by. Shipping a list
+ * of names and a list of ids would send the same nine rows down the RSC payload
+ * twice and let the two drift out of step.
+ */
+export interface DiscordRoleOption {
+  id: string;
+  name: string;
+}
+
+/**
  * THE CHANNELS THE CLUB HAS CONFIGURED, WHICH IS NOT THE SERVER'S CHANNEL LIST.
  *
  * Every relay the bot runs posts into a channel named by one of these settings

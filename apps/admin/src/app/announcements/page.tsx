@@ -24,6 +24,7 @@ import {
   tallyOpens,
   typeBadge,
   type DiscordChannelOption,
+  type DiscordRoleOption,
   type PostedMapping,
   type AnnouncementStatus,
   type AnnouncementType,
@@ -274,13 +275,19 @@ export default async function AnnouncementsPage() {
           .select('announcement_id, synced_title, synced_body, synced_type')
           .in('announcement_id', [...asked])
       : Promise.resolve({ data: [], error: null }),
-    // NAMES ONLY, NEVER `role_id`. The composer needs the vocabulary so it can
-    // show what an @ can name; resolving a name to an id happens server-side in
-    // the action, and nine guild role snowflakes in the RSC payload would be a
-    // leak with nothing asking for it. Gated around the AWAIT for the reason the
-    // roster reads above are.
+    // NAMES AND IDS, AND NO NEW VIEWER SEES EITHER: the `canSendDiscord` gate on
+    // this query is unchanged, so the only people the id reaches are the people
+    // who could already send a message that contains one.
+    //
+    // A GUILD ROLE ID IS NOT A SECRET. Every member of the server sees one in
+    // the raw source of any message that mentions a role, and the console has
+    // been writing them into `discord_outbox.content` and its audit rows since
+    // the ping line shipped. What the id buys is the only thing that can draw
+    // the chip Discord draws: the preview has an `<@&id>` and nothing else to
+    // name it by. Gated around the AWAIT for the reason the roster reads above
+    // are.
     canSendDiscord
-      ? supabase.from('discord_guild_roles').select('role_name')
+      ? supabase.from('discord_guild_roles').select('role_name, role_id')
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -308,9 +315,17 @@ export default async function AnnouncementsPage() {
     id: settingsByKey.get(s.key) ?? '',
   })).filter((c) => c.id);
 
-  const discordRoleNames = [
-    ...new Set(((rolesResult.data ?? []) as { role_name: string }[]).map((r) => r.role_name)),
-  ].sort();
+  // Deduped by id rather than by name, because the id is what the chip is keyed
+  // on and one role cannot be two of them. Sorted by name, because the picker
+  // built from this is read by a person.
+  const discordRoles: DiscordRoleOption[] = [
+    ...new Map(
+      ((rolesResult.data ?? []) as { role_name: string; role_id: string }[]).map((r) => [
+        r.role_id,
+        { id: r.role_id, name: r.role_name },
+      ]),
+    ).values(),
+  ].sort((a, b) => a.name.localeCompare(b.name));
 
   // Keyed by announcement, not by guild. The club runs one server; if it ever
   // ran two, "already in Discord somewhere" is still the true answer to the
@@ -475,7 +490,7 @@ export default async function AnnouncementsPage() {
                   // would otherwise be shipped the club's channel ids. The roles
                   // beside it need no gate: their query never ran.
                   channels={canSendDiscord ? discordChannels : []}
-                  roleNames={discordRoleNames}
+                  roles={discordRoles}
                 />
               ) : (
                 // Withheld, not empty. A blank left column on the widest half of

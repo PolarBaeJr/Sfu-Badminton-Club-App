@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { resolveRoleMentions, resolveRoleNames } from '../discord-mentions';
+import {
+  resolveRoleMentions,
+  resolveRoleNames,
+  unresolveRoleMentions,
+} from '../discord-mentions';
 
 // The role map as a real guild has it: the DB's spelling, and an 18-digit
 // snowflake, because the length of the id is what decides whether an expanded
@@ -131,5 +135,69 @@ describe('resolveRoleNames', () => {
 
     expect(picked.ids).toEqual(['111111111111111111']);
     expect(picked.unknown).toEqual([]);
+  });
+});
+
+// The way back, for a composer about to show an exec their own words. Every
+// assertion here is a WHOLE-STRING round trip on purpose: naming one mention
+// correctly while moving a character somewhere else would be a worse bug than
+// the ids this replaces.
+describe('unresolveRoleMentions', () => {
+  // A name that cannot survive the return trip, in the two shapes that break it:
+  // more words than the forward scan captures, and a character the scan's
+  // character class does not take.
+  const AWKWARD = [
+    ...ROLES,
+    { role_name: 'the exec team', role_id: '444444444444444444' },
+    { role_name: 'vip!', role_id: '555555555555555555' },
+  ];
+
+  it('gives back the name, and that name resolves to the same id again', () => {
+    const resolved = resolve('Ask @internal about it.').text;
+    expect(resolved).toBe(`Ask ${INTERNAL} about it.`);
+
+    const named = unresolveRoleMentions(resolved, ROLES);
+    expect(named).toBe('Ask @internal about it.');
+    // The proof that the round trip closed: resolving the restored text is the
+    // identical string, so pressing Save changes nothing in the channel.
+    expect(resolve(named).text).toBe(resolved);
+  });
+
+  it('gives back the database spelling of a two-word role', () => {
+    const resolved = resolve('@session staff, doors at seven.').text;
+
+    expect(unresolveRoleMentions(resolved, ROLES)).toBe('@session_staff, doors at seven.');
+    expect(resolve(unresolveRoleMentions(resolved, ROLES)).text).toBe(resolved);
+  });
+
+  it('leaves an id the guild map cannot name exactly as it found it', () => {
+    // A live self-assign role from `discord_self_roles` (00168) is the realistic
+    // case, not a deleted one, and inventing a name for it would be a lie.
+    const text = 'Ask <@&999999999999999999> about it.';
+    expect(unresolveRoleMentions(text, ROLES)).toBe(text);
+  });
+
+  it('leaves a name that cannot round-trip as the raw id', () => {
+    // Three words is more than the forward scan captures, so `@the exec team`
+    // would not resolve back to this id and the substitution is refused.
+    const threeWords = 'Ask <@&444444444444444444> about it.';
+    expect(unresolveRoleMentions(threeWords, AWKWARD)).toBe(threeWords);
+
+    // `!` is outside [A-Za-z0-9_-], so the scan would stop at `@vip`.
+    const punctuated = 'Ask <@&555555555555555555> about it.';
+    expect(unresolveRoleMentions(punctuated, AWKWARD)).toBe(punctuated);
+  });
+
+  it('leaves a mention glued to a word character alone', () => {
+    // `@internal` written there would not resolve back, because the forward scan
+    // requires whitespace or markdown before the @.
+    const text = `x${INTERNAL}`;
+    expect(unresolveRoleMentions(text, ROLES)).toBe(text);
+  });
+
+  it('does not disturb the prose the forward scan protects', () => {
+    for (const text of ['Email wkc10@sfu.ca or the exec team.', '@session courts are closed']) {
+      expect(unresolveRoleMentions(resolve(text).text, ROLES)).toBe(text);
+    }
   });
 });
