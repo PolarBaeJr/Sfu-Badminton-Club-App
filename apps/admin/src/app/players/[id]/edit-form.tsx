@@ -68,6 +68,9 @@ export function PlayerEditForm({
   const [execPhotoUrl, setExecPhotoUrl] = useState(
     (player as { exec_photo_url?: string | null }).exec_photo_url ?? '',
   );
+  const [execHidden, setExecHidden] = useState(
+    (player as { exec_hidden?: boolean | null }).exec_hidden ?? false,
+  );
   const [feeExempt, setFeeExempt] = useState(player.fee_exempt ?? false);
   // 00129 — the member's Gender. THE CONSOLE IS THE ONLY PLACE IT CAN CHANGE
   // once the member has declared one: a database trigger refuses their own
@@ -126,6 +129,10 @@ export function PlayerEditForm({
       exec_photo_url:
         isAdmin && execPhotoUrl !== ((player as { exec_photo_url?: string | null }).exec_photo_url ?? '')
           ? execPhotoUrl
+          : undefined,
+      exec_hidden:
+        isAdmin && execHidden !== ((player as { exec_hidden?: boolean | null }).exec_hidden ?? false)
+          ? execHidden
           : undefined,
       fee_exempt: isAdmin && feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
       // NOT gated on isAdmin: this one is exec work by design (00129), and the
@@ -286,6 +293,22 @@ export function PlayerEditForm({
               blank. Their profile avatar is never used here. The blurb beside it is
               written by the exec themselves, on the exec page.
             </p>
+            {/* 00225. Inside the isExec branch because it is meaningless
+                outside it: get_executives() already filters on is_exec, so
+                hiding a member who is not an officer withholds them from a page
+                they were never on.
+
+                THE DESCRIPTION NAMES WHAT IT DOES NOT TOUCH, which is the whole
+                reason this control exists rather than an exec reaching for one
+                of the other two switches. Turning off console access to tidy a
+                webpage is a silent demotion; marking someone inactive says they
+                left the club. Neither is what "take my photo down" means. */}
+            <Switch
+              label="Hide from the public exec page"
+              description="Keeps them off /exec without touching their console access or their membership. Everything else about the account is unchanged."
+              checked={execHidden}
+              onChange={setExecHidden}
+            />
           </>
         )}
         <Switch

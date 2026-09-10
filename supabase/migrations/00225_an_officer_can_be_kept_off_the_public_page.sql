@@ -96,11 +96,21 @@ AS $function$
   ORDER BY (exec_title IS NULL), exec_title, full_name;
 $function$;
 
--- The grants this function already had. Restated because CREATE OR REPLACE on
--- an existing function KEEPS them, but a database that somehow lost the
--- function entirely would get it back ungranted and /exec would go quiet for
--- signed-out visitors — and a failed PostgREST read arrives as an empty list,
--- never an error, so the symptom would be "no executives listed yet".
+-- REVOKE THEN GRANT, in that order, and never GRANT alone. This is the pattern
+-- 00126 and 00187 paid for: Supabase grants EXECUTE to `anon` and
+-- `authenticated` by default, `REVOKE ... FROM PUBLIC` does NOT remove a grant
+-- made to a named role, and the revoke has to name all three or the function
+-- keeps an access path nobody wrote down. Starting from nothing and granting
+-- back exactly what is intended is the only version of this that says what it
+-- means.
+--
+-- ANON IS THEN GRANTED BACK ON PURPOSE, which makes this the rare function
+-- where that is the right answer: /exec is a public page and 00032 revoked
+-- blanket SELECT on players, so this SECURITY DEFINER is the only way a
+-- signed-out visitor can read an officer's title. Losing the grant would not
+-- error — a failed PostgREST read arrives as an empty list — so the symptom
+-- would be the page quietly saying "No executives listed yet".
+REVOKE ALL ON FUNCTION public.get_executives() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_executives() TO anon, authenticated, service_role;
 
 -- ---- 3. THE PRIVILEGED-COLUMN GUARD ---------------------------------------
@@ -233,6 +243,12 @@ BEGIN
   RETURN NEW;
 END;
 $function$;
+
+-- The guard is reached only as a trigger, and a trigger function is executed by
+-- the trigger machinery rather than by the caller — so nobody needs EXECUTE on
+-- it and PUBLIC/anon/authenticated holding it is a call surface with no reason
+-- to exist. Same three names as above, for the same 00126/00187 reason.
+REVOKE ALL ON FUNCTION public.guard_player_privileged_columns() FROM PUBLIC, anon, authenticated;
 
 COMMIT;
 

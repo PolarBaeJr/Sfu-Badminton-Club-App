@@ -340,6 +340,11 @@ export const adminPlayerUpdateSchema = z.object({
   // Photo for the public /exec page. Separate from avatar_url so a profile
   // picture change never alters the club's public page.
   exec_photo_url: blankAsUndefined(z.string().url().max(500)),
+  // 00225 — keeps an officer off the public /exec page while leaving both
+  // is_exec (their console access) and active_flag (their membership) alone.
+  // The third public-page field, and like the two above it hands out nothing:
+  // get_executives() is the only reader.
+  exec_hidden: z.boolean().optional(),
   // 00129 — the member's Gender, which they set once and an exec changes after
   // that. ADDED DELIBERATELY, REVERSING 00111: that migration kept the key out
   // of this schema and a test pinned the absence, on the reading that only the

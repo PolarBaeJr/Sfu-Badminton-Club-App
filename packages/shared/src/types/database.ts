@@ -169,6 +169,11 @@ export interface Player {
    */
   exec_bio: string | null;
   exec_title: string | null;
+  /** 00225 — keeps this officer off the public /exec page. NOT NULL, defaults
+   *  false, and read only by get_executives(). Orthogonal to is_exec (console
+   *  access) and active_flag (membership), which is the whole reason it had to
+   *  be its own column rather than one of those two doing a second job. */
+  exec_hidden: boolean;
   waiver_reset_at: string | null;
   /** 00059 — when the "your membership is now inactive" notice was sent. Cleared whenever active_flag goes back to true. */
   inactivity_notice_sent_at: string | null;
