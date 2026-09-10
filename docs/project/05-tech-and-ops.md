@@ -7,7 +7,7 @@
 ## Where it lives
 
 - The app is **self-hosted** on the club's own small computer (a Raspberry Pi), not rented from an expensive cloud provider.
-- It's reachable at **[badminton.polardev.org](https://badminton.polardev.org)** over a secure (HTTPS) connection.
+- It's reachable at **[sfubadminton.com](https://sfubadminton.com)** over a secure (HTTPS) connection.
 - The database and all core services run on that same self-hosted setup, under the club's control.
 
 **Why this matters:** the club **owns its data and its infrastructure**, and the running cost is minimal.

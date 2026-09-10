@@ -2,7 +2,7 @@
 
 Everything a member needs to know to use the app. Plain and friendly.
 
-**App:** [badminton.polardev.org](https://badminton.polardev.org)
+**App:** [sfubadminton.com](https://sfubadminton.com)
 
 ## Getting in
 
