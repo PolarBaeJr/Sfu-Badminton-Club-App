@@ -12,6 +12,7 @@ import {
 import { DiscordRecent, type OutboxRow } from './discord-send';
 import { ComposerSwitch } from './composer-switch';
 import {
+  DISCORD_CHANNEL_SETTINGS,
   audienceLabel,
   bylineName,
   composerModes,
@@ -20,6 +21,7 @@ import {
   shortDate,
   tallyOpens,
   typeBadge,
+  type DiscordChannelOption,
   type PostedMapping,
   type AnnouncementStatus,
   type AnnouncementType,
@@ -256,19 +258,57 @@ export default async function AnnouncementsPage() {
   // "we did not ask" and "it is not in Discord" must not render the same.
   const asked = new Set(rows.slice(0, MAX_MAPPING_LOOKUP).map((r) => r.id));
 
-  const [settingsResult, postsResult] = await Promise.all([
-    supabase.from('discord_settings').select('key, value').eq('key', 'announcement_channel_id'),
+  const [settingsResult, postsResult, rolesResult] = await Promise.all([
+    // ALL SIX CHANNEL KEYS, not just the announcements one: the Discord composer
+    // offers every channel the club has wired to a relay, and this is the only
+    // place the console can learn what those are.
+    supabase
+      .from('discord_settings')
+      .select('key, value')
+      .in('key', DISCORD_CHANNEL_SETTINGS.map((s) => s.key)),
     asked.size
       ? supabase
           .from('discord_announcement_posts')
           .select('announcement_id, synced_title, synced_body, synced_type')
           .in('announcement_id', [...asked])
       : Promise.resolve({ data: [], error: null }),
+    // NAMES ONLY, NEVER `role_id`. The composer needs the vocabulary so it can
+    // show what an @ can name; resolving a name to an id happens server-side in
+    // the action, and nine guild role snowflakes in the RSC payload would be a
+    // leak with nothing asking for it. Gated around the AWAIT for the reason the
+    // roster reads above are.
+    canSendDiscord
+      ? supabase.from('discord_guild_roles').select('role_name')
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
-  const channelConfigured = Boolean(
-    ((settingsResult.data ?? []) as { key: string; value: string }[])[0]?.value?.trim(),
+  // KEYED BEFORE ANYTHING READS ONE. This used to take `data[0]` and was safe
+  // only while the filter was an `.eq()` that could match a single row; under
+  // `.in()` the row order is arbitrary and the first row is whichever key
+  // Postgres happened to return. `discord_settings.value` is nullable (00167),
+  // so an unset key and a key set to nothing both land here as the empty string,
+  // which is the same answer to every question below.
+  const settingsByKey = new Map<string, string>(
+    ((settingsResult.data ?? []) as { key: string; value: string | null }[]).map((s) => [
+      s.key,
+      (s.value ?? '').trim(),
+    ]),
   );
+
+  const channelConfigured = Boolean(settingsByKey.get('announcement_channel_id'));
+
+  // An unconfigured channel is ABSENT rather than present with an empty id: an
+  // entry the picker offers and the action then refuses is worse than one that
+  // was never there.
+  const discordChannels: DiscordChannelOption[] = DISCORD_CHANNEL_SETTINGS.map((s) => ({
+    key: s.key,
+    label: s.label,
+    id: settingsByKey.get(s.key) ?? '',
+  })).filter((c) => c.id);
+
+  const discordRoleNames = [
+    ...new Set(((rolesResult.data ?? []) as { role_name: string }[]).map((r) => r.role_name)),
+  ].sort();
 
   // Keyed by announcement, not by guild. The club runs one server; if it ever
   // ran two, "already in Discord somewhere" is still the true answer to the
@@ -451,6 +491,13 @@ export default async function AnnouncementsPage() {
                 pushReachable={pushReachable}
                 discord={discord}
                 channelConfigured={channelConfigured}
+                // GATED HERE TOO, not only at the read. Props to a client
+                // component are serialised into the RSC payload whether or not
+                // the component renders, so a viewer without the Discord key
+                // would otherwise be shipped the club's channel ids. The roles
+                // beside it need no gate: their query never ran.
+                channels={canSendDiscord ? discordChannels : []}
+                roleNames={discordRoleNames}
               />
             ) : (
               // Withheld, not empty. A blank left column on the widest half of

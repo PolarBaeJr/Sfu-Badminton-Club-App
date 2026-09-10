@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   AUDIENCE_OPTIONS,
+  DISCORD_CHANNEL_SETTINGS,
   TYPE_OPTIONS,
   audienceLabel,
   bylineName,
@@ -18,6 +19,20 @@ import {
 // cannot save, and one MISSING a value silently hides a category from the club.
 const ANNOUNCEMENT_TYPE = ['info', 'warning', 'urgent', 'event'];
 const ANNOUNCEMENT_AUDIENCE = ['all', 'competitive', 'recreational', 'eligible_only'];
+
+// The channel settings the club is allowed to have, copied from `WRITABLE` in
+// apps/player/src/app/api/discord/settings/route.ts, which that file calls the
+// rule rather than the menu. A key the picker offers and nothing can ever write
+// is a dead entry in a dropdown; a key missing from the picker is a channel the
+// club configured and the console then pretends it cannot see.
+const DISCORD_CHANNEL_KEYS = [
+  'announcement_channel_id',
+  'session_ping_channel_id',
+  'match_results_channel_id',
+  'feedback_channel_id',
+  'event_feedback_channel_id',
+  'audit_channel_id',
+];
 
 describe('announcement vocabulary', () => {
   it('offers exactly the announcement_type enum', () => {
@@ -45,6 +60,22 @@ describe('announcement vocabulary', () => {
   it('labels an unknown audience as itself', () => {
     expect(audienceLabel('all')).toBe('Every member');
     expect(audienceLabel('varsity')).toBe('varsity');
+  });
+});
+
+describe('the Discord channel picker', () => {
+  it('offers exactly the channels the club can configure', () => {
+    expect(DISCORD_CHANNEL_SETTINGS.map((s) => s.key).sort()).toEqual(
+      [...DISCORD_CHANNEL_KEYS].sort(),
+    );
+  });
+
+  it('has something to call every one of them', () => {
+    // An entry with no label renders as a blank line in the dropdown, which is
+    // indistinguishable from a broken picker.
+    for (const setting of DISCORD_CHANNEL_SETTINGS) {
+      expect(setting.label.trim().length).toBeGreaterThan(0);
+    }
   });
 });
 

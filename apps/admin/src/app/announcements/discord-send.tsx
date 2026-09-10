@@ -4,7 +4,11 @@ import { useState } from 'react';
 import { Button, Badge, Input, Select, Textarea, Switch } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { queueDiscordMessage } from '@/lib/actions/discord-message';
-import { TYPE_OPTIONS, type AnnouncementType } from './announcement-shape';
+import {
+  TYPE_OPTIONS,
+  type AnnouncementType,
+  type DiscordChannelOption,
+} from './announcement-shape';
 import { DiscordPreview } from './discord-preview';
 
 // Speaking as the club in Discord, from the console.
@@ -15,6 +19,16 @@ import { DiscordPreview } from './discord-preview';
 // pressing Send here is doing exactly that and deserves exactly that warning.
 
 const MICRO = 'font-mono text-[10px] uppercase tracking-[0.16em]';
+
+// The two picker entries that are not a channel id.
+//
+// Neither can ever collide with a real value: the action's `assertChannelId`
+// takes `^[0-9]{5,25}$` and nothing else, so an empty string and the word
+// `custom` are both unmistakable. The empty string is the default on purpose,
+// because sending no `channelId` at all is what makes the action fall through
+// to the configured announcements channel.
+const CHANNEL_DEFAULT = '';
+const CHANNEL_CUSTOM = 'custom';
 
 const SHAPE_OPTIONS = [
   { value: 'message', label: 'Plain message' },
@@ -52,9 +66,15 @@ function shortTime(iso: string): string {
 
 export function DiscordSend({
   channelConfigured,
+  channels,
+  roleNames,
 }: {
   /** Whether /config has been run. Without it there is nowhere to send. */
   channelConfigured: boolean;
+  /** The channels the club has wired to a relay. Not the server's channel list. */
+  channels: DiscordChannelOption[];
+  /** The role names a mention can name. Ids stay on the server; see the hint. */
+  roleNames: string[];
 }) {
   const [shape, setShape] = useState<'message' | 'embed'>('message');
   const [content, setContent] = useState('');
@@ -62,12 +82,48 @@ export function DiscordSend({
   const [body, setBody] = useState('');
   const [type, setType] = useState<AnnouncementType>('info');
   const [channelId, setChannelId] = useState('');
+  // `Select` renders exactly the options it is handed and has no placeholder
+  // support, so "the announcements channel" has to be a real entry rather than
+  // an empty field. When no announcements channel is configured that entry is
+  // not offered at all, and the picker opens on the paste box instead: an option
+  // the action would refuse is worse than no option.
+  const [channelChoice, setChannelChoice] = useState(
+    channels.some((c) => c.key === 'announcement_channel_id') ? CHANNEL_DEFAULT : CHANNEL_CUSTOM,
+  );
   const [ping, setPing] = useState(false);
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
 
+  const channelOptions = [
+    ...(channels.some((c) => c.key === 'announcement_channel_id')
+      ? [{ value: CHANNEL_DEFAULT, label: 'Announcements (default)' }]
+      : []),
+    // The announcements channel is excluded here so it cannot appear twice
+    // meaning the same thing: once as the default and once under its own name.
+    ...channels
+      .filter((c) => c.key !== 'announcement_channel_id')
+      .map((c) => ({ value: c.id, label: c.label })),
+    // ALWAYS LAST AND ALWAYS PRESENT, even when all six settings are filled in.
+    // The picker only knows the channels a relay posts into, and the rest of the
+    // server is reachable no other way.
+    { value: CHANNEL_CUSTOM, label: 'Paste a channel ID...' },
+  ];
+
+  /** What goes down the wire. Empty means "the action picks the default". */
+  const chosenChannel = channelChoice === CHANNEL_CUSTOM ? channelId.trim() : channelChoice;
+
+  /** Whether a channel can be resolved at all, which the preview asks about. */
+  const channelResolvable =
+    channelChoice === CHANNEL_CUSTOM
+      ? channelId.trim().length > 0
+      : channelChoice !== CHANNEL_DEFAULT || channelConfigured;
+
+  // Choosing to paste and then pasting nothing is now an incomplete form rather
+  // than a shorthand. Nothing is lost by refusing it: "leave it blank for the
+  // announcements channel" is its own entry in the picker above.
   const ready =
-    shape === 'message' ? content.trim().length > 0 : title.trim().length > 0;
+    (shape === 'message' ? content.trim().length > 0 : title.trim().length > 0) &&
+    (channelChoice !== CHANNEL_CUSTOM || channelId.trim().length > 0);
 
   const send = async () => {
     if (!ready || busy) return;
@@ -77,7 +133,12 @@ export function DiscordSend({
         ...(shape === 'message'
           ? { content: content.trim() }
           : { embed: { title: title.trim(), body: body.trim(), type } }),
-        ...(channelId.trim() ? { channelId: channelId.trim() } : {}),
+        // A PICKED CHANNEL GOES DOWN THE PATH A PASTED ONE ALREADY USES, and
+        // the action needs no new parameter for it: it is a channel id either
+        // way, checked by the same `assertChannelId`. A `channelKey` parameter
+        // would be a second client-controlled POST field duplicating one that is
+        // already there, which is exactly what that file's own comment warns off.
+        ...(chosenChannel ? { channelId: chosenChannel } : {}),
         ping,
       });
       // "Queued", never "Sent". The bot has not been asked yet — pg_cron will
@@ -112,7 +173,11 @@ export function DiscordSend({
       {shape === 'message' ? (
         <Textarea
           label="Message"
-          className="min-h-[120px]"
+          // Room to write a Code of Conduct in, and a grab handle for when that
+          // is still not enough. `resize-y` overrides the shared component's
+          // `resize-none`, which stays as it is because a dozen other forms rely
+          // on it; `cn` is twMerge, so the later class here wins.
+          className="min-h-[320px] resize-y"
           value={content}
           onChange={(e) => setContent(e.target.value)}
           // Discord's own cap, enforced here where the writer can still see and
@@ -140,7 +205,9 @@ export function DiscordSend({
           <Textarea
             id="discord-body"
             label="Body"
-            className="min-h-[120px]"
+            // 4096 characters allowed below, so this one needs MORE room than
+            // the plain message, not less.
+            className="min-h-[320px] resize-y"
             value={body}
             onChange={(e) => setBody(e.target.value)}
             maxLength={4096}
@@ -155,22 +222,40 @@ export function DiscordSend({
         </>
       )}
 
-      <Input
-        label="Channel ID (optional)"
-        value={channelId}
-        onChange={(e) => setChannelId(e.target.value)}
-        placeholder={
-          channelConfigured
-            ? 'Leave blank for the announcements channel'
-            : 'Required — no announcements channel is configured'
-        }
+      {/* AN EXPLICIT ID, for the same reason the embed branch above carries
+          three of them: both composers are mounted at once and Select derives
+          its element id from the label text. */}
+      <Select
+        id="discord-channel"
+        label="Channel"
+        value={channelChoice}
+        onChange={(e) => setChannelChoice(e.target.value)}
+        options={channelOptions}
       />
-      <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
-        {/* The console has never been told the name of a Discord channel, so it
-            cannot offer a picker. Saying how to get the ID is the honest
-            alternative to a dropdown that would be empty. */}
-        Turn on Developer Mode in Discord, right-click a channel and choose Copy Channel ID.
-      </p>
+
+      {channelChoice === CHANNEL_CUSTOM && (
+        <>
+          <Input
+            id="discord-channel-id"
+            label="Channel ID"
+            value={channelId}
+            onChange={(e) => setChannelId(e.target.value)}
+            placeholder={
+              channelConfigured
+                ? 'Paste the channel ID'
+                : 'Required: no announcements channel is configured'
+            }
+          />
+          <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
+            {/* The picker lists the channels the club has wired to a relay, and
+                that is all this console can know: it holds no Discord token and
+                nothing in the database catalogues the server's channels. Every
+                other channel in the server is reached exactly one way, which is
+                this box. */}
+            Turn on Developer Mode in Discord, right-click a channel and choose Copy Channel ID.
+          </p>
+        </>
+      )}
 
       <div className="flex flex-col border-y border-[var(--line)] py-3">
         <Switch
@@ -187,6 +272,30 @@ export function DiscordSend({
         />
       </div>
 
+      {shape === 'message' && roleNames.length > 0 && (
+        <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
+          {/* THE VOCABULARY, BEFORE THEY TYPE IT rather than after they send it.
+              Three of these names (internal, external, competitive) are ordinary
+              English words, so "email us @external" really does ping a role once
+              the switch above is on, and seeing the list is what makes that
+              predictable. The list is only the roles the app manages: a member's
+              own ping role lives in `discord_self_roles` (00168), whose trigger
+              guarantees the two sets never overlap, so `@somepingrole` stays
+              literal text. */}
+          Type an @ and a role name to mention it: {roleNames.join(', ')}. Underscores or spaces
+          both work. Anything else after an @ stays plain text.
+        </p>
+      )}
+
+      {shape === 'embed' && (
+        <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
+          {/* Stated here because the plain-message branch above promises the
+              opposite. The reasoning is in lib/actions/discord-message.ts. */}
+          Role names are not turned into mentions inside an embed, because Discord never notifies
+          anybody from embed text.
+        </p>
+      )}
+
       {/* The embed shape gets the same preview the composer does, from the same
           code — that is the whole reason the preview lives in shared. A plain
           message has nothing to preview: it is posted exactly as typed. */}
@@ -201,7 +310,10 @@ export function DiscordSend({
           targetAudience="all"
           expiresAt={null}
           status="published"
-          channelConfigured={channelConfigured || channelId.trim().length > 0}
+          // "A channel is resolvable", which is now three cases rather than
+          // two: the default picked and configured, a named channel picked, or
+          // something pasted.
+          channelConfigured={channelResolvable}
           url={null}
           posted={null}
           updatedAt={null}
