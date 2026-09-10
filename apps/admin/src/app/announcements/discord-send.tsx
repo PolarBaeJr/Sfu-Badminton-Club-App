@@ -19,6 +19,7 @@ import {
   TYPE_OPTIONS,
   type AnnouncementType,
   type DiscordChannelOption,
+  type DiscordRoleOption,
 } from './announcement-shape';
 import { useDiscordConsole } from './discord-console-context';
 import { DiscordPreview } from './discord-preview';
@@ -267,14 +268,22 @@ function formatShortcut(
 export function DiscordSend({
   channelConfigured,
   channels,
-  roleNames,
+  roles,
 }: {
   /** Whether /config has been run. Without it there is nowhere to send. */
   channelConfigured: boolean;
   /** The channels the club has wired to a relay. Not the server's channel list. */
   channels: DiscordChannelOption[];
-  /** The role names a mention can name. Ids stay on the server; see the hint. */
-  roleNames: string[];
+  /**
+   * The roles a mention can name.
+   *
+   * THE PICKER STILL SENDS NAMES, not the ids beside them.
+   * `QueueDiscordMessageInput.pingRoles` takes names and `resolveRoleNames`
+   * turns them into ids server-side, so posting an id from here would add a
+   * client-controlled snowflake field for a job already being done. The id is
+   * carried for the preview, which needs it to draw a chip.
+   */
+  roles: DiscordRoleOption[];
 }) {
   const [shape, setShape] = useState<'message' | 'embed'>('message');
   const [content, setContent] = useState('');
@@ -610,19 +619,19 @@ export function DiscordSend({
           picked here go on a line of ordinary content ABOVE the embed, in the
           same message. Picking one is the whole opt-in: there is no second
           switch to arm and nothing to confirm. */}
-      {shape === 'embed' && !editing && roleNames.length > 0 && (
+      {shape === 'embed' && !editing && roles.length > 0 && (
         <div className="flex flex-col gap-2 border-y border-[var(--line)] py-3">
           <span className={`${MICRO} text-[var(--mute)]`}>Notify</span>
           <div className="flex flex-wrap gap-x-4 gap-y-2">
-            {roleNames.map((name) => (
+            {roles.map((role) => (
               <Checkbox
-                key={name}
-                label={name}
+                key={role.name}
+                label={role.name}
                 showLabel
-                checked={pingRoles.includes(name)}
+                checked={pingRoles.includes(role.name)}
                 onChange={(checked) =>
                   setPingRoles((current) =>
-                    checked ? [...current, name] : current.filter((r) => r !== name),
+                    checked ? [...current, role.name] : current.filter((r) => r !== role.name),
                   )
                 }
               />
@@ -636,7 +645,7 @@ export function DiscordSend({
         </div>
       )}
 
-      {roleNames.length > 0 && (
+      {roles.length > 0 && (
         <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
           {/* THE VOCABULARY, BEFORE THEY TYPE IT rather than after they send it.
               Three of these names (internal, external, competitive) are ordinary
@@ -646,8 +655,8 @@ export function DiscordSend({
               own ping role lives in `discord_self_roles` (00168), whose trigger
               guarantees the two sets never overlap, so `@somepingrole` stays
               literal text. */}
-          Type an @ and a role name to mention it: {roleNames.join(', ')}. Underscores or spaces
-          both work. Anything else after an @ stays plain text.
+          Type an @ and a role name to mention it: {roles.map((r) => r.name).join(', ')}.
+          Underscores or spaces both work. Anything else after an @ stays plain text.
         </p>
       )}
 
@@ -682,6 +691,12 @@ export function DiscordSend({
           url={null}
           posted={null}
           updatedAt={null}
+          roles={roles}
+          // TRUE HERE AND FALSE ON THE WEBSITE COMPOSER. This body goes through
+          // `resolveForDiscord` on its way out, so `@executives` really does
+          // reach Discord as a chip and a preview that drew grey text would be
+          // lying about the thing it exists to show.
+          resolvesRoleNames
         />
       )}
 

@@ -216,6 +216,13 @@ function AnnouncementFields({
           url={discord.announcementsUrl}
           posted={posted}
           updatedAt={updatedAt}
+          // NO ROLES AND NO RESOLUTION ON THIS PATH. The website relay
+          // (apps/player/src/app/api/discord/announcements/route.ts) posts the
+          // stored body byte for byte and imports nothing from
+          // lib/discord-mentions, so `@executives` typed here reaches the channel
+          // as grey text. Passing true would draw a chip nobody will ever see.
+          roles={[]}
+          resolvesRoleNames={false}
         />
       )}
     </div>

@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   ANNOUNCEMENT_BODY_MAX,
   EMBED_TITLE_MAX,
@@ -8,6 +9,16 @@ import {
   embedColorHex,
   type RelayStateResult,
 } from '@badminton/shared';
+import { resolveRoleMentions, type GuildRole } from '@/lib/discord-mentions';
+import type { DiscordRoleOption } from './announcement-shape';
+import {
+  DISCORD_BG,
+  DISCORD_EMBED_BG,
+  DISCORD_LINK,
+  DISCORD_MUTED,
+  DISCORD_TEXT,
+  DiscordMarkdown,
+} from './discord-markdown';
 
 // What the club's Discord channel gets, drawn next to the thing that decides it.
 //
@@ -27,20 +38,6 @@ import {
 // by a test in both packages.
 
 const MICRO = 'font-mono text-[10px] uppercase tracking-[0.16em]';
-
-/**
- * Discord's own dark surface, hard-coded rather than themed.
- *
- * This is the one panel in the console that must NOT follow the club's palette:
- * it is a picture of somebody else's app, and rendering it in our colours would
- * make it a worse answer to the only question it exists to answer — what does
- * this look like over there.
- */
-const DISCORD_BG = '#313338';
-const DISCORD_EMBED_BG = '#2b2d31';
-const DISCORD_TEXT = '#dbdee1';
-const DISCORD_LINK = '#00a8fc';
-const DISCORD_MUTED = '#949ba4';
 
 /** One line of plain English per state, and never a promise the tick will not keep. */
 function relayLine(result: RelayStateResult, channelConfigured: boolean): {
@@ -95,6 +92,18 @@ function relayLine(result: RelayStateResult, channelConfigured: boolean): {
   }
 }
 
+/**
+ * The picker's shape, in the column names `resolveRoleMentions` reads.
+ *
+ * Two names for one thing, and neither is redundant: `DiscordRoleOption` is what
+ * a component prop should look like, `GuildRole` is what `discord_guild_roles`
+ * is called in the database, and the scanner is shared with the server action
+ * that reads that table directly.
+ */
+function guildRoles(roles: DiscordRoleOption[]): GuildRole[] {
+  return roles.map((r) => ({ role_name: r.name, role_id: r.id }));
+}
+
 export interface DiscordPreviewProps {
   title: string;
   body: string;
@@ -114,6 +123,28 @@ export interface DiscordPreviewProps {
   posted: { syncedTitle: string; syncedBody: string; syncedType: string } | null;
   /** The freshness column. null for something that does not exist yet. */
   updatedAt: string | null;
+  /** The guild roles a chip can be named from. Empty is a legitimate answer. */
+  roles: DiscordRoleOption[];
+  /**
+   * WHETHER THE PATH THIS PREVIEW DESCRIBES RESOLVES ROLE NAMES INTO MENTIONS.
+   * REQUIRED, AND DELIBERATELY WITHOUT A DEFAULT.
+   *
+   * The two call sites answer this differently, and that asymmetry is the whole
+   * reason the prop exists rather than a constant:
+   *
+   *  - The DISCORD composer: true. `resolveForDiscord` in
+   *    `lib/actions/discord-message.ts` rewrites `@executives` into `<@&id>` on
+   *    the way out, so Discord really does draw a chip.
+   *  - The WEBSITE composer: false. The relay
+   *    (`apps/player/src/app/api/discord/announcements/route.ts`) posts the body
+   *    exactly as it is stored and imports nothing from that module, so the same
+   *    keystrokes reach the channel as grey text.
+   *
+   * No default, so a third call site cannot inherit whichever answer happened to
+   * be written first: it is a type error until somebody decides which path they
+   * are drawing.
+   */
+  resolvesRoleNames: boolean;
 }
 
 export function DiscordPreview({
@@ -127,12 +158,27 @@ export function DiscordPreview({
   url,
   posted,
   updatedAt,
+  roles,
+  resolvesRoleNames,
 }: DiscordPreviewProps) {
   // `new Date()` at render, in a client component, so the expiry and the
   // lookback are answered against the clock of the person reading the preview.
   const now = Date.now();
 
-  const embed = announcementEmbed({ title, body, type, url });
+  // RESOLVE FIRST, THEN SLICE, WHICH IS THE ORDER THE SERVER USES.
+  // `resolveForDiscord` rewrites the body and the embed is built from the
+  // result, so a mention that grew from `@executives` to eighteen digits and an
+  // id wrapper can push the tail past the cap. Slicing first would preview a
+  // body Discord never sees.
+  //
+  // Memoised because it runs on every keystroke of a body that may be 4096
+  // characters, in the app whose measured ceiling is render CPU.
+  const shown = useMemo(
+    () => (resolvesRoleNames ? resolveRoleMentions(body, guildRoles(roles)).text : body),
+    [body, resolvesRoleNames, roles],
+  );
+
+  const embed = announcementEmbed({ title, body: shown, type, url });
   const state = announcementRelayState(
     {
       status,
@@ -179,6 +225,12 @@ export function DiscordPreview({
             maxWidth: 432, // Discord's own embed width, so wrapping matches.
           }}
         >
+          {/* THE TITLE STAYS FLAT ON PURPOSE, and that is not an oversight to be
+              tidied up later: an embed title renders no markdown and resolves no
+              mention, so `**Closed**` really does reach Discord with its
+              asterisks. The composer agrees already, attaching the format
+              toolbar to the two textareas and never to the headline Input
+              (discord-send.tsx). */}
           {embed.title ? (
             <span
               className="text-[15px] font-semibold leading-snug break-words"
@@ -193,12 +245,12 @@ export function DiscordPreview({
           )}
 
           {embed.description ? (
-            <span
-              className="text-[14px] leading-relaxed whitespace-pre-wrap break-words"
+            <div
+              className="text-[14px] leading-relaxed break-words"
               style={{ color: DISCORD_TEXT }}
             >
-              {embed.description}
-            </span>
+              <DiscordMarkdown text={embed.description} roles={roles} />
+            </div>
           ) : null}
         </div>
 

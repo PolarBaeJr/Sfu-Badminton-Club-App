@@ -8,7 +8,11 @@ import {
 } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
-import { resolveRoleMentions, resolveRoleNames } from '../discord-mentions';
+import {
+  resolveRoleMentions,
+  resolveRoleNames,
+  unresolveRoleMentions,
+} from '../discord-mentions';
 import { readOutboxRows, type OutboxRow } from '../discord-outbox';
 import { revalidatePath } from 'next/cache';
 import { requireCapability } from './_shared';
@@ -444,11 +448,19 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
  * re-read what the club said; the full text should reach a browser only when
  * somebody has asked to change it.
  *
- * IT RETURNS THE RESOLVED TEXT, so a body already holding `<@&123...>` comes
- * back that way and the exec sees an id where they typed a name. That is safe
- * rather than merely tolerable: `resolveRoleMentions` re-emits an existing
- * mention whole, so saving it again moves nothing. Turning ids back into names
- * on the way out is a real feature and is not this one.
+ * NAMES COME BACK, NOT SNOWFLAKES. The stored text holds `<@&123...>`, because
+ * that is what was posted, and an exec pressing Edit used to be shown eighteen
+ * digits where they had typed `@internal`. Every substitution on the way out is
+ * proven against `resolveRoleMentions` itself, per mention and then across the
+ * whole string, so nothing is renamed that would not resolve back to the exact
+ * id it came from. An id the guild map cannot name stays raw.
+ *
+ * A FAILED ROLES READ DEGRADES TO IDS RATHER THAN REFUSING THE EDIT, which is
+ * the opposite of what `resolveForDiscord` does on the way out and deliberately
+ * so: there, a name that failed to resolve would post as literal text and defeat
+ * the point of the message, so it throws. Here the worst case is the screen this
+ * function showed yesterday, and ids re-save unchanged because
+ * `resolveRoleMentions` re-emits an existing mention whole.
  */
 export async function loadDiscordMessage(id: string) {
   await requireCapability('announcements.discord.write');
@@ -458,7 +470,7 @@ export async function loadDiscordMessage(id: string) {
   const { data, error } = await adminClient
     .from('discord_outbox')
     .select(
-      'id, content, embed_title, embed_body, embed_type, ping, channel_id, sent_at, discord_message_id',
+      'id, guild_id, content, embed_title, embed_body, embed_type, ping, channel_id, sent_at, discord_message_id',
     )
     .eq('id', rowId)
     .maybeSingle();
@@ -466,11 +478,36 @@ export async function loadDiscordMessage(id: string) {
   if (error) throw new Error(error.message);
   if (!data) throw new ExpectedError('That message is not one the console has a record of.');
 
+  const content = (data.content as string | null) ?? null;
+  const embedBody = (data.embed_body as string | null) ?? null;
+
+  // THE ROLE READ IS SKIPPED ENTIRELY when there is no mention to name, for the
+  // reason the send path skips it: this feature counts its round trips.
+  //
+  // `content` goes through it as well, and that is safe rather than sloppy: for
+  // an embed row `content` is the ping line, which the composer never loads into
+  // a box and `editDiscordMessage` never writes, and for a plain message it is
+  // the message. Neither can be harmed by a substitution that has to prove
+  // itself first.
+  const named = { content, embedBody };
+  if (content?.includes('<@&') || embedBody?.includes('<@&')) {
+    const { data: roles, error: rolesError } = await adminClient
+      .from('discord_guild_roles')
+      .select('role_name, role_id')
+      .eq('guild_id', data.guild_id as string);
+
+    if (!rolesError) {
+      const map = (roles ?? []) as { role_name: string; role_id: string }[];
+      if (content !== null) named.content = unresolveRoleMentions(content, map);
+      if (embedBody !== null) named.embedBody = unresolveRoleMentions(embedBody, map);
+    }
+  }
+
   return {
     id: data.id as string,
-    content: (data.content as string | null) ?? null,
+    content: named.content,
     embedTitle: (data.embed_title as string | null) ?? null,
-    embedBody: (data.embed_body as string | null) ?? null,
+    embedBody: named.embedBody,
     embedType: (data.embed_type as string | null) ?? null,
     ping: data.ping === true,
     channelId: data.channel_id as string,

@@ -1,11 +1,22 @@
-// Turning "@internal" into a mention Discord will actually ring.
+// Turning "@internal" into a mention Discord will actually ring, and back again.
 //
 // WHY THIS IS ITS OWN MODULE AND NOT PART OF THE ACTION. `actions/discord-message.ts`
 // is a `'use server'` file, where every export must be an async function the
 // client may call. A pure helper exported from there is a build error rather
-// than a type error, so `npm run type-check` would say nothing about it. It
-// cannot live in `announcement-shape.ts` either: the client imports that file,
-// and role ids have no business in a browser bundle.
+// than a type error, so `npm run type-check` would say nothing about it. It does
+// not belong in `announcement-shape.ts` either: that file is the page's shapes
+// and its labels, imported by every client component on it, and this is the
+// scanner.
+//
+// THE OLD REASON GIVEN HERE WAS THAT ROLE IDS HAVE NO BUSINESS IN A BROWSER
+// BUNDLE, AND THAT IS NO LONGER TRUE. The console's preview draws the chip
+// Discord draws, which needs an id to name, so the ids now travel to a browser
+// that already held the capability to send a message containing one.
+//
+// SO THIS MODULE IS NOW IMPORTED BY A CLIENT COMPONENT (`discord-preview.tsx`)
+// AND MUST STAY IMPORTABLE BY ONE. It imports nothing today and must never
+// import the admin client, `next/headers`, or anything else server-only: doing
+// so would not fail here, it would fail in the composer's bundle.
 
 /** The role map as `discord_guild_roles` stores it. */
 export interface GuildRole {
@@ -128,6 +139,70 @@ export function resolveRoleMentions(
   out += text.slice(last);
 
   return { text: out, matched: [...matched].sort() };
+}
+
+/** Every mention this module can have written, and nothing else. */
+const MENTION_IDS = /<@&(\d+)>/g;
+
+/**
+ * The way back: `<@&123...>` to `@internal`, for a composer that is about to
+ * show somebody their own words.
+ *
+ * WHY THIS IS WRITTEN IN TERMS OF `resolveRoleMentions` RATHER THAN BESIDE IT.
+ * The forward direction is not a regex substitution: it normalises the key,
+ * takes up to two words with a backoff, and protects `@everyone`, an address in
+ * a Code of Conduct and a mention that is already one. A second rule guessing at
+ * the inverse of all that would be a second answer to the same question, and the
+ * first thing it would get wrong is a role whose name cannot survive the trip.
+ *
+ * SO EVERY REPLACEMENT IS PROVEN, TWICE:
+ *
+ *  - Per mention: `@` plus the name must resolve back to exactly this id, and
+ *    the character before the `<` must be one that could have opened a mention.
+ *    That rejects a three-word name, an emoji, a `!`, anything outside
+ *    [A-Za-z0-9_-] and a name colliding with another role under `roleKey`. Such
+ *    a mention keeps its raw form, which is what the screen showed before.
+ *  - Whole string: resolving the result must reproduce the input byte for byte.
+ *    If it does not, the ORIGINAL comes back untouched, ids and all. Reverting
+ *    all of them for one bad neighbour is deliberate and is not to be
+ *    "improved" into partial application: a body that saves back differently
+ *    from how it was posted is a worse failure than a snowflake on screen, and
+ *    the worst case here is the status quo.
+ */
+export function unresolveRoleMentions(text: string, roles: GuildRole[]): string {
+  const byId = new Map<string, GuildRole>();
+  for (const role of roles) byId.set(role.role_id, role);
+
+  let out = '';
+  let last = 0;
+
+  // Module scope and global, so the cursor is shared between calls.
+  MENTION_IDS.lastIndex = 0;
+
+  let match: RegExpExecArray | null;
+  while ((match = MENTION_IDS.exec(text)) !== null) {
+    const whole = match[0];
+    const role = byId.get(match[1]!);
+    out += text.slice(last, match.index);
+    last = match.index + whole.length;
+
+    if (
+      role &&
+      mayStartMention(text, match.index) &&
+      resolveRoleMentions(`@${role.role_name}`, roles).text === whole
+    ) {
+      out += `@${role.role_name}`;
+      continue;
+    }
+
+    // An id the guild map cannot name, a name that will not round-trip, or a
+    // mention glued to a word character. All three stay as they arrived.
+    out += whole;
+  }
+
+  out += text.slice(last);
+
+  return resolveRoleMentions(out, roles).text === text ? out : text;
 }
 
 /**

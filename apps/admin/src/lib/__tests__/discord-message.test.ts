@@ -609,16 +609,56 @@ describe('editDiscordMessage', () => {
 });
 
 describe('loadDiscordMessage', () => {
-  it('hands back the resolved text, which is what the row actually holds', async () => {
+  it('hands back the names, not the snowflakes the row holds', async () => {
     store.db.discord_outbox = [postedRow({ embed_body: `Ask ${INTERNAL} about fees.` })];
 
     const message = await loadDiscordMessage(POSTED_ID);
 
-    // The exec sees an id where they typed a name. That is accepted for now,
-    // and it is safe: saving it again re-emits the mention whole.
-    expect(message.embedBody).toBe(`Ask ${INTERNAL} about fees.`);
+    // What the exec typed, restored, and proven per mention against the forward
+    // scanner so saving it again writes the identical row.
+    expect(message.embedBody).toBe('Ask @internal about fees.');
     expect(message.embedTitle).toBe('Fees are due');
     expect(message.discordMessageId).toBe(DISCORD_MESSAGE);
+  });
+
+  it('leaves an id the guild map cannot name exactly as it found it', async () => {
+    // A live self-assign role from `discord_self_roles` (00168) is the realistic
+    // case, and showing the id beats inventing a name for it.
+    const unknown = '<@&777777777777777777>';
+    store.db.discord_outbox = [postedRow({ embed_body: `Ask ${unknown} about fees.` })];
+
+    expect((await loadDiscordMessage(POSTED_ID)).embedBody).toBe(`Ask ${unknown} about fees.`);
+  });
+
+  it('does not read the roles when there is no mention to name', async () => {
+    // The same round-trip thrift the send path keeps: no `<@&` in either field
+    // means there is nothing a role map could tell this function.
+    store.db.discord_outbox = [postedRow({ embed_body: 'Pay before Friday.' })];
+
+    await loadDiscordMessage(POSTED_ID);
+
+    expect(store.touched).not.toContain('discord_guild_roles');
+  });
+
+  it('re-saves what it handed over as the identical row', async () => {
+    // THE SEAM, which neither half proves on its own: the composer writes back
+    // the text this function gave it, and if the return trip were approximate the
+    // club's own words would drift every time somebody fixed a typo.
+    store.db.discord_outbox = [postedRow({ embed_body: `Ask ${INTERNAL} about fees.` })];
+
+    const message = await loadDiscordMessage(POSTED_ID);
+    await editDiscordMessage({
+      id: POSTED_ID,
+      embed: {
+        title: message.embedTitle ?? '',
+        body: message.embedBody ?? '',
+        // The cast the composer makes at the same seam: the column is a plain
+        // string and the action takes the union.
+        type: (message.embedType ?? 'info') as 'info',
+      },
+    });
+
+    expect(outbox()[0]!.embed_body).toBe(`Ask ${INTERNAL} about fees.`);
   });
 
   it('needs the same key the composer does', async () => {
