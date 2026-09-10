@@ -19,9 +19,11 @@ import { AddPlayerButton } from './add-player-button';
 import { MergePlayersButton } from './merge-players-button';
 import { PrivilegeReviewActions } from './privilege-review-actions';
 import { EloReviewActions } from './elo-review-actions';
+import { ConsoleAccessActions } from './console-access-actions';
 import { RosterTable, type RosterRow } from './roster-table';
 import { RowLink } from '@/components/row-link';
 import { RosterCharts } from './roster-charts';
+import { toRoleValue } from '@/lib/console-access';
 import { memberIdentifier } from '@/lib/member-identifier';
 import { rosterActionsFor, rosterActionKey, type RosterAction } from '@/lib/roster-actions';
 
@@ -434,6 +436,28 @@ export default async function PlayersPage({
             canResolve={canMerge}
           />
         )}
+        {/* CONSOLE ACCESS, asked for by the club owner: "allow me to edit
+            access from the player menu too, but only to people who have
+            permission to do edits on the player menu." That capability is
+            players.consoleaccess.write — the one setConsoleAccess itself
+            requires — and NOT players.update.write, or somebody who may correct
+            a phone number could make themselves an executive.
+
+            Beside View for the same reason the two reviews are: it is not a
+            roster action. A level is orthogonal to the tab you are on — an
+            admin is still an admin on Inactive — so it does not belong in
+            roster-actions.ts's answer to what this tab offers.
+
+            The three level columns are already in this page's select, so the
+            level is read off the row with no extra query. */}
+        <ConsoleAccessActions
+          playerId={player.id}
+          playerName={displayName}
+          current={toRoleValue(player.role ?? 'player', player.is_exec === true, player.is_trainer === true)}
+          canWrite={canConsoleAccess}
+          isSelf={player.id === viewer.id}
+          viewerIsAdmin={isAdmin}
+        />
         {rosterActionsFor(tab, player, { isAdmin })
           .filter((action) => mayRun(action, player.status === 'pending_approval'))
           .map((action) => (
