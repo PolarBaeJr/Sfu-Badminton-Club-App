@@ -225,8 +225,16 @@ export function BulkPlayerActions({
             value={roster}
             onChange={(e) => setRoster(e.target.value)}
           />
-          {/* The one refusal the server makes that an officer can see coming.
+          {/* The two refusals the server makes that an officer can see coming.
               Said here rather than discovered as a row of red failures. */}
+          {status !== NO_CHANGE && (
+            <p className="text-[13px] text-[var(--color-warning)]">
+              A pending signup cannot be given a division here — that is an approval,
+              and it belongs to the Approve button, which stamps their membership code
+              and emails them. Anyone on the list who is still pending will be skipped
+              and named.
+            </p>
+          )}
           {roster === 'inactive' && (
             <p className="text-[13px] text-[var(--color-warning)]">
               A suspended, banned or pending member cannot be marked inactive. Anyone on

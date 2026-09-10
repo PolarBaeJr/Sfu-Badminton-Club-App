@@ -197,6 +197,41 @@ describe('the same edit to several members', () => {
 
     expect(auditsOf('player_updated')[0]).toMatchObject({ reason: 'Graduated in April' });
   });
+
+  it('refuses to let a pending signup into a division through Edit, and names them', async () => {
+    // THE DANGEROUS COMBINATION, and the one this bar makes easy to reach: the
+    // Needs Attention tab is where a selection of pending signups lives, and the
+    // Edit dialog offers a Division select right beside the Approve button.
+    // Going through updatePlayer would set status='competitive' and skip all
+    // three things approval means — the membership code, the "you're in" email,
+    // and the player_approved row saying anyone was ever let in — while also
+    // reaching an approval-shaped change on players.update.write alone.
+    //
+    // The others in the same call still go through: a division move for members
+    // who are already in is an ordinary edit.
+    await bulkApprovePlayers(['p-ada', 'p-bao'], 'recreational', REASON);
+    store.db.audit_logs = [];
+    store.emails = [];
+
+    const res = await bulkUpdatePlayers(PENDING, {
+      status: 'competitive',
+      reason: 'Moved up after the ladder night',
+    });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.succeeded).toBe(2);
+      expect(res.data.failures).toHaveLength(1);
+      expect(res.data.failures[0]!.id).toBe('p-kiera');
+      expect(res.data.failures[0]!.error).toMatch(/approval/i);
+    }
+    expect(player('p-kiera').status).toBe('pending_approval');
+    expect(player('p-ada').status).toBe('competitive');
+    // Not quietly admitted by another name: no welcome, no approval row.
+    expect(store.emails).toEqual([]);
+    expect(auditsOf('player_approved')).toHaveLength(0);
+    expect(auditsOf('player_updated')).toHaveLength(2);
+  });
 });
 
 describe('the gate', () => {

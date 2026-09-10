@@ -110,6 +110,9 @@ export function describeBulkOutcome(
     message: succeeded > 0
       ? `${succeeded} ${verb}. ${failures.length} could not be: ${named}${rest}`
       : `Nothing was ${verb}. ${named}${rest}`,
-    type: succeeded > 0 ? 'info' : 'error',
+    // A run where 38 went through and 2 did not is not a neutral notice — the
+    // two are the only part of it anybody has to act on. Any failure at all
+    // paints as one.
+    type: 'error',
   };
 }

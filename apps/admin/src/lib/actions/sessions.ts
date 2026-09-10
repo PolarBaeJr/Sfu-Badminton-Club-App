@@ -291,6 +291,17 @@ async function archiveSessionImpl(sessionId: string, reason: string) {
 
   const { data: old } = await adminClient.from('sessions').select('status').eq('id', sessionId).single();
 
+  // ALREADY CLOSED IS A NO-OP, NOT A REFUSAL AND NOT A SECOND CLOSING. The bulk
+  // bar makes this reachable in bulk for the first time: "Earlier this season"
+  // is mostly closed nights, and select-all + Close over it would otherwise
+  // write one session_archived row per night for a status that never moved —
+  // an audit log full of closings that did not happen. Returning quietly rather
+  // than throwing because re-closing a closed night is not a mistake worth
+  // naming: nothing about the session is wrong afterwards.
+  if (old?.status === 'closed') {
+    return;
+  }
+
   const { error } = await adminClient.from('sessions').update({ status: 'closed' }).eq('id', sessionId);
   if (error) throw new Error(error.message);
 
