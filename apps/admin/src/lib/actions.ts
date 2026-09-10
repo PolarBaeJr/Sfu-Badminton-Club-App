@@ -24,6 +24,8 @@
 //   - settings.ts      — updateLegalDocument (waiver / code of conduct),
 //                        updateEventWaiverTemplate (per-season event waiver),
 //                        updatePlatformSettings (/ratings + /accounts)
+//   - bulk.ts          — one decision applied to several records: a loop over
+//                        the single-record actions above, never a batched write
 //   - _shared.ts       — requireCapability (NOT 'use server' — internal helper)
 export {
   approvePlayer,
@@ -152,3 +154,10 @@ export {
   updateEventWaiverTemplate,
   updatePlatformSettings,
 } from './actions/settings';
+
+export {
+  bulkApprovePlayers,
+  bulkUpdatePlayers,
+  bulkArchiveSessions,
+  bulkDeleteSessions,
+} from './actions/bulk';

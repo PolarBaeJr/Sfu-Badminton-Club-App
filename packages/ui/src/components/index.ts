@@ -12,6 +12,7 @@ export {
 } from './PlayerPicker';
 export { SearchFilter } from './SearchFilter';
 export { Switch } from './Switch';
+export { Checkbox } from './Checkbox';
 export { Badge } from './Badge';
 export { Card } from './Card';
 export { Toast, ToastViewport, TOAST_Z_INDEX } from './Toast';

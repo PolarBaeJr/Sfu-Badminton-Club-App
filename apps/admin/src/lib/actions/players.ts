@@ -26,6 +26,7 @@ import {
   assertPlayerCreateFieldAccess,
   assertPlayerFieldAccess,
 } from '../player-field-access';
+import { isApprovalEdit } from '../player-approval';
 import { assertLevelClosure } from '../console-access';
 import { accessLevelFor, effectiveCapabilities, permissionsOf } from '../permissions';
 import { runAction, type ActionResult } from '../action-result';
@@ -297,6 +298,39 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
   const { data: oldRating } = await adminClient.from('ratings').select('*').eq('player_id', playerId).single();
+
+  // LETTING A PENDING SIGNUP INTO A DIVISION IS AN APPROVAL, AND THIS IS NOT THE
+  // FUNCTION THAT DOES APPROVALS. isApprovalEdit is the same predicate the Edit
+  // dialog routes on (lib/player-approval.ts); until now it was only ever
+  // consulted on the client, which is to say it was a suggestion.
+  //
+  // WHAT GETS SKIPPED IF THIS WRITE GOES THROUGH — all three of the things
+  // approval actually means, and none of them noisily:
+  //   * assign_member_code never runs, so the member has no club membership code;
+  //   * sendPlayerApprovedEmail never runs, so nobody is told they are in;
+  //   * the audit row says player_updated, so nothing anywhere records that this
+  //     person was ever admitted to the club.
+  //
+  // IT IS ALSO A CAPABILITY BYPASS IN EFFECT. Approval is gated on
+  // players.approve.write; this function is gated on players.update.write. An
+  // officer holding only the latter must not be able to reach an
+  // approval-shaped state change by driving this one instead — and the bulk Edit
+  // control, which reproduces the Edit dialog's payload without its routing, is
+  // exactly the caller that would have let them.
+  //
+  // The refusal is safe against every legitimate caller. handleRestore targets
+  // removed members (removePlayer writes status='suspended'), and a pending
+  // signup can never be sitting on the Inactive tab to be restored from: the
+  // active_flag guard below refuses to deactivate one, and mark-inactive-players
+  // filters `.in('status', ['competitive','recreational'])`. The way back for
+  // anyone who does hit this is Edit or bulk Approve, both of which route to
+  // approvePlayer, which is offered on every tab a pending signup can appear on.
+  if (data.status && isApprovalEdit(oldPlayer?.status as string | undefined, data.status)) {
+    throw new ExpectedError(
+      'Letting a pending signup into a division is an approval, not an edit — use Approve, ' +
+      'which stamps their membership code and tells them they are in.',
+    );
+  }
 
   const playerUpdate: Record<string, unknown> = {};
   if (data.status) playerUpdate.status = data.status;
