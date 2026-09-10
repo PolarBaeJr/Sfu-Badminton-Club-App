@@ -17,15 +17,17 @@ import { requireCapability } from './_shared';
 //
 // THE CONSOLE HOLDS NO DISCORD TOKEN, and it must not. The bot is a small
 // service whose whole justification is that the token lives in exactly one
-// place with nothing else beside it — apps/bot has zero production
+// place with nothing else beside it: apps/bot has zero production
 // dependencies for the same reason. Giving this app a DISCORD_BOT_TOKEN would
 // double the number of internet-facing web apps that can speak as the club.
 //
 // So this writes a row and the bot posts it (00222): THE APP DECIDES, THE BOT
 // POSTS, which is the split every other part of this integration already uses.
-// The cost is that Send means "within five minutes" — the bot drains the outbox
-// on the announcements tick — and the panel that calls this says so and shows
-// the row's state afterwards, rather than a toast claiming more than it knows.
+// The cost is that Send queues rather than posts. The bot drains the outbox on
+// the announcements tick, so five minutes is the guaranteed worst case, even
+// though `nudgeBot` below usually turns it into about a second. The panel that
+// calls this says so and shows the row's state afterwards, rather than a toast
+// claiming more than it knows.
 
 /** Discord's own cap on a plain message. Enforced in the DB too (00222). */
 const CONTENT_MAX = 2000;
@@ -59,7 +61,7 @@ export interface QueueDiscordMessageInput {
    * WHETHER MENTIONS IN A PLAIN MESSAGE NOTIFY, and the default is silence.
    *
    * With it off, an @everyone typed into the text still READS as a mention and
-   * buzzes nobody — the posture /say has and for the same reason: a ping
+   * buzzes nobody, the posture /say has and for the same reason: a ping
    * nobody asked for has already reached every phone in the server and cannot
    * be recalled.
    *
@@ -197,7 +199,7 @@ async function resolveForDiscord(
 /** The club's one server, or a refusal that says how to make one. */
 async function requireGuildId(adminClient: AdminClient): Promise<string> {
   // WHICH SERVER. The club runs one, and the registry is the list the bot
-  // sweeps — a guild absent from it is a server the bot was never configured
+  // sweeps. A guild absent from it is a server the bot was never configured
   // for, and queueing into it would produce a message nothing ever posts.
   const { data: guilds, error: guildError } = await adminClient
     .from('discord_guilds')
@@ -270,6 +272,45 @@ function assertTypedLengths(content: string, embedTitle: string, embedBody: stri
  * derived rather than believed, and every `pingRoles` entry has to be a role
  * the club actually manages.
  */
+/**
+ * Ask the bot to drain the outbox now instead of on its next tick.
+ *
+ * WITHOUT THIS THE QUEUE IS STILL DRAINED, just later. pg_cron calls the same
+ * endpoint every five minutes, so a message queued at 12:00:01 can sit visibly
+ * QUEUED until 12:05 with nothing wrong. That wait is defensible for a notice
+ * somebody scheduled and indefensible for an edit somebody is watching, because
+ * the whole point of editing is to correct something already in a channel.
+ *
+ * IT IS A NUDGE AND NOT A DELIVERY MECHANISM, which is why nothing here throws
+ * and nothing here is reported to the caller. Every failure it can have, an
+ * unset variable, a refused connection, a slow bot, a timeout, ends in the same
+ * place: the tick posts the message a few minutes later exactly as it did
+ * before this function existed. Turning any of that into an error would trade a
+ * message that arrives late for a message the writer believes never went.
+ *
+ * THE TIMEOUT IS DELIBERATELY SHORTER THAN THE WORK. `/announcements` runs the
+ * website relay and the outbox drain before it answers, so waiting for the
+ * response would put that whole tick in front of the writer's Send button.
+ * Aborting the wait does not abort the bot: it has the request and finishes it.
+ * So this waits only long enough to hand the work over.
+ */
+async function nudgeBot(): Promise<void> {
+  const base = process.env.DISCORD_BOT_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base || !secret) return;
+
+  try {
+    await fetch(new URL('/announcements', base), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(2_500),
+    });
+  } catch {
+    // Swallowed on purpose. See above: the tick is the guarantee, this is only
+    // the shortcut, and a noisy log line here would be a false alarm.
+  }
+}
+
 export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
   const admin = await requireCapability('announcements.discord.write');
   const adminClient = createAdminClient();
@@ -388,6 +429,8 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
       ...(resolved.mentionedRoles.length ? { mentioned_roles: resolved.mentionedRoles } : {}),
     },
   });
+
+  await nudgeBot();
 
   revalidatePath('/announcements');
   return row;
@@ -600,6 +643,8 @@ export async function editDiscordMessage(input: EditDiscordMessageInput) {
       ...(resolved.mentionedRoles.length ? { mentioned_roles: resolved.mentionedRoles } : {}),
     },
   });
+
+  await nudgeBot();
 
   revalidatePath('/announcements');
   return { id: rowId };

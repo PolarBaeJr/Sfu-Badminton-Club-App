@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Badge, Checkbox, Input, Select, Textarea, Switch } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import {
@@ -66,6 +66,204 @@ function shortTime(iso: string): string {
   });
 }
 
+// A LONG DOCUMENT SHOULD LOOK LIKE ONE.
+//
+// The Code of Conduct runs to dozens of lines, and a fixed box turns it into a
+// letterbox with a scrollbar of its own inside a page that already scrolls.
+// Growing the element to fit its content means the page scrolls once, where the
+// reader expects it to, and the whole text is visible on the way past.
+//
+// `height = 'auto'` FIRST, every time. scrollHeight reports the content height
+// only while the element is not already tall enough to hide it, so without the
+// collapse the box can grow and then never shrink back after a deletion.
+function useAutoGrow(value: string) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const fit = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
+  // A layout effect rather than a plain one: this runs after React writes the
+  // DOM and before the browser paints, so the box is never briefly the wrong
+  // size. It shows most when Edit fills the composer with an existing message,
+  // where a plain effect would flash the letterbox first.
+  useLayoutEffect(fit, [value, fit]);
+
+  // Re-wrapping changes the line count without changing the value, so a window
+  // resize needs a pass of its own or the box is left clipped or padded out.
+  useEffect(() => {
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [fit]);
+
+  return ref;
+}
+
+// DISCORD'S MARKDOWN, PUT ON BUTTONS so nobody has to remember it.
+//
+// This is Discord's set specifically and not a general markdown one. Underline
+// is `__text__` rather than any HTML, a spoiler is `||text||`, and a masked
+// link `[text](url)` renders inside an EMBED but not in a plain message, where
+// Discord shows the raw brackets instead. That is why the link button is
+// offered on the embed body alone.
+type Format =
+  | { kind: 'wrap'; before: string; after: string }
+  | { kind: 'prefix'; prefix: string };
+
+interface FormatButton {
+  label: string;
+  title: string;
+  /** What lands when nothing is selected, so a click is never a no-op. */
+  sample: string;
+  format: Format;
+  /** Styles the button to look like what it does. */
+  labelClass?: string;
+  /** Masked links render in an embed and nowhere else. */
+  embedOnly?: boolean;
+}
+
+const FORMAT_BUTTONS: FormatButton[] = [
+  { label: 'B', title: 'Bold', sample: 'bold text', labelClass: 'font-bold',
+    format: { kind: 'wrap', before: '**', after: '**' } },
+  { label: 'I', title: 'Italic', sample: 'italic text', labelClass: 'italic',
+    format: { kind: 'wrap', before: '*', after: '*' } },
+  { label: 'U', title: 'Underline', sample: 'underlined', labelClass: 'underline',
+    format: { kind: 'wrap', before: '__', after: '__' } },
+  { label: 'S', title: 'Strikethrough', sample: 'struck out', labelClass: 'line-through',
+    format: { kind: 'wrap', before: '~~', after: '~~' } },
+  { label: '</>', title: 'Inline code', sample: 'code',
+    format: { kind: 'wrap', before: '`', after: '`' } },
+  { label: '||', title: 'Spoiler, hidden until clicked', sample: 'spoiler',
+    format: { kind: 'wrap', before: '||', after: '||' } },
+  { label: 'H', title: 'Heading', sample: 'Heading',
+    format: { kind: 'prefix', prefix: '## ' } },
+  { label: '>', title: 'Quote', sample: 'quoted line',
+    format: { kind: 'prefix', prefix: '> ' } },
+  { label: '•', title: 'Bullet list', sample: 'list item',
+    format: { kind: 'prefix', prefix: '- ' } },
+  { label: '[]', title: 'Link, renders in an embed only', sample: 'label', embedOnly: true,
+    format: { kind: 'wrap', before: '[', after: '](https://)' } },
+];
+
+/**
+ * Rewrite the selection in place and leave the caret somewhere useful.
+ *
+ * `execCommand` IS TRIED FIRST, and not for the sake of old browsers: it is the
+ * only way to change a textarea that keeps the browser's own undo stack, so
+ * Ctrl+Z walks back through a formatting click exactly as it walks back through
+ * typing. Setting React state instead throws that history away. It is
+ * deprecated but implemented everywhere this console runs, and the state write
+ * below is the fallback for the day it is not.
+ */
+function applyFormat(
+  el: HTMLTextAreaElement,
+  button: FormatButton,
+  commit: (next: string) => void,
+) {
+  const { selectionStart, selectionEnd, value } = el;
+  let from = selectionStart;
+  let to = selectionEnd;
+  let replacement: string;
+  let caretFrom: number;
+  let caretTo: number;
+
+  if (button.format.kind === 'prefix') {
+    // A prefix marks whole lines, so the edit covers every line the selection
+    // touches however little of the first and last one the pointer caught.
+    const { prefix } = button.format;
+    from = value.lastIndexOf('\n', selectionStart - 1) + 1;
+    const lineEnd = value.indexOf('\n', selectionEnd);
+    to = lineEnd === -1 ? value.length : lineEnd;
+    const lines = (value.slice(from, to) || button.sample).split('\n');
+    // A second click on an already-marked block takes the marker off again,
+    // which is what every editor does and what stops '> > > ' accumulating.
+    const marked = lines.every((line) => line.startsWith(prefix));
+    replacement = lines
+      .map((line) => (marked ? line.slice(prefix.length) : prefix + line))
+      .join('\n');
+    caretFrom = from;
+    caretTo = from + replacement.length;
+  } else {
+    const { before, after } = button.format;
+    const body = value.slice(from, to) || button.sample;
+    replacement = before + body + after;
+    // With nothing selected the sample lands already selected, so the next
+    // keystroke replaces it rather than appending to it.
+    caretFrom = from + before.length;
+    caretTo = caretFrom + body.length;
+  }
+
+  el.focus();
+  el.setSelectionRange(from, to);
+  if (!document.execCommand('insertText', false, replacement)) {
+    commit(value.slice(0, from) + replacement + value.slice(to));
+  }
+
+  // Either path leaves the caret collapsed at the end of the insert. Put it
+  // back around the words, after the re-render, so the next click or keystroke
+  // carries on from where the writer is looking.
+  requestAnimationFrame(() => {
+    el.focus();
+    el.setSelectionRange(caretFrom, caretTo);
+  });
+}
+
+function FormatBar({
+  target,
+  onChange,
+  allowLink,
+}: {
+  target: React.RefObject<HTMLTextAreaElement | null>;
+  onChange: (next: string) => void;
+  allowLink: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 pb-1.5">
+      {FORMAT_BUTTONS.filter((b) => allowLink || !b.embedOnly).map((b) => (
+        <button
+          key={b.title}
+          type="button"
+          title={b.title}
+          aria-label={b.title}
+          // onMouseDown WITH preventDefault, never onClick. A click moves focus
+          // out of the textarea before it fires, and the selection this button
+          // exists to act on is gone by then.
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const el = target.current;
+            if (el) applyFormat(el, b, onChange);
+          }}
+          className={`min-h-[28px] min-w-[30px] px-2 border border-[var(--border)] bg-[var(--bg-surface)] font-mono text-[11px] leading-none text-[var(--text-secondary)] transition-colors hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] ${b.labelClass ?? ''}`}
+        >
+          {b.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Ctrl+B and Ctrl+I, because those are what a writer's hands do without being
+ * asked. Everything else stays on the buttons rather than competing with the
+ * browser's own shortcuts.
+ */
+function formatShortcut(
+  e: React.KeyboardEvent<HTMLTextAreaElement>,
+  onChange: (next: string) => void,
+) {
+  if (!e.metaKey && !e.ctrlKey) return;
+  const key = e.key.toLowerCase();
+  const button = FORMAT_BUTTONS.find(
+    (b) => (key === 'b' && b.title === 'Bold') || (key === 'i' && b.title === 'Italic'),
+  );
+  if (!button) return;
+  e.preventDefault();
+  applyFormat(e.currentTarget, button, onChange);
+}
+
 export function DiscordSend({
   channelConfigured,
   channels,
@@ -100,6 +298,12 @@ export function DiscordSend({
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
   const { pending, clearEdit, refreshRecent } = useDiscordConsole();
+
+  // One per box rather than one shared. Only ever one is mounted, since they
+  // sit in opposite branches of the shape, but each hook tracks the value it is
+  // sizing against and the two values are separate pieces of state.
+  const contentRef = useAutoGrow(content);
+  const bodyRef = useAutoGrow(body);
 
   // FILLING THE COMPOSER FROM THE ROW SOMEBODY PRESSED EDIT ON. The list below
   // reads the message and hands it over; this is where it lands. The shape
@@ -247,27 +451,45 @@ export function DiscordSend({
       />
 
       {shape === 'message' ? (
-        <Textarea
-          label="Message"
-          // Room to write a Code of Conduct in, and a grab handle for when that
-          // is still not enough. `resize-y` overrides the shared component's
-          // `resize-none`, which stays as it is because a dozen other forms rely
-          // on it; `cn` is twMerge, so the later class here wins.
-          className="min-h-[320px] resize-y"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          // Discord's own cap, enforced here where the writer can still see and
-          // cut what they typed — not as a 400 after the words are gone.
-          maxLength={2000}
-          placeholder="Posted exactly as typed, as the bot. Nobody sees that you sent it."
-        />
+        <div className="space-y-1">
+          {/* The label is rendered here rather than through the component's own
+              `label` prop so the formatting buttons can sit on the line beside
+              it, which is where a toolbar belongs. The explicit id is what keeps
+              htmlFor pointing at the right element once the prop is gone. */}
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <label
+              htmlFor="discord-message"
+              className="block text-[13px] font-medium text-[var(--text-secondary)]"
+            >
+              Message
+            </label>
+            <FormatBar target={contentRef} onChange={setContent} allowLink={false} />
+          </div>
+          <Textarea
+            id="discord-message"
+            ref={contentRef}
+            // Room to write a Code of Conduct in, and it grows past that on its
+            // own. `resize-y` is gone with the fixed height: a grab handle the
+            // next keystroke overrules is worse than no grab handle. The
+            // shared component's `resize-none` stays as it is because a dozen
+            // other forms rely on it; `cn` is twMerge, so this className wins.
+            className="min-h-[320px] overflow-hidden"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onKeyDown={(e) => formatShortcut(e, setContent)}
+            // Discord's own cap, enforced here where the writer can still see
+            // and cut what they typed, not as a 400 after the words are gone.
+            maxLength={2000}
+            placeholder="Posted exactly as typed, as the bot. Nobody sees that you sent it."
+          />
+        </div>
       ) : (
         // EXPLICIT IDS, because these three labels are word-for-word the ones
         // the website composer uses and both composers are now mounted at once
         // in the same card. Input/Textarea/Select derive the element id (and the
         // label's htmlFor) from the label text, so without these the embed
         // branch collides with AnnouncementFields on headline, body and
-        // category — two elements sharing an id, and a label pointing at
+        // category: two elements sharing an id, and a label pointing at
         // whichever came first.
         <>
           <Input
@@ -278,16 +500,31 @@ export function DiscordSend({
             maxLength={256}
             placeholder="Say the thing in one line"
           />
-          <Textarea
-            id="discord-body"
-            label="Body"
-            // 4096 characters allowed below, so this one needs MORE room than
-            // the plain message, not less.
-            className="min-h-[320px] resize-y"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            maxLength={4096}
-          />
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <label
+                htmlFor="discord-body"
+                className="block text-[13px] font-medium text-[var(--text-secondary)]"
+              >
+                Body
+              </label>
+              {/* Masked links are offered here and not on the plain message,
+                  because [text](url) renders inside an embed and shows as raw
+                  brackets anywhere else. */}
+              <FormatBar target={bodyRef} onChange={setBody} allowLink />
+            </div>
+            <Textarea
+              id="discord-body"
+              ref={bodyRef}
+              // 4096 characters allowed below, so this one needs MORE room than
+              // the plain message, not less, and it grows past that on its own.
+              className="min-h-[320px] overflow-hidden"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              onKeyDown={(e) => formatShortcut(e, setBody)}
+              maxLength={4096}
+            />
+          </div>
           <Select
             id="discord-category"
             label="Category"
@@ -425,7 +662,7 @@ export function DiscordSend({
       )}
 
       {/* The embed shape gets the same preview the composer does, from the same
-          code — that is the whole reason the preview lives in shared. A plain
+          code, which is the whole reason the preview lives in shared. A plain
           message has nothing to preview: it is posted exactly as typed. */}
       {shape === 'embed' && title.trim() && (
         <DiscordPreview
@@ -473,7 +710,7 @@ export function DiscordSend({
 }
 
 // WHY THERE IS A STATE LIST UNDERNEATH RATHER THAN JUST A TOAST. This does not
-// post the message — it queues a row the bot drains on the announcements tick,
+// post the message. It queues a row the bot drains on the announcements tick,
 // so Send means "within five minutes". A toast saying "Sent" would be a lie for
 // most of that window, and the failure mode it hides is the one that matters: a
 // channel the bot cannot post in fails silently five minutes after the person
