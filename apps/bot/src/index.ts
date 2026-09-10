@@ -1,11 +1,16 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { clearRevocations, fetchLinkedMembers } from './api.js';
+import { clearRevocations, fetchLinkedMembers, setMembership } from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
 import {
   DEFERRED_COMMANDS,
   dispatch,
+  handleProfileAutocomplete,
+  handleAnnounceModal,
   handleReportModal,
+  handleSayModal,
+  isAnnounceModal,
+  isSayModal,
   handleSelfRoleButton,
   isReportModal,
   isSelfRoleButton,
@@ -14,10 +19,13 @@ import {
   type ResolvedAttachment,
 } from './commands.js';
 import { DiscordApi, editDeferredReply } from './discord-api.js';
+import { warmHandles } from './handles.js';
+import { sendMultipart } from './multipart.js';
 import { reconcile } from './reconcile.js';
 import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
 import { runAnnouncements } from './announcements.js';
+import { runOutbox } from './outbox.js';
 import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
@@ -29,6 +37,12 @@ const PORT = Number(process.env.PORT ?? 3002);
 // Discord will not POST a body larger than this, so anything bigger is not
 // Discord. Cap it rather than buffering whatever arrives.
 const MAX_BODY_BYTES = 256 * 1024;
+
+// How long the autocomplete branch will wait on a cold handle cache before
+// answering with nothing. Well under Discord's three seconds, because losing
+// this race costs one keystroke's suggestions and missing the deadline costs
+// the member an error.
+const AUTOCOMPLETE_BUDGET_MS = 1_000;
 
 function send(res: ServerResponse, status: number, body: unknown) {
   const payload = JSON.stringify(body);
@@ -97,6 +111,19 @@ async function runSweep(res: ServerResponse, trigger: 'scheduled' | 'manual') {
       console.error('[bot] could not clear revocations:', error);
     }
 
+    // What members picked for themselves, pushed back into the app. Same
+    // posture as the revocations above and for the same reason: it runs after
+    // the roles are settled, and a failure here must not turn a good sweep into
+    // a 500. Nothing is lost by dropping it — the next sweep reads the same
+    // roles and reports the same disagreement.
+    try {
+      if (summary.membershipUpdates.length > 0) {
+        await setMembership(summary.membershipUpdates);
+      }
+    } catch (error) {
+      console.error('[bot] could not write back membership:', error);
+    }
+
     // One entry per sweep, never one per member — see rule 3 in audit.ts. It is
     // awaited rather than fired off, so a sweep that has answered 200 has
     // already been written down; the alternative loses the last entry whenever
@@ -160,6 +187,19 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
       await clearRevocations(summary.cleared);
     } catch (error) {
       console.error('[bot] could not clear revocations:', error);
+    }
+
+    // What members picked for themselves, pushed back into the app. Same
+    // posture as the revocations above and for the same reason: it runs after
+    // the roles are settled, and a failure here must not turn a good sweep into
+    // a 500. Nothing is lost by dropping it — the next sweep reads the same
+    // roles and reports the same disagreement.
+    try {
+      if (summary.membershipUpdates.length > 0) {
+        await setMembership(summary.membershipUpdates);
+      }
+    } catch (error) {
+      console.error('[bot] could not write back membership:', error);
     }
 
     await postAuditEntry(api, auditChannelId, {
@@ -264,13 +304,39 @@ const server = createServer(async (req, res) => {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
     }
+    // TWO JOBS, TWO try/catch BLOCKS, ONE TICK.
+    //
+    // The console's outbox (00222) rides this tick rather than getting a
+    // pg_cron job of its own, because a new job would need an owner to run SQL
+    // on production — a step that sits undone while the feature looks shipped.
+    //
+    // But they must not be able to abort each other. A relay that throws would
+    // otherwise leave a queued message unsent with nothing saying why, and an
+    // outbox failure would stop announcements syncing — neither has anything
+    // to do with the other, and each reports its own counts.
+    let announcements: Awaited<ReturnType<typeof runAnnouncements>> | null = null;
+    let outbox: Awaited<ReturnType<typeof runOutbox>> | null = null;
+
     try {
-      const result = await runAnnouncements();
-      return send(res, 200, result);
+      announcements = await runAnnouncements();
     } catch (error) {
       console.error('[bot] announcement relay failed:', error);
+    }
+
+    try {
+      outbox = await runOutbox();
+    } catch (error) {
+      console.error('[bot] outbox drain failed:', error);
+    }
+
+    // A 500 only when BOTH halves fell over, which is the shape that means the
+    // tick achieved nothing. One half failing is reported in the body and in
+    // the log, and pg_cron keeps calling either way.
+    if (!announcements && !outbox) {
       return send(res, 500, { error: 'announcements_failed' });
     }
+
+    return send(res, 200, { ...(announcements ?? {}), outbox });
   }
 
   // The match result relay, driven by pg_cron every 10 minutes. Slower than
@@ -373,6 +439,8 @@ const server = createServer(async (req, res) => {
     member?: { user?: { id?: string }; roles?: string[] };
     user?: { id?: string };
     guild_id?: string;
+    // Where it was typed. /say's `channel` option defaults to it.
+    channel_id?: string;
     // Only sent for real interactions, not for the PING probe.
     application_id?: string;
     token?: string;
@@ -391,6 +459,8 @@ const server = createServer(async (req, res) => {
     const context = {
       discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
       guildId: interaction.guild_id ?? null,
+      // /say defaults to the channel it was typed in.
+      channelId: interaction.channel_id ?? null,
       applicationId: interaction.application_id ?? null,
       interactionToken: interaction.token ?? null,
       attachments: interaction.data.resolved?.attachments ?? null,
@@ -444,6 +514,56 @@ const server = createServer(async (req, res) => {
     }
 
     const response = await dispatch(interaction.data.name, interaction.data.options, context);
+
+    // ACKNOWLEDGED MID-COMMAND. The branch above defers before dispatch, which
+    // is all /setup can do — it is slow from its first byte. /profile is not:
+    // it decides in one fast call whether the answer is a card or an ephemeral
+    // refusal, and only then does the slow work. So it dispatches normally and
+    // hands back its own deferral, carrying the rest as `finish`.
+    //
+    // The acknowledgement is sent VERBATIM, flags included or absent, because
+    // the handler chose the visibility knowing the answer — see handleProfile.
+    if (response.type === 5 && response.finish) {
+      const { finish, ...ack } = response;
+      const { application_id: appId, token: interactionToken } = interaction;
+      send(res, 200, ack);
+
+      // Deliberately not awaited: the response is already sent.
+      void (async () => {
+        try {
+          const final = await finish();
+          if (!appId || !interactionToken) {
+            console.error('[bot] deferred command finished but had no interaction token');
+            return;
+          }
+          // The webhook edit takes a MESSAGE, not a callback, so the `data`
+          // wrapper comes off — and the file travels beside it rather than in
+          // it, for the same reason it does above.
+          await editDeferredReply(appId, interactionToken, final.data ?? {}, fetch, final.file);
+        } catch (error) {
+          // finish() is written not to throw, so reaching here is a bug rather
+          // than a slow render. The member is still watching a spinner.
+          console.error(`[bot] deferred ${interaction.data?.name} failed:`, error);
+          if (appId && interactionToken) {
+            await editDeferredReply(appId, interactionToken, {
+              content: 'Something went wrong. Please try again.',
+            });
+          }
+        }
+      })();
+      return;
+    }
+
+    // Unreached today -- /profile was the only command that answered
+    // immediately with a file, and it defers now. See the note in multipart.ts
+    // before sending anything down here.
+    if (response.file) {
+      // The file is SPLIT OFF, never passed through. send() would
+      // JSON.stringify it, and a serialised byte array is a payload Discord
+      // accepts as a message with a colossal content field.
+      const { file, ...payload } = response;
+      return sendMultipart(res, 200, payload, file);
+    }
     return send(res, 200, response);
   }
 
@@ -461,18 +581,83 @@ const server = createServer(async (req, res) => {
   if (interaction.type === 5 && interaction.data) {
     const customId = interaction.data.custom_id;
 
+    // Same two places a command reads its caller from: a guild submit populates
+    // member.user, a DM submit populates user.
+    const modalContext = {
+      discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+      guildId: interaction.guild_id ?? null,
+      channelId: interaction.channel_id ?? null,
+    };
+
+    if (isAnnounceModal(customId)) {
+      try {
+        const response = await handleAnnounceModal(
+          customId as string,
+          interaction.data.components,
+          modalContext
+        );
+        return send(res, 200, response);
+      } catch (error) {
+        // THIS DOES NOT SAY "NOTHING WAS POSTED", AND THE RESTRAINT IS THE POINT.
+        //
+        // The obvious wording is the wrong one. api.ts aborts at 2500ms, inside
+        // the modal submit's own 3-second deadline, and an abort fires against a
+        // request the app may already have COMMITTED -- the row is inserted, the
+        // answer is still in flight, and the fetch gives up. Telling the exec
+        // nothing was posted is then false in the one direction that costs
+        // something: they retype the announcement, and the club gets two of
+        // them, in the channel, in front of everybody.
+        //
+        // A refusal the app made deliberately never reaches here; those come
+        // back as a 200 with a code and are rendered as their own sentence. So
+        // everything that lands in this branch is genuinely unknown, and the
+        // reply says so and names the one place that settles it.
+        console.error('[bot] announce modal failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: {
+            content:
+              "Couldn't get an answer from the club app — I can't tell whether that went " +
+              'through. Check the announcements page before you try again, in case it did. ' +
+              'Your words are gone from this box, so copy them somewhere first.',
+            flags: 64,
+          },
+        });
+      }
+    }
+
+    if (isSayModal(customId)) {
+      try {
+        const response = await handleSayModal(
+          customId as string,
+          interaction.data.components,
+          modalContext
+        );
+        return send(res, 200, response);
+      } catch (error) {
+        // Unlike the announce branch this one CAN say nothing was posted: the
+        // handler talks to Discord and nothing else, it returns its own refusal
+        // for a channel Discord would not take, and a throw from it is a bug
+        // here rather than an answer lost in flight.
+        console.error('[bot] say modal failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: {
+            content:
+              'Something went wrong posting that, and nothing was sent. Your words are gone ' +
+              'from this box, so copy them somewhere before you try again.',
+            flags: 64,
+          },
+        });
+      }
+    }
+
     if (isReportModal(customId)) {
-      const context = {
-        // Same two places as a command: a guild submit populates member.user, a
-        // DM submit populates user.
-        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
-        guildId: interaction.guild_id ?? null,
-      };
       try {
         const response = await handleReportModal(
           customId as string,
           interaction.data.components,
-          context
+          modalContext
         );
         return send(res, 200, response);
       } catch (error) {
@@ -536,6 +721,35 @@ const server = createServer(async (req, res) => {
     return send(res, 200, { type: 6 });
   }
 
+  // APPLICATION_COMMAND_AUTOCOMPLETE — the /profile handle picker, refiring on
+  // every keystroke.
+  //
+  // CANNOT BE DEFERRED. Type 8 within about three seconds is the only valid
+  // answer there is, and the fall-through below would reply type 1, which the
+  // picker renders as "loading options failed".
+  //
+  // So the cold-cache read races a timer and empty choices win it. A picker
+  // that suggests nothing for one keystroke is invisible; a missed deadline is
+  // an error the member sees.
+  if (interaction.type === 4 && interaction.data) {
+    const options = interaction.data.options;
+    try {
+      const answered = await Promise.race([
+        handleProfileAutocomplete(options),
+        new Promise<{ type: number; data: { choices: [] } }>((resolve) =>
+          setTimeout(() => resolve({ type: 8, data: { choices: [] } }), AUTOCOMPLETE_BUDGET_MS)
+        ),
+      ]);
+      return send(res, 200, answered);
+    } catch (error) {
+      // The whole branch, because createServer's handler has no outer catch: a
+      // throw escaping here writes no response at all and raises an unhandled
+      // rejection in the process.
+      console.error('[bot] autocomplete failed:', error);
+      return send(res, 200, { type: 8, data: { choices: [] } });
+    }
+  }
+
   // Unknown interaction type — acknowledge rather than erroring, so a future
   // Discord type does not surface to users as a broken bot.
   return send(res, 200, { type: 1 });
@@ -556,6 +770,11 @@ server.listen(PORT, '0.0.0.0', () => {
   } else {
     console.log('[bot] no DISCORD_BOT_TOKEN — gateway disabled, bot will show offline');
   }
+
+  // Filled now rather than on the first keystroke: an autocomplete cannot be
+  // deferred, so a cold cache spends the member's whole budget on a fetch.
+  // Non-fatal, like loadConfig below — the picker simply pays for it later.
+  warmHandles();
 
   // Where config comes from, said once. The guild map and audit channel are
   // read from the database at runtime now, so the env vars are only the

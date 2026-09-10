@@ -215,8 +215,9 @@ export function BottomNav({
     };
   }, [checkUnread, supabase, playerId, subscribe]);
 
-  // Auth / onboarding screens render their own full-screen layout — no app chrome.
-  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding') {
+  // Auth, onboarding and the Discord consent screen render their own
+  // full-screen layout — no app chrome.
+  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
     return null;
   }
 

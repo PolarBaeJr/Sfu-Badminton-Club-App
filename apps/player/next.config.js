@@ -36,6 +36,18 @@ const nextConfig = {
   // ~/package-lock.json is enough), which decides what gets copied into the
   // standalone bundle the container runs.
   outputFileTracingRoot: path.join(__dirname, '../..'),
+  // THE PROFILE CARD'S FONTS. next/og renders the card server-side and reads
+  // these .ttf files off disk at request time, so they have to be inside the
+  // standalone bundle -- and nothing imports them, so nothing traces them.
+  // Without this the route builds clean and 500s on first request in the
+  // container, which is the only place it would ever be noticed.
+  //
+  // They are .ttf and not the .woff2 the browser gets because satori (what
+  // next/og renders through) cannot read WOFF2 at all.
+  outputFileTracingIncludes: {
+    '/api/discord/card/[token]': ['./src/fonts/*.ttf'],
+    '/api/discord/card/probe': ['./src/fonts/*.ttf'],
+  },
   // src/instrumentation.ts (Sentry server/edge init) needed an experimental
   // flag on 14; it is default-on from 15, and leaving the flag set now only
   // earns an "unrecognised experimental option" warning.

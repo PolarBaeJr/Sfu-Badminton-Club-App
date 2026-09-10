@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { unwrap, unwrapMaybe } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
@@ -47,7 +47,7 @@ type FeeRow = {
 };
 
 export default async function FeesPage() {
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
@@ -55,7 +55,7 @@ export default async function FeesPage() {
 
   // ── Reading only THIS member's money ──────────────────────────────────
   // Every query below runs on the session client (anon key + the member's JWT),
-  // never the service-role client getCurrentPlayer() uses for the player's own
+  // never the service-role client getViewer() uses for the player's own
   // row. That means two independent layers say "yours only":
   //
   //   1. an explicit .eq('player_id', player.id) on the fee ledger, and

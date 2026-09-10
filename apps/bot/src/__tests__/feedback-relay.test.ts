@@ -73,7 +73,7 @@ const SURVEY = {
 beforeEach(() => {
   vi.resetAllMocks();
   process.env.DISCORD_BOT_TOKEN = 'bot-token';
-  loadConfig.mockResolvedValue({ registry: { g1: {} }, auditChannelId: null });
+  loadConfig.mockResolvedValue({ registry: new Map([['g1', {}]]), auditChannelId: null });
   fetchFeedbackActions.mockResolvedValue({ actions: [REPORT], skipped: [] });
   postMessageWithFile.mockResolvedValue('msg-1');
   editMessage.mockResolvedValue('ok');
@@ -216,7 +216,7 @@ describe('editing and retracting', () => {
 
 describe('one guild failing does not stop the others', () => {
   it('carries on to the next guild', async () => {
-    loadConfig.mockResolvedValue({ registry: { g1: {}, g2: {} }, auditChannelId: null });
+    loadConfig.mockResolvedValue({ registry: new Map([['g1', {}], ['g2', {}]]), auditChannelId: null });
     fetchFeedbackActions
       .mockRejectedValueOnce(new Error('unreachable'))
       .mockResolvedValueOnce({ actions: [REPORT], skipped: [] });

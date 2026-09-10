@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer, getExecutives } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer, getExecutives } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { Megaphone } from 'lucide-react';
@@ -108,7 +108,7 @@ function abbreviateName(full: string) {
 }
 
 export default async function AnnouncementsPage() {
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();

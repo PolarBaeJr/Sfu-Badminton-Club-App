@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, createServiceRoleClient, getViewer } from '@/lib/supabase-server';
 import {
   formatDate,
   isDoublesEvent,
@@ -78,7 +78,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     .eq('tournament_id', id)
     .order('event_type');
 
-  const currentPlayer = await getCurrentPlayer();
+  const { player: currentPlayer } = await getViewer();
   // `paired` is the discriminator and `partnerName` is only ever display: a
   // pair whose partner name did not resolve is still a pair, and inferring the
   // state from the name would show a paired member "Waiting for a partner".

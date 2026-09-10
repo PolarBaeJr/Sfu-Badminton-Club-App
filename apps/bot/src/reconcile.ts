@@ -16,7 +16,12 @@
 // however many are running. See POST /sync in index.ts.
 
 import type { DiscordApi } from './discord-api.js';
-import { desiredRoles, type GuildRegistry, type MemberState } from './roles.js';
+import {
+  desiredRoles,
+  type GuildRegistry,
+  type MemberState,
+  type MembershipRole,
+} from './roles.js';
 import { syncMemberEverywhere, describeOutcomes, type SyncOutcome } from './sync.js';
 
 /** One row of the app's linked-member list. */
@@ -40,6 +45,21 @@ export interface MemberChange {
   failed: number;
 }
 
+/**
+ * A linked member whose own membership role disagrees with what the app has
+ * stored, and what Discord says it should be.
+ *
+ * REPORTED, NOT APPLIED, exactly like `cleared`. reconcile touches Discord and
+ * nothing else; the caller writes it back through the app's API. That keeps
+ * this module testable without a fetch and keeps the app the only thing that
+ * ever writes to players — see index.ts, where clearRevocations already works
+ * this way.
+ */
+export interface MembershipUpdate {
+  discordUserId: string;
+  membershipType: MembershipRole;
+}
+
 export interface SweepSummary {
   /**
    * Tombstoned accounts this sweep genuinely finished clearing, in every guild.
@@ -49,6 +69,8 @@ export interface SweepSummary {
   cleared: string[];
   /** Every member whose roles moved, or whose sync was refused or failed. */
   changes: MemberChange[];
+  /** Members whose picked membership role the app has not caught up with. */
+  membershipUpdates: MembershipUpdate[];
   members: number;
   added: number;
   removed: number;
@@ -66,6 +88,7 @@ export async function reconcile(
   const summary: SweepSummary = {
     cleared: [],
     changes: [],
+    membershipUpdates: [],
     members: 0,
     added: 0,
     removed: 0,
@@ -88,7 +111,15 @@ export async function reconcile(
         api,
         registry,
         member.discordUserId,
-        member.state ? desiredRoles(member.state) : null
+        member.state ? desiredRoles(member.state) : null,
+        // THE ONE CASE THAT STILL TAKES A MEMBERSHIP ROLE OFF. Picking one is
+        // the member's own call and the sweep leaves it alone; a BAN or a
+        // tombstone is the club withdrawing access, and member-only channel
+        // visibility in this server IS @Internal + @Alumni. Leaving them on
+        // would keep those channels open to exactly the person who was just
+        // removed from them, and would let a tombstone be reported `cleared`
+        // with a role still on the account.
+        { revokeMembership: member.state === null || member.state.isBanned }
       );
     } catch (error) {
       // syncMemberEverywhere already swallows the predictable failures, so
@@ -133,6 +164,34 @@ export async function reconcile(
       summary.changes.push(change);
     }
 
+    // WHAT THE MEMBER PICKED, pushed back into the app.
+    //
+    // Only for a member the app still resolves — a tombstone has no player to
+    // write to — and only when Discord actually disagrees, so a settled roster
+    // produces an empty list and no requests at all.
+    //
+    // FIRST GUILD THAT ASSERTS ANYTHING WINS. With one server that is simply
+    // "the answer"; with several it is a tie-break rather than a policy, and it
+    // is the same tie-break every time because the registry preserves order.
+    // Two servers disagreeing about one member is a configuration the club can
+    // see in the audit entry, not something to invent a merge rule for.
+    //
+    // NOT FOR A BANNED MEMBER, for the same reason the sweep just stripped
+    // their roles: the write-back would put a fee tier onto a row the club has
+    // withdrawn, sourced from a role that is being taken away in the same pass.
+    if (member.state && !member.state.isBanned) {
+      const picked = outcomes.find((o) => o.membership !== null)?.membership ?? null;
+      if (picked && picked !== member.state.membershipType) {
+        summary.membershipUpdates.push({
+          discordUserId: member.discordUserId,
+          membershipType: picked,
+        });
+        log(
+          `[sync] ${member.discordUserId}: membership ${member.state.membershipType} -> ${picked} (picked in Discord)`
+        );
+      }
+    }
+
     // A member with no state is a tombstone: the app is waiting to hear that
     // this account is clean. Report it ONLY if nothing was refused or failed
     // anywhere — an absent member counts as clear, since roles they do not hold
@@ -151,7 +210,8 @@ export async function reconcile(
   log(
     `[sync] swept ${summary.members} members across ${registry.size} guild(s):` +
       ` +${summary.added} -${summary.removed}` +
-      ` forbidden=${summary.forbidden} failed=${summary.failed}`
+      ` forbidden=${summary.forbidden} failed=${summary.failed}` +
+      ` membership=${summary.membershipUpdates.length}`
   );
   return summary;
 }

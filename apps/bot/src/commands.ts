@@ -4,7 +4,9 @@ import {
   AppApiError,
   clearRevocations,
   deleteLink,
+  fetchCard,
   fetchLeaderboard,
+  fetchProfile,
   fetchSelfRoles,
   fetchSessions,
   fetchTournaments,
@@ -15,16 +17,30 @@ import {
   AlreadyLinkedError,
   mintLinkToken,
   writeGuildConfig,
+  fetchDiscordSettings,
+  writeDiscordSettings,
+  submitAnnouncement,
+  setMembership,
+  type CardFile,
   type FeedbackKind,
+  type ProfilePayload,
   type SessionSummary,
   type TournamentSummary,
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
-import { type ManagedRole } from './roles.js';
+import { loadHandles, matchHandles } from './handles.js';
+import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipRole } from './roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
+import {
+  ALL_SETTINGS,
+  CHANNEL_SETTINGS,
+  VALUE_SETTINGS,
+  specByOption,
+  validateValue,
+} from './settings.js';
 
 // SFU red, the app's single accent (--red: #c00). Keeps Discord output visually
 // part of the same product rather than Discord-default blurple.
@@ -117,9 +133,68 @@ export const COMMAND_DEFINITIONS = [
     ],
   },
   {
+    name: 'profile',
+    description: 'A member\u2019s club profile card',
+    options: [
+      {
+        type: 6, // USER
+        name: 'member',
+        description: 'Whose card (defaults to yours)',
+        required: false,
+      },
+      {
+        type: 3, // STRING
+        name: 'handle',
+        description: 'Club handle, for a member who has not linked Discord',
+        required: false,
+        // The `member` option above cannot have this: Discord populates a USER
+        // option from the server's own member list and only accepts
+        // autocomplete on STRING, INTEGER and NUMBER.
+        autocomplete: true,
+      },
+      {
+        type: 3, // STRING
+        name: 'type',
+        // The club ranks two elos four ways, and by default the card shows the
+        // whole table. This asks it to headline ONE of them instead.
+        description: 'Headline one ladder instead of the whole table',
+        required: false,
+        // CHOICES, not free text, and the values are /leaderboard's own
+        // CategoryId strings. Discord enforces the list on its side, and the
+        // card route re-validates against the same allowlist rather than
+        // trusting it -- the value reaches the route as a query parameter and
+        // a query parameter is whatever the caller says it is.
+        choices: [
+          { name: 'Doubles — open', value: 'open_doubles' },
+          { name: 'Singles — open', value: 'open_singles' },
+          { name: 'Doubles — competitive', value: 'comp_doubles' },
+          { name: 'Singles — competitive', value: 'comp_singles' },
+        ],
+      },
+    ],
+  },
+  {
     name: 'sessions',
     description: 'Upcoming club sessions',
     options: [],
+  },
+  {
+    // ONE WORD, because Discord's command names are `^[-_\p{L}\p{N}]{1,32}$`
+    // and lowercase -- there is no /sessionPost to register.
+    //
+    // A SIBLING of /sessions rather than a subcommand of it. Adding subcommands
+    // would turn the command every member already uses into `/sessions list`,
+    // which is a rename of the club's most-run command to make room for one
+    // execs use. They sort next to each other in the picker anyway.
+    name: 'sessionpost',
+    description: 'Post the club-wide session schedule into this channel',
+    options: [],
+    // EXEC_ONLY, on the same argument /rolepicker post makes: this writes a
+    // message into a shared channel under the club's name. It is not gated on
+    // MANAGE_GUILD because posting the schedule is session-running work and the
+    // execs who run sessions are usually not the one or two people holding that
+    // bit. '0' means an admin grants @Executives once, in Integrations.
+    default_member_permissions: EXEC_ONLY,
   },
   {
     name: 'tournaments',
@@ -180,6 +255,108 @@ export const COMMAND_DEFINITIONS = [
     ],
   },
   {
+    // EXEC_ONLY, and it is the strongest case for it in this file: everything
+    // else behind that flag reads club data or wires up the server, and this
+    // one WRITES something every member reads. The flag is only half of it --
+    // Discord's command-list filter is not authorization, so the app checks the
+    // caller's own `announcements.create.write` before writing anything. See
+    // the route.
+    name: 'announce',
+    description: 'Post a club announcement to the website',
+    default_member_permissions: EXEC_ONLY,
+    // A guild only. The reply names the channel the relay will post into, and a
+    // DM has no guild for that to mean anything in.
+    dm_permission: false,
+    // THE WORDS COME FROM A MODAL, same as /bug and /feedback and for the same
+    // reason: a slash-command option is one line that truncates at the width of
+    // the input, and an announcement is a paragraph.
+    //
+    // These four cannot move into the modal -- a modal's only component is a
+    // text input, so a choice and three toggles have nowhere to live in one.
+    // They are carried across in the custom_id; there is no file here, so
+    // unlike /bug nothing has to be stashed in memory to survive the round trip.
+    options: [
+      {
+        type: 3, // STRING
+        name: 'type',
+        description: 'How it is badged on the website (defaults to info)',
+        required: false,
+        choices: [
+          { name: 'Info', value: 'info' },
+          { name: 'Warning', value: 'warning' },
+          { name: 'Urgent', value: 'urgent' },
+          { name: 'Event', value: 'event' },
+        ],
+      },
+      {
+        type: 5, // BOOLEAN
+        name: 'pin',
+        description: 'Keep it at the top of the announcements page',
+        required: false,
+      },
+      {
+        type: 5,
+        name: 'draft',
+        description: 'Save it without publishing, to finish in the console',
+        required: false,
+      },
+      {
+        type: 5,
+        name: 'evergreen',
+        description: 'A standing notice (club rules, door code) that outlives this term',
+        required: false,
+      },
+    ],
+  },
+  {
+    // EXEC_ONLY, and read /announce's note above first — this is the same
+    // reasoning with none of the safety rails. /announce writes a row the
+    // console can edit, unpublish or delete, badged as an announcement, and the
+    // relay says where it came from. This posts arbitrary words in the club's
+    // own voice, indistinguishable from anything else the bot says, and Discord
+    // has no undo. Two things make that acceptable rather than reckless:
+    //
+    //   Discord's own permissions still apply. The bot cannot post where it
+    //   cannot post, and cannot mention @everyone unless the club has given it
+    //   that permission in that channel.
+    //
+    //   Every use writes an audit entry QUOTING THE MESSAGE, so a message that
+    //   is later deleted is still readable in the audit channel. A bot that can
+    //   speak for the club with no record of who moved its mouth is the thing
+    //   worth not building.
+    //
+    // Unlike every other EXEC_ONLY command there is no app-side capability
+    // check, because there is no app call: nothing here reads or writes club
+    // data. The gate is Discord's, which is the same gate that decides who can
+    // type in the channel by hand.
+    name: 'say',
+    description: 'Post a message as the club bot',
+    default_member_permissions: EXEC_ONLY,
+    // A guild only. There is no channel to default to in a DM, and speaking as
+    // the club in a DM is not a thing the club does.
+    dm_permission: false,
+    // THE WORDS COME FROM A MODAL, for /announce's reason and one more: a slash
+    // option cannot carry a line break, and the whole point of this command is
+    // posting something that reads like a person wrote it.
+    options: [
+      {
+        type: 7, // CHANNEL
+        name: 'channel',
+        description: 'Where to post it (defaults to this channel)',
+        required: false,
+        // Text (0) and announcement (5), same as /config. The picker would
+        // otherwise offer a category and the post would 400.
+        channel_types: [0, 5],
+      },
+      {
+        type: 5, // BOOLEAN
+        name: 'ping',
+        description: 'Let @mentions in the message actually notify people (default: no)',
+        required: false,
+      },
+    ],
+  },
+  {
     name: 'link',
     description: 'Connect your Discord account to your club account',
     options: [],
@@ -222,6 +399,72 @@ export const COMMAND_DEFINITIONS = [
     // thing it bootstraps would leave a fresh server with no way in.
     default_member_permissions: MANAGE_GUILD,
     // Meaningless in a DM: there is no guild to configure.
+    dm_permission: false,
+  },
+  {
+    name: 'config',
+    description: 'See and change where the club relays post',
+    options: [
+      {
+        type: 1, // SUB_COMMAND
+        name: 'show',
+        description: 'What is configured, and what each relay is doing about it',
+        options: [],
+      },
+      {
+        type: 1,
+        name: 'channels',
+        description: 'Choose where each relay posts',
+        // BUILT FROM THE SPEC LIST rather than typed out, so a setting cannot
+        // exist in /config show and be missing from the thing that sets it.
+        options: CHANNEL_SETTINGS.map((spec) => ({
+          type: 7, // CHANNEL
+          name: spec.option,
+          description: spec.label,
+          required: false,
+          // Text (0) and announcement (5) channels only. The picker would
+          // happily offer a voice channel or a category, and the failure would
+          // arrive later as a relay that 400s every five minutes.
+          channel_types: [0, 5],
+        })),
+      },
+      {
+        type: 1,
+        name: 'tournament',
+        description: 'Times and location for the Discord events I create for tournaments',
+        options: [
+          { type: 3, name: 'start_time', description: 'Start time, 24-hour HH:MM (default 09:00)', required: false },
+          { type: 3, name: 'end_time', description: 'End time, 24-hour HH:MM (default 18:00)', required: false },
+          { type: 3, name: 'location', description: 'Where tournaments are held', required: false },
+          {
+            type: 4, // INTEGER
+            name: 'ping_lead_minutes',
+            description: 'How long before a session to ping (default 60)',
+            required: false,
+            min_value: 5,
+            max_value: 1440,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'clear',
+        description: 'Unset one of these — the relay that reads it goes quiet',
+        options: [
+          {
+            type: 3,
+            name: 'setting',
+            description: 'Which one to unset',
+            required: true,
+            choices: ALL_SETTINGS.map((spec) => ({ name: spec.label, value: spec.option })),
+          },
+        ],
+      },
+    ],
+    // MANAGE_GUILD, the same gate /setup carries and for the same reason: this
+    // decides which channels the bot broadcasts the club's business into, which
+    // is server administration rather than exec tooling.
+    default_member_permissions: MANAGE_GUILD,
     dm_permission: false,
   },
   {
@@ -313,7 +556,7 @@ export const COMMAND_DEFINITIONS = [
  * nine roles and then write to the app, which is comfortably longer, so it
  * acknowledges first and edits the message when it is actually finished.
  */
-export const DEFERRED_COMMANDS = new Set(['setup']);
+export const DEFERRED_COMMANDS = new Set(['setup', 'config']);
 
 /**
  * Who ran the command, and where.
@@ -327,6 +570,13 @@ export const DEFERRED_COMMANDS = new Set(['setup']);
 export interface InteractionContext {
   discordUserId: string | null;
   guildId: string | null;
+  /**
+   * Where the command was typed. Only /say reads it, and only as the default
+   * for its optional `channel` option — "post it here" is the overwhelmingly
+   * common case and making it the one thing you have to fill in every time is
+   * how a quick command stops being quick.
+   */
+  channelId?: string | null;
   /** Both only present for a deferred command; see DEFERRED_COMMANDS. */
   applicationId?: string | null;
   interactionToken?: string | null;
@@ -349,7 +599,10 @@ export interface ResolvedAttachment {
 
 export interface CommandOption {
   name: string;
-  value?: string | number;
+  // boolean because Discord sends a BOOLEAN option (type 5) as a real JSON
+  // boolean, not the string "true" -- /announce's three toggles arrive that
+  // way. Reading one through String() would make `false` the truthy "false".
+  value?: string | number | boolean;
   /**
    * Subcommands nest. Discord sends `/rolepicker add role:@X` as a single
    * top-level option named "add" (type 1) whose own `options` carry the real
@@ -360,6 +613,13 @@ export interface CommandOption {
    */
   options?: CommandOption[];
   type?: number;
+  /**
+   * AUTOCOMPLETE ONLY: which slot the cursor is in.
+   *
+   * Discord marks exactly one, and it is sent even when nothing has been typed
+   * yet — that first empty-value call is how the picker opens.
+   */
+  focused?: boolean;
 }
 
 /** The chosen subcommand and its arguments, for a command that has any. */
@@ -445,6 +705,269 @@ export async function handleLeaderboard(options: CommandOption[] | undefined) {
   });
 }
 
+// The card is fetched AFTER the acknowledgement, so this no longer has to fit
+// inside Discord's three seconds -- the interaction token is good for fifteen
+// minutes. It is still bounded, and the bound still matters: the member is
+// looking at a "thinking..." spinner that Discord will happily spin for the
+// full fifteen, so an unbounded read turns a slow render into a message that
+// never arrives. Today's behaviour on a timeout, a link they can open, is worse
+// than a card and far better than a permanent spinner.
+//
+// EIGHT SECONDS RATHER THAN THE 1800ms THIS REPLACES. That ceiling existed
+// because the read had to finish inside the acknowledgement deadline, and it
+// sat only ~750ms above the measured worst case (1046, 945, 611, 631ms from
+// inside the staging bot container, every one a fresh render) -- close enough
+// that an ordinary slow render dropped to the URL intermittently and looked
+// like the feature was broken at random. Nothing forces it to be tight now, so
+// it is set where only a genuinely stuck render reaches it.
+const CARD_FETCH_MS = 8000;
+
+/**
+ * Why a requested `type:` cannot be honoured, or null when it can.
+ *
+ * THE ONLY PLACE THIS IS DECIDED. The route already falls back to the default
+ * table for a ladder the member is not on, which is the truthful render but an
+ * invisible one -- the bytes are identical to a card with no type at all, which
+ * is how the option came to look broken. Drawing the explanation on the card
+ * instead was tried and dropped: it can only be reached by hand-editing a card
+ * URL, since this returns before one is ever built, and a second copy of the
+ * rule in the renderer is a copy that drifts.
+ *
+ * An unrecognised `type` returns null, deliberately. The route ignores one and
+ * draws the default table, so refusing here would be the bot inventing a miss
+ * the app does not have.
+ */
+function unavailableLadder(profile: ProfilePayload, type: string): string | null {
+  const who = profile.name;
+
+  // Resolved BEFORE the not-ranked case, so that an unrecognised type takes the
+  // same null exit whatever the member's state -- otherwise `type:garbage` on
+  // an unranked member would be refused with a miss the route does not have.
+  const side =
+    type.endsWith('_doubles') ? profile.doubles
+    : type.endsWith('_singles') ? profile.singles
+    : undefined;
+  if (side === undefined) return null;
+
+  if (!profile.ranked) {
+    return `${who} isn't on the club ladder yet — no ranked matches recorded.`;
+  }
+
+  const discipline = type.endsWith('_doubles') ? 'doubles' : 'singles';
+
+  if (type.startsWith('comp_')) {
+    // Three shapes mean the same thing to the member -- no competitive rank in
+    // this discipline -- so they get the same sentence. `side` null is a member
+    // who has not played it at all; compRank null is one who has, but not as a
+    // competitive member.
+    //
+    // == null, NOT === null, and this is load-bearing rather than style. The
+    // field arrives over the wire from the player app, and a player older than
+    // the resolver that added it omits the key entirely -- so `undefined` is
+    // the shape a bot that has rolled ahead of its player actually sees, which
+    // is an ordinary state here and not a hypothetical. A strict check reads
+    // that as "has a competitive rank" and hands back the byte-identical card
+    // this whole function exists to stop.
+    if (!side || side.compRank == null) {
+      return `${who} does not have competitive stats in ${discipline}. Run \`/profile\` without a type to see their full card.`;
+    }
+    return null;
+  }
+
+  if (type.startsWith('open_') && !side) {
+    return `${who} hasn't played any ranked ${discipline} yet. Run \`/profile\` without a type to see their full card.`;
+  }
+
+  return null;
+}
+
+/**
+ * A member's profile card.
+ *
+ * PUBLIC, like /leaderboard and unlike /sessions. The card carries only what
+ * the club ladder already publishes about the member, and the point of the
+ * command is that somebody can post their card into a channel.
+ *
+ * THE CARD ITSELF IS A PNG THE APP RENDERS. The bot fetches its bytes and
+ * uploads them, but it still does not draw the card and does not know the
+ * numbers on it — the app decides both, which keeps the card's visibility rules
+ * in the same place as every other rule this bot renders rather than splitting
+ * them across two codebases.
+ *
+ * UPLOADED RATHER THAN LINKED. An embed's `image.url` makes Discord's CDN fetch
+ * the card itself, from outside the cluster, and the signed URL it would be
+ * fetching expires — so the picture goes missing from a message that stays in
+ * the channel. Uploading the bytes hands Discord a file it owns and stores, and
+ * it also removes the embed frame the card was never designed to sit inside.
+ *
+ * ANSWERED IN TWO PHASES, and the split is what makes deferring possible at
+ * all. The command has to be deferred: rendering the card is a fresh PNG every
+ * time, and a cold one blows Discord's three seconds and shows the member "the
+ * application did not respond". But DEFERRED_COMMANDS defers ephemerally, and
+ * an ephemeral card is the one property this command exists to not have, while
+ * deferring publicly would publish the five refusals below — each of which is
+ * ephemeral on purpose.
+ *
+ * Neither, then. The refusals are ALL decided by fetchProfile, one JSON call to
+ * the app; the card fetch and its multipart upload are the slow part and decide
+ * nothing. So the fast half runs BEFORE any acknowledgement and still answers
+ * every refusal immediately and ephemerally, exactly as it did when the whole
+ * command was immediate, and only the hit path acknowledges — publicly, because
+ * by then the answer is known to be a card. Visibility is therefore still
+ * chosen with the answer in hand, which is the whole reason it can be fixed at
+ * acknowledgement time and never revisited.
+ *
+ * The five refusals are the app declining on purpose, and each one sends the
+ * member somewhere different. Collapsing them into "something went wrong" would
+ * leave someone who mistyped a handle waiting for an outage to end.
+ */
+export async function handleProfile(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const member = option(options, 'member');
+  const handle = option(options, 'handle');
+  // The value itself is NOT validated here -- the route that renders owns that,
+  // and a check in two places is a check that drifts. What is checked here, in
+  // the miss below, is something the route cannot answer: whether the member
+  // has that ladder at all. Only the bot can say so in words.
+  const type = option(options, 'type');
+
+  const result = await fetchProfile(context.discordUserId, {
+    discordUserId: member ? String(member) : null,
+    handle: handle ? String(handle) : null,
+  });
+
+  if ('miss' in result) {
+    switch (result.miss) {
+      case 'not_linked':
+        return ephemeral(
+          "You haven't linked your Discord account to the club yet — run `/link` first, or look someone up with `/profile handle:their-handle`."
+        );
+      case 'target_unlinked':
+        return ephemeral(
+          "That Discord account isn't linked to a club member. If you know their club handle, try `/profile handle:their-handle`."
+        );
+      case 'no_such_handle':
+        // Deliberately does NOT say whether the handle exists. A member who is
+        // off the public ladder has no ladder row for a handle to find, and
+        // "that member is hidden" would be exactly the disclosure their setting
+        // exists to prevent -- so an unlisted member and a typo read the same.
+        return ephemeral(
+          "No member on the club ladder has that handle. Check the spelling — `/leaderboard` lists handles."
+        );
+      default:
+        return ephemeral("Couldn't find that member.");
+    }
+  }
+
+  // A LADDER THE MEMBER IS NOT ON. Asking for `type:` and getting the default
+  // table back is indistinguishable from the option doing nothing -- the two
+  // renders are byte-identical for a member with no competitive rank, which is
+  // exactly how this was reported. So say it instead of drawing it.
+  //
+  // Text, and ephemeral, unlike every other reply this command sends: the card
+  // is the artifact and this is not a card, it is an answer to the person who
+  // asked. Posting "they have no competitive stats" publicly would also put a
+  // member's absence from a ladder into a channel, which nobody asked for.
+  const focusMiss = type ? unavailableLadder(result.profile, String(type)) : null;
+  if (focusMiss) {
+    return ephemeral(focusMiss);
+  }
+
+  // NO MESSAGE BODY. Everything this reply says is drawn on the card — the bio
+  // and the provisional footnote used to be typed here beside the image, and
+  // both moved into the render.
+  //
+  // The image is the artifact: it is what gets forwarded, quoted, embedded and
+  // cached, and message text does not travel with any of that. A card that
+  // needed a caption to be understood was only complete in the one channel it
+  // was posted to.
+  //
+  // The asterisk on a provisional rating is the case that proves it. It is
+  // drawn on the panel; the line explaining it is now on the rail beside the
+  // club name, so the explanation cannot be separated from the mark.
+  // The chosen ladder rides on the card URL rather than on the token, so it
+  // stays a rendering choice and never touches what the token AUTHORISES. The
+  // token already decides whose card this is and what may be said about them;
+  // a query parameter that could widen that would be a hole. This one cannot --
+  // the route matches it against a fixed list of four and ignores anything else.
+  const cardUrl = type
+    ? `${result.cardUrl}?type=${encodeURIComponent(String(type))}`
+    : result.cardUrl;
+
+  // THE ACKNOWLEDGEMENT, and the last decision this function makes. No flags:
+  // the card is public, and a deferred reply's visibility is fixed here and
+  // cannot be changed by the edit that follows. Every return above this line is
+  // ephemeral and immediate; everything below runs after the socket has closed.
+  return {
+    type: 5,
+    finish: async () => {
+      // NEVER THROWS, by construction rather than by a try: fetchCard answers
+      // null on any failure, and the only other work is building an object.
+      // A rejection escaping here is answered publicly with a generic apology,
+      // which is strictly worse than the link this returns instead.
+      const card = await fetchCard(cardUrl, CARD_FETCH_MS);
+
+      if (card) {
+        return {
+          type: 4,
+          data: {
+            // Both halves of the pair, and the filename taken from the file
+            // rather than written out again. Discord accepts a declaration that
+            // does not match the part with a 200 and renders the message with
+            // no image at all — the same silent half-success
+            // postMessageWithFile guards.
+            attachments: [{ id: 0, filename: card.filename }],
+          },
+          file: card,
+        };
+      }
+
+      // The bytes did not arrive. The URL still resolves for whoever opens it,
+      // so the reply degrades to a link rather than to an apology — and the
+      // link is enough on its own now, because the bio and the footnote are on
+      // the card it points at rather than in a body this branch would rebuild.
+      return {
+        type: 4,
+        data: { content: cardUrl },
+      };
+    },
+  };
+}
+
+/**
+ * The handle picker behind /profile.
+ *
+ * READS THE FOCUSED OPTION, not the one named 'handle'. Discord says which slot
+ * the cursor is in, and it sends the option with an empty value the moment the
+ * picker opens — matching by name would answer the wrong slot as soon as a
+ * second autocompleting option is added, and would look like a picker that
+ * suggests nothing.
+ *
+ * The value of a choice is the BARE HANDLE, because it lands straight in the
+ * option handleProfile passes to fetchProfile. Anything decorative in there
+ * becomes a lookup for a handle nobody has.
+ */
+export async function handleProfileAutocomplete(
+  options: CommandOption[] | undefined
+): Promise<BotResponse> {
+  const focused = options?.find((o) => o.focused);
+  const hits = matchHandles(await loadHandles(), String(focused?.value ?? ''));
+
+  return {
+    type: 8,
+    data: {
+      choices: hits.map((h) => ({
+        // Discord refuses a choice name over 100 characters, and refusing it
+        // takes the whole response down rather than that one row.
+        name: `${h.name} (@${h.handle})`.slice(0, 100),
+        value: h.handle,
+      })),
+    },
+  };
+}
+
 function formatSession(s: SessionSummary) {
   // Discord's <t:unix:F> renders in each viewer's own timezone. Using it means
   // the bot never has to know the club timezone, and a member travelling sees
@@ -496,6 +1019,61 @@ export async function handleSessions(context: InteractionContext) {
     description: sessions.map(formatSession).join('\n\n'),
     footer: { text: footer },
   });
+}
+
+/**
+ * The session schedule, posted into the channel for everyone to read.
+ *
+ * NOT EPHEMERAL -- that is the entire point of it, and it is the reason this is
+ * a separate command rather than a flag on /sessions. Read the comment on
+ * handleSessions before changing anything here: /sessions is ephemeral as a
+ * CORRECTNESS property, because the app filters that schedule to the caller's
+ * own track, and a public reply would post one member's filtered-for-them view
+ * into a channel every other track reads.
+ *
+ * WHICH IS WHY THIS FETCHES WITH NO CALLER. Passing the exec who ran it would
+ * publish THEIR schedule; the audience for a channel post is everyone who can
+ * read the channel, including members who never linked an account, so the right
+ * view is the one the app gives an unlinked caller -- club-wide nights only.
+ * See PUBLIC_TRACKS and the three-audiences comment in the sessions route. The
+ * gate on this command controls who may post, not what the post may contain,
+ * and those are different questions.
+ *
+ * NOBODY IS MENTIONED, for the reason announcements.ts gives at length: a
+ * feature that can ping the server on demand is one bad afternoon away from
+ * people muting the channel that carries club notices. The scheduled pings in
+ * session-pings.ts are the thing that is allowed to mention a role, and they
+ * are rate-limited by being tied to a session actually starting.
+ */
+export async function handleSessionPost(): Promise<BotResponse> {
+  const { sessions } = await fetchSessions(null);
+
+  // EPHEMERAL, unlike the success case. "There is nothing to post" is feedback
+  // for the exec who ran the command, not a notice the channel needs -- and a
+  // public "no sessions are open" is worse than saying nothing, because it
+  // reads as a club announcement that the club has cancelled everything.
+  if (sessions.length === 0) {
+    return ephemeral(
+      'No club-wide sessions are open right now, so there is nothing to post.'
+    );
+  }
+
+  return {
+    type: 4,
+    data: {
+      embeds: [
+        {
+          title: 'Upcoming sessions',
+          color: CLUB_RED,
+          description: sessions.map(formatSession).join('\n\n'),
+          // No "run /link to see your track" line here. That footer is advice
+          // for one reader looking at their own narrowed list; on a club-wide
+          // post it would imply this list is narrowed, which it is not.
+          footer: { text: 'RSVP on the website' },
+        },
+      ],
+    },
+  };
 }
 
 /**
@@ -647,7 +1225,11 @@ export async function handleUnlink(context: InteractionContext) {
       api,
       registry,
       context.discordUserId,
-      null
+      null,
+      // Including the membership role they picked. /unlink is the member saying
+      // they are done with the club account; leaving @Internal on would leave
+      // the member-only channels open to somebody the app no longer knows.
+      { revokeMembership: true }
     );
     cleared = outcomes.every((o) => !o.forbidden && !o.failed);
     // Only when the strip actually succeeded everywhere. A 403 here is the
@@ -880,6 +1462,184 @@ function parseEmoji(emoji: string) {
   return { name: emoji };
 }
 
+// ---------------------------------------------------------------------------
+// /config
+// ---------------------------------------------------------------------------
+//
+// THE COMMAND THAT ANSWERS "IT IS SET UP BUT NOTHING POSTS".
+//
+// Every relay reads discord_settings, nothing wrote it, and there was no way to
+// see that from anywhere: /setup wires roles and the audit channel and stops,
+// the settings table is service-role only so no member-facing page can touch
+// it, and an unconfigured relay is indistinguishable from a working one from
+// outside — it runs on schedule, answers 200 and posts nothing. `show` is the
+// half that closes that; the rest is the half that fixes it.
+//
+// Deferred (see DEFERRED_COMMANDS) because `channels` posts a message into
+// every channel it was given before saving any of them, which is several round
+// trips to Discord and then one to the app.
+
+/**
+ * Prove the bot can post in a channel by posting in it.
+ *
+ * THE ALTERNATIVE IS A RELAY THAT 403s FOREVER. Discord's channel picker offers
+ * channels by what the CALLER can see, not by what the bot can write to, so a
+ * perfectly reasonable choice can be one the bot has no Send Messages in —
+ * and every relay treats a failed post as a transient error and tries again on
+ * the next tick, quietly, for as long as the setting stands.
+ *
+ * Computing the bot's effective permissions from the role and overwrite lists
+ * would be the tidy version and it is not worth it: it means fetching the
+ * member, the roles and the channel, reimplementing Discord's overwrite
+ * precedence, and being wrong in a way that is invisible. Sending one message
+ * asks the only question that matters and gets Discord's own answer, and it
+ * leaves the club a note in the channel saying what will appear there.
+ */
+async function proveCanPost(
+  api: DiscordApi,
+  channelId: string,
+  label: string
+): Promise<boolean> {
+  return api.createMessage(channelId, {
+    content: `**${label}** will be posted here.`,
+    // No mentions, ever. This lands in a channel the club chose for a relay,
+    // and a setup confirmation that pings a role would be a poor introduction.
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function handleConfig(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+) {
+  if (!context.guildId) return ephemeral('Run this in a server, not a DM.');
+  const { name: sub, options: args } = subcommand(options);
+
+  if (sub === 'show') {
+    const { settings } = await fetchDiscordSettings();
+
+    const line = (spec: (typeof ALL_SETTINGS)[number], asChannel: boolean) => {
+      const value = settings[spec.key];
+      if (!value) return `**${spec.label}** — not set, so ${spec.whenUnset}`;
+      return `**${spec.label}** — ${asChannel ? `<#${value}>` : value}`;
+    };
+
+    return ephemeralEmbed({
+      title: 'Discord relay settings',
+      color: CLUB_RED,
+      description: [
+        CHANNEL_SETTINGS.map((spec) => line(spec, true)).join('\n'),
+        '',
+        VALUE_SETTINGS.map((spec) => line(spec, false)).join('\n'),
+      ].join('\n'),
+      // SAID EVERY TIME, because it is the one thing about this feature that
+      // surprises people: tournaments are the exception. That relay makes
+      // Discord scheduled events rather than posting messages, so it has no
+      // channel to set and runs whether or not anything above is filled in.
+      footer: {
+        text:
+          'Tournaments become Discord events, not messages — that relay runs with no channel. ' +
+          'Change any of these with /config channels or /config tournament.',
+      },
+    });
+  }
+
+  if (sub === 'channels') {
+    const chosen = CHANNEL_SETTINGS.map((spec) => ({
+      spec,
+      channelId: option(args, spec.option),
+    })).filter((c): c is { spec: typeof c.spec; channelId: string } => typeof c.channelId === 'string');
+
+    if (chosen.length === 0) {
+      return ephemeral(
+        'Pick at least one channel. Run **/config show** to see what is set, or ' +
+          '**/config clear** to unset one.'
+      );
+    }
+
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) {
+      console.error('[bot] /config channels: DISCORD_BOT_TOKEN is not set');
+      return ephemeral('I am not configured to post anywhere right now.');
+    }
+    const api = new DiscordApi({ token });
+
+    const write: Record<string, string> = {};
+    const refused: string[] = [];
+    for (const { spec, channelId } of chosen) {
+      if (await proveCanPost(api, channelId, spec.label)) write[spec.key] = channelId;
+      else refused.push(`<#${channelId}> for **${spec.label}**`);
+    }
+
+    // NOTHING IS SAVED UNTIL THE POST SUCCEEDS, and a channel that refused is
+    // left exactly as it was rather than half-set. A club that changes three
+    // channels and gets one wrong keeps the other two.
+    if (Object.keys(write).length > 0) await writeDiscordSettings(write);
+
+    const saved = Object.keys(write).length;
+    const ok = saved > 0 ? `Saved ${saved} channel${saved === 1 ? '' : 's'}.` : 'Nothing saved.';
+    if (refused.length === 0) return ephemeral(`${ok} I posted a note in each one.`);
+
+    return ephemeral(
+      `${ok}\n\nI could not post in ${refused.join(', ')}, so ` +
+        `${refused.length === 1 ? 'it was' : 'they were'} left unchanged. ` +
+        'Give me **View Channel** and **Send Messages** there and run this again.'
+    );
+  }
+
+  if (sub === 'tournament') {
+    const write: Record<string, string> = {};
+    for (const spec of VALUE_SETTINGS) {
+      const raw = option(args, spec.option);
+      if (raw === undefined || raw === null) continue;
+      const value = String(raw).trim();
+      const problem = validateValue(spec.option, value);
+      if (problem) return ephemeral(problem);
+      write[spec.key] = value;
+    }
+
+    if (Object.keys(write).length === 0) {
+      return ephemeral('Nothing to change. Run **/config show** to see what is set.');
+    }
+
+    // A tournament event Discord will accept needs the end after the start, and
+    // checking it here rather than at send time is the difference between one
+    // wrong answer now and a relay that skips every tournament with
+    // `end_before_start` where nobody is reading.
+    const { settings } = await fetchDiscordSettings();
+    const start = write.tournament_event_start_time ?? settings.tournament_event_start_time ?? '09:00';
+    const end = write.tournament_event_end_time ?? settings.tournament_event_end_time ?? '18:00';
+    // COMPARED AS STRINGS, which is only correct because both went through a
+    // zero-padded HH:MM check -- CLOCK in settings.ts for what arrived here,
+    // and the app's identical one for what came back from it. '9:00' would
+    // sort after '18:00' and this would pass a backwards pair.
+    if (end <= start) {
+      return ephemeral(
+        `A tournament cannot end at **${end}** having started at **${start}** — ` +
+          'Discord rejects an event that ends before it begins, so nothing would be created.'
+      );
+    }
+
+    await writeDiscordSettings(write);
+    return ephemeral(
+      `Saved. Tournament events run **${start}–${end}**` +
+        `${settings.tournament_event_location || write.tournament_event_location ? '' : ' with no location set'}.`
+    );
+  }
+
+  if (sub === 'clear') {
+    const spec = specByOption(String(option(args, 'setting') ?? ''));
+    if (!spec) return ephemeral('I do not know that setting.');
+
+    await writeDiscordSettings({ [spec.key]: null });
+    // Says what stops rather than "cleared", because that is the part the club
+    // needs to have understood before running it.
+    return ephemeral(`Unset **${spec.label}** — from now on ${spec.whenUnset}.`);
+  }
+
+  return ephemeral('Use **/config show**, **/config channels**, **/config tournament** or **/config clear**.');
+}
+
 async function handleRolePicker(
   options: CommandOption[] | undefined,
   context: InteractionContext
@@ -966,9 +1726,11 @@ async function handleRolePicker(
             title: 'Get pinged for the sessions you care about',
             color: CLUB_RED,
             description:
-              'Pick the nights you want a heads-up for. Click again to turn one off.\n\n' +
-              'These are just notification roles — they do not change what you can ' +
-              'sign up for.',
+              'Pick what you want. Click again to turn one off.\n\n' +
+              'Most of these are notification roles and change nothing else. The ' +
+              'exception is your membership — **Internal**, **Alumni** or ' +
+              '**External** — which the website reads back, so picking one sets ' +
+              'your tournament entry fee and which events you can enter.',
           },
         ],
         components: pickerComponents(roles),
@@ -1035,11 +1797,119 @@ export async function handleSelfRoleButton(
     return ephemeral(`Couldn't change **${offered.label}** just now. Try again in a moment.`);
   }
 
+  // ---- MEMBERSHIP ROLES, WHICH ARE NOT PING ROLES --------------------------
+  //
+  // @Internal / @Alumni / @External say who a member is, so picking one has a
+  // consequence on the website: it is what prices a tournament entry and what
+  // decides which events they may enter. Everything below runs only for those
+  // three; an ordinary ping role falls straight past it to the reply.
+  const guildRoles = await guildRolesFor(context.guildId);
+  const membership = membershipRoleFor(roleId, guildRoles);
+
+  if (membership && !holds) {
+    // ONE MEMBERSHIP AT A TIME. membership_type is a single value, and a member
+    // holding both @Alumni and @Internal is a state the app cannot store — so
+    // the other two come off here rather than being resolved by a guess later.
+    // Failures are deliberately ignored: the app write below is the part that
+    // matters, and a role that would not come off is visible in the server.
+    await removeOtherMembershipRoles(
+      api,
+      context.guildId,
+      context.discordUserId,
+      guildRoles,
+      membership,
+      currentRoleIds
+    );
+
+    let linkedToApp = true;
+    try {
+      const result = await setMembership([
+        { discordUserId: context.discordUserId, membershipType: membership },
+      ]);
+      linkedToApp = result.skipped === 0;
+    } catch (error) {
+      // The role is already on. Saying "that failed" would be wrong, and
+      // silently pretending the website updated would be worse — so the reply
+      // says exactly which half landed, and the nightly sweep repairs the rest
+      // by reading this same role back.
+      console.error('[bot] membership write-back failed:', error);
+      return ephemeral(
+        `Added **${offered.label}**.\n\n` +
+          'I could not update the website just now — it will catch up on the ' +
+          'next nightly sync.'
+      );
+    }
+
+    return ephemeral(
+      linkedToApp
+        ? `Added **${offered.label}** — the website now has you as **${membership}**, ` +
+            'which is what decides your tournament entry fee and which events you can enter.'
+        : `Added **${offered.label}**.\n\n` +
+            'Your Discord account is not linked to the website yet, so this only ' +
+            'changed your role here. Run **/link** and it will follow.'
+    );
+  }
+
+  if (membership && holds) {
+    // Toggling one OFF leaves the website alone on purpose. There is no "no
+    // membership" to write — the column always holds one of the three — and
+    // guessing a default would quietly move somebody's fee tier as a side
+    // effect of tidying their roles.
+    return ephemeral(
+      `Removed **${offered.label}**.\n\n` +
+        'The website still has your membership as it was — pick another one to ' +
+        'change it.'
+    );
+  }
+
   return ephemeral(
     holds
       ? `Removed **${offered.label}** — you won't be pinged for those any more.`
       : `Added **${offered.label}** — you'll be pinged for those.`
   );
+}
+
+/**
+ * This guild's role map, or an empty one if the config cannot be read.
+ *
+ * Degrading to empty is right HERE and nowhere else in this bot: an empty map
+ * names no membership role, so the button behaves as an ordinary ping role and
+ * the website is left alone. The sweep, which reads the same roles nightly with
+ * `force: true`, is what repairs it.
+ */
+async function guildRolesFor(guildId: string): Promise<GuildRoleMap> {
+  try {
+    const { registry } = await loadConfig();
+    return registry.get(guildId) ?? {};
+  } catch (error) {
+    console.error('[bot] could not read the role map for a self-role click:', error);
+    return {};
+  }
+}
+
+/** Which membership this role id IS in this guild, if any. */
+function membershipRoleFor(roleId: string, guildRoles: GuildRoleMap): MembershipRole | null {
+  for (const role of MEMBERSHIP_ROLES) {
+    if (guildRoles[role] === roleId) return role;
+  }
+  return null;
+}
+
+async function removeOtherMembershipRoles(
+  api: DiscordApi,
+  guildId: string,
+  discordUserId: string,
+  guildRoles: GuildRoleMap,
+  keep: MembershipRole,
+  currentRoleIds: readonly string[]
+): Promise<void> {
+  const held = new Set(currentRoleIds);
+  for (const role of MEMBERSHIP_ROLES) {
+    if (role === keep) continue;
+    const id = guildRoles[role];
+    if (!id || !held.has(id)) continue;
+    await api.removeRole(guildId, discordUserId, id);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,6 +2126,372 @@ function modalValue(components: ModalComponent[] | undefined, customId: string):
   return '';
 }
 
+// ---------------------------------------------------------------------------
+// /announce
+// ---------------------------------------------------------------------------
+//
+// The same two-interaction split /bug uses: the command opens a modal, and the
+// submit arrives later as its own interaction carrying the custom_id and the
+// typed values and NOTHING ELSE. The four command options have to survive that
+// gap, and the custom_id is the only field that does.
+//
+// PACKED INTO THE ID RATHER THAN STASHED IN A MAP, which is where /bug's
+// screenshot has to go. A map costs correctness the moment the bot restarts or
+// a second replica takes the submit: the entry is gone and the options silently
+// revert to their defaults. For a screenshot that is a lost picture; for `draft`
+// it would be an announcement published when somebody asked for a draft. Four
+// flags fit in a dozen characters of a hundred-character field, so nothing here
+// needs to be remembered between the two requests.
+
+const ANNOUNCE_MODAL_PREFIX = 'announce:';
+
+type AnnouncementType = 'info' | 'warning' | 'urgent' | 'event';
+const ANNOUNCEMENT_TYPES: readonly AnnouncementType[] = ['info', 'warning', 'urgent', 'event'];
+
+interface AnnounceFlags {
+  type: AnnouncementType;
+  pin: boolean;
+  draft: boolean;
+  evergreen: boolean;
+}
+
+/** `announce:<type>:<pin><draft><evergreen>`, each flag a single 0 or 1. */
+function packAnnounceFlags(f: AnnounceFlags): string {
+  const bit = (on: boolean) => (on ? '1' : '0');
+  return `${ANNOUNCE_MODAL_PREFIX}${f.type}:${bit(f.pin)}${bit(f.draft)}${bit(f.evergreen)}`;
+}
+
+/**
+ * Read the flags back, FAILING CLOSED ON `draft`.
+ *
+ * Everything that reaches here was written by packAnnounceFlags, so a malformed
+ * id means either a build that has changed the format under a modal somebody
+ * still has open, or a caller that is not Discord. Both are answered the same
+ * way, and the direction of the default is the whole point: an unreadable
+ * `draft` bit resolves to DRAFT, never to published. A draft the exec has to go
+ * and publish is a small annoyance; a publish nobody asked for is on the
+ * website and in the announcements channel before anyone can say otherwise.
+ *
+ * `pin` and `evergreen` fail closed to false on the same reasoning -- neither
+ * is recoverable from the reply, both are one edit away in the console.
+ */
+function unpackAnnounceFlags(customId: string): AnnounceFlags {
+  const [, rawType = '', bits = ''] = customId.split(':');
+  const type = ANNOUNCEMENT_TYPES.includes(rawType as AnnouncementType)
+    ? (rawType as AnnouncementType)
+    : 'info';
+
+  if (!/^[01]{3}$/.test(bits)) {
+    return { type, pin: false, draft: true, evergreen: false };
+  }
+  return {
+    type,
+    pin: bits[0] === '1',
+    draft: bits[1] === '1',
+    evergreen: bits[2] === '1',
+  };
+}
+
+/** True for a modal submit this module owns. */
+export function isAnnounceModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(ANNOUNCE_MODAL_PREFIX);
+}
+
+function openAnnounceModal(options: CommandOption[] | undefined) {
+  const rawType = String(option(options, 'type') ?? '');
+  const flags: AnnounceFlags = {
+    type: ANNOUNCEMENT_TYPES.includes(rawType as AnnouncementType)
+      ? (rawType as AnnouncementType)
+      : 'info',
+    pin: option(options, 'pin') === true,
+    draft: option(options, 'draft') === true,
+    evergreen: option(options, 'evergreen') === true,
+  };
+
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id: packAnnounceFlags(flags),
+      title: (flags.draft ? 'Draft an announcement' : 'Post an announcement').slice(
+        0,
+        MODAL_TITLE_MAX
+      ),
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4, // TEXT_INPUT
+              custom_id: 'title',
+              label: 'Headline',
+              style: 1, // SHORT
+              required: true,
+              min_length: 3,
+              // Under the column's own 200 so a headline never arrives needing
+              // to be trimmed by the route.
+              max_length: 150,
+              placeholder: 'Sunday session moved to Gym B',
+            },
+          ],
+        },
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: 'body',
+              label: 'The announcement',
+              style: 2, // PARAGRAPH
+              required: true,
+              min_length: 5,
+              // Discord's own ceiling for a text input is 4000; the route caps
+              // at 3500 and the schema at 5000. The tightest of the three is
+              // enforced HERE, where the writer can still see what they typed.
+              max_length: 3500,
+              placeholder: 'Everyone can read this — on the website and in the announcements channel.',
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * A submitted announcement: file it, and be honest about who it reached.
+ *
+ * THE SECOND PARAGRAPH OF THE SUCCESS REPLY IS THE POINT OF IT. This path files
+ * the announcement and nothing else -- no in-app bell row, no web push -- so an
+ * exec who reads "posted" and walks away believes they have notified the club
+ * when they have not. The route's header explains why it works that way; this
+ * is where the club finds out.
+ */
+export async function handleAnnounceModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+) {
+  const flags = unpackAnnounceFlags(customId);
+  const title = modalValue(components, 'title').trim();
+  const body = modalValue(components, 'body').trim();
+
+  if (!title || !body) {
+    // Discord's min_length should make this unreachable. Checked anyway,
+    // because a blank announcement is worse than a refused one.
+    return ephemeral('An announcement needs a headline and something to say. Try again.');
+  }
+
+  const result = await submitAnnouncement({
+    discordUserId: context.discordUserId,
+    title,
+    body,
+    type: flags.type,
+    pin: flags.pin,
+    draft: flags.draft,
+    evergreen: flags.evergreen,
+  });
+
+  if (!result.ok) {
+    // MATCHED AGAINST A CLOSED SET, never printed. The refusal is a code the
+    // route chose from a union; turning it into a sentence is this file's job,
+    // and interpolating whatever arrived would put an app response body into a
+    // Discord message.
+    switch (result.refusal) {
+      case 'not_linked':
+        return ephemeral(
+          "Run `/link` first — an announcement is filed against your club account, " +
+            "and this Discord account isn't connected to one yet. Nothing was posted."
+        );
+      case 'no_active_season':
+        return ephemeral(
+          "There's no active season right now, so this announcement wouldn't belong to " +
+            'one — and a notice filed against no season shows in every future term. ' +
+            'Run it again with `evergreen: True` if it is a standing notice (club rules, ' +
+            'the door code), or activate a season in the console first. Nothing was posted.'
+        );
+      default:
+        // 'not_permitted', and anything a newer app adds. Deliberately says
+        // nothing about which check failed: a banned exec and a member who
+        // never had the capability get the same sentence.
+        return ephemeral(
+          "You don't have permission to post club announcements. An admin grants that " +
+            'in the console under Permissions. Nothing was posted.'
+        );
+    }
+  }
+
+  if (result.status === 'draft') {
+    return ephemeral(
+      "**Saved as a draft.** Nothing is public yet — nobody can see it on the website " +
+        'and it will not reach the announcements channel until an exec publishes it in ' +
+        'the console.'
+    );
+  }
+
+  return ephemeral(
+    "**Posted.** It's on the website now, and it will appear in the announcements " +
+      'channel within about five minutes.\n\n' +
+      'Nobody was notified — no in-app alert and no push. If members need to be ' +
+      'pinged, publish it from the console instead.'
+  );
+}
+
+// ---------------------------------------------------------------------------
+// /say
+// ---------------------------------------------------------------------------
+//
+// The two-interaction split /announce uses, and the same reason for packing the
+// options into the custom_id rather than a map: a modal submit arrives as its
+// own request carrying the id and the typed text and nothing else, and a map
+// entry is gone the moment the bot restarts or a second replica takes the
+// submit. Here the loss would be worse than a reverted flag — the channel would
+// be unknown and the message would have nowhere to go.
+
+const SAY_MODAL_PREFIX = 'say:';
+
+/** `say:<channelId>:<ping bit>`. */
+function packSay(channelId: string, ping: boolean): string {
+  return `${SAY_MODAL_PREFIX}${channelId}:${ping ? '1' : '0'}`;
+}
+
+/**
+ * Read it back, FAILING CLOSED ON `ping`.
+ *
+ * Anything malformed means a build that changed the format under a modal
+ * somebody still has open, or a caller that is not Discord. Either way an
+ * unreadable ping bit resolves to NO mentions: a message that should have
+ * pinged and did not is a follow-up, and a ping nobody asked for has already
+ * buzzed every phone in the server.
+ */
+function unpackSay(customId: string): { channelId: string; ping: boolean } {
+  const [, channelId = '', bit = ''] = customId.split(':');
+  return { channelId, ping: bit === '1' };
+}
+
+/** True for a modal submit this module owns. */
+export function isSayModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SAY_MODAL_PREFIX);
+}
+
+export function openSayModal(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): BotResponse {
+  // The picker gives a channel id as the option value; "here" is the fallback.
+  const chosen = option(options, 'channel');
+  const channelId = chosen ? String(chosen) : String(context.channelId ?? '');
+  const ping = option(options, 'ping') === true;
+
+  if (!channelId) {
+    // Unreachable through Discord — a guild command always has a channel — but
+    // a modal whose id has no channel in it would open, take the words and
+    // throw them away on submit.
+    return ephemeral("Couldn't work out which channel to post in. Pick one with `channel:`.");
+  }
+
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id: packSay(channelId, ping),
+      title: 'Post as the club'.slice(0, MODAL_TITLE_MAX),
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4, // TEXT_INPUT
+              custom_id: 'body',
+              label: 'What should I say?',
+              style: 2, // PARAGRAPH
+              required: true,
+              min_length: 1,
+              // Discord refuses a message over 2000 characters. Enforced here,
+              // where the writer can still see and cut what they typed, rather
+              // than as a 400 after the modal has closed and eaten the words.
+              max_length: 2000,
+              placeholder: 'Posted exactly as typed, as the bot. Nobody sees that you sent it.',
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * A submitted /say: post it, and write down who said it.
+ *
+ * ORDER MATTERS. The message goes out first and the audit entry second, so an
+ * audit channel the bot cannot post in — misconfigured, deleted, permissions
+ * changed — costs the club its record and not its message. postAuditEntry
+ * already swallows its own failures for that reason.
+ */
+export async function handleSayModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const { channelId, ping } = unpackSay(customId);
+  const body = modalValue(components, 'body').trim();
+
+  if (!channelId) {
+    return ephemeral("That message had no channel attached to it — run `/say` again.");
+  }
+  if (!body) {
+    // Discord's min_length should make this unreachable. Checked anyway: a
+    // blank message from the club bot is a mystery nobody can explain later.
+    return ephemeral('There was nothing to post. Try again.');
+  }
+
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.error('[bot] /say: DISCORD_BOT_TOKEN is not set');
+    return ephemeral("I'm not configured to post right now. Nothing was posted.");
+  }
+
+  const api = new DiscordApi({ token });
+  const messageId = await api.postMessage(channelId, {
+    content: body,
+    // THE DEFAULT IS SILENCE. An empty `parse` turns every @here, @everyone and
+    // @role in the text into plain text — they still READ as mentions, they
+    // just do not notify. Without this a stray @everyone typed into a paragraph
+    // buzzes the whole server, and there is no way to take that back.
+    allowed_mentions: ping
+      ? { parse: ['users', 'roles', 'everyone'] }
+      : { parse: [] },
+  });
+
+  if (!messageId) {
+    return ephemeral(
+      `Discord refused that — check I can post in <#${channelId}>. Nothing was posted.`
+    );
+  }
+
+  try {
+    const { auditChannelId } = await loadConfig();
+    await postAuditEntry(api, auditChannelId, {
+      kind: 'say',
+      discordUserId: context.discordUserId,
+      guildId: context.guildId,
+      channelId,
+      messageId,
+      body,
+      pinged: ping,
+    });
+  } catch (error) {
+    // The message is already posted. A failure to record it is worth a line in
+    // the log and nothing else — telling the exec their message did not go out
+    // would be false.
+    console.error('[bot] /say: could not write the audit entry:', error);
+  }
+
+  return ephemeral(
+    `**Posted** in <#${channelId}>${ping ? ' — mentions were allowed to notify.' : '.'}\n\n` +
+      'It shows as coming from me, not from you. The audit channel has a copy with your name on ' +
+      'it, so an exec can always find out who asked.'
+  );
+}
+
 export interface ModalComponent {
   type?: number;
   custom_id?: string;
@@ -1341,21 +2577,52 @@ export function isSelfRoleButton(customId: string | undefined | null): boolean {
   return typeof customId === 'string' && customId.startsWith(SELF_ROLE_PREFIX);
 }
 
+/**
+ * What a handler answers Discord with.
+ *
+ * `file` is a SIDECAR and is never part of the JSON body. index.ts splits it
+ * off and writes a multipart response when it is set; leaving it on would
+ * JSON.stringify the raw bytes into the payload, which Discord accepts as a
+ * message with a very large content field.
+ */
+export interface BotResponse {
+  type: number;
+  data?: Record<string, unknown>;
+  file?: CardFile;
+  /**
+   * The slow half of a command that acknowledged first — see handleProfile.
+   *
+   * Only ever set beside `type: 5`. index.ts writes the acknowledgement, then
+   * runs this and PATCHes whatever it returns over the "thinking..." message.
+   * It must not throw: a rejection here is answered publicly with a generic
+   * apology, which is worse than any answer it could have returned itself.
+   */
+  finish?: () => Promise<BotResponse>;
+}
+
 export async function dispatch(
   name: string,
   options: CommandOption[] | undefined,
   context: InteractionContext = { discordUserId: null, guildId: null }
-) {
+): Promise<BotResponse> {
   try {
     switch (name) {
       case 'leaderboard':
         return await handleLeaderboard(options);
+      case 'profile':
+        return await handleProfile(options, context);
       case 'sessions':
         return await handleSessions(context);
+      case 'sessionpost':
+        return await handleSessionPost();
       case 'tournaments':
         return await handleTournaments(context);
       case 'rolepicker':
         return await handleRolePicker(options, context);
+      case 'announce':
+        return openAnnounceModal(options);
+      case 'say':
+        return openSayModal(options, context);
       case 'bug':
         return openReportModal('bug', options, context);
       case 'feedback':
@@ -1366,6 +2633,8 @@ export async function dispatch(
         return await handleUnlink(context);
       case 'setup':
         return await handleSetup(options, context);
+      case 'config':
+        return await handleConfig(options, context);
       default:
         return ephemeral('Unknown command.');
     }

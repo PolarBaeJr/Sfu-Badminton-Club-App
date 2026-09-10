@@ -1,6 +1,7 @@
 import React from 'react';
 import { AvatarChip, Atomic, ResponsiveTable, TableCard } from '@badminton/ui';
 import { splitFullName } from '@badminton/shared';
+import { RowSelectCheckbox, SelectAllCheckbox } from '@/components/selection';
 
 /**
  * The two session tables on /sessions — upcoming, and the term's archive.
@@ -99,12 +100,24 @@ export function SessionTable({
   rows,
   heading,
   count,
+  selectable = false,
 }: {
   rows: SessionRow[];
   /** Left label of the card's header row. */
   heading: string;
   /** Right label — what the reader is looking at, in the reader's words. */
   count: string;
+  /**
+   * Draw the multi-select column.
+   *
+   * A CAPABILITY ANSWER THIS FILE DOES NOT COMPUTE, like everything else here:
+   * page.tsx passes `true` only when the viewer can archive or delete, and it
+   * is the same page.tsx that puts the SelectionProvider around this table and
+   * the bulk bar under it. Rendering a checkbox with no provider above it is a
+   * thrown error rather than a silent no-op — see useSelection — which is the
+   * failure mode worth having if the two ever come apart.
+   */
+  selectable?: boolean;
 }) {
   return (
     <>
@@ -123,6 +136,9 @@ export function SessionTable({
             key={row.id}
             title={
               <span className="flex items-baseline gap-2 flex-wrap">
+                {selectable && (
+                  <RowSelectCheckbox id={row.id} label={`${row.name}, ${row.dayLabel}`} />
+                )}
                 <span>{row.name}</span>
                 {row.closed && (
                   <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
@@ -155,6 +171,11 @@ export function SessionTable({
         <table className="w-full">
           <thead>
             <tr className="border-b border-[var(--border)]">
+              {selectable && (
+                <th className={`${TH} w-px`}>
+                  <SelectAllCheckbox noun="session" />
+                </th>
+              )}
               <th className={TH}>Session</th>
               <th className={TH}>Venue</th>
               <th className={TH}>Signed up</th>
@@ -165,6 +186,11 @@ export function SessionTable({
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} className="border-t border-[var(--border)]">
+                {selectable && (
+                  <td className={`${TD} w-px`}>
+                    <RowSelectCheckbox id={row.id} label={`${row.name}, ${row.dayLabel}`} />
+                  </td>
+                )}
                 <td className={TD}>
                   <div className="text-sm text-[var(--text-primary)]">
                     {row.name}

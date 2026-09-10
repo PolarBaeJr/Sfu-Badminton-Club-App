@@ -4,20 +4,31 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic, EmptyState } from '@badminton/ui';
 import { isPushCategoryEnabled } from '@badminton/shared';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
-import { Composer, AnnouncementRowActions, type RowAnnouncement } from './actions';
+import {
+  Composer,
+  AnnouncementRowActions,
+  type DiscordContext,
+  type RowAnnouncement,
+} from './actions';
+import { DiscordSend, type OutboxRow } from './discord-send';
 import {
   audienceLabel,
   bylineName,
   reachPercent,
+  relayChip,
   shortDate,
   tallyOpens,
   typeBadge,
+  type PostedMapping,
   type AnnouncementStatus,
   type AnnouncementType,
   type TargetAudience,
 } from './announcement-shape';
 
 const MICRO = 'font-mono text-[10px] uppercase tracking-[0.16em]';
+
+/** See the note where it is used. Matches MAX_MAPPED in the relay route. */
+const MAX_MAPPING_LOOKUP = 150;
 
 interface Row {
   id: string;
@@ -31,6 +42,12 @@ interface Row {
   expires_at: string | null;
   status: AnnouncementStatus;
   created_at: string;
+  /**
+   * The relay's freshness column, not created_at. A notice drafted in August
+   * and published today reads as today's to the relay, and the Discord chip has
+   * to answer the same way or it will call a live post stale.
+   */
+  updated_at: string | null;
 }
 
 /**
@@ -190,6 +207,12 @@ export default async function AnnouncementsPage() {
   const canUpdate = may('announcements.update.write');
   const canDelete = may('announcements.delete.write');
 
+  // A SEPARATE KEY FROM THE THREE ABOVE, and not a fourth way to write an
+  // announcement. This one reaches the club's Discord channel — a different
+  // audience by a different route, and nothing on this page can take a posted
+  // Discord message back the way unpublishing takes an announcement down.
+  const canSendDiscord = may('announcements.discord.write');
+
   // THE ROSTER IS A DIFFERENT AREA, and every number on this screen drawn from
   // `players` is behind its key. This gate is around the AWAIT, not around the
   // JSX: a fetch that runs and is then conditionally rendered still ships its
@@ -203,7 +226,7 @@ export default async function AnnouncementsPage() {
     // Explicit, so the payload carries the columns this screen draws and not
     // whatever the table gains next.
     .select(
-      'id, title, body, type, author_id, pinned, send_push, target_audience, expires_at, status, created_at',
+      'id, title, body, type, author_id, pinned, send_push, target_audience, expires_at, status, created_at, updated_at',
     )
     .order('pinned', { ascending: false })
     .order('created_at', { ascending: false });
@@ -211,6 +234,103 @@ export default async function AnnouncementsPage() {
   const rows = (announcements ?? []) as Row[];
 
   const opened = await openedCounts(supabase, rows);
+
+  // WHAT DISCORD ALREADY HAS, AND WHETHER IT IS LISTENING AT ALL.
+  //
+  // Two cheap reads that turn the relay from invisible into something a person
+  // can see before they publish. Neither is gated separately: both are
+  // announcements data, and this page has exactly one key (see the note on the
+  // gate above). Failures are not named — a preview that cannot say what
+  // Discord holds is a missing panel, not a broken page, and degrading to
+  // "nothing is configured" is the honest reading of "we could not find out".
+  //
+  // The id list is CAPPED for the reason the relay route caps its own (see
+  // MAX_MAPPED there): it is spelled out in the query string, and an unbounded
+  // list eventually meets a request-line limit in front of PostgREST. Rows past
+  // the cap are the oldest, and they get NO chip rather than a wrong one —
+  // "we did not ask" and "it is not in Discord" must not render the same.
+  const asked = new Set(rows.slice(0, MAX_MAPPING_LOOKUP).map((r) => r.id));
+
+  const [settingsResult, postsResult] = await Promise.all([
+    supabase.from('discord_settings').select('key, value').eq('key', 'announcement_channel_id'),
+    asked.size
+      ? supabase
+          .from('discord_announcement_posts')
+          .select('announcement_id, synced_title, synced_body, synced_type')
+          .in('announcement_id', [...asked])
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const channelConfigured = Boolean(
+    ((settingsResult.data ?? []) as { key: string; value: string }[])[0]?.value?.trim(),
+  );
+
+  // Keyed by announcement, not by guild. The club runs one server; if it ever
+  // ran two, "already in Discord somewhere" is still the true answer to the
+  // only question this map is asked.
+  const postedByAnnouncement = new Map<string, PostedMapping>(
+    (
+      (postsResult.data ?? []) as {
+        announcement_id: string;
+        synced_title: string;
+        synced_body: string;
+        synced_type: string;
+      }[]
+    ).map((m) => [
+      m.announcement_id,
+      { syncedTitle: m.synced_title, syncedBody: m.synced_body, syncedType: m.synced_type },
+    ]),
+  );
+
+  // The link the relay puts on the embed title, built the same way the route
+  // builds it so the preview's title is a link exactly when the real one is.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '') ?? null;
+  const discord: DiscordContext = {
+    channelConfigured,
+    announcementsUrl: appUrl ? `${appUrl}/announcements` : null,
+  };
+
+  const now = Date.now();
+
+  // THE GATE IS AROUND THE AWAIT, not around the JSX — the same rule the roster
+  // reads follow above. A query that runs and is then conditionally rendered
+  // still ships its rows in the RSC payload, and these rows quote what the club
+  // said in its own channel.
+  const outboxRows: OutboxRow[] = canSendDiscord
+    ? await supabase
+        .from('discord_outbox')
+        .select(
+          'id, created_at, channel_id, content, embed_title, ping, sent_at, failed_at, last_error',
+        )
+        .order('created_at', { ascending: false })
+        .limit(5)
+        .then(({ data }) =>
+          (
+            (data ?? []) as {
+              id: string;
+              created_at: string;
+              channel_id: string;
+              content: string | null;
+              embed_title: string | null;
+              ping: boolean;
+              sent_at: string | null;
+              failed_at: string | null;
+              last_error: string | null;
+            }[]
+          ).map((r) => ({
+            id: r.id,
+            createdAt: r.created_at,
+            channelId: r.channel_id,
+            // One line, whichever shape it was. The full text is in the audit
+            // log; this list exists to answer "did it go out", not to re-read
+            // the message.
+            preview: (r.content ?? r.embed_title ?? '').slice(0, 140),
+            ping: r.ping,
+            state: r.sent_at ? 'sent' : r.failed_at ? 'failed' : 'queued',
+            error: r.last_error,
+          })),
+        )
+    : [];
 
   // Three roster-derived reads, all behind `players.read`, all skipped
   // outright when it is not held.
@@ -259,6 +379,22 @@ export default async function AnnouncementsPage() {
     return parts.length ? parts.join(' · ') : null;
   };
 
+  /**
+   * Two words per row about the Discord relay, or nothing.
+   *
+   * Nothing in three cases, all of them "we cannot say": the row is past the
+   * mapping lookup cap, no channel is configured, or it is a draft — where the
+   * DRAFT badge beside it already says the same thing in different words.
+   */
+  const discordChip = (row: Row) =>
+    asked.has(row.id)
+      ? relayChip(row, {
+          now,
+          channelConfigured,
+          posted: postedByAnnouncement.get(row.id) ?? null,
+        })
+      : null;
+
   const rowActions = (row: Row) => (
     <AnnouncementRowActions
       announcement={
@@ -277,6 +413,8 @@ export default async function AnnouncementsPage() {
       canUpdate={canUpdate}
       canDelete={canDelete}
       pushReachable={pushReachable}
+      discord={discord}
+      posted={postedByAnnouncement.get(row.id) ?? null}
     />
   );
 
@@ -295,7 +433,7 @@ export default async function AnnouncementsPage() {
         {/* ---------------------------------------------------------------- */}
         <Card className="p-5">
           {canCreate ? (
-            <Composer pushReachable={pushReachable} />
+            <Composer pushReachable={pushReachable} discord={discord} />
           ) : (
             // Withheld, not empty. A blank left column on the widest half of
             // the screen reads as a page that failed to load.
@@ -366,6 +504,12 @@ export default async function AnnouncementsPage() {
             </Card>
           )}
 
+          {canSendDiscord && (
+            <Card className="p-5">
+              <DiscordSend channelConfigured={channelConfigured} recent={outboxRows} />
+            </Card>
+          )}
+
           <Card padding={false}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--line)]">
               <span className={`${MICRO} text-[var(--mute)]`}>Posted</span>
@@ -408,6 +552,7 @@ export default async function AnnouncementsPage() {
                     fields={[
                       { label: 'Posted', value: <Atomic>{shortDate(row.created_at)}</Atomic> },
                       { label: 'Audience', value: audienceLabel(row.target_audience) },
+                      ...(discordChip(row) ? [{ label: 'Discord', value: discordChip(row) as string }] : []),
                       ...(byline(row)
                         ? [{ label: 'Detail', wide: true, value: byline(row) as string }]
                         : []),
@@ -449,8 +594,12 @@ export default async function AnnouncementsPage() {
                           <div className="mt-2 text-[15px] leading-snug text-[var(--text-primary)]">
                             {row.title}
                           </div>
-                          {byline(row) && (
-                            <div className={`mt-1.5 ${MICRO} text-[var(--mute)]`}>{byline(row)}</div>
+                          {(byline(row) || discordChip(row)) && (
+                            <div className={`mt-1.5 ${MICRO} text-[var(--mute)]`}>
+                              {[byline(row), discordChip(row) && `Discord: ${discordChip(row)}`]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </div>
                           )}
                         </td>
                         <td className="px-5 py-4 text-right">

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer, getActiveSeason } from '@/lib/supabase-server';
 import { Landing } from '@/components/landing';
 
 export const dynamic = 'force-dynamic';
@@ -10,7 +10,7 @@ export default async function Home() {
 
   // Un-onboarded players finish setup first; everyone else sees the landing.
   if (user) {
-    const player = await getCurrentPlayer();
+    const { player } = await getViewer();
     if (!player || !player.onboarding_completed) redirect('/onboarding');
   }
 

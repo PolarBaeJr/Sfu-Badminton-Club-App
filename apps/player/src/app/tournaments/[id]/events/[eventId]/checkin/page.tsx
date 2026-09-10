@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { notFound, redirect } from 'next/navigation';
 import { SelfCheckInClient } from './SelfCheckInClient';
 
@@ -23,7 +23,7 @@ export default async function CheckInPage({
     .eq('id', tournamentId)
     .single();
 
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const { data: registration } = await supabase

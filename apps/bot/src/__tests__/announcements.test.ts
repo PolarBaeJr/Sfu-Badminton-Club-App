@@ -50,7 +50,7 @@ const POST_ACTION = {
 beforeEach(() => {
   vi.resetAllMocks();
   process.env.DISCORD_BOT_TOKEN = 'bot-token';
-  loadConfig.mockResolvedValue({ registry: { g1: {} }, auditChannelId: null });
+  loadConfig.mockResolvedValue({ registry: new Map([['g1', {}]]), auditChannelId: null });
   fetchAnnouncementActions.mockResolvedValue({ actions: [POST_ACTION], skipped: [] });
   postMessage.mockResolvedValue('m1');
   editMessage.mockResolvedValue('ok');
@@ -120,6 +120,41 @@ describe('runAnnouncements', () => {
     // Different, because an exec who escalates a notice expects it to look
     // escalated — the reason the mapping remembers the type at all.
     expect(warning).not.toBe(urgent);
+  });
+
+  // ---- THE TRIPWIRE ------------------------------------------------------
+  //
+  // The other half is in packages/shared/src/utils/__tests__/discord-embed.test.ts,
+  // which pins the same four literals against ANNOUNCEMENT_EMBED_COLORS — the
+  // map the admin console draws its Discord preview from.
+  //
+  // BOTH HALVES ARE NEEDED, and one alone is the bug. apps/bot has no
+  // dependency on @badminton/shared (zero production deps, deliberately), so
+  // nothing at build time can notice the two maps drifting apart, and the
+  // symptom would be a preview that quietly shows the wrong colour rather than
+  // anything failing. A test on this side alone catches a change to this side.
+  //
+  // Asserted through the payload the bot actually sends rather than by
+  // exporting the map, because the payload is the thing the preview claims to
+  // reproduce.
+  it('pins the exact colours the console previews', async () => {
+    const { runAnnouncements } = await import('../announcements.js');
+    const colorFor = async (type: string) => {
+      postMessage.mockClear();
+      fetchAnnouncementActions.mockResolvedValue({
+        actions: [{ ...POST_ACTION, type }],
+        skipped: [],
+      });
+      await runAnnouncements();
+      return (postMessage.mock.calls[0]?.[1] as { embeds: { color: number }[] }).embeds[0]?.color;
+    };
+
+    expect(await colorFor('info')).toBe(0x3498db);
+    expect(await colorFor('warning')).toBe(0xf1c40f);
+    expect(await colorFor('urgent')).toBe(0xe74c3c);
+    expect(await colorFor('event')).toBe(0x2ecc71);
+    // A type neither side has heard of falls back to the same grey.
+    expect(await colorFor('invented')).toBe(0x95a5a6);
   });
 
   it('edits through PATCH rather than posting a second copy', async () => {
@@ -218,7 +253,7 @@ describe('runAnnouncements', () => {
   });
 
   it("does not let one guild's failure abort the others", async () => {
-    loadConfig.mockResolvedValue({ registry: { g1: {}, g2: {} }, auditChannelId: null });
+    loadConfig.mockResolvedValue({ registry: new Map([['g1', {}], ['g2', {}]]), auditChannelId: null });
     fetchAnnouncementActions
       .mockRejectedValueOnce(new Error('down'))
       .mockResolvedValueOnce({ actions: [POST_ACTION], skipped: [] });

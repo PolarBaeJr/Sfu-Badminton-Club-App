@@ -239,13 +239,49 @@ export const CAPABILITIES = [
   'challenges.expire.write',
 
   // ---- announcements -----------------------------------------------------
+  //
+  // `announcements.discord.write` is NOT a fourth way to write an
+  // announcement. It queues a message into the club's Discord channel — the
+  // console's half of the bot's /say — and it is separate from the three above
+  // because it reaches a different audience by a different route: a member who
+  // never opens the website is in that channel, and nothing on this page can
+  // take a Discord message back the way unpublishing takes an announcement
+  // down. The three writes above all lead somewhere the console still owns.
+  //
+  // It is NOT a new AREA. `discord` as an area would need its own `.page`, and
+  // there is no Discord page to open — the panel lives on this one, behind
+  // this one's key.
+  //
+  // IT BELONGS TO VP EXTERNAL, who already holds every other announcement
+  // write. The club owner asked for that directly, and it is the coherent
+  // answer: the person who decides what the club says to its members should
+  // not have to ask somebody else to say it in the one place most members
+  // actually read.
+  //
+  // IT IS STILL NOT IN EXEC_BASELINE. This is the one comms act in the console
+  // with no undo and no reach afterwards — unpublishing takes an announcement
+  // down, nothing here takes a Discord message back — so it is held by a named
+  // job, not by everyone who happens to be an exec.
+  //
+  // AND IT COST A MIGRATION, which is the part worth remembering. The four VP
+  // portfolios are SEEDED ROWS (00104) and editable-roles.test.ts reads that
+  // file as text, so widening one is a re-seed (00224) and not an edit to this
+  // constant. The re-seed also has to reach the people already holding the
+  // role: assigning a built-in COPIES its capabilities onto the player row
+  // (00104), so a baseline the migration widens and holders it does not is a
+  // portfolio that grants something nobody in it can do.
   'announcements.page',
   'announcements.create.write',
   'announcements.update.write',
   'announcements.delete.write',
+  'announcements.discord.write',
 
   // ---- tournaments -------------------------------------------------------
-  // The largest area by a distance: 44 of the 117. Four groups, and the split
+  // The largest area by a distance — more capabilities than the next three
+  // areas together. (No headcount here on purpose: the one that used to be
+  // written down said 117 against a list that had grown to 119, which is what
+  // a number in a comment does. capabilities.test.ts pins the real one.) Four
+  // groups, and the split
   // matters — running a draw, entering results and handling entry money are
   // three different jobs that happen to share a section.
   //
@@ -708,6 +744,9 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
     'announcements.create.write',
     'announcements.update.write',
     'announcements.delete.write',
+    // Saying it in Discord as well as on the website. The one capability here
+    // with no undo, which is why it is a named job's and not every exec's.
+    'announcements.discord.write',
     'legal.page',
     'legal.reacceptance.write',
   ],
@@ -800,6 +839,13 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
   // given the ability to make somebody a varsity trainer without also being made
   // an admin. It cannot be given the ability to make an admin.
   'players.consoleaccess.write',
+
+  // THE SECOND WRITE ON THIS LIST, and it is here for the same structural
+  // reason: a capability outside this ceiling cannot be granted, cannot be put
+  // in a baseline and is not even RENDERED by either editor, so leaving it out
+  // would make "admin-only" mean "admin-only forever" rather than "not handed
+  // out by default".
+  //
 ];
 
 // DELIBERATELY STILL OUT OF REACH, and each for its own reason:
@@ -876,6 +922,11 @@ export const EXEC_ASSIGNABLE: readonly Capability[] = [
   'announcements.create.write',
   'announcements.update.write',
   'announcements.delete.write',
+  // VP External's, by the owner's decision — see the capability's own comment
+  // above and the re-seed in 00224. Listed here rather than in
+  // OFFERABLE_BEYOND_EXEC because EDITOR_OFFERABLE is the union of the two and
+  // a string in both would be a duplicate the invariants reject.
+  'announcements.discord.write',
   'tournaments.page',
   'tournaments.manage.create.write',
   'tournaments.manage.update.write',

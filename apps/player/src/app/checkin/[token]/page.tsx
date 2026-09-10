@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { CHECKIN_TOKEN_REGEX, getAccountStanding } from '@badminton/shared';
-import { getCurrentPlayer } from '@/lib/supabase-server';
+import { getViewer } from '@/lib/supabase-server';
 import { CheckinClient } from './checkin-client';
 
 // This URL performs a check-in and its result depends on who is signed in —
@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 // the camera needs to see whether it worked.
 export default async function CheckinPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) {
     // Carry the token through sign-in — /login has no generic `next=` support.
     // Only a well-formed token travels, so nothing arbitrary can ride along.

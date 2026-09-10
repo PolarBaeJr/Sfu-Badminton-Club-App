@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Card, ResponsiveTable, SearchFilter, filterPlayerOptions } from '@badminton/ui';
+import { SelectionProvider } from '@/components/selection';
 
 /**
  * Rows mounted at first paint, and added each time the sentinel comes into view.
@@ -73,6 +74,20 @@ interface Props {
    * button they will never see.
    */
   note?: string;
+  /**
+   * The multi-select bar, or nothing for a viewer who can act on no selection.
+   *
+   * PASSED IN, AND BUILT ON THE SERVER, for the same reason `tabs` and the row
+   * actions are: which controls exist is a capability question, and this
+   * component must not be able to answer one. It renders INSIDE the selection
+   * provider below, so the buttons in it read the same selection the row
+   * checkboxes write.
+   *
+   * Its absence is also what turns the feature off: page.tsx omits the
+   * checkbox column in the same breath, so a trainer sees the roster exactly
+   * as they did before.
+   */
+  bulkBar?: ReactNode;
 }
 
 /**
@@ -109,7 +124,7 @@ interface Props {
  * that builds these rows, so a server-side page would silently chart only the
  * rows it fetched.
  */
-export function RosterTable({ head, rows, tabs, total, initialQuery = '', note }: Props) {
+export function RosterTable({ head, rows, tabs, total, initialQuery = '', note, bulkBar }: Props) {
   const [query, setQuery] = useState(initialQuery);
 
   const filtered = useMemo(() => filterPlayerOptions(rows, query), [rows, query]);
@@ -132,6 +147,18 @@ export function RosterTable({ head, rows, tabs, total, initialQuery = '', note }
   const windowed = useMemo(() => filtered.slice(0, shown), [filtered, shown]);
   const hasMore = shown < filtered.length;
 
+  // WHAT SELECT-ALL MEANS, decided here because this is the only place that
+  // knows. `items` is everything the page fetched — so a row ticked before a
+  // search stays ticked and stays named in the confirmation — and `visibleIds`
+  // is what the search matched, which is what "all" is allowed to reach.
+  //
+  // FILTERED, NEVER WINDOWED. The window is a mount budget: 25 of 500 rows are
+  // in the DOM at any moment, and select-all meaning "the 25 I happen to have
+  // scrolled past" would be a different answer depending on how far down the
+  // page somebody was.
+  const selectable = useMemo(() => rows.map((r) => ({ id: r.id, label: r.name })), [rows]);
+  const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
+
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = sentinelRef.current;
@@ -149,6 +176,7 @@ export function RosterTable({ head, rows, tabs, total, initialQuery = '', note }
   }, [hasMore, filtered.length]);
 
   return (
+    <SelectionProvider items={selectable} visibleIds={visibleIds}>
     <div className="space-y-4">
       {/* Search left, tabs right, stacked on a phone — where a 360px field and
           five tabs cannot share a line without one of them scrolling. */}
@@ -236,6 +264,12 @@ export function RosterTable({ head, rows, tabs, total, initialQuery = '', note }
         </span>
         {note && <span className="text-right">{note}</span>}
       </div>
+
+      {/* Last, so it sticks to the bottom of the whole instrument — the count
+          line above it scrolls away under the bar rather than sitting on top
+          of it. Renders nothing at all until something is ticked. */}
+      {bulkBar}
     </div>
+    </SelectionProvider>
   );
 }

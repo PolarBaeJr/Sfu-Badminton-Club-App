@@ -1,10 +1,10 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import LeaderboardClient, { type LeaderboardEntry, type LeaderboardRow } from './leaderboard-client';
 
 // Public page (middleware allows /leaderboard for anon); get_leaderboard is
 // anon-safe, so logged-out visitors see rankings with no "you" highlight.
 export default async function LeaderboardPage() {
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   const meId = player?.id ?? null;
 
   const supabase = await createServerSupabaseClient();

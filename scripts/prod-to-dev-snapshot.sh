@@ -547,6 +547,22 @@ BEGIN
   IF to_regclass('public.player_discord_links') IS NOT NULL THEN
     DELETE FROM public.player_discord_links;
   END IF;
+  -- The console's queued messages (00222). NOT MERELY A LEAK OF PROD'S TEXT,
+  -- though it is that too: a row prod queued and had not yet posted arrives
+  -- UNSENT and UNCLAIMED, and the staging bot drains this table on the same
+  -- tick prod's does. An announcement the club wrote for its members would be
+  -- posted into the test server by a bot nobody asked to say it.
+  IF to_regclass('public.discord_outbox') IS NOT NULL THEN
+    DELETE FROM public.discord_outbox;
+  END IF;
+  -- Prod's announcement -> Discord message mappings. Guild-scoped, so staging's
+  -- bot would not act on them, but they are prod message ids and they belong to
+  -- prod's setup exactly like the rows above. Cleared for the same reason: the
+  -- rule here is that staging inherits NONE of prod's Discord state, and a
+  -- table exempted because it looks harmless today is how the last hole opened.
+  IF to_regclass('public.discord_announcement_posts') IS NOT NULL THEN
+    DELETE FROM public.discord_announcement_posts;
+  END IF;
 END
 $do$;
 SQL

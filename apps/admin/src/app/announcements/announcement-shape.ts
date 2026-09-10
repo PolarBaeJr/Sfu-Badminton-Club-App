@@ -7,6 +7,8 @@
 // 00001_schema.sql (595 and 597) and a value outside them is rejected by
 // Postgres, so a select offering anything else builds a form that cannot save.
 
+import { announcementRelayState } from '@badminton/shared';
+
 export type AnnouncementType = 'info' | 'warning' | 'urgent' | 'event';
 export type AnnouncementStatus = 'draft' | 'published';
 export type TargetAudience = 'all' | 'competitive' | 'recreational' | 'eligible_only';
@@ -137,4 +139,58 @@ export function shortDate(iso: string): string {
     .toLocaleDateString('en-CA', { day: '2-digit', month: 'short' })
     .toUpperCase()
     .replace(/\./g, '');
+}
+
+// ---------------------------------------------------------------------------
+// Discord
+// ---------------------------------------------------------------------------
+
+export interface PostedMapping {
+  syncedTitle: string;
+  syncedBody: string;
+  syncedType: string;
+}
+
+/**
+ * Two words for the list, where the full preview would not fit.
+ *
+ * The composer and the edit dialog draw the whole embed; a row only has to say
+ * whether this post is in Discord, going there, or deliberately not — enough
+ * for somebody scanning the list to notice the one that surprises them and open
+ * it. The state itself is computed by the relay's own function, so the chip
+ * cannot say something the tick will contradict.
+ */
+export function relayChip(
+  row: {
+    status: string;
+    target_audience: string;
+    expires_at: string | null;
+    /** The relay's own freshness column, not created_at — see the lookback. */
+    updated_at: string | null;
+    title: string;
+    body: string;
+    type: string;
+  },
+  context: { now: number; channelConfigured: boolean; posted: PostedMapping | null },
+): string | null {
+  const { state } = announcementRelayState(row, context);
+  switch (state) {
+    case 'posts':
+      return 'Queued';
+    case 'edits':
+      return 'Edit due';
+    case 'in_sync':
+      return 'In channel';
+    case 'retracts':
+      return 'Coming down';
+    case 'too_old':
+      return 'Not sent';
+    case 'no_channel':
+      return null;
+    case 'stays_off':
+    default:
+      // A draft says nothing — the DRAFT badge already does, and a second
+      // label repeating it in different words is noise on every row.
+      return row.status === 'published' ? 'Website only' : null;
+  }
 }

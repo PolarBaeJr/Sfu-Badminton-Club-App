@@ -1,13 +1,21 @@
 // WHAT CONSOLE ACCESS SOMEBODY HAS, as one question with four answers, and the
 // translation between that answer and the three columns that store it.
 //
-// ONE MAPPING, AND NOW ONE EDITING SCREEN. This began inside the player Edit
-// dialog and moved here when /permissions grew a console-access control of its
-// own, because two places that both turn "Admin" into a role and two booleans is
-// two places that can disagree about what Admin means. The club owner has since
-// taken the control off the Edit dialog entirely — "as its only admins who will
-// be mainly editing permissions" — so /permissions is the only screen that SETS
-// a level. /accounts still reads the mapping, to label a level it is showing.
+// ONE MAPPING, AND ONE WRITER. This began inside the player Edit dialog and
+// moved here when /permissions grew a console-access control of its own, because
+// two places that both turn "Admin" into a role and two booleans is two places
+// that can disagree about what Admin means.
+//
+// TWO SCREENS SET A LEVEL AGAIN — /permissions and the /players roster, which
+// the club owner asked for: "allow me to edit access from the player menu too,
+// but only to people who have permission to do edits on the player menu." That
+// is not a return to the old arrangement, and the distinction is the whole point
+// of this module: both screens call setConsoleAccess, so there is still exactly
+// one writer of the three columns and exactly one place that decides what Admin
+// means. The Edit dialog's old control wrote them through updatePlayer under a
+// bare isAdmin check, which is what made it wrong; updatePlayer refuses them
+// from every caller now. /accounts still only reads the mapping, to label a
+// level it is showing.
 //
 // NOT a 'use server' module and deliberately free of any Supabase, Next or React
 // import — a server action and a client component both import it, which is the

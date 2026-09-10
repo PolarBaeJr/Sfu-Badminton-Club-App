@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { MATCH_FORMAT_LABELS, formatRelativeTime, pickOne } from '@badminton/shared';
 import { notFound, redirect } from 'next/navigation';
 import { ChallengeDetailActions } from './actions';
@@ -10,7 +10,7 @@ import { viewerMaySeeChallenge } from '@/lib/challenge-visibility';
 
 export default async function ChallengeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();

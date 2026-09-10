@@ -7,18 +7,36 @@ import { COMMAND_DEFINITIONS } from './commands.js';
 // can take up to an hour to propagate the first time, which is worth knowing
 // before concluding a deploy failed.
 //
+// `autocomplete: true` IS PART OF THE STORED DEFINITION, not something the bot
+// decides at runtime. Deploying the handler alone changes nothing: Discord will
+// not send an autocomplete interaction for an option it has not been told is
+// one, so /profile's handle picker stays inert until this runs again — and then
+// for up to an hour more while the global registration propagates.
+//
+// UNLESS DISCORD_DEV_GUILD_ID IS SET, in which case the same set is registered
+// to that one guild instead — which Discord applies IMMEDIATELY.
+//
+// Worth the branch because the alternative has cost this project real time
+// twice: a new command is deployed, does not appear, and the hour of global
+// propagation is indistinguishable from a registration that failed. A guild
+// registration is a separate list from the global one, so a test server ends up
+// showing both copies until the global set catches up — untidy, and much better
+// than debugging the wrong layer.
+//
 // Run manually: `npm run register -w bot`
 async function main() {
   const token = process.env.DISCORD_BOT_TOKEN;
   const applicationId = process.env.DISCORD_APPLICATION_ID;
+  const devGuildId = process.env.DISCORD_DEV_GUILD_ID;
 
   if (!token || !applicationId) {
     console.error('DISCORD_BOT_TOKEN and DISCORD_APPLICATION_ID must both be set');
     process.exit(1);
   }
 
+  const scope = devGuildId ? `/guilds/${devGuildId}` : '';
   const response = await fetch(
-    `https://discord.com/api/v10/applications/${applicationId}/commands`,
+    `https://discord.com/api/v10/applications/${applicationId}${scope}/commands`,
     {
       method: 'PUT', // PUT replaces the full set, so removals take effect too.
       headers: {
@@ -36,7 +54,10 @@ async function main() {
   }
 
   const registered = (await response.json()) as { name: string }[];
-  console.log(`Registered ${registered.length}: ${registered.map((c) => c.name).join(', ')}`);
+  console.log(
+    `Registered ${registered.length} ${devGuildId ? `to guild ${devGuildId} (live now)` : 'globally (up to 1h to appear)'}: ` +
+      registered.map((c) => c.name).join(', ')
+  );
 }
 
 main();

@@ -237,6 +237,10 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     label: 'Edit an announcement', area: 'announcements', group: null, mode: 'write',
     gate: 'actions/announcements.ts updateAnnouncement',
   },
+  'announcements.discord.write': {
+    label: 'Send a message to Discord', area: 'announcements', group: null, mode: 'write',
+    gate: 'actions/discord-message.ts queueDiscordMessage',
+  },
   'announcements.delete.write': {
     label: 'Delete an announcement', area: 'announcements', group: null, mode: 'write',
     gate: 'actions/announcements.ts deleteAnnouncement',

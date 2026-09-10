@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import {
   MATCH_FORMAT_LABELS,
   formatRelativeTime,
@@ -25,7 +25,7 @@ import {
 import { ChallengeSections } from './challenge-sections';
 
 export default async function ChallengesPage() {
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
   // The history stays — a suspended member should still be able to read what
   // they played. Only the "issue one" entry points go, since createChallenge

@@ -1,7 +1,7 @@
 import { isUuid, getAccountStanding } from '@badminton/shared';
 import Link from 'next/link';
 import { PageHeader } from '@badminton/ui';
-import { getCurrentPlayer } from '@/lib/supabase-server';
+import { getViewer } from '@/lib/supabase-server';
 import { getRatingSettings } from '@/lib/rating-settings';
 import { listChallengeableOpponents } from '@/lib/challengeable-opponents';
 import NewChallengeClient from './new-challenge-client';
@@ -30,7 +30,7 @@ export default async function NewChallengePage({
   // the entry points that has to say it.
   // Read once and used twice — the standing gate below, and the self-exclusion
   // for the opponent list. The client used to fetch its own row for both.
-  const me = await getCurrentPlayer();
+  const { player: me } = await getViewer();
   const standing = getAccountStanding(me);
   if (!standing.ok) {
     return (

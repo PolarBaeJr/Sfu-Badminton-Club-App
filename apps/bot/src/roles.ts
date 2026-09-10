@@ -1,9 +1,19 @@
 // app state -> the set of Discord roles a member should hold.
 //
-// One direction only. Nothing here ever reads a Discord role and writes it back
-// to the app: if it did, anyone who can edit roles in a Discord server would be
+// One direction only, FOR EVERY ROLE THAT CARRIES PERMISSION. Nothing here ever
+// reads @Executives, @VP, @Session Staff, @Competitive or @Recreation back into
+// the app: if it did, anyone who can edit roles in a Discord server would be
 // able to promote themselves inside the club, and Discord role edits are not
 // audited the way the app's permission changes are. See docs/design/discord-bot.md §5.
+//
+// THE THREE MEMBERSHIP ROLES ARE THE DELIBERATE EXCEPTION, and it is an
+// exception the club asked for: @Internal, @Alumni and @External are now
+// MEMBERS' OWN to pick, so the sweep neither asserts nor strips them
+// (MEMBERSHIP_ROLES below), and what the member picked is written back to
+// players.membership_type for a LINKED account. They are the exception because
+// they grant nothing inside the app — they price a tournament entry and decide
+// which events a member may enter, which an exec can see and correct in the
+// console. Nothing else about this file changes direction.
 //
 // This module is deliberately pure — no fetch, no Discord client, no clock. The
 // whole of the interesting logic (who gets what, and what a sync should change)
@@ -28,6 +38,39 @@ export const MANAGED_ROLES = [
 ] as const;
 
 export type ManagedRole = (typeof MANAGED_ROLES)[number];
+
+/**
+ * The roles a member chooses for themselves, which the sweep therefore must
+ * never touch.
+ *
+ * They stay in MANAGED_ROLES — the registry still has to be able to NAME them,
+ * because knowing that role 123 is this guild's @Alumni is exactly what makes
+ * the write-back possible, and because parseGuildRegistry rejects a role name
+ * it does not know, so dropping them here would stop a bot booting on an
+ * unchanged DISCORD_GUILDS.
+ */
+export const MEMBERSHIP_ROLES = ['internal', 'alumni', 'external'] as const;
+
+export type MembershipRole = (typeof MEMBERSHIP_ROLES)[number];
+
+/**
+ * What the nightly sweep actually reconciles.
+ *
+ * roleDiff iterates THIS, not MANAGED_ROLES, and that is the whole mechanism
+ * keeping the sweep off a member's own choice. Leaving the three in the
+ * iteration and merely dropping them from desiredRoles() would have been WORSE
+ * than doing nothing: a role the diff knows about and does not want is one it
+ * REMOVES, so the sweep would have stripped every membership role in the server
+ * at 10:50 UTC instead of merely overwriting it.
+ */
+export const SWEPT_ROLES = MANAGED_ROLES.filter(
+  (role): role is Exclude<ManagedRole, MembershipRole> =>
+    !(MEMBERSHIP_ROLES as readonly string[]).includes(role)
+);
+
+export function isMembershipRole(role: string): role is MembershipRole {
+  return (MEMBERSHIP_ROLES as readonly string[]).includes(role);
+}
 
 /**
  * What the app reports about a linked member. Mirrors the payload of
@@ -72,11 +115,13 @@ const VP_ROLES = ['finance', 'tournaments', 'internal', 'external'];
  *
  *  - A BANNED member keeps only `linked`. A ban is the club withdrawing access;
  *    leaving them holding `@Internal` would leave the member-only channels open
- *    to exactly the person who was just removed from them.
- *  - A `pending_approval` member gets no membership or team role. Signing up is
- *    not the club letting you in — the same reason the guard refuses a
- *    self-created row that arrives already approved, and the same reason the
- *    owner asked for pending signups to stay off the ladder.
+ *    to exactly the person who was just removed from them. The membership roles
+ *    are not in this set at all any more, so the ban takes them off through
+ *    `roleDiff`'s `revokeMembership` instead — see DiffOptions.
+ *  - A `pending_approval` member gets no team role. Signing up is not the club
+ *    letting you in — the same reason the guard refuses a self-created row that
+ *    arrives already approved, and the same reason the owner asked for pending
+ *    signups to stay off the ladder.
  *
  * Both are visible in the role diff, so getting them wrong is repairable by
  * changing this function and letting the sweep run; neither silently persists.
@@ -101,15 +146,11 @@ export function desiredRoles(state: MemberState): Set<ManagedRole> {
   if (approved && state.status === 'competitive') roles.add('competitive');
   if (approved && state.status === 'recreational') roles.add('recreation');
 
-  if (approved) {
-    // membership_type and permission_role BOTH have values called 'internal'
-    // and 'external' meaning entirely unrelated things. This switch reads
-    // membership_type and nothing else; see the collision note in the spec.
-    if (state.membershipType === 'internal') roles.add('internal');
-    else if (state.membershipType === 'alumni') roles.add('alumni');
-    else if (state.membershipType === 'external') roles.add('external');
-  }
-
+  // NO MEMBERSHIP ROLE IS ASSERTED HERE ANY MORE. @Internal / @Alumni /
+  // @External are the member's own pick (MEMBERSHIP_ROLES), so the app has an
+  // opinion about what they MEAN — membership_type follows the pick — but none
+  // about who should hold one. Adding them back to this set would do nothing on
+  // its own, since roleDiff iterates SWEPT_ROLES; both would have to change.
   return roles;
 }
 
@@ -164,6 +205,24 @@ export function parseGuildRegistry(raw: string | undefined): GuildRegistry {
   return registry;
 }
 
+export interface DiffOptions {
+  /**
+   * Take the membership roles OFF as well.
+   *
+   * THE ASYMMETRY IS THE POINT, and it is the difference between the two things
+   * that can put a membership role on somebody: a member choosing one, and the
+   * club having granted it. Nothing ever ADDS one — that is the member's own
+   * call now. But a BAN or a tombstone is the club revoking access, not a
+   * member changing their mind, and member-only channel visibility in this
+   * server IS @Internal + @Alumni (see the role table in
+   * docs/design/discord-bot.md §5). Leaving them on would leave the member
+   * channels open to exactly the person who was just removed from them, and
+   * would let a tombstone be reported clean while a role was still on the
+   * account.
+   */
+  revokeMembership?: boolean;
+}
+
 export interface RoleDiff {
   /** Role IDs to add. */
   add: string[];
@@ -182,17 +241,23 @@ export interface RoleDiff {
  * does not name is invisible to the diff, so `Admin`, and every unrelated role
  * the server happens to use, are safe by construction rather than by a
  * blocklist that a future role could fall outside of.
+ *
+ * The three membership roles are invisible to it for the same structural
+ * reason: the loop is over SWEPT_ROLES. Never added, and not removed either
+ * unless `revokeMembership` says the club is withdrawing access — see
+ * DiffOptions, which is where that asymmetry is argued.
  */
 export function roleDiff(
   desired: Set<ManagedRole> | null,
   guildRoles: GuildRoleMap,
-  currentRoleIds: readonly string[]
+  currentRoleIds: readonly string[],
+  options: DiffOptions = {}
 ): RoleDiff {
   const held = new Set(currentRoleIds);
   const add: string[] = [];
   const remove: string[] = [];
 
-  for (const role of MANAGED_ROLES) {
+  for (const role of SWEPT_ROLES) {
     const id = guildRoles[role];
     // A guild missing a given role is a skip, not an error (spec §5).
     if (!id) continue;
@@ -201,5 +266,47 @@ export function roleDiff(
     if (!shouldHold && held.has(id)) remove.push(id);
   }
 
+  // REMOVAL ONLY, and only when asked. There is no branch anywhere in this
+  // function that can add a membership role.
+  if (options.revokeMembership) {
+    for (const role of MEMBERSHIP_ROLES) {
+      const id = guildRoles[role];
+      if (id && held.has(id)) remove.push(id);
+    }
+  }
+
   return { add, remove };
+}
+
+/**
+ * What the roles a member is HOLDING say their membership is.
+ *
+ * The one read in the Discord -> app direction, and it is deliberately
+ * conservative in both of the ways it can be wrong:
+ *
+ *  - Holding none of the three answers `null`, which every caller treats as
+ *    "leave the app alone". A member who has not picked yet must not be
+ *    silently demoted to a default, and a guild that has not configured the
+ *    roles at all must not rewrite the whole roster.
+ *  - Holding TWO answers `null` as well. Two memberships is not a state the app
+ *    can store, and picking one of them here would be this module guessing at
+ *    something a human can see and fix in a second. The picker keeps them
+ *    exclusive when it is the one doing the assigning; this is what happens
+ *    when somebody hands out a second one by hand.
+ */
+export function membershipFromRoles(
+  guildRoles: GuildRoleMap,
+  currentRoleIds: readonly string[]
+): MembershipRole | null {
+  const held = new Set(currentRoleIds);
+  let found: MembershipRole | null = null;
+
+  for (const role of MEMBERSHIP_ROLES) {
+    const id = guildRoles[role];
+    if (!id || !held.has(id)) continue;
+    if (found) return null;
+    found = role;
+  }
+
+  return found;
 }

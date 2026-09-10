@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation';
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
 import { CLUB_TIMEZONE, selectInChunks } from '@badminton/shared';
 import { clubDayKey } from '@/lib/feed-activity';
+import { wasPresent } from '@/lib/schedule';
 import { buildRatingSeries, formatSigned, type RatingSourceRow } from '@/lib/stats-charts';
 import {
   formatDayKey,
@@ -30,8 +31,6 @@ const SEASON_MATCH_CAP = 200;
 // empty result, and there is no reason to send it one.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `session_attendance.status` values that mean the member was there. */
-const PRESENT_STATUSES = new Set(['checked_in', 'present']);
 
 /**
  * A TIMESTAMPTZ as the club's own day, e.g. `18 APR 2027`.
@@ -90,7 +89,7 @@ type OtherPlayer = { id: string; full_name: string; avatar_url?: string | null; 
 export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
   if (!UUID.test(seasonId)) redirect('/my-stats');
 
-  const player = await getCurrentPlayer();
+  const { player } = await getViewer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
@@ -196,7 +195,7 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
   const attended = attendanceRes.error
     ? null
     : ((attendanceRes.data ?? []) as { status: string }[]).filter((a) =>
-        PRESENT_STATUSES.has(a.status)
+        wasPresent(a.status)
       ).length;
 
   // Who each match was against. Those ids go into the query string of a GET,

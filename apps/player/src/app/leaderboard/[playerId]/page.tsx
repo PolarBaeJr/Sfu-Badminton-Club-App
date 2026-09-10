@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { getPublicProfile } from '@/lib/public-profile';
 import { getRatingSettings } from '@/lib/rating-settings';
 import { getKFactor, PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, buildChallengeQrUrl, getAccountStanding } from '@badminton/shared';
@@ -19,7 +19,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   // because `hide_from_leaderboard` is a rule about OTHER people: a member who
   // has opted out still sees their own numbers here, exactly as /my-stats and
   // the feed's own-record card show them.
-  const viewer = await getCurrentPlayer();
+  const { player: viewer } = await getViewer();
   const standing = getAccountStanding(viewer);
 
   const [

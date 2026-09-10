@@ -44,8 +44,9 @@ describe('syncMemberInGuild', () => {
       desiredRoles(member({ status: 'competitive' }))
     );
 
-    // wants linked+internal+competitive, holds executives
-    expect(out.added).toBe(3);
+    // wants linked+competitive, holds executives. @Internal is not in this
+    // count any more — the sweep does not assert a membership role.
+    expect(out.added).toBe(2);
     expect(out.removed).toBe(1);
     expect(out.forbidden).toBe(0);
     expect(out.failed).toBe(0);
@@ -74,12 +75,12 @@ describe('syncMemberInGuild', () => {
     );
 
     expect(out.forbidden).toBe(1);
-    // linked + internal still applied despite the refusal.
-    expect(out.added).toBe(2);
+    // linked still applied despite the refusal.
+    expect(out.added).toBe(1);
     expect(out.failed).toBe(0);
   });
 
-  it('strips every managed role when the member is not linked', async () => {
+  it('strips every swept role when the member is not linked', async () => {
     const calls: string[] = [];
     const { api } = apiWith((method, path) => {
       calls.push(`${method} ${path}`);
@@ -88,10 +89,31 @@ describe('syncMemberInGuild', () => {
     });
 
     const out = await syncMemberInGuild(api, 'g1', GUILD, 'u1', null);
-    expect(out.removed).toBe(3);
+    expect(out.removed).toBe(2);
     expect(out.added).toBe(0);
     // '99' is a role the registry does not name — never touched.
     expect(calls.some((c) => c.includes('/roles/99'))).toBe(false);
+    // '3' is @Internal, which the member chose. An unlink does not take it.
+    expect(calls.some((c) => c.includes('/roles/3'))).toBe(false);
+  });
+
+  it('reports the membership the member picked without writing it', async () => {
+    const calls: string[] = [];
+    const { api } = apiWith((method, path) => {
+      calls.push(`${method} ${path}`);
+      if (method === 'GET') return { status: 200, body: { roles: ['1', '3'] } };
+      return { status: 204 };
+    });
+
+    const out = await syncMemberInGuild(
+      api, 'g1', GUILD, 'u1',
+      desiredRoles(member({ membershipType: 'external' }))
+    );
+
+    // Discord says internal, the app says external, and the SWEEP does not
+    // resolve that — it reports it. reconcile is what pushes it to the app.
+    expect(out.membership).toBe('internal');
+    expect(calls.filter((c) => c !== 'GET /guilds/g1/members/u1')).toEqual([]);
   });
 
   it('counts a hard failure without throwing', async () => {

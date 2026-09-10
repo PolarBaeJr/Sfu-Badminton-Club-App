@@ -97,6 +97,7 @@ const rel = (f: string) => f.slice(SRC.length + 1).replace(/\\/g, '/');
 // the MEMBER'S key is not — that is the read 00151 revokes.
 const SERVICE_ROLE_READERS = new Map<string, string>([
   ['lib/public-profile.ts', 'service role, collapses the value before returning'],
+  ['lib/discord-profile.ts', 'service role; collapses through statusForViewer(_, false) -- the card is public'],
   ['app/layout.tsx', "service role, own row by the session's verified user id"],
   ['lib/challengeable-opponents.ts', 'service role; status is a filter, never returned'],
   ['lib/reactivate.ts', 'service role, own row by verified user id'],

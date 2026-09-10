@@ -40,8 +40,9 @@ describe('reconcile', () => {
 
     const summary = await reconcile(a, REGISTRY, members, () => {});
     expect(summary.members).toBe(2);
-    // u1: linked+internal = 2. u2: linked+internal+executives = 3.
-    expect(summary.added).toBe(5);
+    // u1: linked = 1. u2: linked+executives = 2. No membership role is
+    // asserted by the sweep any more.
+    expect(summary.added).toBe(3);
     expect(summary.failed).toBe(0);
   });
 
@@ -50,6 +51,9 @@ describe('reconcile', () => {
       method === 'GET' ? { status: 200, body: { roles: ['1', '2', '3'] } } : { status: 204 }
     );
     const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
+    // All three, '3' (@Internal) included. The sweep leaves a member's own pick
+    // alone; a TOMBSTONE is not a member picking, and reporting the account
+    // `cleared` with @Internal still on it would be a lie the app acts on.
     expect(summary.removed).toBe(3);
     expect(summary.added).toBe(0);
   });
@@ -120,7 +124,7 @@ describe('reconcile', () => {
     );
     expect(summary.members).toBe(2);
     expect(summary.failed).toBe(1);
-    expect(summary.added).toBe(2); // u2 still synced
+    expect(summary.added).toBe(1); // u2 still synced
   });
 
   it('an exec who outranks the bot is counted, not fatal', async () => {
@@ -133,7 +137,7 @@ describe('reconcile', () => {
       a, REGISTRY, [{ discordUserId: 'u1', state: state({ isExec: true }) }], () => {}
     );
     expect(summary.forbidden).toBe(1);
-    expect(summary.added).toBe(2);
+    expect(summary.added).toBe(1);
     expect(summary.failed).toBe(0);
   });
 
@@ -179,5 +183,81 @@ describe('isAuthorizedService', () => {
     expect(isAuthorizedService('correct-horse')).toBe(false);
     expect(isAuthorizedService(undefined)).toBe(false);
     expect(isAuthorizedService('')).toBe(false);
+  });
+});
+
+// ---- THE WRITE-BACK ----
+//
+// The one direction this bot reads Discord and tells the app about it. Reported
+// out of reconcile rather than applied inside it, the same way a tombstone is:
+// index.ts is what POSTs it, so these tests need no fetch stub for the app.
+
+describe('reconcile membership write-back', () => {
+  it('reports a member whose picked role disagrees with the app', async () => {
+    const a = api((method) =>
+      method === 'GET' ? { status: 200, body: { roles: ['1', '3'] } } : { status: 204 }
+    );
+    const summary = await reconcile(
+      a, REGISTRY,
+      [{ discordUserId: 'u1', state: state({ membershipType: 'external' }) }],
+      () => {}
+    );
+    expect(summary.membershipUpdates).toEqual([
+      { discordUserId: 'u1', membershipType: 'internal' },
+    ]);
+  });
+
+  it('says nothing when Discord and the app already agree', async () => {
+    const a = api((method) =>
+      method === 'GET' ? { status: 200, body: { roles: ['1', '3'] } } : { status: 204 }
+    );
+    const summary = await reconcile(
+      a, REGISTRY,
+      [{ discordUserId: 'u1', state: state({ membershipType: 'internal' }) }],
+      () => {}
+    );
+    expect(summary.membershipUpdates).toEqual([]);
+  });
+
+  it('leaves a member who has picked nothing alone', async () => {
+    // The important negative. A server where nobody has clicked yet must not
+    // rewrite the whole roster to some default on the first sweep.
+    const a = api((method) =>
+      method === 'GET' ? { status: 200, body: { roles: ['1'] } } : { status: 204 }
+    );
+    const summary = await reconcile(
+      a, REGISTRY,
+      [{ discordUserId: 'u1', state: state({ membershipType: 'alumni' }) }],
+      () => {}
+    );
+    expect(summary.membershipUpdates).toEqual([]);
+  });
+
+  it('never writes back for a tombstone', async () => {
+    // There is no player to write to, and the role is on its way off anyway.
+    const a = api((method) =>
+      method === 'GET' ? { status: 200, body: { roles: ['1', '3'] } } : { status: 204 }
+    );
+    const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
+    expect(summary.membershipUpdates).toEqual([]);
+  });
+
+  it('strips a banned member’s membership role and writes nothing back', async () => {
+    // A ban is the club withdrawing access, not a member picking. Both halves
+    // matter: the role has to come off, AND the fee tier it implies must not be
+    // written onto the row the club has just closed.
+    const removed: string[] = [];
+    const a = api((method, path) => {
+      if (method === 'GET') return { status: 200, body: { roles: ['1', '2', '3'] } };
+      if (method === 'DELETE') removed.push(path.split('/').pop() as string);
+      return { status: 204 };
+    });
+    const summary = await reconcile(
+      a, REGISTRY,
+      [{ discordUserId: 'u1', state: state({ isBanned: true, membershipType: 'external' }) }],
+      () => {}
+    );
+    expect(removed).toContain('3');
+    expect(summary.membershipUpdates).toEqual([]);
   });
 });

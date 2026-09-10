@@ -1,8 +1,5 @@
 import { NextResponse } from 'next/server';
-import {
-  buildICSCalendar,
-  clubToday,
-} from '@badminton/shared';
+import { buildICSCalendar, clubToday } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { getCheckinSettings } from '@/lib/checkin-settings';

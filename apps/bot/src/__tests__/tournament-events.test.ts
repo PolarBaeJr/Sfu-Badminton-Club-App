@@ -57,7 +57,7 @@ const CREATE = {
 beforeEach(() => {
   vi.resetAllMocks();
   process.env.DISCORD_BOT_TOKEN = 'bot-token';
-  loadConfig.mockResolvedValue({ registry: { g1: {} }, auditChannelId: null });
+  loadConfig.mockResolvedValue({ registry: new Map([['g1', {}]]), auditChannelId: null });
   fetchTournamentActions.mockResolvedValue({ actions: [CREATE], skipped: [] });
   hasManageEvents.mockResolvedValue(true);
   createScheduledEvent.mockResolvedValue('evt-1');
@@ -204,7 +204,7 @@ describe('tournament events', () => {
   });
 
   it('one guild failing does not stop the others', async () => {
-    loadConfig.mockResolvedValue({ registry: { g1: {}, g2: {} }, auditChannelId: null });
+    loadConfig.mockResolvedValue({ registry: new Map([['g1', {}], ['g2', {}]]), auditChannelId: null });
     fetchTournamentActions.mockImplementation(async (guildId: string) => {
       if (guildId === 'g1') throw new Error('app down');
       return { actions: [CREATE], skipped: [] };

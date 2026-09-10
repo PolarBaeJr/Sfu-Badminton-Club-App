@@ -162,6 +162,24 @@ export function removeSelfRole(guildId: string, roleId: string): Promise<{ ok: t
   return send<{ ok: true }>('DELETE', `/api/discord/self-roles?${params}`);
 }
 
+/**
+ * Tell the app what a member picked for themselves in Discord.
+ *
+ * The ONE call in this file that runs Discord -> app. The app decides whether
+ * the account is linked at all and refuses to write anything but membership_type
+ * — see apps/player/src/app/api/discord/membership/route.ts for why that is a
+ * boundary worth being pedantic about.
+ */
+export function setMembership(
+  updates: readonly { discordUserId: string; membershipType: 'internal' | 'alumni' | 'external' }[]
+): Promise<{ ok: true; updated: number; unchanged: number; skipped: number; failed: number }> {
+  return send<{ ok: true; updated: number; unchanged: number; skipped: number; failed: number }>(
+    'POST',
+    '/api/discord/membership',
+    { updates }
+  );
+}
+
 export interface DuePing {
   sessionId: string;
   channelId: string;
@@ -269,6 +287,23 @@ export function fetchLeaderboard(
 ): Promise<LeaderboardPage> {
   const params = new URLSearchParams({ ladder, page: String(page) });
   return get<LeaderboardPage>(`/api/discord/leaderboard?${params}`);
+}
+
+export interface ClubHandle {
+  handle: string;
+  name: string;
+}
+
+/**
+ * Every handle the ladder publishes, for the /profile picker.
+ *
+ * NAMES AND HANDLES ONLY. The route it calls reads the same ladder function the
+ * handle lookup itself reads, so the suggestions are exactly the set a member
+ * could already have found by typing — see the route for why that equivalence
+ * is the privacy argument and not a coincidence.
+ */
+export function fetchHandles(): Promise<{ members: ClubHandle[] }> {
+  return get<{ members: ClubHandle[] }>('/api/discord/handles');
 }
 
 /**
@@ -465,6 +500,35 @@ export async function writeGuildConfig(payload: {
   }
 }
 
+// ---- RUNTIME SETTINGS ------------------------------------------------------
+//
+// The key/value rows every relay reads to decide where it posts. Separate from
+// writeGuildConfig above because that route refuses a payload with no roles in
+// it -- moving the announcement channel is not a role change.
+
+/** Every setting the club has actually set, keyed as it is in the database. */
+export function fetchDiscordSettings(): Promise<{ settings: Record<string, string> }> {
+  return get<{ settings: Record<string, string> }>('/api/discord/settings');
+}
+
+/**
+ * Write settings, or clear them.
+ *
+ * A NULL VALUE DELETES THE KEY, and that is the only way to turn a relay back
+ * off: every one of them treats a missing key as "post nothing", and an empty
+ * string is not the same thing -- it survives the `?? null` that two of the
+ * routes use and would leave a relay pointed at a channel id of ''.
+ */
+export function writeDiscordSettings(
+  settings: Record<string, string | null>
+): Promise<{ ok: true; written: number; cleared: number }> {
+  return send<{ ok: true; written: number; cleared: number }>(
+    'POST',
+    '/api/discord/settings',
+    { settings }
+  );
+}
+
 // ---- ANNOUNCEMENT RELAY ----------------------------------------------------
 
 export interface AnnouncementAction {
@@ -503,6 +567,56 @@ export function recordAnnouncementPost(input: {
   type: string;
 }): Promise<{ ok: true }> {
   return send<{ ok: true }>('POST', '/api/discord/announcements', input);
+}
+
+// ---------------------------------------------------------------------------
+// The outbox — messages the console asked for (00222)
+// ---------------------------------------------------------------------------
+
+export interface OutboxMessage {
+  id: string;
+  channelId: string;
+  /** A plain message, exactly like /say. Null when this is an embed. */
+  content: string | null;
+  embed: { title: string; body: string; type: string } | null;
+  /** Whether mentions in the text are allowed to notify. Default is silence. */
+  ping: boolean;
+  attempts: number;
+  /**
+   * The name of the exec who asked for it, for the audit entry. Null when the
+   * row's requester was deleted, or when the app could not resolve the name —
+   * the entry still gets written, it just cannot say who.
+   */
+  requestedBy: string | null;
+}
+
+/**
+ * CLAIM the next few, do not merely read them.
+ *
+ * The endpoint takes the claim in the same statement it returns the rows, so
+ * calling this TAKES OWNERSHIP: whatever comes back is this process's to post,
+ * and no other replica will be given it for ten minutes. Anything claimed and
+ * not resolved through recordOutboxResult comes back into the pool then.
+ */
+export function claimOutboxMessages(guildId: string): Promise<{ messages: OutboxMessage[] }> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/outbox?${params}`);
+}
+
+/**
+ * Say what Discord did. Exactly one of the two outcomes.
+ *
+ * `discordMessageId` closes the row for good. `error` spends one attempt and
+ * releases the claim, so a transient refusal is retried and a permanent one
+ * stops after three with the reason still readable in the console — which is
+ * the only thing that will get it fixed.
+ */
+export function recordOutboxResult(input: {
+  id: string;
+  discordMessageId?: string;
+  error?: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/outbox', input);
 }
 
 /** Forget a mapping, after the Discord message is gone. */
@@ -593,6 +707,40 @@ export function submitFeedback(input: {
   return send<{ ok: true; linked: boolean }>('POST', '/api/discord/feedback', input);
 }
 
+// ---- ANNOUNCE --------------------------------------------------------------
+
+/** Why the app declined to file an announcement. Closed set; see the route. */
+export type AnnounceRefusal = 'not_linked' | 'not_permitted' | 'no_active_season';
+
+/**
+ * File a club announcement, or learn why not.
+ *
+ * REFUSALS COME BACK AS A 200 WITH A CODE rather than a 4xx, and that is the
+ * app's decision rather than this client's -- send() turns every non-ok status
+ * into an AppApiError, which dispatch renders as "couldn't reach the club app",
+ * and all three refusals here are the app being reached and answering clearly.
+ * The route's header explains why it answers this way; this signature is the
+ * half of the contract the bot has to honour.
+ *
+ * The `refusal` is matched against the union above at the call site rather than
+ * printed. Nothing the app puts in a response body is ever interpolated into a
+ * Discord message.
+ */
+export function submitAnnouncement(input: {
+  discordUserId: string | null;
+  title: string;
+  body: string;
+  type: 'info' | 'warning' | 'urgent' | 'event';
+  pin: boolean;
+  draft: boolean;
+  evergreen: boolean;
+}): Promise<
+  | { ok: true; announcementId: string; status: 'draft' | 'published' }
+  | { ok: false; refusal: AnnounceRefusal }
+> {
+  return send('POST', '/api/discord/announce', input);
+}
+
 // ---- FEEDBACK RELAY --------------------------------------------------------
 
 export interface FeedbackAction {
@@ -655,4 +803,158 @@ export function clearFeedbackPost(
 ): Promise<{ ok: true }> {
   const params = new URLSearchParams({ source, sourceId, guildId });
   return send<{ ok: true }>('DELETE', `/api/discord/feedback-relay?${params}`);
+}
+
+export interface ProfileLadderLine {
+  elo: number;
+  provisional: boolean;
+  wins: number;
+  losses: number;
+  streak: number;
+  rank: number;
+  // Rank among competitive members only, or null for a member who is not one.
+  // Same rating as `rank` -- the two ladders differ by who is counted, not by
+  // how anyone is rated. Mirrored here, unlike the rest of the card's numbers,
+  // because /profile has to know whether a requested `type:` can be honoured
+  // BEFORE it spends the budget rendering a card that would ignore it.
+  //
+  // READ IT WITH == null. A player app older than the resolver that added this
+  // omits the key, so the runtime value can be undefined however this reads.
+  compRank: number | null;
+}
+
+export interface ProfilePayload {
+  id: string;
+  name: string;
+  handle: string | null;
+  avatarUrl: string | null;
+  bio: string | null;
+  status: string | null;
+  ranked: boolean;
+  doubles: ProfileLadderLine | null;
+  singles: ProfileLadderLine | null;
+  tournamentPoints: number | null;
+  awards: { label: string; glyph?: string | null }[];
+}
+
+/** The app declining on purpose — not a fault. See fetchProfile. */
+export type ProfileMiss =
+  | 'not_linked'
+  | 'target_unlinked'
+  | 'no_such_handle'
+  | 'not_found';
+
+export type ProfileResult =
+  | { profile: ProfilePayload; cardUrl: string }
+  | { miss: ProfileMiss };
+
+/**
+ * A member's profile card.
+ *
+ * Written out rather than routed through get() for two reasons. The 404s are
+ * the app declining on purpose — "you haven't linked", "no such handle" — and
+ * get() turns every non-ok status into the same AppApiError, which would tell a
+ * member the club app was down when they had simply mistyped a handle. And the
+ * card's URL has to be built against APP_PUBLIC_URL: Discord's CDN fetches the
+ * image from outside the cluster, so the in-cluster APP_API_URL it would
+ * otherwise inherit is unreachable. Same split, and the same reason, as
+ * mintLinkToken.
+ *
+ * Both Discord ids travel as HEADERS. Ids in a URL end up in the access log.
+ */
+export async function fetchProfile(
+  callerId: string | null,
+  target: { discordUserId?: string | null; handle?: string | null }
+): Promise<ProfileResult> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  const publicBase = process.env.APP_PUBLIC_URL;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+  if (!publicBase) throw new AppApiError('APP_PUBLIC_URL is not set');
+
+  const path = target.handle
+    ? `/api/discord/profile?${new URLSearchParams({ handle: target.handle })}`
+    : '/api/discord/profile';
+
+  const response = await fetch(new URL(path, base), {
+    headers: {
+      authorization: `Bearer ${secret}`,
+      ...(callerId ? { 'x-discord-user-id': callerId } : {}),
+      ...(target.discordUserId ? { 'x-discord-target-id': target.discordUserId } : {}),
+    },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+
+  if (response.status === 404) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    const miss = body?.error;
+    return {
+      miss:
+        miss === 'not_linked' ||
+        miss === 'target_unlinked' ||
+        miss === 'no_such_handle'
+          ? miss
+          : 'not_found',
+    };
+  }
+
+  if (!response.ok) {
+    throw new AppApiError(`GET /api/discord/profile -> ${response.status}`);
+  }
+
+  const body = (await response.json()) as { profile: ProfilePayload; cardToken: string };
+  return {
+    profile: body.profile,
+    cardUrl: new URL(`/api/discord/card/${body.cardToken}`, publicBase).toString(),
+  };
+}
+
+export interface CardFile {
+  filename: string;
+  contentType: string;
+  bytes: Uint8Array;
+}
+
+// A rendered card is tens of kilobytes. Anything approaching this is not one,
+// and buffering it would spend the rest of the interaction's budget on a body
+// that is going to be discarded.
+const MAX_CARD_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The rendered card as BYTES, so the reply can upload it instead of linking it.
+ *
+ * NEVER THROWS. A timeout, an expired card token, an HTML error page from
+ * something in front of the app — every one of them comes back as null, because
+ * the caller's answer to null is the URL fallback and an exception would sail
+ * past it into dispatch's generic "couldn't reach the club app". The whole
+ * point of the fallback is that it stays reachable.
+ *
+ * Takes its budget rather than using TIMEOUT_MS: by the time this runs the
+ * caller has already spent part of Discord's three seconds on fetchProfile, and
+ * what is left still has to cover encoding and writing the multipart body.
+ */
+export async function fetchCard(cardUrl: string, budgetMs: number): Promise<CardFile | null> {
+  try {
+    const response = await fetch(cardUrl, { signal: AbortSignal.timeout(budgetMs) });
+    if (!response.ok) return null;
+
+    // A proxy error page is a 200 whose body is HTML. Uploading it would attach
+    // a file Discord renders as a broken image, which reads as the card being
+    // wrong rather than the card never having arrived.
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.startsWith('image/')) return null;
+
+    // Checked twice on purpose: the header is absent on a chunked response, so
+    // it can only ever reject early, never authorise.
+    const declared = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > MAX_CARD_BYTES) return null;
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_CARD_BYTES) return null;
+
+    return { filename: 'card.png', contentType, bytes };
+  } catch {
+    return null;
+  }
 }

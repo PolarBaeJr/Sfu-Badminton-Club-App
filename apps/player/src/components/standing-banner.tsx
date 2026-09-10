@@ -9,16 +9,17 @@ import { useStanding } from '@/components/standing-provider';
 // it, including what undoes it — so that hiding buttons reads as a stated
 // account state rather than as the app losing features.
 //
-// Client-side only so it can duck out of the auth and onboarding screens,
-// which render their own full-screen layout with no app chrome (same guard as
-// TopBar/BottomNav). A brand-new member is pending_approval and un-onboarded
-// at the same time, so without this they would meet the banner mid-signup.
+// Client-side only so it can duck out of the auth, onboarding and Discord
+// consent screens, which render their own full-screen layout with no app
+// chrome (same guard as TopBar/BottomNav). A brand-new member is
+// pending_approval and un-onboarded at the same time, so without this they
+// would meet the banner mid-signup.
 export function StandingBanner() {
   const standing = useStanding();
   const pathname = usePathname();
 
   if (standing.ok) return null;
-  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding') return null;
+  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) return null;
 
   return (
     <div

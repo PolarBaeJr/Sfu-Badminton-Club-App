@@ -19,9 +19,13 @@ import { AddPlayerButton } from './add-player-button';
 import { MergePlayersButton } from './merge-players-button';
 import { PrivilegeReviewActions } from './privilege-review-actions';
 import { EloReviewActions } from './elo-review-actions';
+import { ConsoleAccessActions } from './console-access-actions';
 import { RosterTable, type RosterRow } from './roster-table';
 import { RowLink } from '@/components/row-link';
+import { RowSelectCheckbox, SelectAllCheckbox } from '@/components/selection';
+import { BulkPlayerActions } from './bulk-player-actions';
 import { RosterCharts } from './roster-charts';
+import { toRoleValue } from '@/lib/console-access';
 import { memberIdentifier } from '@/lib/member-identifier';
 import { rosterActionsFor, rosterActionKey, type RosterAction } from '@/lib/roster-actions';
 
@@ -112,6 +116,12 @@ export default async function PlayersPage({
   // capability the /permissions editor asks for — not players.update.write, or
   // somebody who may edit member details could grant admin through a review.
   const canConsoleAccess = can('players.consoleaccess.write');
+  // MULTI-SELECT EXISTS ONLY FOR SOMEBODY WHO COULD ACT ON A SELECTION. The two
+  // capabilities are the two bulk controls (see BulkPlayerActions), and holding
+  // neither means the checkbox column is never rendered at all — a trainer gets
+  // the roster exactly as it was. This decides whether the CONTROL is drawn; the
+  // server actions behind it gate every record on their own.
+  const canBulk = canApprove || canManage;
   /**
    * Which of the actions the tab offers are this viewer's to press.
    *
@@ -150,7 +160,13 @@ export default async function PlayersPage({
   // action they offer asks for a players.*.write — so a trainer is not shown
   // queues they cannot act on, and a stale link falls back to the roster rather
   // than erroring.
-  const MODERATION_TABS = ['attention', 'incomplete', 'permissions', 'suspended', 'inactive'];
+  //
+  // `all` is one of them, which is the non-obvious entry. It sounds like the
+  // least privileged tab in the strip and lists the most: an unfiltered roster
+  // is Competitive and Recreational PLUS the suspended, the banned and the
+  // unfinished signups — exactly the rows the other five queues were gated to
+  // withhold. Leaving it open would be a way round every one of them.
+  const MODERATION_TABS = ['all', 'attention', 'incomplete', 'permissions', 'suspended', 'inactive'];
   const tab = !canModerate && MODERATION_TABS.includes(requestedTab) ? 'competitive' : requestedTab;
   const supabase = createAdminClient();
 
@@ -160,7 +176,19 @@ export default async function PlayersPage({
     .order('created_at', { ascending: false })
     .limit(500);
 
-  if (tab === 'competitive') {
+  if (tab === 'all') {
+    // NO FILTER, and that is the whole tab. Every other tab answers a question
+    // ("who is competitive", "who is waiting on us"); this one answers none, so
+    // an exec working through the roster end to end — changing a batch of
+    // memberships, checking who is missing a waiver — does it in one list
+    // instead of six.
+    //
+    // The 500-row cap on the query above therefore bites here first. It is not
+    // raised, because the honest thing already happens: `total` below is the
+    // tab's real count, so a roster past 500 reads "showing 500 of 620" rather
+    // than claiming completeness. Raising the cap without paging the query
+    // would only move where it lies.
+  } else if (tab === 'competitive') {
     // Show all active players (not recreational, suspended, or pending)
     query = query.not('status', 'in', '("recreational","suspended","pending_approval")');
   } else if (tab === 'recreational') {
@@ -269,6 +297,10 @@ export default async function PlayersPage({
   // writing a varsity note about, so they get the two tabs that list people who
   // actually play, and are not shown queues they cannot act on.
   const tabs = [
+    // First, and only for somebody who may moderate — see MODERATION_TABS. It
+    // is not the default tab: Competitive is what an exec wants on arrival, and
+    // "everybody, unsorted" is a tool you reach for rather than one you land in.
+    ...(canModerate ? [{ id: 'all', label: 'All', count: forCount.length }] : []),
     { id: 'competitive', label: 'Competitive', count: compCount },
     { id: 'recreational', label: 'Recreational', count: recCount },
     ...(canModerate ? [
@@ -434,6 +466,28 @@ export default async function PlayersPage({
             canResolve={canMerge}
           />
         )}
+        {/* CONSOLE ACCESS, asked for by the club owner: "allow me to edit
+            access from the player menu too, but only to people who have
+            permission to do edits on the player menu." That capability is
+            players.consoleaccess.write — the one setConsoleAccess itself
+            requires — and NOT players.update.write, or somebody who may correct
+            a phone number could make themselves an executive.
+
+            Beside View for the same reason the two reviews are: it is not a
+            roster action. A level is orthogonal to the tab you are on — an
+            admin is still an admin on Inactive — so it does not belong in
+            roster-actions.ts's answer to what this tab offers.
+
+            The three level columns are already in this page's select, so the
+            level is read off the row with no extra query. */}
+        <ConsoleAccessActions
+          playerId={player.id}
+          playerName={displayName}
+          current={toRoleValue(player.role ?? 'player', player.is_exec === true, player.is_trainer === true)}
+          canWrite={canConsoleAccess}
+          isSelf={player.id === viewer.id}
+          viewerIsAdmin={isAdmin}
+        />
         {rosterActionsFor(tab, player, { isAdmin })
           .filter((action) => mayRun(action, player.status === 'pending_approval'))
           .map((action) => (
@@ -474,6 +528,15 @@ export default async function PlayersPage({
           href={`/players/${player.id}`}
           className="cursor-pointer transition-colors hover:bg-[var(--border-hover)]"
         >
+          {/* FIRST CELL, its own column, and never folded into the name cell:
+              a checkbox inside the member's link would be a control inside a
+              navigation target. RowLink already treats `input` and `label` as
+              interactive, so ticking a box does not also open the member. */}
+          {canBulk && (
+            <td className="w-px px-4 py-3 align-middle">
+              <RowSelectCheckbox id={player.id} label={displayName} />
+            </td>
+          )}
           <td className="px-4 py-3">{name}</td>
           <td className="px-4 py-3">
             <div className="flex flex-wrap items-center gap-1">{badges}</div>
@@ -504,7 +567,19 @@ export default async function PlayersPage({
       ),
       card: (
         <TableCard
-          title={name}
+          title={
+            canBulk ? (
+              // Beside the name rather than in a row of its own: the card IS the
+              // row on a phone, and a checkbox floating above it reads as a
+              // control over the card rather than a selection of the member.
+              <span className="flex items-start gap-2">
+                <RowSelectCheckbox id={player.id} label={displayName} />
+                <span className="min-w-0 flex-1">{name}</span>
+              </span>
+            ) : (
+              name
+            )
+          }
           badges={badges}
           fields={[
             { label: 'Singles', value: rating(r?.singles_elo, r?.singles_provisional) },
@@ -654,6 +729,11 @@ export default async function PlayersPage({
           }
           head={
             <tr className="border-b border-[var(--border)]">
+              {canBulk && (
+                <th className={`${TH} w-px text-left`}>
+                  <SelectAllCheckbox noun="member" />
+                </th>
+              )}
               <th className={`${TH} text-left`}>Player</th>
               <th className={`${TH} text-left`}>Standing</th>
               <th className={`${TH} text-right`}>Singles</th>
@@ -664,6 +744,9 @@ export default async function PlayersPage({
             </tr>
           }
           rows={rows}
+          bulkBar={
+            canBulk ? <BulkPlayerActions canApprove={canApprove} canManage={canManage} /> : undefined
+          }
         />
         </>
       )}

@@ -30,8 +30,23 @@
 
 // ---------------------------------------------------------------------------
 
-/** Tabs on /players. Anything unrecognised falls back to the roster tabs. */
-export type RosterTab = 'competitive' | 'recreational' | 'attention' | 'suspended' | 'inactive';
+/**
+ * Tabs on /players. Anything unrecognised falls back to the roster tabs.
+ *
+ * `all` is deliberately one of the ones that falls back, rather than earning a
+ * case of its own. It is the unfiltered roster, so its rows arrive in every
+ * state at once — and the default branch is the only one that decides per ROW
+ * rather than per tab: it offers Unban to a banned member, Ban to everyone
+ * else, and withholds Inactive from anybody moderated. A dedicated case could
+ * only reproduce that, less well.
+ */
+export type RosterTab =
+  | 'all'
+  | 'competitive'
+  | 'recreational'
+  | 'attention'
+  | 'suspended'
+  | 'inactive';
 
 export type RosterAction =
   | { kind: 'edit' }
