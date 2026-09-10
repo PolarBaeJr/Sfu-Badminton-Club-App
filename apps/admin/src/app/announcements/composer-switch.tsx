@@ -8,6 +8,7 @@ import {
   COMPOSER_MODE_LABELS,
   showsModeSelector,
   type ComposerMode,
+  type DiscordChannelOption,
 } from './announcement-shape';
 
 // One card, two composers, a strip at the top to choose between them.
@@ -24,11 +25,15 @@ export function ComposerSwitch({
   pushReachable,
   discord,
   channelConfigured,
+  channels,
+  roleNames,
 }: {
   modes: ComposerMode[];
   pushReachable: number | null;
   discord: DiscordContext | null;
   channelConfigured: boolean;
+  channels: DiscordChannelOption[];
+  roleNames: string[];
 }) {
   const [mode, setMode] = useState<ComposerMode>(modes[0] ?? 'website');
 
@@ -57,7 +62,11 @@ export function ComposerSwitch({
 
       {modes.includes('discord') && (
         <div hidden={mode !== 'discord'}>
-          <DiscordSend channelConfigured={channelConfigured} />
+          <DiscordSend
+            channelConfigured={channelConfigured}
+            channels={channels}
+            roleNames={roleNames}
+          />
         </div>
       )}
     </div>

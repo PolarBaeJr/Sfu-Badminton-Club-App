@@ -196,6 +196,42 @@ export function relayChip(
 }
 
 // ---------------------------------------------------------------------------
+// Where in Discord the console can speak
+// ---------------------------------------------------------------------------
+
+/** One entry in the channel picker: which setting it came from, and its id. */
+export interface DiscordChannelOption {
+  key: string;
+  label: string;
+  id: string;
+}
+
+/**
+ * THE CHANNELS THE CLUB HAS CONFIGURED, WHICH IS NOT THE SERVER'S CHANNEL LIST.
+ *
+ * Every relay the bot runs posts into a channel named by one of these settings
+ * keys, so a key with a value is a channel somebody has already pointed the bot
+ * at. That is the whole of what this console can know: it holds no Discord
+ * token, and there is no catalogue of the server's channels in the database for
+ * it to read. A channel that exists in Discord and is wired to no relay is
+ * therefore reachable only by pasting its id.
+ *
+ * The labels are word for word the ones `/config show` prints, from
+ * `CHANNEL_SETTINGS` in `apps/bot/src/settings.ts`, and the order is the same.
+ * They are duplicated rather than imported because the admin app cannot import
+ * from `apps/bot`: the bot is a separate service whose whole justification is
+ * that nothing else links against it.
+ */
+export const DISCORD_CHANNEL_SETTINGS: readonly { key: string; label: string }[] = [
+  { key: 'announcement_channel_id', label: 'Announcements' },
+  { key: 'session_ping_channel_id', label: 'Session pings' },
+  { key: 'match_results_channel_id', label: 'Match results' },
+  { key: 'feedback_channel_id', label: 'Bug reports' },
+  { key: 'event_feedback_channel_id', label: 'Event feedback' },
+  { key: 'audit_channel_id', label: 'Audit log' },
+];
+
+// ---------------------------------------------------------------------------
 // Which composers the left card offers
 // ---------------------------------------------------------------------------
 

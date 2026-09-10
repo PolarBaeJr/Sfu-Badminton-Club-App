@@ -8,6 +8,7 @@ import {
 } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
+import { resolveRoleMentions } from '../discord-mentions';
 import { revalidatePath } from 'next/cache';
 import { requireCapability } from './_shared';
 
@@ -93,6 +94,13 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
   if (embedBody.length > EMBED_DESCRIPTION_MAX) {
     throw new ExpectedError(`An embed body stops at ${EMBED_DESCRIPTION_MAX} characters.`);
   }
+  // AN EMBED'S TEXT IS NEVER RESOLVED INTO MENTIONS, deliberately, and this is
+  // the branch where that decision belongs. `payloadFor` (apps/bot/src/outbox.ts)
+  // builds the embed shape with NO content field, and Discord does not notify
+  // anybody from embed text however `allowed_mentions` is set. Rewriting a role
+  // name in here would render a mention chip that can never ring a phone, which
+  // makes the composer's own switch ("WILL buzz every phone it names") a false
+  // statement for this shape. A mention that cannot ping is worse than a name.
   if (input.embed && !(input.embed.type in ANNOUNCEMENT_EMBED_COLORS)) {
     throw new ExpectedError('That is not one of the four announcement categories.');
   }
@@ -110,6 +118,56 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
   if (!guildId) {
     throw new ExpectedError(
       'No Discord server is registered yet. Run /setup in the server first.',
+    );
+  }
+
+  // ROLE NAMES BECOME REAL MENTIONS, AND THIS IS THE ONLY PLACE IT HAPPENS.
+  //
+  // It sits here because it needs the guild id, and above the channel work
+  // because a message that is about to be refused for length should not first
+  // cost a settings read. The `@` guard means a message with no `@` in it pays
+  // nothing for any of this: the rest of this feature counts its round trips
+  // carefully and this is not the place to stop counting. An embed takes the
+  // same free ride without needing a second condition, since `content` is the
+  // empty string for that shape.
+  //
+  // A FAILED READ THROWS RATHER THAN DEGRADING. The whole point of a message
+  // like this is the ping, and quietly posting the literal text `@internal`
+  // where a mention was meant is the exact failure this exists to remove.
+  let outgoing = content;
+  let mentionedRoles: string[] = [];
+  if (content.includes('@')) {
+    const { data: roles, error: rolesError } = await adminClient
+      .from('discord_guild_roles')
+      .select('role_name, role_id')
+      .eq('guild_id', guildId);
+
+    if (rolesError) {
+      throw new ExpectedError(
+        'Could not read the club\'s Discord roles, so a role name in this message would have ' +
+          'posted as plain text instead of a mention. Nothing was queued. Try again.',
+      );
+    }
+
+    const resolved = resolveRoleMentions(
+      content,
+      (roles ?? []) as { role_name: string; role_id: string }[],
+    );
+    outgoing = resolved.text;
+    mentionedRoles = resolved.matched;
+  }
+
+  // THE SECOND LENGTH CHECK, because resolution only ever makes the text longer.
+  // The typed-length check above is the one the writer can act on; this one
+  // catches what expansion added. `discord_outbox` has a CHECK of its own on
+  // 2000 characters (00222), so without this a 1995-character message with a
+  // mention in it comes back as a raw Postgres constraint string.
+  if (outgoing.length > CONTENT_MAX) {
+    throw new ExpectedError(
+      `Turning the role names in this message into real mentions takes it to ${outgoing.length} ` +
+        `characters, and Discord refuses anything over ${CONTENT_MAX}. Each @role becomes an id, ` +
+        'which costs about 22 characters. Cut roughly ' +
+        `${outgoing.length - CONTENT_MAX} characters and send it again.`,
     );
   }
 
@@ -142,7 +200,7 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
     .insert({
       guild_id: guildId,
       channel_id: channelId,
-      content: content || null,
+      content: outgoing || null,
       embed_title: embedTitle || null,
       embed_body: content ? null : embedBody || null,
       embed_type: content ? null : (input.embed?.type ?? null),
@@ -159,6 +217,14 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
   // can speak for the club with no record of who moved its mouth is the thing
   // worth not building. The ping bit is in there because it is the difference
   // between a line in a channel and every phone in the server buzzing.
+  //
+  // IT QUOTES THE RESOLVED TEXT, not what was typed. `target_id` is the outbox
+  // row, and an entry quoting something other than that row's content is a trail
+  // that disagrees with the thing it points at. `mentioned_roles` restores what
+  // the raw text was good for, which is that a human can read "internal" where
+  // the row now holds `<@&1234...>`, and it names the interesting fact plainly:
+  // this ping was aimed at a specific role. Neither costs a second copy of the
+  // message.
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'discord_message_queued',
@@ -167,7 +233,8 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
     new_value: {
       channel_id: channelId,
       ping,
-      ...(content ? { content } : { embed_title: embedTitle, embed_body: embedBody }),
+      ...(content ? { content: outgoing } : { embed_title: embedTitle, embed_body: embedBody }),
+      ...(mentionedRoles.length ? { mentioned_roles: mentionedRoles } : {}),
     },
   });
 
