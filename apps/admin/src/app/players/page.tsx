@@ -21,6 +21,8 @@ import { PrivilegeReviewActions } from './privilege-review-actions';
 import { EloReviewActions } from './elo-review-actions';
 import { RosterTable, type RosterRow } from './roster-table';
 import { RowLink } from '@/components/row-link';
+import { RowSelectCheckbox, SelectAllCheckbox } from '@/components/selection';
+import { BulkPlayerActions } from './bulk-player-actions';
 import { RosterCharts } from './roster-charts';
 import { memberIdentifier } from '@/lib/member-identifier';
 import { rosterActionsFor, rosterActionKey, type RosterAction } from '@/lib/roster-actions';
@@ -112,6 +114,12 @@ export default async function PlayersPage({
   // capability the /permissions editor asks for — not players.update.write, or
   // somebody who may edit member details could grant admin through a review.
   const canConsoleAccess = can('players.consoleaccess.write');
+  // MULTI-SELECT EXISTS ONLY FOR SOMEBODY WHO COULD ACT ON A SELECTION. The two
+  // capabilities are the two bulk controls (see BulkPlayerActions), and holding
+  // neither means the checkbox column is never rendered at all — a trainer gets
+  // the roster exactly as it was. This decides whether the CONTROL is drawn; the
+  // server actions behind it gate every record on their own.
+  const canBulk = canApprove || canManage;
   /**
    * Which of the actions the tab offers are this viewer's to press.
    *
@@ -474,6 +482,15 @@ export default async function PlayersPage({
           href={`/players/${player.id}`}
           className="cursor-pointer transition-colors hover:bg-[var(--border-hover)]"
         >
+          {/* FIRST CELL, its own column, and never folded into the name cell:
+              a checkbox inside the member's link would be a control inside a
+              navigation target. RowLink already treats `input` and `label` as
+              interactive, so ticking a box does not also open the member. */}
+          {canBulk && (
+            <td className="w-px px-4 py-3 align-middle">
+              <RowSelectCheckbox id={player.id} label={displayName} />
+            </td>
+          )}
           <td className="px-4 py-3">{name}</td>
           <td className="px-4 py-3">
             <div className="flex flex-wrap items-center gap-1">{badges}</div>
@@ -504,7 +521,19 @@ export default async function PlayersPage({
       ),
       card: (
         <TableCard
-          title={name}
+          title={
+            canBulk ? (
+              // Beside the name rather than in a row of its own: the card IS the
+              // row on a phone, and a checkbox floating above it reads as a
+              // control over the card rather than a selection of the member.
+              <span className="flex items-start gap-2">
+                <RowSelectCheckbox id={player.id} label={displayName} />
+                <span className="min-w-0 flex-1">{name}</span>
+              </span>
+            ) : (
+              name
+            )
+          }
           badges={badges}
           fields={[
             { label: 'Singles', value: rating(r?.singles_elo, r?.singles_provisional) },
@@ -654,6 +683,11 @@ export default async function PlayersPage({
           }
           head={
             <tr className="border-b border-[var(--border)]">
+              {canBulk && (
+                <th className={`${TH} w-px text-left`}>
+                  <SelectAllCheckbox noun="member" />
+                </th>
+              )}
               <th className={`${TH} text-left`}>Player</th>
               <th className={`${TH} text-left`}>Standing</th>
               <th className={`${TH} text-right`}>Singles</th>
@@ -664,6 +698,9 @@ export default async function PlayersPage({
             </tr>
           }
           rows={rows}
+          bulkBar={
+            canBulk ? <BulkPlayerActions canApprove={canApprove} canManage={canManage} /> : undefined
+          }
         />
         </>
       )}

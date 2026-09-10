@@ -20,6 +20,8 @@ import { SeasonSelect } from '@/components/season-select';
 import { isWaivedFee } from '@/lib/fee-status';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog, CheckinQrDialog } from './actions';
 import { SessionTable, type SessionRow } from './session-table';
+import { SelectionProvider } from '@/components/selection';
+import { BulkSessionActions } from './bulk-session-actions';
 import { TonightCheckin, DoorFeed, type DoorFeedEntry } from './tonight';
 import { LiveAttendance } from './live-attendance';
 import { TurnoutPanel, type TurnoutNight } from './turnout-panel';
@@ -160,6 +162,16 @@ export default async function SessionsPage({
     archive: may('sessions.archive.write'),
     delete: may('sessions.delete.write'),
   };
+  // The two bulk controls are the two capabilities, and holding neither means
+  // the checkbox column is never drawn — the same rule /players follows. Which
+  // of the two buttons appears is answered again inside the bar; this only
+  // decides whether there is anything to select for.
+  const canBulk = menuCan.archive || menuCan.delete;
+  // What a confirmation calls each night. The name alone is not enough — a club
+  // runs "Tuesday Drop-in" every week of the term, so a list of eleven
+  // identically-named rows would tell the reader nothing about WHICH eleven.
+  const selectableSessions = (list: SessionRow[]) =>
+    list.map((r) => ({ id: r.id, label: `${r.name} · ${r.dayLabel} ${r.timeLabel}` }));
   // WHAT A MEMBER OWES IS NOT SESSION DATA. The door feed shows a fee badge
   // beside each person walking in, which means whoever is working the door
   // reads the club's debt list — so it asks for the capability that gates the
@@ -746,13 +758,25 @@ export default async function SessionsPage({
           {/* The anchor sits on a wrapper rather than on the Card: Card takes
               children/className/padding and nothing else, and packages/ui is
               not this change's to widen. */}
+          {/* ONE PROVIDER PER TABLE, so the two selections are separate. They
+              are two different decisions — closing the nights still to come is
+              not the same act as tidying the ones already played — and a single
+              selection spanning both would let one Close reach across the
+              boundary the page draws between them. `visibleIds` is the whole
+              list because this table has no client-side filter: everything it
+              holds is on screen. */}
           <div id="upcoming" className="scroll-mt-6">
+            <SelectionProvider
+              items={selectableSessions(upcomingRows)}
+              visibleIds={upcomingRows.map((r) => r.id)}
+            >
             <Card padding={false}>
               {upcomingRows.length > 0 ? (
                 <SessionTable
                   rows={upcomingRows}
                   heading="Upcoming"
                   count={`Next ${upcomingRows.length} session${upcomingRows.length === 1 ? '' : 's'}`}
+                  selectable={canBulk}
                 />
               ) : (
                 <div className="p-6">
@@ -767,6 +791,10 @@ export default async function SessionsPage({
                 </div>
               )}
             </Card>
+            {canBulk && (
+              <BulkSessionActions canArchive={menuCan.archive} canDelete={menuCan.delete} />
+            )}
+            </SelectionProvider>
           </div>
 
           {/* The term's archive stays on the page. Marking a no-show after the
@@ -776,13 +804,22 @@ export default async function SessionsPage({
               without saying so. */}
           {earlierRows.length > 0 && (
             <div id="earlier" className="scroll-mt-6">
+              <SelectionProvider
+                items={selectableSessions(earlierRows)}
+                visibleIds={earlierRows.map((r) => r.id)}
+              >
               <Card padding={false}>
                 <SessionTable
                   rows={earlierRows}
                   heading="Earlier this season"
                   count={`${earlierRows.length} session${earlierRows.length === 1 ? '' : 's'}`}
+                  selectable={canBulk}
                 />
               </Card>
+              {canBulk && (
+                <BulkSessionActions canArchive={menuCan.archive} canDelete={menuCan.delete} />
+              )}
+              </SelectionProvider>
             </div>
           )}
         </div>
