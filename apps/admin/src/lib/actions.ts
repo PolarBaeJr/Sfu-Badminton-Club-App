@@ -90,6 +90,7 @@ export type { SeasonEloPolicy } from './actions/seasons';
 export {
   createSession,
   updateSession,
+  patchSession,
   archiveSession,
   deleteSession,
   sendSessionReminders,
@@ -158,6 +159,12 @@ export {
 export {
   bulkApprovePlayers,
   bulkUpdatePlayers,
+  bulkUpdateSessions,
   bulkArchiveSessions,
   bulkDeleteSessions,
+  bulkMarkFeesPaid,
+  bulkWaiveFees,
+  bulkMarkFeesUnpaid,
+  bulkMarkTournamentFeesPaid,
+  bulkMarkTournamentFeesUnpaid,
 } from './actions/bulk';

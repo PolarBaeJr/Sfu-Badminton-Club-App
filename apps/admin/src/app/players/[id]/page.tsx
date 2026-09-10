@@ -1,5 +1,10 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
+import { accessLevelFor, effectiveCapabilities, permissionsOf, permits } from '@/lib/permissions';
+// THE WHOLE PERMISSION EDITOR, in its one-person mode. Imported across routes
+// rather than copied, because a second console-access control is a second place
+// that can disagree about what Admin means — see console-access.ts.
+import { PermissionEditor } from '@/app/permissions/permission-editor';
+import { customBaselinesFrom, personRowFrom } from '@/lib/person-row';
 import { Badge, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -60,6 +65,23 @@ export default async function PlayerDetailPage({
   const showNotes = canRead || canWriteNotes;
   /** How many of the three panels below this viewer gets — the grid's columns. */
   const panelCount = [canManage, canRead, showNotes].filter(Boolean).length;
+  // CONSOLE PERMISSIONS, THE OTHER HALF OF WHAT A MEMBER'S RECORD IS. The two
+  // halves are separate capabilities on purpose and either one alone is enough to
+  // draw the panel: the editor itself hides the tree without the compose write
+  // and hides the access control without the console write, so a holder of one
+  // gets exactly the half they can use.
+  //
+  // Resolved once into a set because three questions are asked of it, and it is
+  // the same pair permits() is given above.
+  //
+  // NOT gated on `permissions.page`. The resolver prunes any capability whose
+  // area page is absent, so `permissions.write` cannot resolve without it —
+  // asking for it here would be a second copy of a rule the resolver already
+  // enforces, and the two copies would only ever disagree by going stale.
+  const viewerSet = effectiveCapabilities(level, permissions);
+  const canConsoleAccess = viewerSet.has('players.consoleaccess.write');
+  const canComposePermissions = viewerSet.has('permissions.write');
+  const showPermissions = canComposePermissions || canConsoleAccess;
   // Nobody with a claim on this member at all. Every query below is skipped —
   // including the one that decides notFound(), which is deliberate: whether a
   // particular id exists is itself something the roster would tell them.
@@ -112,6 +134,7 @@ export default async function PlayerDetailPage({
     { data: varsityNotes },
     { data: walkoverEvents },
     { data: tournamentNoShows },
+    { data: baselineRows },
   ] = await Promise.all([
     // The member row itself stays: it is what notFound() reads, what the
     // identity header draws, and what seeds the edit form for somebody who may
@@ -165,6 +188,20 @@ export default async function PlayerDetailPage({
           .eq('tournament_events.tournaments.season_id', seasonId ?? '')
           .eq('status', 'no_show')
       : Promise.resolve({ data: null }),
+    // The club's own baselines, for the permission editor's "Starts from"
+    // picker. Read here for the same reason /permissions reads them in its page:
+    // the editor is a client component, and this is a query the service-role
+    // client is already open for. No holder count — that is a question the
+    // baseline MANAGER asks, and this panel has no manager in it.
+    //
+    // Ordered the same way /permissions orders it, so the picker offers the
+    // club's jobs in the same order on both screens.
+    showPermissions
+      ? supabase
+          .from('permission_baselines')
+          .select('id, name, capabilities, builtin_role, created_at, updated_at')
+          .order('name')
+      : Promise.resolve({ data: [] }),
   ]);
 
   if (!player) notFound();
@@ -618,6 +655,45 @@ export default async function PlayerDetailPage({
               </div>
             ))}
           </dl>
+        </Panel>
+      )}
+
+      {/* CONSOLE PERMISSIONS — the same editor /permissions hosts, in its
+          one-person mode, on the page about the one person. It is LAST rather
+          than up in the three-column grid because a collapsed sixteen-area
+          capability tree plus the access box is an order of magnitude taller than
+          anything above it: at the top of the page it would bury Recent matches
+          and Membership entirely, and those are what an officer opens this page
+          for.
+
+          /permissions is unchanged and still the place the club's baselines are
+          managed — that question is about what the jobs ARE, not who holds one,
+          and it has no home on one member's record. */}
+      {showPermissions && (
+        <Panel title="Console permissions" padded={false}>
+          <PermissionEditor
+            // A FRESH INSTANCE PER MEMBER. /players/A → /players/B is the same
+            // route, so React would otherwise reuse this instance and carry
+            // `access`, the typed reason and the pending queue across to somebody
+            // else's record. The alternative is an effect that resyncs state from
+            // props, which is the defect class ../console-access-actions.tsx
+            // already documents (its openDialog comment, and 5e8d25b).
+            key={player.id}
+            solo
+            // The row is already in hand from the select('*') above — permission
+            // triple and level flags included — so the panel costs no extra query.
+            holders={[personRowFrom(player)]}
+            // `others` is the roster of people with NO console access, offered so
+            // that a level can be handed to one of them. On one person's own page
+            // the target is holders[0] and there is nobody else to reach.
+            others={[]}
+            viewerId={viewer.id}
+            viewerIsAdmin={isAdmin}
+            viewerCanGrantConsole={isAdmin || canConsoleAccess}
+            viewerCanComposeCapabilities={canComposePermissions}
+            viewerCapabilities={[...viewerSet]}
+            baselines={customBaselinesFrom(baselineRows ?? [])}
+          />
         </Panel>
       )}
     </div>

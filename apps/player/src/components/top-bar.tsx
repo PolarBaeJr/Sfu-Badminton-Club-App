@@ -100,8 +100,20 @@ export function TopBar({
               >
                 Leaderboard
               </Link>
-              {/* TODO: activate → link to /exec (exec photo page) when ready; add a Contact Us page here later. */}
-              <span className="nav-item" aria-disabled="true" style={{ opacity: 0.4, cursor: 'default' }} title="Coming soon">Execs</span>
+              {/* /exec IS ready and has been for a while: it lists ten officers
+                  from get_executives(), which is granted to anon, and the landing
+                  page, the fees page and the settings page all link straight to
+                  it. This was an inert aria-disabled span reading "Coming soon",
+                  so the only exec-page control in the app chrome silently did
+                  nothing when a visitor clicked it — on every page, forever.
+                  TODO: add a Contact Us page alongside this later. */}
+              <Link
+                href="/exec"
+                className={cn('nav-item', pathname.startsWith('/exec') && 'active')}
+                aria-current={pathname.startsWith('/exec') ? 'page' : undefined}
+              >
+                Execs
+              </Link>
             </>
           )}
         </nav>

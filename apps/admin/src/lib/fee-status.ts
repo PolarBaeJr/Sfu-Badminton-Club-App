@@ -1,8 +1,14 @@
 // A waiver is stored as a paid row with amount_cents 0 and method 'waived', so
 // income sums stay correct without a separate column. Reading that back takes a
 // two-field test, and the fees page and waiveFee both have to agree on it — the
-// page to render "Waived" instead of "Paid $0.00", waiveFee to tell a genuine
-// payment apart from a re-waive it may safely overwrite.
+// page to render "Waived" instead of "Paid $0.00", waiveFee to say which of the
+// two states a row it is refusing is in.
+//
+// NOT to decide whether a write may proceed. waiveFee once used this to let a
+// re-waive through as harmless, and it is not: re-waiving writes a fresh
+// paid_at and marked_by over the ones already there, losing when the waiver was
+// granted and by whom. A waived row is refused on paid_at alone, like any other
+// row that already records something.
 //
 // NOT a 'use server' module: this is a plain predicate imported by both a
 // server component and a server action.

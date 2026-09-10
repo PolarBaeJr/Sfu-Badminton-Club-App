@@ -61,31 +61,14 @@ import {
   type CustomBaseline,
   type PermissionRole,
 } from '@/lib/permissions';
+// The row this editor lists. It lives in a pure module because a second screen
+// builds one now and the mapping needed a test — see the header there.
+import type { PersonRow } from '@/lib/person-row';
 
-export interface PersonRow {
-  id: string;
-  name: string;
-  email: string | null;
-  title: string | null;
-  // NULL is an ordinary member — somebody with no console access at all. They
-  // are listed because giving them some is what this page is for, and their
-  // three permission columns are empty by construction: no level means no gate
-  // is ever reached, so nothing stored would be consulted.
-  level: AccessLevel | null;
-  // Standing, not level. A banned or deactivated executive still holds the
-  // level and still cannot get through the front door, and a screen describing
-  // access nobody has is worse than one that says so.
-  canSignIn: boolean;
-  role: string | null;
-  grants: string[];
-  revokes: string[];
-  /**
-   * Which custom baseline these grants were copied from, or null for a set
-   * somebody picked by hand. PROVENANCE, never authority: the resolver does not
-   * know the table exists, and clearing this takes nothing away.
-   */
-  baselineId: string | null;
-}
+// Re-exported so every existing `from './permission-editor'` import keeps
+// working. The shape did not move because somebody wanted it elsewhere in the
+// tree; it moved so the builder beside it could be called without a DOM.
+export type { PersonRow };
 
 // Words for the machine-readable path segments. The area and group keys are
 // path segments — lower-case, no spaces — and putting them on screen raw would
@@ -412,6 +395,8 @@ export function PermissionEditor({
   viewerCanGrantConsole,
   viewerCapabilities,
   baselines,
+  solo = false,
+  viewerCanComposeCapabilities = true,
 }: {
   holders: PersonRow[];
   others: PersonRow[];
@@ -435,8 +420,28 @@ export function PermissionEditor({
   viewerCapabilities: Capability[];
   /** The club's own baselines, offered beside the four VP jobs. */
   baselines: CustomBaseline[];
+  /**
+   * ONE PERSON, NO RAIL: this editor embedded on that person's own detail page.
+   * `holders` carries exactly that one row and `others` is empty, so there is
+   * nobody to pick and nothing to search — the pane IS the panel.
+   */
+  solo?: boolean;
+  /**
+   * Whether the viewer holds `permissions.write`. Default `true` so /permissions
+   * passes nothing: that route is gated on `permissions.page`, and therefore on
+   * the write, so the question could not arise there.
+   *
+   * NEEDED AS AN EXPLICIT PROP rather than read off `viewerCapabilities`,
+   * because localRefusal (lib/permission-batch.ts) mirrors setPlayerPermissions'
+   * five checks and NOT the actor's own `permissions.write` — so the queue
+   * validator cannot be relied on to hide a Save the server always refuses.
+   */
+  viewerCanComposeCapabilities?: boolean;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // WHO THE RAIL HAS PICKED, which in solo mode is nobody and never will be.
+  // Read through `selectedId` below rather than directly — see the derivation
+  // under the state block, which is what makes solo mode work at all.
+  const [pickedId, setPickedId] = useState<string | null>(null);
   // EVERY PERSON'S PENDING TRIPLE, KEYED BY ID, and this is the whole of the
   // change. It used to be three pieces of state describing whoever was selected,
   // so picking somebody else silently threw the work away — the club owner wants
@@ -450,7 +455,13 @@ export function PermissionEditor({
   const [capabilitySearch, setCapabilitySearch] = useState('');
   const [mode, setMode] = useState<FilterMode>('all');
   const [memberSearch, setMemberSearch] = useState('');
-  const [access, setAccess] = useState<ExecRole>('none');
+  // SEEDED IN THE INITIALISER FOR SOLO, because select() — the rail button's
+  // handler, and the only other place this is ever seeded — never runs when
+  // there is no rail. Left at 'none' otherwise, exactly as before: on
+  // /permissions nobody is selected yet, so there is no level to read.
+  const [access, setAccess] = useState<ExecRole>(() =>
+    accessForLevel(solo ? (holders[0]?.level ?? null) : null),
+  );
   const [accessReason, setAccessReason] = useState('');
   /**
    * ONE REASON FOR THE WHOLE QUEUE, and it belongs beside the Save button
@@ -469,6 +480,21 @@ export function PermissionEditor({
   const { toast } = useToast();
   const confirm = useConfirm();
   const router = useRouter();
+
+  // THE SELECTION IS DERIVED, NOT STORED, AND THAT IS THE WHOLE OF SOLO MODE.
+  // Do not "simplify" this back into one piece of state.
+  //
+  // In solo there is exactly one person and they are always the one on screen,
+  // so the id comes from the row rather than from a click that never happens.
+  // The trick is what that does to the two `setPickedId(null)` calls — the end of
+  // save() and the end of applyAccess(), both of which drop the selection because
+  // on /permissions the person has just moved between the two lists. Here there
+  // is no list to move between and the panel must stay where it is, so writing
+  // `pickedId` leaves the derived answer untouched and both calls become harmless
+  // no-ops. Storing the solo id instead would mean either blanking the panel or
+  // teaching both call sites about a mode they have no other reason to know.
+  const soloPerson = solo ? (holders[0] ?? null) : null;
+  const selectedId = soloPerson ? soloPerson.id : pickedId;
 
   const held = useMemo(() => new Set(viewerCapabilities), [viewerCapabilities]);
   const baselineNames = useMemo(
@@ -537,7 +563,24 @@ export function PermissionEditor({
             [...before].some((capability) => !held.has(capability))
             ? 'They already hold capabilities you do not, so you cannot change their permissions. Ask an admin.'
             : null;
-  const composable = selected !== null && selectedLevel !== null && readOnlyReason === null;
+  // WHETHER THIS VIEWER MAY HAND-PICK CAPABILITIES AT ALL, as opposed to whether
+  // this ROW may be composed. The two are different questions and only the
+  // second one has a reason to state — a viewer who reached this panel from a
+  // member's detail page on `players.consoleaccess.write` alone is not being
+  // refused anything, they simply never had the capability the tree writes.
+  const canCompose = viewerCanComposeCapabilities;
+  // ONE CONJUNCTION, AND IT CASCADES TO THE WHOLE TREE. Verified rather than
+  // assumed: `composable` is what disables every segment, hides the "Starts
+  // from" select and the Reads/All/None buttons, hides the losing band and the
+  // orphan-revokes box, and gates the tree itself. So with it false nothing can
+  // reach `pending` — which means no save bar, and no beforeunload or click
+  // interceptor armed either, since both key off `entries.length`.
+  //
+  // readOnlyReason and the read-only "Everything they hold" panel stay visible on
+  // purpose: somebody who may only set a console level still needs to see what
+  // the level they are setting comes with.
+  const composable =
+    selected !== null && selectedLevel !== null && readOnlyReason === null && canCompose;
 
   // PICKING SOMEBODY RESETS THE VIEW AND NOTHING ELSE. The filter, the mode and
   // the open areas describe how this pane is being LOOKED at and belong to the
@@ -546,7 +589,7 @@ export function PermissionEditor({
   // next. Their pending permission edit is deliberately not touched — that is
   // the whole point of the queue.
   function select(person: PersonRow) {
-    setSelectedId(person.id);
+    setPickedId(person.id);
     setAccess(accessForLevel(person.level));
     setAccessReason('');
     setCapabilitySearch('');
@@ -929,7 +972,7 @@ export function PermissionEditor({
       // pending, and clearing the box would make the admin retype the reason
       // they already gave for the very same act.
       setBatchReason('');
-      setSelectedId(null);
+      setPickedId(null);
     });
   }
 
@@ -1042,7 +1085,12 @@ export function PermissionEditor({
           'success',
         );
         setPending((prev) => dropPending(prev, [selected.id]));
-        setSelectedId(null);
+        setPickedId(null);
+        // THE REASON DESCRIBED A MOVE THAT HAS NOW HAPPENED. A no-op on
+        // /permissions, which drops the selection and re-seeds through select();
+        // in solo the panel stays put, so without this the box would still hold
+        // the text typed for the change that just landed.
+        setAccessReason('');
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to change console access', 'error');
@@ -1296,8 +1344,21 @@ export function PermissionEditor({
           collapses and exactly one of the two is drawn: the list until somebody
           is picked, the editor afterwards, with a back control that clears the
           selection. A 296px rail beside a capability tree on a 390px screen
-          would be two unusable columns rather than one usable one. */}
-      <Card padding={false} className="md:grid md:grid-cols-[296px_minmax(0,1fr)]">
+          would be two unusable columns rather than one usable one.
+
+          IN SOLO THE CARD IS NOT A CARD. The host is a `Panel` on the member's
+          own detail page and already draws the hairline box, so a second border
+          and a second surface inside it would read as a box in a box. The radius
+          is left alone on purpose — see Card itself, where `rounded-xl` compiles
+          to 0 in both apps and passing `rounded-none` is called out as the wrong
+          fix. */}
+      <Card
+        padding={false}
+        className={cn(
+          solo ? 'border-0 bg-transparent' : 'md:grid md:grid-cols-[296px_minmax(0,1fr)]',
+        )}
+      >
+        {!solo && (
         <div
           className={cn(
             'md:sticky md:top-[120px] md:self-start md:h-[calc(100vh-140px)] md:flex md:flex-col md:border-r md:border-[var(--line)]',
@@ -1358,8 +1419,12 @@ export function PermissionEditor({
               : 'A role decides what somebody STARTS from; grants and revokes adjust it person by person. Leave a role unset and they keep the full access their level has always had. You can only hand out capabilities you hold yourself, and every change is recorded in the audit log.'}
           </p>
         </div>
+        )}
 
-        <div className={cn('min-w-0', !selected && 'hidden md:block')}>
+        {/* The `hidden md:block` is the phone half of the two-pane collapse and
+            has nothing to hide behind in solo: there is no list to fall back to,
+            so an unpicked pane would be an empty panel below `md`. */}
+        <div className={cn('min-w-0', !solo && !selected && 'hidden md:block')}>
           {selected === null ? (
             <EmptyState
               title="Nobody picked"
@@ -1368,9 +1433,13 @@ export function PermissionEditor({
           ) : (
             <>
               <div className="border-b border-[var(--line)] px-4 py-4">
+                {/* Back to a list that does not exist in solo, and the click
+                    would not even blank the pane — the selection is derived
+                    there. A control that does nothing is worse than no control. */}
+                {!solo && (
                 <button
                   type="button"
-                  onClick={() => setSelectedId(null)}
+                  onClick={() => setPickedId(null)}
                   className={cn(
                     MICRO,
                     'md:hidden mb-3 inline-flex items-center gap-2 min-h-[36px] text-[var(--mute)] hover:text-[var(--ink)] transition-colors',
@@ -1379,6 +1448,7 @@ export function PermissionEditor({
                   <ArrowLeft className="w-4 h-4" />
                   All people
                 </button>
+                )}
 
                 <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
                   <div className="min-w-0">
@@ -1543,6 +1613,20 @@ export function PermissionEditor({
                   <>
                     {readOnlyReason && (
                       <p className="text-sm text-[var(--mute)] max-w-[64ch]">{readOnlyReason}</p>
+                    )}
+
+                    {/* WHY THERE IS NO TREE, said out loud. This viewer is not
+                        being refused anything — the row is composable and they
+                        simply do not hold `permissions.write` — so it is not a
+                        readOnlyReason and it is drawn only when there is no other
+                        reason competing with it. A tree that is silently absent
+                        is read as a bug in the screen. */}
+                    {!canCompose && readOnlyReason === null && (
+                      <p className="text-sm text-[var(--mute)] max-w-[64ch]">
+                        You can set this member&rsquo;s console access here, but not hand-pick the
+                        capabilities that come with it — that is set on Permissions. What they hold
+                        today is below.
+                      </p>
                     )}
 
                     {/* ADMIN IGNORES EVERY CELL BELOW, so say it before somebody

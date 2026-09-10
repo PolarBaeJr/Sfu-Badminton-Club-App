@@ -139,3 +139,106 @@ describe('updatePlatformSettings — the reason is the boundary', () => {
     ]);
   });
 });
+
+// A SAVE MAY NOT QUIETLY DELETE A SETTING IT WAS NOT SENT.
+//
+// The write is a whole-blob JSONB replace, so a payload missing a key removes
+// it. Both real forms spread the saved blob first, which is why this never
+// showed up in the app — and why nothing stopped a stale tab or a hand-rolled
+// POST from doing it. `updates` is a client-controlled POST field, so the shape
+// that matters is the one no button produces.
+const REAL_RATING_KEY = 'rating_defaults';
+const REAL_RATING_BLOB = {
+  default_elo: 400,
+  min_elo: 100,
+  max_elo: 3001,
+  tier_beginner_elo: 400,
+  tier_intermediate_elo: 800,
+  tier_advanced_elo: 1200,
+};
+const WHY = 'Raising the advanced starting rating';
+
+describe('updatePlatformSettings — a partial blob is refused, not applied', () => {
+  beforeEach(() => {
+    store.db.platform_settings!.push({ key: REAL_RATING_KEY, value: { ...REAL_RATING_BLOB } });
+  });
+
+  const ratingRow = () => settings().find((s) => s.key === REAL_RATING_KEY)!;
+
+  it('refuses a payload holding one field of a six-field blob, and writes nothing', async () => {
+    // The crafted-POST shape, verbatim: one tier, no bounds, no other tiers.
+    // Before the guard this succeeded and left rating_defaults holding exactly
+    // one key — no error, and an audit row that looked entirely normal.
+    await expect(
+      updatePlatformSettings([{ key: REAL_RATING_KEY, value: { tier_advanced_elo: 9999 } }], WHY),
+    ).rejects.toThrow(/would delete the settings/);
+
+    expect(ratingRow().value).toEqual(REAL_RATING_BLOB);
+    expect(audits()).toHaveLength(0);
+  });
+
+  it('names every key it would have destroyed', async () => {
+    // Naming them is the whole point: "invalid payload" tells a stale tab
+    // nothing, and tells somebody deleting a key on purpose even less.
+    await expect(
+      updatePlatformSettings([{ key: REAL_RATING_KEY, value: { tier_advanced_elo: 9999 } }], WHY),
+    ).rejects.toThrow(/default_elo, min_elo, max_elo, tier_beginner_elo, tier_intermediate_elo/);
+  });
+
+  it('says "the setting" for one and "the settings" for several', async () => {
+    const { tier_advanced_elo: _dropped, ...allButOne } = REAL_RATING_BLOB;
+    await expect(
+      updatePlatformSettings([{ key: REAL_RATING_KEY, value: allButOne }], WHY),
+    ).rejects.toThrow(/would delete the setting tier_advanced_elo,/);
+  });
+
+  it('still lets a superset through — every field back, one of them changed', async () => {
+    // The shape both real forms actually send. This must not have become
+    // harder: the guard is about what is ABSENT, never about what is different.
+    await updatePlatformSettings(
+      [{ key: REAL_RATING_KEY, value: { ...REAL_RATING_BLOB, tier_advanced_elo: 1400 } }],
+      WHY,
+    );
+
+    expect(ratingRow().value).toEqual({ ...REAL_RATING_BLOB, tier_advanced_elo: 1400 });
+    expect(audits()).toHaveLength(1);
+    expect(audits()[0]!.old_value).toEqual(REAL_RATING_BLOB);
+    expect(audits()[0]!.new_value).toEqual({ ...REAL_RATING_BLOB, tier_advanced_elo: 1400 });
+  });
+
+  it('lets a payload ADD a key, which is how a migration-seeded field arrives', async () => {
+    await updatePlatformSettings(
+      [{ key: REAL_RATING_KEY, value: { ...REAL_RATING_BLOB, provisional_k_enabled: true } }],
+      WHY,
+    );
+    expect(ratingRow().value).toHaveProperty('provisional_k_enabled', true);
+  });
+
+  it('refuses a key that does not exist rather than writing an audit row about it', async () => {
+    // `.update().eq('key', ...)` matches zero rows and returns no error, so this
+    // used to be a silent no-op that still logged a change.
+    await expect(
+      updatePlatformSettings([{ key: 'rating_defaultz', value: { min_elo: 100 } }], WHY),
+    ).rejects.toThrow(/no platform setting called "rating_defaultz"/);
+    expect(audits()).toHaveLength(0);
+  });
+
+  it('writes NO key when a later key in the same save is refused', async () => {
+    // There is no transaction across keys, so the guards run in a pass of their
+    // own. Checked per key inside the write loop, this save would have committed
+    // elo_settings and audited it before ever looking at the bad second key.
+    await expect(
+      updatePlatformSettings(
+        [
+          { key: KEY, value: { k_factor: 40 } },
+          { key: REAL_RATING_KEY, value: { tier_advanced_elo: 9999 } },
+        ],
+        WHY,
+      ),
+    ).rejects.toThrow(/would delete/);
+
+    expect(settings().find((s) => s.key === KEY)!.value).toEqual({ k_factor: 32 });
+    expect(ratingRow().value).toEqual(REAL_RATING_BLOB);
+    expect(audits()).toHaveLength(0);
+  });
+});

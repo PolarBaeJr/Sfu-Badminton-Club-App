@@ -69,7 +69,15 @@ export default async function PlayersPage({
   searchParams: Promise<{ tab?: string; search?: string }>;
 }) {
   const params = await searchParams;
-  const requestedTab = params.tab || 'competitive';
+  // THE UNFILTERED ROSTER IS THE LANDING TAB. Competitive was the default back
+  // when it was the first tab in the strip; `all` is now, and opening the roster
+  // on a filtered view meant somebody looking for a member they could not find
+  // had to work out which of eight queues was hiding them.
+  //
+  // Safe to default to despite `all` being a moderation tab: the fallback below
+  // resolves it to `competitive` for anybody who cannot moderate, so this
+  // changes where an exec lands and leaves a trainer exactly where they were.
+  const requestedTab = params.tab || 'all';
   // Execs manage the roster; only admins grant privilege, remove, or merge.
   // Hiding those controls is cosmetic — the server actions are the real gate —
   // but showing a button that is guaranteed to fail is worse than not showing

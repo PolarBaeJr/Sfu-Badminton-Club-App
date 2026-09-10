@@ -107,7 +107,9 @@ export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[]
         const value: Record<string, unknown> = { ...(setting?.value ?? {}) };
         for (const [field, raw] of Object.entries(fields)) {
           const meta = FIELD_META[key]?.[field];
-          if (!meta || meta.type === 'text') {
+          // A select saves the string it was given, exactly as text does — the
+          // control is what restricts the vocabulary, not this.
+          if (!meta || meta.type === 'text' || meta.type === 'select') {
             value[field] = raw;
             continue;
           }
@@ -251,6 +253,29 @@ export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[]
                     label={fm.label}
                     onChange={(next) => handleFieldChange(s.key, field, next, original)}
                   />
+                );
+              } else if (fm.type === 'select' && fm.options) {
+                const original = raw == null ? '' : String(raw);
+                const current = (fieldEdits[s.key]?.[field] as string | undefined) ?? original;
+                // A VALUE THE OPTIONS DO NOT COVER IS SHOWN, NOT SWALLOWED. A
+                // <select> whose value matches no <option> renders as blank,
+                // which would present a setting the database is actively
+                // warning about as if nothing were set at all. The stored value
+                // gets its own option so an officer can see what is there and
+                // pick their way out of it.
+                const known = fm.options.some((o) => o.value === current);
+                control = (
+                  <select
+                    value={current}
+                    onChange={(e) => handleFieldChange(s.key, field, e.target.value, original)}
+                    aria-label={fm.label}
+                    className="settings-input w-56"
+                  >
+                    {!known && <option value={current}>{current || '— not set —'}</option>}
+                    {fm.options.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
                 );
               } else {
                 const original = raw == null ? '' : String(raw);

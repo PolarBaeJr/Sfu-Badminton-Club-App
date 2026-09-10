@@ -118,9 +118,10 @@ export async function markFeePaid(input: FeeMarkInput) {
   // offered over either and no rendered control reaches this branch.
   //
   // A waived row is refused on paid_at alone — see the matching note in
-  // tournament-fees.ts. waiveFee may re-waive a waiver because that destroys
-  // nothing; recording a PAYMENT over a waiver replaces the club's decision not
-  // to charge, and that decision is a fact of its own.
+  // tournament-fees.ts. Recording a PAYMENT over a waiver replaces the club's
+  // decision not to charge, and that decision is a fact of its own. waiveFee
+  // refuses a re-waive on the same test, for a reason of its own: it would
+  // rewrite the date the waiver was granted and the officer who granted it.
   if (existing?.paid_at) {
     throw new ExpectedError(
       `That fee is already recorded as ${isWaivedFee(existing) ? 'waived' : `paid ($${((existing.amount_cents ?? 0) / 100).toFixed(2)})`}. ` +
@@ -219,8 +220,18 @@ export async function waiveFee(input: FeeWaiveInput) {
   // old_value for exactly this reason.
   //
   // Refuse rather than overwrite: reversing a payment is markFeeUnpaid, which
-  // preserves the amount and audits it. Re-waiving an already-waived row is
-  // still allowed — it is idempotent and destroys nothing.
+  // preserves the amount and audits it.
+  //
+  // AN ALREADY-WAIVED ROW IS REFUSED TOO, which it was not until recently. A
+  // re-waive was called idempotent, and it is not: the update below writes a
+  // fresh paid_at and marked_by, so running it a second time replaces the date
+  // the waiver was granted and the officer who granted it with today and
+  // whoever clicked. When a fee was waived and by whom is a fact of its own —
+  // that is the whole point of recording it — and removing the waiver and
+  // granting it again is how to redo the decision on the record.
+  //
+  // isWaivedFee is still needed: the page renders "Waived" from it, and the
+  // refusal below uses it to say which of the two states the row is in.
   const { data: existing } = await adminClient
     .from('club_fees')
     .select('id, player_id, season_id, amount_cents, paid_at, method, reference')
@@ -232,10 +243,15 @@ export async function waiveFee(input: FeeWaiveInput) {
     .eq('fee_type', 'dues')
     .maybeSingle();
 
-  if (existing?.paid_at && !isWaivedFee(existing)) {
+  // On paid_at alone, branching only for the wording — the shape markFeePaid
+  // twenty lines above already had.
+  if (existing?.paid_at) {
     throw new ExpectedError(
-      `That fee is already recorded as paid ($${((existing.amount_cents ?? 0) / 100).toFixed(2)}). ` +
-        'Mark it unpaid first if you really mean to waive it — waiving would overwrite the amount with $0.00.',
+      isWaivedFee(existing)
+        ? 'That fee is already waived. Remove the waiver first if you really mean to grant it again — ' +
+          're-waiving would replace the date it was waived and the officer who waived it.'
+        : `That fee is already recorded as paid ($${((existing.amount_cents ?? 0) / 100).toFixed(2)}). ` +
+          'Mark it unpaid first if you really mean to waive it — waiving would overwrite the amount with $0.00.',
     );
   }
 
@@ -258,8 +274,10 @@ export async function waiveFee(input: FeeWaiveInput) {
         method: 'waived',
       })
       .eq('id', existing.id)
-      // Only while it is STILL unpaid, or still a waiver being re-waived.
-      .or('paid_at.is.null,method.eq.waived')
+      // Only while it is STILL unpaid. This used to admit a row whose method
+      // was already 'waived' as well, because a re-waive was permitted; the
+      // refusal above ends that, so the predicate is now markFeePaid's exactly.
+      .is('paid_at', null)
       .select('id')
       .maybeSingle();
     if (updateError) throw new Error(updateError.message);
@@ -329,7 +347,28 @@ export async function markFeeUnpaid(playerId: string, seasonId: string) {
     // season fee must never reach into an entry fee or a reinstatement.
     .eq('fee_type', 'dues')
     .single();
-  if (!oldFee) throw new Error('Fee record not found');
+  // EXPECTED, NOT A FAULT. This was a plain Error, and its message is not in
+  // EXPECTED_DB_GUARDS, so a member who simply has no dues row was filed in
+  // Sentry as a defect. Asking to reverse a fee that was never recorded is an
+  // ordinary mistake — a stale roster, or a run over people who have never been
+  // billed — and the answer to it is a sentence, not an incident.
+  if (!oldFee) {
+    throw new ExpectedError(
+      'There is no season fee recorded for that member, so there is nothing to reverse.',
+    );
+  }
+
+  // NOTHING TO REVERSE. Without this the update below clears three fields that
+  // are already null, matches its row, reports success, and files a
+  // fee_marked_unpaid entry for a reversal that reversed nothing — an audit log
+  // that says a payment was undone when there was never a payment is worse than
+  // no entry at all, because it is the record somebody would reason from. /fees
+  // renders this control only over a paid row ("Mark Unpaid") or a waived one
+  // ("Unwaive"), so no rendered control reaches this branch; a stale selection
+  // reaches it easily.
+  if (oldFee.paid_at === null) {
+    throw new ExpectedError('That fee is already unpaid, so there is nothing to reverse.');
+  }
 
   // Keep the row — only clear the payment fields.
   //
@@ -338,19 +377,24 @@ export async function markFeeUnpaid(playerId: string, seasonId: string) {
   // and B recording a corrected payment in between meant A's delayed update
   // erased B's payment — and A's audit row recorded the OLD value, so nothing
   // in the trail showed that a newer payment had been destroyed.
-  const unpaidQuery = adminClient
+  //
+  // One predicate rather than the `.is('paid_at', null)` / `.eq(…)` pair this
+  // used to choose between: the refusal above means paid_at was non-null when it
+  // was read, so the null arm is unreachable by construction.
+  const { data: cleared, error } = await adminClient
     .from('club_fees')
     .update({ paid_at: null, marked_by: null, method: null })
-    .eq('id', oldFee.id);
-  const { data: cleared, error } = await (
-    oldFee.paid_at === null ? unpaidQuery.is('paid_at', null) : unpaidQuery.eq('paid_at', oldFee.paid_at)
-  ).select('id');
+    .eq('id', oldFee.id)
+    .eq('paid_at', oldFee.paid_at)
+    .select('id');
   if (error) throw new Error(error.message);
   // Zero rows means the predicate no longer held: somebody changed the payment
   // after the read. Refuse rather than retry — the operator has to see the
-  // current state before deciding again.
+  // current state before deciding again. Expected for the same reason the
+  // not-found above is: losing a race is this guard working, and it was being
+  // reported to Sentry as though it were not.
   if (!cleared || cleared.length === 0) {
-    throw new Error('This fee was changed by someone else while you were working on it. Reload and try again.');
+    throw new ExpectedError('This fee was changed by someone else while you were working on it. Reload and try again.');
   }
 
   await logAdminAudit(adminClient, {

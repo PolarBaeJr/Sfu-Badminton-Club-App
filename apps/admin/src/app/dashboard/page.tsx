@@ -380,8 +380,24 @@ export default async function DashboardPage({
       : noCount,
 
     // ---- tournaments.page / challenges.page ------------------------------
+    //
+    // SEASON-SCOPED, and it follows "matches logged" above rather than
+    // "unsettled results" below. The distinction the two comments draw is
+    // between a TERM FIGURE and a BACKLOG, and "in play" is the first: it is a
+    // present-tense claim, made under a heading that names the term, on a strip
+    // whose next card says "FALL 2026 · NET POSITION". An `active` tournament
+    // left over from Summer made that card read "there is a tournament running
+    // right now" on the first day of a new season, which was simply not true —
+    // it was a test event nobody closed.
+    //
+    // Nothing is hidden by this. A stale `active` row is still first in the
+    // list on /tournaments, which this number links to, and that page is where
+    // somebody goes to close it. The dashboard's job here is to answer "is
+    // anything on court this term", not to keep score of unfinished admin.
     showTournaments
-      ? supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active')
+      ? (season
+          ? supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('season_id', season.id)
+          : supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active'))
       : noCount,
     showChallenges
       ? supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted'])

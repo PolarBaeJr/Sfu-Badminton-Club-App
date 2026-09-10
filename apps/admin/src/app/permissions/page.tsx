@@ -3,12 +3,11 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import {
   accessLevelFor,
   effectiveCapabilities,
-  isBuiltinPermissionRole,
-  isCapability,
-  isInGoodStanding,
   permissionsOf,
-  type AccessLevel,
 } from '@/lib/permissions';
+// The two row builders, shared with the copy of this editor embedded on a
+// member's own detail page. Pure, and tested in lib/__tests__/person-row.test.ts.
+import { customBaselinesFrom, personRowFrom } from '@/lib/person-row';
 import { isAdminActor } from '@/lib/player-field-access';
 import { PageHeader } from '@badminton/ui';
 import { PermissionEditor, type PersonRow } from './permission-editor';
@@ -76,22 +75,8 @@ export default async function PermissionsPage() {
   // impossible, and if it ever stops being impossible, listing somebody with no
   // level among the console holders is the wrong way to find out.
   const holders: PersonRow[] = (people ?? [])
-    .map((person) => ({ person, level: accessLevelFor(person) }))
-    .filter((entry): entry is { person: typeof entry.person; level: AccessLevel } =>
-      entry.level !== null,
-    )
-    .map(({ person, level }) => ({
-      id: person.id as string,
-      name: (person.full_name as string | null) ?? (person.email as string | null) ?? 'Unnamed',
-      email: (person.email as string | null) ?? null,
-      title: (person.exec_title as string | null) ?? null,
-      level,
-      canSignIn: isInGoodStanding(person),
-      role: (person.permission_role as string | null) ?? null,
-      grants: (person.permission_grants as string[] | null) ?? [],
-      revokes: (person.permission_revokes as string[] | null) ?? [],
-      baselineId: (person.permission_baseline_id as string | null) ?? null,
-    }));
+    .map(personRowFrom)
+    .filter((person) => person.level !== null);
 
   // Everyone else, and ONLY FOR SOMEBODY WHO MAY HAND OUT THE CONSOLE. That
   // used to mean an admin and now means a holder of
@@ -130,24 +115,15 @@ export default async function PermissionsPage() {
         .order('full_name')
     : { data: [] };
 
-  // No level, so no permission columns and nothing to resolve. Written out as
-  // the empty composition rather than left off the type: the editor asks one
-  // question of every row it lists, and a second row shape would be a second
-  // path through it for no gain.
+  // No level, so no permission columns and nothing to resolve. The empty
+  // composition is what the narrow select resolves to rather than something left
+  // off the type: the editor asks one question of every row it lists, and a
+  // second row shape would be a second path through it for no gain. It is also
+  // the case personRowFrom's every-field-optional shape exists for — a missing
+  // column has to arrive as `[]`, never as `undefined`.
   const others: PersonRow[] = (members ?? [])
     .filter((person) => !holderIds.has(person.id as string))
-    .map((person) => ({
-      id: person.id as string,
-      name: (person.full_name as string | null) ?? (person.email as string | null) ?? 'Unnamed',
-      email: (person.email as string | null) ?? null,
-      title: null,
-      level: null,
-      canSignIn: isInGoodStanding(person),
-      role: null,
-      grants: [],
-      revokes: [],
-      baselineId: null,
-    }));
+    .map(personRowFrom);
 
   // THE CLUB'S OWN BASELINES. Read here rather than in the editor because the
   // editor is a client component and this is one query the page already has a
@@ -168,26 +144,25 @@ export default async function PermissionsPage() {
     .select('id, name, capabilities, builtin_role, created_at, updated_at')
     .order('name');
 
-  const baselines: BaselineRow[] = (baselineRows ?? []).map((row) => {
-    const builtinRole = isBuiltinPermissionRole(row.builtin_role) ? row.builtin_role : null;
-    return {
-      id: row.id as string,
-      name: row.name as string,
-      capabilities: ((row.capabilities as string[] | null) ?? []).filter(isCapability),
-      builtinRole,
-      // BOTH POPULATIONS, for the same reason holdersOf() counts both: a built-in
-      // role reaches people whose grants were copied from it AND anybody still
-      // storing the legacy permission_role it replaced. 00104 converts the second
-      // kind, so this is normally zero — but a count that under-reports is the
-      // one thing this number must never do, because it is what the Edit dialog
-      // promises ("...and 3 people") before an admin presses the button.
-      holders: holders.filter(
-        (person) =>
-          person.baselineId === row.id
-          || (builtinRole !== null && person.baselineId === null && person.role === builtinRole),
-      ).length,
-    };
-  });
+  // The COUNT is added here and nowhere else, which is why customBaselinesFrom
+  // has no populations to count over: /players/[id] embeds the editor without a
+  // BaselineManager, so this is the one screen that asks the question.
+  const baselines: BaselineRow[] = customBaselinesFrom(baselineRows ?? []).map((baseline) => ({
+    ...baseline,
+    // BOTH POPULATIONS, for the same reason holdersOf() counts both: a built-in
+    // role reaches people whose grants were copied from it AND anybody still
+    // storing the legacy permission_role it replaced. 00104 converts the second
+    // kind, so this is normally zero — but a count that under-reports is the
+    // one thing this number must never do, because it is what the Edit dialog
+    // promises ("...and 3 people") before an admin presses the button.
+    holders: holders.filter(
+      (person) =>
+        person.baselineId === baseline.id
+        || (baseline.builtinRole !== null
+          && person.baselineId === null
+          && person.role === baseline.builtinRole),
+    ).length,
+  }));
 
   return (
     <div>

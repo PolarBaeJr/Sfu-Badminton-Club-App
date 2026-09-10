@@ -250,14 +250,14 @@ export function RoundLadder({ event, rounds, thirdPlace, phase }: Props) {
                     <span className="flex items-center gap-1.5">
                       <span>{row.name}</span>
                       {row.overrides && !row.mixed && (
-                        <span className="rounded-[4px] bg-[var(--color-accent)] px-1 py-px text-[9px] font-bold uppercase tracking-wide text-[var(--bg-base)]">
+                        <span className="rounded-[4px] bg-[var(--color-accent)] px-1 py-px text-[9px] font-bold uppercase tracking-wide text-[var(--bg-primary)]">
                           <span className="sr-only">Set for this round, not inherited from the event: </span>
                           Set
                         </span>
                       )}
                       {row.mixed && (
                         <span
-                          className="rounded-[4px] bg-[var(--color-danger)] px-1 py-px text-[9px] font-bold uppercase tracking-wide text-[var(--bg-base)]"
+                          className="rounded-[4px] bg-[var(--color-danger)] px-1 py-px text-[9px] font-bold uppercase tracking-wide text-[var(--bg-primary)]"
                           title="The matches in this round are not all set to the same shape. Pick one below to put the whole round back in step."
                         >
                           <span className="sr-only">

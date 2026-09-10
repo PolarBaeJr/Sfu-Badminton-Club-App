@@ -6,11 +6,14 @@ import { SeasonSelect } from '@/components/season-select';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
+import { RowSelectCheckbox, SelectAllCheckbox, SelectionProvider } from '@/components/selection';
 import { isWaivedFee, summariseFeeCollection, type FeeStatusRow } from '@/lib/fee-status';
+import type { FeeRowState } from '@/lib/fee-bulk-eligibility';
 import { getSeasonFinances } from '@/lib/season-finance';
 import { foldLedgerRows } from '@/lib/season-income';
 import { outstandingClubFeeCents } from '@/lib/fees-outstanding';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
+import { BulkFeeActions } from './bulk-fee-actions';
 import { ReinstatementsCard } from './reinstatements-card';
 import { LedgerCard } from './ledger-card';
 import { NetPositionStrip } from './net-position-strip';
@@ -264,6 +267,18 @@ export default async function FeesPage({
   // because the withheld message below has to describe the control truthfully.
   const showAddManualFee = tab === 'fees' && may('fees.clubfees.addmanual.write') && !isPast;
 
+  // THE THREE BULK CONTROLS ARE THE THREE CAPABILITIES, one apiece, the same
+  // rule /players and /sessions follow. Which of the three buttons appears is
+  // answered again inside the bar, and again per record by the actions. Not
+  // withheld on a finished term: the per-row controls are not either, and
+  // settling last term's dues late is ordinary work — unlike adding a NEW fee,
+  // which would land outside the season being collected for.
+  const bulkCan = {
+    markPaid: may('fees.clubfees.markpaid.write'),
+    waive: may('fees.clubfees.waive.write'),
+    markUnpaid: may('fees.clubfees.markunpaid.write'),
+  };
+
   // Fee-collection list: active players (competitive/recreational) who are
   // neither exec nor fee-exempt.
   const players = showFeeTable
@@ -311,6 +326,34 @@ export default async function FeesPage({
   // Shared with waiveFee (lib/fee-status) so the page and the action cannot
   // drift on what "already waived" means.
   const isWaived = isWaivedFee;
+
+  // WHAT IS SELECTABLE, AND IT IS THE ROSTER PLAYERS AND NOTHING ELSE.
+  //
+  // The manual entries below them are keyed by FEE id rather than player id, and
+  // not one of the three bulk actions can touch them — they have no player to
+  // name and Remove is their only control. So they get no checkbox and they are
+  // in neither of these lists: `items` and `visibleIds` have to agree with which
+  // rows actually carry a box, or SelectAllCheckbox ticks rows that have none.
+  //
+  // `visibleIds` is simply every selectable row, because this table has no
+  // client-side filter — everything it holds is on screen.
+  const selectableMembers = players.map((p) => ({ id: p.id, label: p.full_name }));
+  // AND THERE HAS TO BE SOMETHING TO SELECT. Holding one of the three
+  // capabilities is not enough on its own: a roster where everybody is exec or
+  // fee-exempt leaves this table with manual entries only, and those carry no
+  // box — so the column would be a header checkbox over nothing, above rows that
+  // all render the empty spacer cell.
+  const canBulkFees =
+    (bulkCan.markPaid || bulkCan.waive || bulkCan.markUnpaid) && selectableMembers.length > 0;
+  // The same paid/waived flags each row renders from, as a map for the bulk bar.
+  // A SNAPSHOT, used only to say how many of a selection an action applies to and
+  // to grey out a button that applies to none of it — never to filter the ids
+  // that are sent. See lib/fee-bulk-eligibility for why that distinction matters.
+  const feeStates: Record<string, FeeRowState> = {};
+  for (const p of players) {
+    const fee = feeByPlayer.get(p.id);
+    feeStates[p.id] = isWaived(fee) ? 'waived' : fee?.paid_at ? 'paid' : 'unpaid';
+  }
 
   // One row per LINE OF THE TABLE BELOW — each roster player's fee (or nothing,
   // where they have none) followed by the manual entries — so all three figures
@@ -550,6 +593,11 @@ export default async function FeesPage({
       )}
 
       {/* Fee Table */}
+      {/* THE PROVIDER, THE TABLE AND THE BAR, in that order — the shape /sessions
+          uses. The provider goes round both because the checkboxes the server
+          renders inside the rows read it from where they land, and the bar reads
+          the same selection back out. */}
+      <SelectionProvider items={selectableMembers} visibleIds={selectableMembers.map((m) => m.id)}>
       <Card padding={false}>
         <CardHeading
           title="Club fees"
@@ -574,7 +622,12 @@ export default async function FeesPage({
               return (
                 <TableCard
                   key={player.id}
-                  title={personTitle(player.full_name, player.email, player.avatar_url, player.id)}
+                  title={
+                    <div className="flex items-center gap-3">
+                      {canBulkFees && <RowSelectCheckbox id={player.id} label={player.full_name} />}
+                      {personTitle(player.full_name, player.email, player.avatar_url, player.id)}
+                    </div>
+                  }
                   value={
                     <Atomic>
                       {paid && fee?.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
@@ -621,6 +674,11 @@ export default async function FeesPage({
           <table className="w-full">
             <thead>
               <tr className="border-b border-[var(--border)]">
+                {canBulkFees && (
+                  <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase w-px">
+                    <SelectAllCheckbox noun="member" />
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Player</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Status</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Amount</th>
@@ -635,6 +693,11 @@ export default async function FeesPage({
                 const paid = Boolean(fee?.paid_at) && !waived;
                 return (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
+                    {canBulkFees && (
+                      <td className="px-4 py-3 w-px">
+                        <RowSelectCheckbox id={player.id} label={player.full_name} />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <AvatarChip name={player.full_name} src={player.avatar_url} size="sm" id={player.id} />
@@ -679,6 +742,10 @@ export default async function FeesPage({
               })}
               {manualFees.map((fee) => (
                 <tr key={fee.id} className="hover:bg-[var(--border-hover)] transition-colors">
+                  {/* EMPTY, NOT MISSING. A manual entry has no player to act on
+                      and so no checkbox — but the column exists in the header, and
+                      a row one cell short would shift every value in it left. */}
+                  {canBulkFees && <td className="px-4 py-3 w-px" />}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <AvatarChip name={fee.manual_name} size="sm" />
@@ -712,6 +779,17 @@ export default async function FeesPage({
         </ResponsiveTable>
         )}
       </Card>
+      {canBulkFees && (
+        <BulkFeeActions
+          seasonId={season.id}
+          seasonName={season.name}
+          states={feeStates}
+          canMarkPaid={bulkCan.markPaid}
+          canWaive={bulkCan.waive}
+          canMarkUnpaid={bulkCan.markUnpaid}
+        />
+      )}
+      </SelectionProvider>
 
       </>
       )}

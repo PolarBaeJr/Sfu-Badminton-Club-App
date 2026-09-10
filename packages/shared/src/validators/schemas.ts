@@ -238,6 +238,39 @@ export const sessionCreateSchema = z.object({
   path: ['repeat_until'],
 });
 
+// ONE PARTIAL EDIT, APPLIED TO SEVERAL NIGHTS — the payload the /sessions bulk
+// bar sends. Every key is optional because an ABSENT key means "leave this
+// column exactly as it is", which is the only thing that can be meant across a
+// selection: there is no single current value shared by twelve Tuesdays.
+//
+// DELIBERATELY NOT isoTimeSchema. That helper is wrapped in blankAsUndefined
+// (top of this file), which preprocesses '' -> undefined — so reusing it would
+// turn "clear the time" into "leave the time alone" and silently delete the one
+// state this schema exists to express. The regex is spelled out here so that ''
+// FAILS instead of being normalized into a third meaning.
+//
+// .nullable() ONLY on the two nullable columns. sessions.start_time and
+// end_time really are NULL for a night with no time set — that is the "TIME NOT
+// SET" the console shows — so `null` has to parse for them and mean "clear it".
+// name, location and track are NOT NULL / column-defaulted, so `null` must not
+// parse for those.
+//
+// THE ABSENCE OF A KEY IS THE ALLOWLIST. date, status, notes, season_id,
+// host_player_id and require_scan_to_check_in are all out (the arguments are in
+// patchSession's header), and .strict() makes an attempt to send one a loud
+// rejection rather than zod's default silent strip.
+//
+// NO end > start refine HERE, on purpose: a patch may move only one of the two
+// times, so the check needs the STORED row, which this schema never sees. It
+// lives in assertTimeOrder beside the action that has read the row.
+export const sessionPatchSchema = z.object({
+  name: z.string().min(2).optional(),
+  location: z.string().min(2).optional(),
+  start_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Invalid time').nullable().optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Invalid time').nullable().optional(),
+  track: sessionGroupSchema.optional(),
+}).strict();
+
 // Admin-only attendance marks; players self-insert 'checked_in' rows via RLS.
 export const attendanceStatusSchema = z.enum(['present', 'no_show', 'excused']);
 
@@ -340,6 +373,11 @@ export const adminPlayerUpdateSchema = z.object({
   // Photo for the public /exec page. Separate from avatar_url so a profile
   // picture change never alters the club's public page.
   exec_photo_url: blankAsUndefined(z.string().url().max(500)),
+  // 00225 — keeps an officer off the public /exec page while leaving both
+  // is_exec (their console access) and active_flag (their membership) alone.
+  // The third public-page field, and like the two above it hands out nothing:
+  // get_executives() is the only reader.
+  exec_hidden: z.boolean().optional(),
   // 00129 — the member's Gender, which they set once and an exec changes after
   // that. ADDED DELIBERATELY, REVERSING 00111: that migration kept the key out
   // of this schema and a test pinned the absence, on the reading that only the
@@ -704,6 +742,7 @@ export type ChallengeCreateInput = z.infer<typeof challengeCreateSchema>;
 export type MatchResultInput = z.infer<typeof matchResultSchema>;
 export type DisputeInput = z.infer<typeof disputeSchema>;
 export type SessionCreateInput = z.infer<typeof sessionCreateSchema>;
+export type SessionPatchInput = z.infer<typeof sessionPatchSchema>;
 export type AttendanceStatusInput = z.infer<typeof attendanceStatusSchema>;
 export type AttendanceMarkInput = z.infer<typeof attendanceMarkSchema>;
 export type SessionIntentInput = z.infer<typeof sessionIntentSchema>;

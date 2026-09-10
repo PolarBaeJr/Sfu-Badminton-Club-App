@@ -42,6 +42,10 @@ export const AUDITABLE_COLUMNS = [
   'is_exec',
   'is_trainer',
   'exec_title',
+  // 00225. An officer vanishing from the club's public page is exactly the
+  // change somebody would want to be able to make quietly, so it is one an
+  // admin can find afterwards.
+  'exec_hidden',
   'is_banned',
   'banned_at',
   'banned_by',

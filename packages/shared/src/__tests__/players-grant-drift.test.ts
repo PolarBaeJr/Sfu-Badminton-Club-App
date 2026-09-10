@@ -43,6 +43,10 @@ const SERVICE_ROLE_ONLY = [
   'eligibility_flag',
   'elo_review',
   'email',
+  // 00225. Note it sits apart from exec_bio, which IS self-service and is
+  // granted: the officer writes their own blurb on /exec, but whether that
+  // card appears at all is the club's call, not theirs.
+  'exec_hidden',
   'exec_photo_url',
   'exec_title',
   'fee_exempt',

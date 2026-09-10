@@ -398,6 +398,7 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   if (data.exec_title !== undefined) playerUpdate.exec_title = data.exec_title;
   if (data.fee_exempt !== undefined) playerUpdate.fee_exempt = data.fee_exempt;
   if (data.exec_photo_url !== undefined) playerUpdate.exec_photo_url = data.exec_photo_url;
+  if (data.exec_hidden !== undefined) playerUpdate.exec_hidden = data.exec_hidden;
   // 00129 — the member's Gender, which they set once and cannot change again.
   // THIS IS THE ONLY WAY IT EVER CHANGES AFTER THAT, and it is deliberately an
   // ordinary line in this function rather than a server action of its own:

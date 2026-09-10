@@ -10,10 +10,12 @@ import {
   parseOrThrow,
   sessionCreateSchema,
   sessionGroupSchema,
+  sessionPatchSchema,
   attendanceMarkSchema,
   formatDate,
   formatTime,
   type SessionGroupInput,
+  type SessionPatchInput,
   type AttendanceMarkInput,
   requireActiveSeasonId,
 } from '@badminton/shared';
@@ -21,6 +23,12 @@ import { z } from 'zod';
 import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 import { remindSessionGoers } from '../session-reminders';
+import {
+  SESSION_PATCH_FIELDS,
+  assertTimeOrder,
+  patchTouchesSomething,
+  resolveSessionTimes,
+} from '../session-patch';
 
 export async function createSession(data: {
   name: string;
@@ -274,6 +282,103 @@ async function updateSessionImpl(sessionId: string, data: {
     new_value: scanPolicyWritten
       ? data
       : { ...data, require_scan_to_check_in: undefined },
+    reason: why,
+  }, { sessionId });
+
+  revalidatePath('/sessions');
+}
+
+// One partial edit, written to one session — the per-record action the bulk bar
+// loops over.
+//
+// WHY IT IS NOT updateSession. That function takes a whole session and reads an
+// ABSENT time/end_time/notes as "clear this to NULL" (`data.time ?? null`, just
+// above). It is right for a dialog holding the entire night, and it can never
+// express "leave this column alone", which is the only thing a bulk edit can
+// mean: there is no single current start time shared by twelve Tuesdays, so
+// re-sending one would blank or overwrite the eleven it did not come from.
+// patchSession writes ONLY the keys it was handed. updateSession is untouched.
+//
+// WHY IT IS NOT A SECOND ANSWER TO "WHO MAY EDIT A SESSION". It skips nothing.
+// The SAME capability constant updateSessionImpl names, the same requireReason
+// floor, the same 'session_updated' action_type, one gate and one audit row per
+// session with that session's own old_value. It differs in exactly one respect:
+// which columns are in the UPDATE.
+//
+// WHAT IS OUT, AND WHY. `date` — setting twelve nights to one date collapses a
+// term into one evening and strands the RSVP and attendance rows already
+// recorded against them. `status` — that IS the Close button, and a
+// session_updated row where a reader expects session_archived splits the
+// history. `notes` — per-night free text, and one note across twelve nights
+// overwrites twelve distinct sentences. `require_scan_to_check_in` — it is
+// written by the deliberately isolated first UPDATE above, which swallows
+// PGRST204/42703 because 00116 is applied by hand; duplicating a pre-migration
+// workaround into a second write path is how the two come to disagree about
+// whether the policy was ever written.
+//
+// A SESSION EDIT NOTIFIES NOBODY, here as in updateSession. That is what makes
+// bulk edit safe while a bulk reminder send is not.
+export async function patchSession(
+  sessionId: string,
+  patch: SessionPatchInput,
+  reason: string,
+): Promise<ActionResult<void>> {
+  return runAction(() => patchSessionImpl(sessionId, patch, reason));
+}
+
+async function patchSessionImpl(sessionId: string, patch: SessionPatchInput, reason: string) {
+  // THE ORDER OF THIS FUNCTION IS THE REQUIREMENT, not just its contents.
+  // Everything that can refuse runs before anything is written, and the
+  // capability check runs before the row is even read.
+  const why = requireReason(reason, 'Editing a session');
+  const parsed = parseOrThrow(sessionPatchSchema, patch);
+  parseOrThrow(z.string().uuid(), sessionId);
+  if (!patchTouchesSomething(parsed)) {
+    throw new Error('Nothing to change — pick at least one field to edit.');
+  }
+  const admin = await requireCapability('sessions.update.write');
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient.from('sessions').select('*').eq('id', sessionId).single();
+  if (!old) throw new Error('That session no longer exists.');
+
+  // The end-before-start check cannot live in the schema: a patch may move only
+  // one of the two times, so the other one has to come out of the stored row.
+  // Nothing downstream catches it — there is no DB CHECK (see 00110).
+  assertTimeOrder(resolveSessionTimes(old, parsed));
+
+  // BUILT BY ITERATING THE ALLOWLIST, never `.update({ ...patch })`. Every
+  // exported parameter of a 'use server' function is a client-controlled POST
+  // field, so a spread would put whatever key the schema one day gains — or any
+  // key .strict() one day stops rejecting — straight into `sessions`. This is
+  // the shape that already cost this codebase once: an unqualified UPDATE needs
+  // no SELECT grant, which is how the elo_review write got out.
+  //
+  // `in`, not `!== undefined`, because a present `null` is a deliberate CLEAR
+  // and must reach the UPDATE. A present `undefined` is skipped anyway — it is
+  // not a state anything here produces, and passing it on would be read as a
+  // clear by some clients and ignored by others.
+  const update: Record<string, unknown> = {};
+  for (const field of SESSION_PATCH_FIELDS) {
+    if (!(field in parsed)) continue;
+    const value = parsed[field];
+    if (value === undefined) continue;
+    update[field] = value;
+  }
+
+  const { error } = await adminClient.from('sessions').update(update).eq('id', sessionId);
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'session_updated',
+    target_type: 'session',
+    target_id: sessionId,
+    old_value: old,
+    // What was actually written, not what was asked for — the same honesty rule
+    // updateSessionImpl follows. A cleared time therefore reads as an explicit
+    // `start_time: null` in the log rather than as a missing key.
+    new_value: update,
     reason: why,
   }, { sessionId });
 

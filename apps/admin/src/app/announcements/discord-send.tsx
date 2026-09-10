@@ -13,13 +13,6 @@ import { DiscordPreview } from './discord-preview';
 // Discord gets an ephemeral reply telling them the message shows as coming from
 // the bot and that the audit channel has a copy with their name on it. Somebody
 // pressing Send here is doing exactly that and deserves exactly that warning.
-//
-// WHY THERE IS A STATE LIST UNDERNEATH RATHER THAN JUST A TOAST. This does not
-// post the message — it queues a row the bot drains on the announcements tick,
-// so Send means "within five minutes". A toast saying "Sent" would be a lie for
-// most of that window, and the failure mode it hides is the one that matters: a
-// channel the bot cannot post in fails silently five minutes after the person
-// who could fix it has closed the tab.
 
 const MICRO = 'font-mono text-[10px] uppercase tracking-[0.16em]';
 
@@ -59,12 +52,9 @@ function shortTime(iso: string): string {
 
 export function DiscordSend({
   channelConfigured,
-  recent,
 }: {
   /** Whether /config has been run. Without it there is nowhere to send. */
   channelConfigured: boolean;
-  /** The last few rows, newest first. Server-rendered; refreshed on send. */
-  recent: OutboxRow[];
 }) {
   const [shape, setShape] = useState<'message' | 'embed'>('message');
   const [content, setContent] = useState('');
@@ -131,8 +121,16 @@ export function DiscordSend({
           placeholder="Posted exactly as typed, as the bot. Nobody sees that you sent it."
         />
       ) : (
+        // EXPLICIT IDS, because these three labels are word-for-word the ones
+        // the website composer uses and both composers are now mounted at once
+        // in the same card. Input/Textarea/Select derive the element id (and the
+        // label's htmlFor) from the label text, so without these the embed
+        // branch collides with AnnouncementFields on headline, body and
+        // category — two elements sharing an id, and a label pointing at
+        // whichever came first.
         <>
           <Input
+            id="discord-headline"
             label="Headline"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -140,6 +138,7 @@ export function DiscordSend({
             placeholder="Say the thing in one line"
           />
           <Textarea
+            id="discord-body"
             label="Body"
             className="min-h-[120px]"
             value={body}
@@ -147,6 +146,7 @@ export function DiscordSend({
             maxLength={4096}
           />
           <Select
+            id="discord-category"
             label="Category"
             value={type}
             onChange={(e) => setType(e.target.value as AnnouncementType)}
@@ -222,33 +222,47 @@ export function DiscordSend({
         It shows as coming from the bot, not from you. The audit log has a copy with your name
         on it, and so does the Discord audit channel.
       </p>
+    </div>
+  );
+}
 
-      {recent.length > 0 && (
-        <div className="flex flex-col gap-2 border-t border-[var(--line)] pt-3">
-          <span className={`${MICRO} text-[var(--mute)]`}>Recently sent</span>
-          {recent.map((row) => {
-            const badge = stateBadge(row);
-            return (
-              <div key={row.id} className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <Badge variant={badge.variant}>{badge.label}</Badge>
-                  <span className={`${MICRO} text-[var(--mute)]`}>{shortTime(row.createdAt)}</span>
-                  {row.ping && <Badge variant="danger">PINGED</Badge>}
-                </div>
-                <span className="text-xs text-[var(--text-secondary)] break-words">
-                  {row.preview}
-                </span>
-                {row.error && (
-                  // Discord's own words. The person who can fix a missing
-                  // permission is the one reading this, and paraphrasing the
-                  // error would take away the only clue they have.
-                  <span className="text-xs text-[var(--red)] break-words">{row.error}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+// WHY THERE IS A STATE LIST UNDERNEATH RATHER THAN JUST A TOAST. This does not
+// post the message — it queues a row the bot drains on the announcements tick,
+// so Send means "within five minutes". A toast saying "Sent" would be a lie for
+// most of that window, and the failure mode it hides is the one that matters: a
+// channel the bot cannot post in fails silently five minutes after the person
+// who could fix it has closed the tab.
+//
+// AND WHY IT LIVES OUTSIDE THE COMPOSER, in its own card rather than inside
+// this one: the card above now switches between the website composer and the
+// Discord one, and a queued row that is about to fail must not be hidden by
+// somebody going back to write a website post. The failure has to stay on
+// screen in both modes, because it is the only place it is ever visible.
+export function DiscordRecent({ recent }: { recent: OutboxRow[] }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className={`${MICRO} text-[var(--mute)]`}>Recently sent to Discord</span>
+      {recent.map((row) => {
+        const badge = stateBadge(row);
+        return (
+          <div key={row.id} className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <Badge variant={badge.variant}>{badge.label}</Badge>
+              <span className={`${MICRO} text-[var(--mute)]`}>{shortTime(row.createdAt)}</span>
+              {row.ping && <Badge variant="danger">PINGED</Badge>}
+            </div>
+            <span className="text-xs text-[var(--text-secondary)] break-words">
+              {row.preview}
+            </span>
+            {row.error && (
+              // Discord's own words. The person who can fix a missing
+              // permission is the one reading this, and paraphrasing the
+              // error would take away the only clue they have.
+              <span className="text-xs text-[var(--red)] break-words">{row.error}</span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

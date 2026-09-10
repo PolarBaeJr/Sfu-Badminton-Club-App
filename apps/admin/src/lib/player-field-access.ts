@@ -120,9 +120,18 @@ export const PLAYER_FIELD_FLOOR = [
 //                     factor, bound and margin rule the rating engine applies,
 //                     and it is the one number the whole ladder is FOR. Execs
 //                     record results; the engine decides ratings.
+//  - exec_hidden    — 00225. Sits with the two above for their exact reason:
+//                     it decides what the public /exec page shows. It is the
+//                     one of the three that publishes nothing itself — it only
+//                     withholds — but "who the club presents as its officers"
+//                     is the same decision in either direction, and splitting
+//                     it out would mean an exec could take a colleague off the
+//                     public page without holding the grant that put them on
+//                     it.
 export const PLAYER_FIELD_PRIVILEGED = [
   'exec_title',
   'exec_photo_url',
+  'exec_hidden',
   'fee_exempt',
   'singles_elo',
   'doubles_elo',

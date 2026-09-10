@@ -5,15 +5,16 @@ import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic, EmptyState
 import { isPushCategoryEnabled } from '@badminton/shared';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import {
-  Composer,
   AnnouncementRowActions,
   type DiscordContext,
   type RowAnnouncement,
 } from './actions';
-import { DiscordSend, type OutboxRow } from './discord-send';
+import { DiscordRecent, type OutboxRow } from './discord-send';
+import { ComposerSwitch } from './composer-switch';
 import {
   audienceLabel,
   bylineName,
+  composerModes,
   reachPercent,
   relayChip,
   shortDate,
@@ -212,6 +213,10 @@ export default async function AnnouncementsPage() {
   // audience by a different route, and nothing on this page can take a posted
   // Discord message back the way unpublishing takes an announcement down.
   const canSendDiscord = may('announcements.discord.write');
+
+  // Which composers the left card offers, decided in one place so a test can
+  // drive all four capability combinations.
+  const modes = composerModes({ canCreate, canSendDiscord });
 
   // THE ROSTER IS A DIFFERENT AREA, and every number on this screen drawn from
   // `players` is behind its key. This gate is around the AWAIT, not around the
@@ -429,23 +434,45 @@ export default async function AnnouncementsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-5 items-start">
         {/* ---------------------------------------------------------------- */}
-        {/* LEFT — the composer                                              */}
+        {/* LEFT — the composer, and what Discord already has                */}
         {/* ---------------------------------------------------------------- */}
-        <Card className="p-5">
-          {canCreate ? (
-            <Composer pushReachable={pushReachable} discord={discord} />
-          ) : (
-            // Withheld, not empty. A blank left column on the widest half of
-            // the screen reads as a page that failed to load.
-            <div className="flex flex-col gap-2">
-              <span className={`${MICRO} text-[var(--mute)]`}>New post</span>
-              <p className="text-sm text-[var(--text-secondary)]">
-                Writing announcements is not part of your access. You can read what the club has
-                posted below.
-              </p>
-            </div>
+        <div className="flex flex-col gap-5">
+          <Card className="p-5">
+            {/* `modes.length > 0`, NOT `canCreate` — and that is a deliberate
+                behaviour change. Until now a viewer holding
+                `announcements.discord.write` but not
+                `announcements.create.write` was told writing was not part of
+                their access in this column, while a working Discord composer
+                sat in the other one. The refusal below now means "neither
+                composer", not "not the website composer". */}
+            {modes.length > 0 ? (
+              <ComposerSwitch
+                modes={modes}
+                pushReachable={pushReachable}
+                discord={discord}
+                channelConfigured={channelConfigured}
+              />
+            ) : (
+              // Withheld, not empty. A blank left column on the widest half of
+              // the screen reads as a page that failed to load.
+              <div className="flex flex-col gap-2">
+                <span className={`${MICRO} text-[var(--mute)]`}>New post</span>
+                <p className="text-sm text-[var(--text-secondary)]">
+                  Writing announcements is not part of your access. You can read what the club has
+                  posted below.
+                </p>
+              </div>
+            )}
+          </Card>
+
+          {/* Its own card, below whichever composer is showing, so a queued or
+              failed row stays visible in both modes. */}
+          {canSendDiscord && outboxRows.length > 0 && (
+            <Card className="p-5">
+              <DiscordRecent recent={outboxRows} />
+            </Card>
           )}
-        </Card>
+        </div>
 
         {/* ---------------------------------------------------------------- */}
         {/* RIGHT — reach, then the posted list                              */}
@@ -501,12 +528,6 @@ export default async function AnnouncementsPage() {
               <p className="mt-4 text-xs text-[var(--text-muted)] leading-relaxed">
                 {lastPost.title} · {audienceLabel(lastPost.target_audience)}
               </p>
-            </Card>
-          )}
-
-          {canSendDiscord && (
-            <Card className="p-5">
-              <DiscordSend channelConfigured={channelConfigured} recent={outboxRows} />
             </Card>
           )}
 

@@ -162,11 +162,13 @@ export default async function SessionsPage({
     archive: may('sessions.archive.write'),
     delete: may('sessions.delete.write'),
   };
-  // The two bulk controls are the two capabilities, and holding neither means
-  // the checkbox column is never drawn — the same rule /players follows. Which
-  // of the two buttons appears is answered again inside the bar; this only
-  // decides whether there is anything to select for.
-  const canBulk = menuCan.archive || menuCan.delete;
+  // The three bulk controls are the three capabilities, and holding none of them
+  // means the checkbox column is never drawn — the same rule /players follows.
+  // Which of the three buttons appears is answered again inside the bar; this
+  // only decides whether there is anything to select for. `update` belongs here
+  // because bulk Edit is on it: leave it out and an officer who may edit a
+  // session gets no checkboxes and no bar, with nothing saying why.
+  const canBulk = menuCan.update || menuCan.archive || menuCan.delete;
   // What a confirmation calls each night. The name alone is not enough — a club
   // runs "Tuesday Drop-in" every week of the term, so a list of eleven
   // identically-named rows would tell the reader nothing about WHICH eleven.
@@ -792,7 +794,7 @@ export default async function SessionsPage({
               )}
             </Card>
             {canBulk && (
-              <BulkSessionActions canArchive={menuCan.archive} canDelete={menuCan.delete} />
+              <BulkSessionActions canEdit={menuCan.update} canArchive={menuCan.archive} canDelete={menuCan.delete} />
             )}
             </SelectionProvider>
           </div>
@@ -817,7 +819,7 @@ export default async function SessionsPage({
                 />
               </Card>
               {canBulk && (
-                <BulkSessionActions canArchive={menuCan.archive} canDelete={menuCan.delete} />
+                <BulkSessionActions canEdit={menuCan.update} canArchive={menuCan.archive} canDelete={menuCan.delete} />
               )}
               </SelectionProvider>
             </div>
