@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { markAnnouncementRead } from '@/lib/actions';
+import { AnnouncementMarkdown } from '@/lib/announcement-markdown';
 import { AvatarChip, Badge } from '@badminton/ui';
 
 /** Everything the row needs, already resolved and already formatted.
@@ -83,7 +84,7 @@ export function PinnedNotice({ post, isRead }: { post: NewsPost; isRead: boolean
         <span className="news-stamp">{post.stamp}</span>
       </div>
       <h2 className="news-pin-title">{post.title}</h2>
-      <p className="news-body">{post.body}</p>
+      <AnnouncementMarkdown text={post.body} className="news-body" />
       {post.author && (
         <div className="news-pin-foot">
           <AvatarChip name={post.author.name} id={post.author.id} src={post.author.avatarUrl} size="sm" />
@@ -110,7 +111,7 @@ export function AnnouncementRow({ post, isRead }: { post: NewsPost; isRead: bool
         <span className="news-stamp">{post.stamp}</span>
       </div>
       <h2 className="news-headline">{post.title}</h2>
-      <p className="news-body">{post.body}</p>
+      <AnnouncementMarkdown text={post.body} className="news-body" />
       {post.author && (
         <div className="news-byline">
           <AvatarChip name={post.author.name} id={post.author.id} src={post.author.avatarUrl} size="xs" />

@@ -30,6 +30,7 @@ import {
 } from '@/lib/feed-activity';
 import { isUnderWay, runningEvents, type FeedTournament } from '@/lib/feed-tournament';
 import { countEnteredPlayers, occupiesAPlace } from '@/lib/tournament-index';
+import { AnnouncementMarkdown } from '@/lib/announcement-markdown';
 import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
 import { onVisibleTracks } from '@/lib/session-track-filter';
 
@@ -837,7 +838,10 @@ export default async function FeedPage() {
               <h3 className="card-title" style={{ margin: '8px 0 6px' }}>
                 {notice.title}
               </h3>
-              <p style={{ fontSize: 15, lineHeight: 1.45, margin: 0 }}>{notice.body}</p>
+              <AnnouncementMarkdown
+                text={notice.body}
+                style={{ fontSize: 15, lineHeight: 1.45, margin: 0 }}
+              />
               <div
                 className="mono muted"
                 style={{ fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', marginTop: 12 }}
