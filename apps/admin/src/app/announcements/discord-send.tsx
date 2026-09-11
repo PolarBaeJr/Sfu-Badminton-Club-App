@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Badge, Checkbox, Input, Select, Textarea, Switch } from '@badminton/ui';
+import { DISCORD_BUTTON_SETS } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import {
   editDiscordMessage,
@@ -22,6 +23,8 @@ import {
   type DiscordRoleOption,
 } from './announcement-shape';
 import { useDiscordConsole } from './discord-console-context';
+import { DiscordButtonsPreview } from './discord-buttons-preview';
+import { DISCORD_BG } from './discord-markdown';
 import { DiscordPreview } from './discord-preview';
 import { FormatBar, formatShortcut } from './format-bar';
 
@@ -141,6 +144,14 @@ export function DiscordSend({
   const [ping, setPing] = useState(false);
   /** The roles a ping line above an embed names. Picking one IS the opt-in. */
   const [pingRoles, setPingRoles] = useState<string[]>([]);
+  /**
+   * The member buttons this message will carry, by NAME, or null for none.
+   *
+   * A name rather than a boolean because the column is one (00227) and the
+   * action takes one: a second set would then be a second switch and nothing
+   * else, with no boolean to untangle.
+   */
+  const [buttonSet, setButtonSet] = useState<string | null>(null);
   /** The message being edited, or null when this is a fresh one. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -169,9 +180,26 @@ export function DiscordSend({
       setShape('message');
       setContent(pending.content ?? '');
     }
+    // OUTSIDE THE SHAPE BRANCHES, because buttons are legal under either one and
+    // both arms would otherwise need the same line. It is also load-bearing for
+    // the happy path rather than only for the switch's appearance: `send()` only
+    // ships `buttonSet` when it is set, so a row that already has buttons and did
+    // not refill this would be an edit the server refuses as a removal.
+    setButtonSet(pending.buttonSet);
   }, [pending]);
 
   const editing = editingId !== null;
+
+  /**
+   * Whether the buttons switch is fixed on.
+   *
+   * A message Discord already has can GAIN buttons and cannot lose them: its
+   * PATCH leaves a field it is not sent standing, so omitting them would be a
+   * save that appears to work and changes nothing in the channel.
+   * `editDiscordMessage` refuses the removal, and this is that refusal shown
+   * before somebody runs into it.
+   */
+  const buttonsLocked = editing && Boolean(pending?.buttonSet);
 
   const channelOptions = [
     ...(channels.some((c) => c.key === 'announcement_channel_id')
@@ -220,6 +248,7 @@ export function DiscordSend({
     setBody('');
     setPing(false);
     setPingRoles([]);
+    setButtonSet(null);
     setEditingId(null);
     clearEdit();
   };
@@ -234,7 +263,13 @@ export function DiscordSend({
           : { embed: { title: title.trim(), body: body.trim(), type } };
 
       if (editingId) {
-        await editDiscordMessage({ id: editingId, ...words });
+        // SPREAD RATHER THAN PASSED AS NULL, so a message with no buttons sends
+        // the same fields it always did and the action's own default decides.
+        await editDiscordMessage({
+          id: editingId,
+          ...words,
+          ...(buttonSet ? { buttonSet } : {}),
+        });
         // Same five minute window as a send, because an edit is a re-queue: the
         // bot picks the row up on the next announcements tick and PATCHes the
         // message that is already in the channel.
@@ -249,6 +284,7 @@ export function DiscordSend({
           // already there, which is exactly what that file's own comment warns off.
           ...(chosenChannel ? { channelId: chosenChannel } : {}),
           ...(shape === 'embed' && pingRoles.length > 0 ? { pingRoles } : {}),
+          ...(buttonSet ? { buttonSet } : {}),
           ping,
         });
         // "Queued", never "Sent". The bot has not been asked yet, pg_cron will
@@ -294,6 +330,11 @@ export function DiscordSend({
           // has no line to put it on.
           setPing(false);
           setPingRoles([]);
+          // AND `buttonSet` IS DELIBERATELY LEFT ALONE, which is the opposite of
+          // the two lines above and needs saying because of them: the ping
+          // controls are per shape, the buttons are not. Three buttons under a
+          // plain message and three under an embed are the same three buttons,
+          // so clearing them here would throw away a choice for no reason.
         }}
         options={SHAPE_OPTIONS}
       />
@@ -330,6 +371,23 @@ export function DiscordSend({
             maxLength={2000}
             placeholder="Posted exactly as typed, as the bot. Nobody sees that you sent it."
           />
+          {/* THE ONLY THING THERE IS TO PREVIEW ON A PLAIN MESSAGE. The text is
+              posted exactly as typed, which is why this shape has never had a
+              preview and should not grow one; the buttons are the one part of it
+              that is not visible in the box above. Without this the preview
+              would show nothing for a message that does carry buttons, which is
+              the same lie the embed preview exists to remove.
+
+              On the Discord surface rather than the console's, for the reason
+              discord-markdown.tsx gives about every colour in this panel: it is a
+              picture of somebody else's app, and the caption's grey is only
+              legible against it. aria-hidden because the switch's own
+              description says all of this in words. */}
+          {buttonSet && (
+            <div className="px-3 pt-1 pb-3" style={{ background: DISCORD_BG }} aria-hidden>
+              <DiscordButtonsPreview set={buttonSet} />
+            </div>
+          )}
         </div>
       ) : (
         // EXPLICIT IDS, because these three labels are word-for-word the ones
@@ -430,6 +488,33 @@ export function DiscordSend({
           )}
         </>
       )}
+
+      {/* THE MEMBER BUTTONS, and this one is offered UNDER BOTH SHAPES AND
+          WHILE EDITING, which is the opposite of the two controls below it.
+          Three buttons under a plain message and three under an embed are the
+          same three buttons, and an edit is how the guide messages already in
+          the channel gain theirs. They notify nobody: a click answers the
+          person who clicked and nobody else sees the reply. */}
+      <div className="flex flex-col gap-2 border-y border-[var(--line)] py-3">
+        <Switch
+          // The copy lives in @badminton/shared beside the allowlist, so the
+          // switch and the preview cannot describe different buttons.
+          label={DISCORD_BUTTON_SETS.guide.switchLabel}
+          description={DISCORD_BUTTON_SETS.guide.switchDescription}
+          checked={buttonSet === 'guide'}
+          // LOCKED ON once Discord has the message with them, mirroring the
+          // server's refusal the same way the disabled Shape select above
+          // mirrors its own.
+          disabled={buttonsLocked}
+          onChange={(checked) => setButtonSet(checked ? 'guide' : null)}
+        />
+        {buttonsLocked && (
+          <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+            Buttons can be added to a message Discord already has, but not taken off again:
+            leaving them out of an edit would change nothing in the channel.
+          </p>
+        )}
+      </div>
 
       {/* THE SWITCH BELONGS TO THE PLAIN MESSAGE ALONE. In the embed shape it
           never did anything: the payload the bot builds for an embed has no
@@ -536,6 +621,8 @@ export function DiscordSend({
           // reach Discord as a chip and a preview that drew grey text would be
           // lying about the thing it exists to show.
           resolvesRoleNames
+          // Drawn under the embed card, which is where Discord puts them.
+          buttonSet={buttonSet}
         />
       )}
 
@@ -653,6 +740,9 @@ export function DiscordRecent({ recent }: { recent: OutboxRow[] }) {
         embedTitle: message.embedTitle,
         embedBody: message.embedBody,
         embedType: message.embedType,
+        // Carried through so the composer knows the switch is fixed on: buttons
+        // can be added to a posted message and not taken off.
+        buttonSet: message.buttonSet,
       });
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Could not open that message', 'error');

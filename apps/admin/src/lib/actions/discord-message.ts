@@ -5,6 +5,7 @@ import {
   EMBED_DESCRIPTION_MAX,
   EMBED_TITLE_MAX,
   ExpectedError,
+  isDiscordButtonSet,
 } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
@@ -74,6 +75,18 @@ export interface QueueDiscordMessageInput {
    * trusted.
    */
   ping?: boolean;
+  /**
+   * THE MEMBER BUTTONS UNDER THE MESSAGE, named rather than described.
+   *
+   * A NAME FROM AN ALLOWLIST AND NEVER COMPONENT JSON, for the reason the
+   * comment on this whole block gives: every exported parameter here is a
+   * client-controlled POST field, so a parameter carrying a Discord payload
+   * would be a way to make the club's bot post anything at all. The only known
+   * name is `guide`, the buttons themselves live beside their handlers in
+   * apps/bot/src/commands.ts, and 00227's CHECK says the same thing in the
+   * database.
+   */
+  buttonSet?: string;
 }
 
 export interface EditDiscordMessageInput {
@@ -82,6 +95,12 @@ export interface EditDiscordMessageInput {
   /** The new text, in whichever shape the row was posted as. */
   content?: string;
   embed?: { title: string; body: string; type: 'info' | 'warning' | 'urgent' | 'event' };
+  /**
+   * The button set, which an edit may ADD but not take off. See the refusal in
+   * `editDiscordMessage` below: Discord's PATCH leaves components standing when
+   * the key is omitted, so a removal here would be a silent no-op.
+   */
+  buttonSet?: string;
 }
 
 /** A Discord snowflake, and nothing else. Mirrors the CHECK in 00222. */
@@ -254,6 +273,22 @@ function assertEmbedShape(embed: { title: string; body: string; type: string } |
   }
 }
 
+/**
+ * A button set the bot knows, or nothing at all.
+ *
+ * CALLED BEFORE THE INSERT, so the CHECK in 00227 is the second line of defence
+ * rather than the thing an exec reads: a name the column refuses comes back from
+ * PostgREST as a raw constraint string. Absent and empty are the same answer,
+ * because an unchecked switch sends nothing and a cleared one sends ''.
+ */
+function assertButtonSet(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (!isDiscordButtonSet(value)) {
+    throw new ExpectedError('Those are not buttons the bot knows how to answer.');
+  }
+  return value;
+}
+
 /** The typed lengths, before anything is read or resolved. */
 function assertTypedLengths(content: string, embedTitle: string, embedBody: string) {
   if (content.length > CONTENT_MAX) {
@@ -339,6 +374,7 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
   }
   assertTypedLengths(content, embedTitle, embedBody);
   assertEmbedShape(input.embed);
+  const buttonSet = assertButtonSet(input.buttonSet);
 
   const guildId = await requireGuildId(adminClient);
 
@@ -399,6 +435,9 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
       embed_body: hasEmbed ? outgoingEmbedBody || null : null,
       embed_type: hasEmbed ? (input.embed?.type ?? null) : null,
       ping,
+      // A NAME, validated above. Null for every message without buttons, which
+      // is the column's own default and every row written before 00227.
+      button_set: buttonSet,
       requested_by: admin.id,
     })
     .select('id, created_at')
@@ -431,6 +470,10 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
         ? { content: outgoing }
         : { embed_title: embedTitle, embed_body: outgoingEmbedBody }),
       ...(resolved.mentionedRoles.length ? { mentioned_roles: resolved.mentionedRoles } : {}),
+      // RECORDED HERE EVEN THOUGH THE DISCORD AUDIT ENTRY DOES NOT SAY IT. That
+      // entry quotes what the club said; this one records what an exec asked
+      // for, and a public message that grew three buttons is part of the ask.
+      ...(buttonSet ? { button_set: buttonSet } : {}),
     },
   });
 
@@ -470,7 +513,7 @@ export async function loadDiscordMessage(id: string) {
   const { data, error } = await adminClient
     .from('discord_outbox')
     .select(
-      'id, guild_id, content, embed_title, embed_body, embed_type, ping, channel_id, sent_at, discord_message_id',
+      'id, guild_id, content, embed_title, embed_body, embed_type, ping, channel_id, sent_at, discord_message_id, button_set',
     )
     .eq('id', rowId)
     .maybeSingle();
@@ -513,6 +556,9 @@ export async function loadDiscordMessage(id: string) {
     channelId: data.channel_id as string,
     sentAt: (data.sent_at as string | null) ?? null,
     discordMessageId: (data.discord_message_id as string | null) ?? null,
+    // The composer needs this to know it must show the switch on and disabled:
+    // buttons can be added to a posted message and not taken off.
+    buttonSet: (data.button_set as string | null) ?? null,
   };
 }
 
@@ -546,7 +592,9 @@ export async function editDiscordMessage(input: EditDiscordMessageInput) {
 
   const { data: row, error: readError } = await adminClient
     .from('discord_outbox')
-    .select('id, guild_id, channel_id, content, embed_title, sent_at, discord_message_id')
+    .select(
+      'id, guild_id, channel_id, content, embed_title, sent_at, discord_message_id, button_set',
+    )
     .eq('id', rowId)
     .maybeSingle();
 
@@ -577,6 +625,20 @@ export async function editDiscordMessage(input: EditDiscordMessageInput) {
   assertTypedLengths(content, embedTitle, embedBody);
   assertEmbedShape(input.embed);
 
+  // BUTTONS CAN BE ADDED TO A POSTED MESSAGE AND NOT TAKEN OFF, and the refusal
+  // mirrors the shape refusal above for the same reason: Discord's PATCH leaves
+  // a field it is not sent standing, so omitting `components` does not remove
+  // them. The honest alternative to this error is a save that appears to work
+  // and changes nothing in the channel. Adding a set, keeping it, or swapping
+  // one known set for another are all fine.
+  const nextButtonSet = assertButtonSet(input.buttonSet);
+  const hadButtonSet = (row.button_set as string | null) ?? null;
+  if (hadButtonSet && !nextButtonSet) {
+    throw new ExpectedError(
+      'Buttons cannot be taken off a message that is already in Discord. They can only be added.',
+    );
+  }
+
   const resolved = await resolveForDiscord(adminClient, row.guild_id as string, {
     content,
     embedBody,
@@ -589,13 +651,18 @@ export async function editDiscordMessage(input: EditDiscordMessageInput) {
   // mentions that were chosen when it was sent, and an edit that cleared it
   // would take the ping line off a message in the channel. Nothing is
   // re-notified by leaving it there.
+  //
+  // THE BUTTON SET GOES IN BOTH ARMS, or an add would not land in the shape it
+  // was asked for. It is legal under either one: three buttons under a plain
+  // message and three under an embed are the same three buttons.
   const changes = wasEmbed
     ? {
         embed_title: embedTitle,
         embed_body: resolved.embedBody || null,
         embed_type: input.embed?.type ?? null,
+        button_set: nextButtonSet,
       }
-    : { content: resolved.content };
+    : { content: resolved.content, button_set: nextButtonSet };
 
   const { data: updated, error } = await adminClient
     .from('discord_outbox')
@@ -678,6 +745,7 @@ export async function editDiscordMessage(input: EditDiscordMessageInput) {
         ? { embed_title: embedTitle, embed_body: resolved.embedBody }
         : { content: resolved.content }),
       ...(resolved.mentionedRoles.length ? { mentioned_roles: resolved.mentionedRoles } : {}),
+      ...(nextButtonSet ? { button_set: nextButtonSet } : {}),
     },
   });
 

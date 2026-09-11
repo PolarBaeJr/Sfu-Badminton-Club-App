@@ -2367,7 +2367,7 @@ function parseEmoji(emoji: string) {
 /** Prefix on every guide button's custom_id. `guide:<keyword>`. */
 const GUIDE_PREFIX = 'guide:';
 
-function guideComponents() {
+export function guideComponents() {
   return [
     {
       type: 1, // ACTION_ROW
@@ -2393,6 +2393,27 @@ function guideComponents() {
       ],
     },
   ];
+}
+
+/**
+ * The buttons a NAMED SET means, for a message the console queued (00227).
+ *
+ * An outbox row carries the NAME of a set and never component JSON, because the
+ * insert path is a server action and every field on one is client-controlled. So
+ * the resolution from a name to real buttons happens exactly here, in the file
+ * that also holds the handlers answering them.
+ *
+ * AN UNKNOWN NAME IS NULL, NOT A THROW, and that is the compatibility property
+ * rather than laziness: a row written by a newer console and drained by an older
+ * bot image would otherwise throw inside payloadFor and fail a club message
+ * three times over. This way it loses its buttons and still posts its words.
+ *
+ * `undefined` is the same case, and it is the version skew in the other
+ * direction: a new bot image against an old relay route gets no `buttonSet`
+ * field at all.
+ */
+export function componentsForButtonSet(name: string | null | undefined) {
+  return name === 'guide' ? guideComponents() : null;
 }
 
 function handleGuidePost(context: InteractionContext) {

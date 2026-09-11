@@ -274,3 +274,44 @@ describe('isGuideButton', () => {
     expect(isGuideButton('selfrole:900')).toBe(false);
   });
 });
+
+describe('componentsForButtonSet', () => {
+  it('gives a console-queued message the SAME buttons /guidepost posts', async () => {
+    // One definition, two callers. A second copy of the buttons for the outbox
+    // is how a click on a console-posted message stops being answered.
+    const { componentsForButtonSet, guideComponents } = await import('../commands.js');
+
+    expect(componentsForButtonSet('guide')).toEqual(guideComponents());
+  });
+
+  it('answers an unknown or absent name with null rather than throwing', async () => {
+    // THE COMPATIBILITY PROPERTY. A row written by a newer console and drained
+    // by an older bot image loses its buttons and still posts its words; a throw
+    // here would cost the club the whole message, three attempts over.
+    // `undefined` is the skew the other way: a new image, an older relay route
+    // that sends no buttonSet field at all.
+    const { componentsForButtonSet } = await import('../commands.js');
+
+    expect(componentsForButtonSet('rolepicker')).toBeNull();
+    expect(componentsForButtonSet('')).toBeNull();
+    expect(componentsForButtonSet(null)).toBeNull();
+    expect(componentsForButtonSet(undefined)).toBeNull();
+  });
+
+  it('says what the console promises it says', async () => {
+    // THE BOT'S HALF OF A TRIPWIRE WITH TWO HALVES. apps/bot has zero
+    // production dependencies, so it cannot import
+    // packages/shared/src/utils/discord-buttons.ts and the console keeps a
+    // second copy of these labels for its preview. A tripwire on only one side
+    // catches a change to that side and misses the other, which is how the two
+    // Elo weight tables ended up disagreeing with nothing failing.
+    const { componentsForButtonSet } = await import('../commands.js');
+    const buttons = componentsForButtonSet('guide')!.flatMap((row) => row.components);
+
+    expect(
+      buttons.map((b) => b.label),
+      'these labels are also DISCORD_BUTTON_SETS.guide.buttons in ' +
+        'packages/shared/src/utils/discord-buttons.ts: change both or neither',
+    ).toEqual(['Connect my account', 'Report a bug', 'Send feedback']);
+  });
+});

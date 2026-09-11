@@ -126,6 +126,7 @@ vi.mock('../audit', () => ({
   },
 }));
 
+import { ExpectedError } from '@badminton/shared';
 import {
   editDiscordMessage,
   loadDiscordMessage,
@@ -156,6 +157,8 @@ const postedRow = (over: Row = {}): Row => ({
   embed_type: 'info',
   ping: false,
   attempts: 1,
+  /** No buttons, which is every row written before 00227. */
+  button_set: null,
   // THE SEND DOES NOT CLEAR THE CLAIM. The outbox route writes `sent_at` and
   // the message id and leaves `claimed_at` where it was, so every sent row on
   // production carries one. A fence of "claimed_at IS NULL" would therefore
@@ -457,6 +460,92 @@ describe('queueDiscordMessage: the audit entry', () => {
     await queueDiscordMessage({ content: 'Gym is closed tonight' });
 
     expect(store.audit[0]!.new_value).not.toHaveProperty('mentioned_roles');
+  });
+});
+
+// THE MEMBER BUTTONS (00227). A NAME FROM AN ALLOWLIST, NEVER A PAYLOAD: this
+// is a server action, so `buttonSet` is a client-controlled POST field, and the
+// one thing that must be impossible is making the club's bot post an arbitrary
+// Discord payload. The refusal is also written for an exec, because the CHECK in
+// the column would otherwise reach them as a raw constraint string.
+describe('the member buttons', () => {
+  it('refuses a set the bot does not know, and queues nothing at all', async () => {
+    await expect(
+      queueDiscordMessage({ content: 'Welcome', buttonSet: 'arbitrary-json' }),
+    ).rejects.toThrow(ExpectedError);
+
+    // The refusal happens BEFORE the insert, which is the whole point of having
+    // it here as well as in the database.
+    expect(outbox()).toHaveLength(0);
+    expect(store.touched).not.toContain('discord_outbox');
+  });
+
+  it('stores the name an exec asked for and records it in the audit log', async () => {
+    await queueDiscordMessage({ content: 'Welcome to the club', buttonSet: 'guide' });
+
+    expect(outbox()[0]!.button_set).toBe('guide');
+    expect(store.audit[0]!.new_value).toMatchObject({ button_set: 'guide' });
+  });
+
+  it('says nothing about buttons on a message that has none', async () => {
+    await queueDiscordMessage({ content: 'Gym is closed tonight' });
+
+    expect(outbox()[0]!.button_set).toBeNull();
+    expect(store.audit[0]!.new_value).not.toHaveProperty('button_set');
+  });
+
+  it('adds the buttons to a message that is already in Discord', async () => {
+    // HOW THE SIX GUIDE MESSAGES ALREADY POSTED GAIN THEIRS: an edit in place,
+    // so they keep their position, their permalink and their replies.
+    store.db.discord_outbox = [postedRow()];
+
+    await editDiscordMessage({
+      id: POSTED_ID,
+      embed: { title: 'Fees are due', body: 'Pay before Friday.', type: 'info' },
+      buttonSet: 'guide',
+    });
+
+    expect(outbox()[0]!.button_set).toBe('guide');
+    // And the row is back in the queue, which is what makes the bot PATCH it.
+    expect(outbox()[0]!.sent_at).toBeNull();
+    expect(store.audit[0]!.new_value).toMatchObject({ button_set: 'guide' });
+  });
+
+  it('REFUSES to take the buttons off a message that is already in Discord', async () => {
+    // Discord's PATCH leaves a field it is not sent standing, so omitting
+    // `components` does not remove them. The alternative to this error is a save
+    // that appears to work and changes nothing in the channel.
+    store.db.discord_outbox = [postedRow({ button_set: 'guide' })];
+
+    await expect(
+      editDiscordMessage({
+        id: POSTED_ID,
+        embed: { title: 'Fees are due', body: 'Pay before Monday.', type: 'info' },
+      }),
+    ).rejects.toThrow(/can only be added/);
+
+    // Nothing moved: not the words, not the buttons.
+    expect(outbox()[0]!.button_set).toBe('guide');
+    expect(outbox()[0]!.embed_body).toBe('Pay before Friday.');
+  });
+
+  it('keeps the set when an edit sends it back unchanged', async () => {
+    store.db.discord_outbox = [postedRow({ button_set: 'guide' })];
+
+    await editDiscordMessage({
+      id: POSTED_ID,
+      embed: { title: 'Fees are due', body: 'Pay before Monday.', type: 'info' },
+      buttonSet: 'guide',
+    });
+
+    expect(outbox()[0]!.button_set).toBe('guide');
+    expect(outbox()[0]!.embed_body).toBe('Pay before Monday.');
+  });
+
+  it('hands the set back to the composer, which is what disables the switch', async () => {
+    store.db.discord_outbox = [postedRow({ button_set: 'guide' })];
+
+    expect((await loadDiscordMessage(POSTED_ID)).buttonSet).toBe('guide');
   });
 });
 
