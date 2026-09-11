@@ -97,7 +97,7 @@ function mapping(over: Record<string, unknown> = {}) {
     match_id: "m1",
     channel_id: "chan-old",
     discord_message_id: "msg-1",
-    synced_summary: "Alice Nguyen def. Bao Tran — 21-18, 19-21, 21-15",
+    synced_summary: "Alice Nguyen vs Bao Tran: 21-18, 19-21, 21-15",
     ...over,
   };
 }
@@ -269,8 +269,19 @@ describe("GET /api/discord/match-results", () => {
     expect(a.kind).toBe("post");
     expect(a.channelId).toBe("chan-1");
     expect(a.discordMessageId).toBeNull();
-    expect(a.summary).toBe("Alice Nguyen def. Bao Tran — 21-18, 19-21, 21-15");
+    expect(a.summary).toBe("Alice Nguyen vs Bao Tran: 21-18, 19-21, 21-15");
     expect(a.winner).toBe("a");
+  });
+
+  it("words the stored line as a matchup, with no em dash", async () => {
+    // The line is a fingerprint AND what the bot's embed has to agree with, so
+    // both halves of the wording are pinned: no "def.", and no em dash, which
+    // this project bans everywhere.
+    const a = only((await run()).body.actions);
+
+    expect(a.summary).toContain(" vs ");
+    expect(a.summary).not.toContain("def.");
+    expect(a.summary).not.toContain("\u2014");
   });
 
   it("NEVER sends a rating delta or a post rating", async () => {
@@ -302,7 +313,7 @@ describe("GET /api/discord/match-results", () => {
     const a = only((await run()).body.actions);
     expect(a.teamA).toBe("Alice Nguyen & Bao Tran");
     expect(a.teamB).toBe("Cam Diaz & Dev Rao");
-    expect(a.summary).toBe("Alice Nguyen & Bao Tran def. Cam Diaz & Dev Rao — 21-18, 19-21, 21-15");
+    expect(a.summary).toBe("Alice Nguyen & Bao Tran vs Cam Diaz & Dev Rao: 21-18, 19-21, 21-15");
   });
 
   it("renders the same names in the same order however the rows arrive", async () => {
@@ -331,7 +342,7 @@ describe("GET /api/discord/match-results", () => {
         ],
       }),
     ];
-    expect(only((await run()).body.actions).summary).toBe("alice def. bao — 21-18, 19-21, 21-15");
+    expect(only((await run()).body.actions).summary).toBe("alice vs bao: 21-18, 19-21, 21-15");
   });
 
   // ---- WHAT NEVER GOES OUT ------------------------------------------------
@@ -377,7 +388,7 @@ describe("GET /api/discord/match-results", () => {
     expect((await run()).body.actions).toEqual([]);
   });
 
-  it("does not post 'def.' with no names when the participant join comes back empty", async () => {
+  it("does not post a bare matchup with no names when the participant join comes back empty", async () => {
     matches = [match({ match_participants: [] })];
     const { body } = await run();
 
@@ -402,7 +413,7 @@ describe("GET /api/discord/match-results", () => {
 
   it("posts without a score when there is none", async () => {
     matches = [match({ score_summary: null })];
-    expect(only((await run()).body.actions).summary).toBe("Alice Nguyen def. Bao Tran");
+    expect(only((await run()).body.actions).summary).toBe("Alice Nguyen vs Bao Tran");
   });
 
   // ---- EDIT ---------------------------------------------------------------

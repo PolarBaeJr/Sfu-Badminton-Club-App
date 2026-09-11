@@ -352,7 +352,17 @@ export async function GET(request: Request) {
 
     const winners = winner === 'a' ? teamA : teamB;
     const losers = winner === 'a' ? teamB : teamA;
-    const summary = `${winners} def. ${losers}${score ? ` — ${score}` : ''}`;
+    // Worded the same way as the embed the bot builds out of the same pieces.
+    // Single line on purpose: this is a comparison key, not display text, which
+    // is why it carries none of the embed's doubles layout or per-game split.
+    //
+    // CHANGING THIS STRING CHANGES THE FINGERPRINT of every result already
+    // posted, so the first tick after a deploy edits each one in place into the
+    // new wording. That is intended: a channel half in the old wording is worse
+    // than a burst of edits. It only reaches matches inside the LOOKBACK_HOURS
+    // window, though, so results older than that keep whatever they were posted
+    // with, permanently and with nothing to fix them.
+    const summary = `${winners} vs ${losers}${score ? `: ${score}` : ''}`;
 
     if (!mapping) {
       // Nothing to post to. Not an error: the relay is off until the club sets
