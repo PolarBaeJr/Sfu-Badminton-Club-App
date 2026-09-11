@@ -23,6 +23,7 @@ const BASE: DiscordPreviewProps = {
   updatedAt: null,
   roles: [{ id: '333333333333333333', name: 'executives' }],
   resolvesRoleNames: false,
+  buttonSet: null,
 };
 
 const draw = (props: Partial<DiscordPreviewProps>) =>
@@ -76,5 +77,29 @@ describe('DiscordPreview', () => {
     const html = draw({ body: 'x'.repeat(4001) });
 
     expect(html).toContain('The website shows all of it.');
+  });
+
+  /**
+   * THE SECOND ASYMMETRY, and the reason `buttonSet` is required with no
+   * default: the Discord composer can carry the member buttons and the website
+   * composer never can, because a relayed announcement goes out through a path
+   * with no column to put them in.
+   */
+  it('draws the member buttons only for a message that carries them', () => {
+    const withButtons = draw({ buttonSet: 'guide' });
+    for (const label of ['Connect my account', 'Report a bug', 'Send feedback']) {
+      expect(withButtons).toContain(label);
+    }
+    expect(withButtons).toContain('replies only to them');
+
+    const without = draw({ buttonSet: null });
+    expect(without).not.toContain('Connect my account');
+    expect(without).not.toContain('replies only to them');
+  });
+
+  it('draws nothing for a set name the console does not know', () => {
+    // The bot resolves an unknown name to no components at all, so a guessed
+    // row of pills here would be a picture of something nobody will ever see.
+    expect(draw({ buttonSet: 'rolepicker' })).not.toContain('Connect my account');
   });
 });

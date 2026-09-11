@@ -24,6 +24,14 @@ export interface PendingDiscordEdit {
   embedTitle: string | null;
   embedBody: string | null;
   embedType: string | null;
+  /**
+   * The member buttons the row already carries, or null.
+   *
+   * Not decoration: the composer shows the switch on and DISABLED when this is
+   * set, because buttons can be added to a message Discord already has and not
+   * taken off it, and the server refuses the removal either way.
+   */
+  buttonSet: string | null;
 }
 
 interface DiscordConsoleValue {

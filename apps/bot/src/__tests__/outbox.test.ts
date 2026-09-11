@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const claimOutboxMessages = vi.fn();
 const recordOutboxResult = vi.fn();
 const postMessage = vi.fn();
+const postMessageResult = vi.fn();
 const editMessage = vi.fn();
 const createMessage = vi.fn();
 const loadConfig = vi.fn();
@@ -37,6 +38,9 @@ vi.mock('../discord-api.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../discord-api.js')>()),
   DiscordApi: class {
     postMessage = postMessage;
+    // The one method that tells a 4xx from a maybe, which is what decides
+    // whether the buttons fallback is allowed to retry at all.
+    postMessageResult = postMessageResult;
     editMessage = editMessage;
     createMessage = createMessage;
   },
@@ -53,6 +57,9 @@ const MESSAGE = {
   // this file tested before editing existed.
   discordMessageId: null as string | null,
   requestedBy: 'Priya Raman',
+  // Null is every row written before 00227, and every row written since that
+  // did not ask for the buttons.
+  buttonSet: null as string | null,
 };
 
 /** The embed the console queues, and the colour the club pins for `urgent`. */
@@ -77,6 +84,7 @@ beforeEach(() => {
   // `vi.resetAllMocks()` above clears return values as well as calls, so every
   // mock needs its default here or an edit resolves undefined and reads as a
   // refusal.
+  postMessageResult.mockResolvedValue({ id: 'm1' });
   editMessage.mockResolvedValue('ok');
   recordOutboxResult.mockResolvedValue({ ok: true });
 });
@@ -363,6 +371,173 @@ describe('runOutbox', () => {
     createMessage.mockRejectedValue(new Error('missing access'));
     const { runOutbox } = await import('../outbox.js');
     expect(await runOutbox()).toEqual({ sent: 1, failed: 0 });
+    expect(recordOutboxResult).toHaveBeenCalledWith({ id: 'o1', discordMessageId: 'm1' });
+  });
+});
+
+// THE MEMBER BUTTONS ON A CONSOLE MESSAGE (00227). Three properties, and the
+// first is the one every existing row depends on:
+//
+//   1. A ROW WITH NO SET IS UNCHANGED, with no `components` key at all. Every
+//      message the club has ever queued goes down that path.
+//   2. THE BUTTONS ARE CLICKABLE ONES. custom_id buttons, never style 5: a
+//      style 5 button carries a url instead, which on this path would mean
+//      publishing a minted single-use token to a channel every member reads.
+//      guide.test.ts pins the same property for the interaction path.
+//   3. THE WORDS SURVIVE A DISCORD THAT REFUSES THE BUTTONS, and a message is
+//      never posted twice to find that out. Nothing has ever proved in
+//      production that a bot-posted message here is accepted with components.
+describe('runOutbox: the member buttons', () => {
+  /** The row an exec queued with the buttons switch on. */
+  const WITH_BUTTONS = { ...MESSAGE, buttonSet: 'guide' };
+
+  /** Every button in one payload, flattened out of its action rows. */
+  function buttonsIn(payload: unknown) {
+    const rows = (payload as { components?: { type: number; components: unknown[] }[] }).components;
+    return (rows ?? []).flatMap((row) => row.components) as {
+      type: number;
+      style: number;
+      label: string;
+      custom_id?: string;
+      url?: string;
+    }[];
+  }
+
+  it('posts one action row of three clickable buttons', async () => {
+    claimOutboxMessages.mockResolvedValue({ messages: [WITH_BUTTONS] });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 1, failed: 0 });
+
+    const payload = postMessageResult.mock.calls[0]?.[1];
+    const rows = (payload as { components: unknown[] }).components;
+    expect(rows).toHaveLength(1);
+
+    const buttons = buttonsIn(payload);
+    expect(buttons.map((b) => b.custom_id)).toEqual([
+      'guide:link',
+      'guide:bug',
+      'guide:feedback',
+    ]);
+    for (const button of buttons) {
+      // A style 5 button renders happily, emits no interaction and needs a url.
+      expect(button.style).not.toBe(5);
+      expect(button.url).toBeUndefined();
+      expect(typeof button.custom_id).toBe('string');
+    }
+  });
+
+  it('adds NO components key at all to a row that asked for none', async () => {
+    // THE REGRESSION GUARD FOR THE EXISTING PATH, and `toEqual` is the point:
+    // `objectContaining` cannot see a key that was added.
+    const { runOutbox } = await import('../outbox.js');
+    await runOutbox();
+
+    expect(postMessage.mock.calls[0]?.[1]).toEqual({
+      content: MESSAGE.content,
+      allowed_mentions: { parse: [] },
+    });
+    // And it never went near the method the fallback needs.
+    expect(postMessageResult).not.toHaveBeenCalled();
+  });
+
+  it('posts the words without the buttons when Discord refuses them', async () => {
+    // 'refused' is a 4xx, so nothing was created and one retry is safe.
+    postMessageResult.mockResolvedValueOnce('refused').mockResolvedValueOnce({ id: 'm1' });
+    claimOutboxMessages.mockResolvedValue({ messages: [WITH_BUTTONS] });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 1, failed: 0 });
+
+    expect(postMessageResult).toHaveBeenCalledTimes(2);
+    expect(buttonsIn(postMessageResult.mock.calls[0]?.[1])).toHaveLength(3);
+    expect(postMessageResult.mock.calls[1]?.[1]).not.toHaveProperty('components');
+
+    // Recorded as SENT, because it was, with the note that says what is missing.
+    const recorded = recordOutboxResult.mock.calls[0]?.[0] as {
+      discordMessageId?: string;
+      note?: string;
+    };
+    expect(recorded.discordMessageId).toBe('m1');
+    expect(recorded.note).toMatch(/without them/);
+  });
+
+  it('NEVER retries an unknown outcome, whatever it costs', async () => {
+    // THE ONE THAT MATTERS. A 5xx or a thrown fetch may already have landed the
+    // message, and retrying it is how the club says the same thing twice in a
+    // channel every member reads. So it is recorded as a failure and the next
+    // tick is where it is tried again, with an attempt spent.
+    postMessageResult.mockResolvedValue('unknown');
+    claimOutboxMessages.mockResolvedValue({ messages: [WITH_BUTTONS] });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 0, failed: 1 });
+
+    expect(postMessageResult).toHaveBeenCalledTimes(1);
+    expect(postMessage).not.toHaveBeenCalled();
+    const [call] = recordOutboxResult.mock.calls as [[{ error: string }]];
+    expect(call[0].error).toMatch(/channel/i);
+    expect(call[0]).not.toHaveProperty('discordMessageId');
+    // Nothing is known to have been said, so nothing is attributed.
+    expect(createMessage).not.toHaveBeenCalled();
+  });
+
+  it('sends the buttons on the PATCH that adds them to a posted message', async () => {
+    // How the six guide messages already in the channel gain their buttons:
+    // an edit in place, keeping their position, permalink and replies.
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...WITH_BUTTONS, discordMessageId: 'm1' }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 1, failed: 0 });
+
+    expect(buttonsIn(editMessage.mock.calls[0]?.[2])).toHaveLength(3);
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('retries a refused edit without the buttons, because a PATCH cannot duplicate', async () => {
+    editMessage.mockResolvedValueOnce('failed').mockResolvedValueOnce('ok');
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...WITH_BUTTONS, discordMessageId: 'm1' }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 1, failed: 0 });
+
+    expect(editMessage).toHaveBeenCalledTimes(2);
+    expect(editMessage.mock.calls[1]?.[2]).not.toHaveProperty('components');
+    const recorded = recordOutboxResult.mock.calls[0]?.[0] as {
+      discordMessageId?: string;
+      note?: string;
+    };
+    expect(recorded.discordMessageId).toBe('m1');
+    expect(recorded.note).toMatch(/without them/);
+  });
+
+  it('still refuses to repost a message somebody deleted', async () => {
+    // 'gone' is a 404, which means an exec removed the message on purpose. The
+    // buttons fallback must not turn that into a second attempt of any kind.
+    editMessage.mockResolvedValue('gone');
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...WITH_BUTTONS, discordMessageId: 'm1' }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 0, failed: 1 });
+
+    expect(editMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(postMessageResult).not.toHaveBeenCalled();
+    const [call] = recordOutboxResult.mock.calls as [[{ error: string }]];
+    expect(call[0].error).toMatch(/gone from Discord/);
+  });
+
+  it('posts a set name it has never heard of with no buttons, rather than failing', async () => {
+    // OLD IMAGE, NEW ROW. A console that learns a second set name before the
+    // bot image does must not cost the club a message: the row loses its buttons
+    // and still posts its words, down the unchanged path.
+    claimOutboxMessages.mockResolvedValue({
+      messages: [{ ...MESSAGE, buttonSet: 'rolepicker' }],
+    });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 1, failed: 0 });
+
+    expect(postMessage.mock.calls[0]?.[1]).not.toHaveProperty('components');
     expect(recordOutboxResult).toHaveBeenCalledWith({ id: 'o1', discordMessageId: 'm1' });
   });
 });

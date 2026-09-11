@@ -1,5 +1,6 @@
 import { claimOutboxMessages, recordOutboxResult, type OutboxMessage } from './api.js';
 import { postAuditEntry } from './audit.js';
+import { componentsForButtonSet } from './commands.js';
 import { loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
 
@@ -65,7 +66,22 @@ function roleIdsIn(text: string): string[] {
   return [...ids].slice(0, 100);
 }
 
-function payloadFor(message: OutboxMessage) {
+/**
+ * What one row sends to Discord.
+ *
+ * `withComponents: false` is the FALLBACK's half of the signature, not an
+ * option a caller picks: it builds the same message without its buttons, for
+ * the one retry runOutbox allows itself when Discord refuses the first attempt.
+ */
+function payloadFor(message: OutboxMessage, options?: { withComponents?: boolean }) {
+  // THE BUTTONS, RESOLVED FROM A NAME the row carries (00227). `components` is
+  // spread into the returns below and NOT written as a key set to null, so a row
+  // with no button set produces the identical payload it produced before this
+  // existed, byte for byte. That is the property the outbox tests pin with
+  // `toEqual`, and every message the club has ever queued goes down it.
+  const components =
+    options?.withComponents === false ? null : componentsForButtonSet(message.buttonSet);
+
   // THE DEFAULT IS SILENCE, and it is the same argument /say makes. An empty
   // `parse` turns every @here, @everyone and @role in the text into plain text
   // — they still READ as mentions and they notify nobody. A ping that nobody
@@ -100,6 +116,7 @@ function payloadFor(message: OutboxMessage) {
       allowed_mentions: message.ping
         ? { parse: [] as string[], roles: roleIdsIn(message.content) }
         : { parse: [] as string[] },
+      ...(components ? { components } : {}),
     };
   }
 
@@ -117,10 +134,15 @@ function payloadFor(message: OutboxMessage) {
         },
       ],
       allowed_mentions,
+      ...(components ? { components } : {}),
     };
   }
 
-  return { content: message.content ?? '', allowed_mentions };
+  return {
+    content: message.content ?? '',
+    allowed_mentions,
+    ...(components ? { components } : {}),
+  };
 }
 
 /**
@@ -129,6 +151,11 @@ function payloadFor(message: OutboxMessage) {
  * An embed is two fields and the entry has to read as one message, so the title
  * leads and the body follows. Not truncated here — postAuditEntry's own quoting
  * caps it and SAYS it capped it, which is the behaviour /say already relies on.
+ *
+ * THE BUTTONS ARE NOT QUOTED, and that is deliberate: the Discord audit entry
+ * records what the club SAID, and three fixed buttons that answer the clicker
+ * privately are not words anybody said. The admin audit_logs entry does record
+ * the set, because there the question is what an exec asked for.
  */
 function auditBody(message: OutboxMessage): string {
   if (message.embed) {
@@ -138,6 +165,18 @@ function auditBody(message: OutboxMessage): string {
   }
   return message.content ?? '';
 }
+
+/**
+ * What the console is told when the words went out and the buttons did not.
+ *
+ * WRITTEN FOR AN EXEC, not for a log. It lands in `last_error`, which the recent
+ * list already renders in red under the row, so the person who pressed Send
+ * learns the one thing they would otherwise have to spot in the channel by eye.
+ * Under the column's 500-character CHECK with room to spare.
+ */
+const BUTTONS_REFUSED_NOTE =
+  'Posted, but Discord would not take the buttons, so the message went out without them. ' +
+  'The words are in the channel.';
 
 export async function runOutbox(): Promise<OutboxRunResult> {
   const result: OutboxRunResult = { sent: 0, failed: 0 };
@@ -175,17 +214,62 @@ export async function runOutbox(): Promise<OutboxRunResult> {
       // message on purpose; silently putting it back is the worst thing this
       // file could do. It is recorded as a failure, so the attempt budget
       // retires the row rather than retrying it forever.
+      //
+      // AND THE WORDS COME FIRST IF DISCORD REFUSES THE BUTTONS. Nothing has
+      // ever proved in production that a bot-POSTED message here is accepted
+      // with components: the session board has never posted one, because
+      // `session_board_channel_id` is still unset. So a refusal is retried ONCE
+      // without them rather than losing a club message to an untested field, and
+      // the console is told it happened.
       let discordMessageId: string | null;
       let refusal: string | null = null;
+      const withButtons = componentsForButtonSet(message.buttonSet) !== null;
+      let note: string | null = null;
       if (message.discordMessageId) {
-        const outcome = await api.editMessage(
+        let outcome = await api.editMessage(
           message.channelId,
           message.discordMessageId,
           payloadFor(message)
         );
+        // RETRYING A PATCH IS SAFE, which is what separates this from the post
+        // path below: an edit cannot create a second message however many times
+        // it is attempted. 'gone' is never retried, because it is the one answer
+        // that means somebody deleted the message on purpose.
+        if (outcome === 'failed' && withButtons) {
+          outcome = await api.editMessage(
+            message.channelId,
+            message.discordMessageId,
+            payloadFor(message, { withComponents: false })
+          );
+          if (outcome === 'ok') note = BUTTONS_REFUSED_NOTE;
+        }
         discordMessageId = outcome === 'ok' ? message.discordMessageId : null;
         if (outcome === 'gone') {
           refusal = 'That message is gone from Discord, so there was nothing to edit.';
+        }
+      } else if (withButtons) {
+        // postMessageResult RATHER THAN postMessage, for the one distinction
+        // that decides whether a retry is allowed at all. postMessage folds
+        // every failure into null, and null cannot be retried safely.
+        const outcome = await api.postMessageResult(message.channelId, payloadFor(message));
+        if (typeof outcome === 'object') {
+          discordMessageId = outcome.id;
+        } else if (outcome === 'refused') {
+          // 4xx ONLY, SO NOTHING WAS CREATED, and that is the whole licence for
+          // this retry.
+          const retry = await api.postMessageResult(
+            message.channelId,
+            payloadFor(message, { withComponents: false })
+          );
+          discordMessageId = typeof retry === 'object' ? retry.id : null;
+          if (discordMessageId) note = BUTTONS_REFUSED_NOTE;
+        } else {
+          // 'unknown' IS NEVER RETRIED. A 5xx or a thrown fetch may have landed
+          // the message with nothing here able to find it again, and retrying
+          // that is how the club says the same thing twice in a channel every
+          // member reads. It falls through to the failure recording below, which
+          // spends an attempt and hands the row to the next tick.
+          discordMessageId = null;
         }
       } else {
         discordMessageId = await api.postMessage(message.channelId, payloadFor(message));
@@ -233,7 +317,13 @@ export async function runOutbox(): Promise<OutboxRunResult> {
       }
 
       try {
-        await recordOutboxResult({ id: message.id, discordMessageId });
+        // THE NOTE IS SPREAD IN RATHER THAN PASSED AS NULL, so the ordinary
+        // send is the same two-field call it always was.
+        await recordOutboxResult({
+          id: message.id,
+          discordMessageId,
+          ...(note ? { note } : {}),
+        });
       } catch (error) {
         // LOUD, and the worst case in this file: the message is in a channel
         // members read, the row is still claimed, and in ten minutes it becomes

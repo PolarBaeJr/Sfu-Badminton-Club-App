@@ -11,6 +11,7 @@ import {
 } from '@badminton/shared';
 import { resolveRoleMentions, type GuildRole } from '@/lib/discord-mentions';
 import type { DiscordRoleOption } from './announcement-shape';
+import { DiscordButtonsPreview } from './discord-buttons-preview';
 import {
   DISCORD_BG,
   DISCORD_EMBED_BG,
@@ -145,6 +146,23 @@ export interface DiscordPreviewProps {
    * are drawing.
    */
   resolvesRoleNames: boolean;
+  /**
+   * THE MEMBER BUTTONS THIS MESSAGE WILL CARRY, by name. null for none.
+   * REQUIRED, AND DELIBERATELY WITHOUT A DEFAULT, for the same reason
+   * `resolvesRoleNames` is:
+   *
+   *  - The DISCORD composer: whatever the switch says. Buttons are a thing the
+   *    outbox row can carry (00227) and the bot resolves the name into real
+   *    components.
+   *  - The WEBSITE composer: null, always. A relayed announcement goes out
+   *    through a different path entirely
+   *    (`apps/player/src/app/api/discord/announcements/route.ts`), which has no
+   *    button set and no column to put one in.
+   *
+   * No default, so that asymmetry stays visible at the call sites instead of
+   * being inherited from whichever answer happened to be written first.
+   */
+  buttonSet: string | null;
 }
 
 export function DiscordPreview({
@@ -160,6 +178,7 @@ export function DiscordPreview({
   updatedAt,
   roles,
   resolvesRoleNames,
+  buttonSet,
 }: DiscordPreviewProps) {
   // `new Date()` at render, in a client component, so the expiry and the
   // lookback are answered against the clock of the person reading the preview.
@@ -253,6 +272,11 @@ export function DiscordPreview({
             </div>
           ) : null}
         </div>
+
+        {/* UNDER THE EMBED CARD AND ABOVE THE FOOTER LINE, which is where
+            Discord actually draws components: they belong to the message, not to
+            the embed, so inside the card would be a picture of something else. */}
+        <DiscordButtonsPreview set={buttonSet} />
 
         <span className="mt-2 block text-[11px]" style={{ color: DISCORD_MUTED }}>
           {/* Not decoration. The relay never mentions anybody, and an exec

@@ -265,6 +265,12 @@ function AnnouncementFields({
           // as grey text. Passing true would draw a chip nobody will ever see.
           roles={[]}
           resolvesRoleNames={false}
+          // AND NO BUTTONS ON THIS PATH EITHER, for the same reason. A website
+          // announcement is relayed by
+          // apps/player/src/app/api/discord/announcements/route.ts, which knows
+          // nothing about button sets and has no column to carry one: the
+          // outbox is the only path that can.
+          buttonSet={null}
         />
       )}
     </div>

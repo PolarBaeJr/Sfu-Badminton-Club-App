@@ -59,6 +59,8 @@ interface OutboxRow {
    * instead of posting a second copy underneath the first.
    */
   discord_message_id: string | null;
+  /** The NAME of a button set the bot knows (00227), never a Discord payload. */
+  button_set: string | null;
 }
 
 export async function GET(request: Request) {
@@ -114,7 +116,7 @@ export async function GET(request: Request) {
     .lt('attempts', MAX_ATTEMPTS)
     .or(`claimed_at.is.null,claimed_at.lt.${staleClaim}`)
     .select(
-      'id, channel_id, content, embed_title, embed_body, embed_type, ping, attempts, requested_by, discord_message_id'
+      'id, channel_id, content, embed_title, embed_body, embed_type, ping, attempts, requested_by, discord_message_id, button_set'
     );
 
   if (claimError) {
@@ -163,6 +165,7 @@ export async function GET(request: Request) {
       ping: r.ping,
       attempts: r.attempts,
       discordMessageId: r.discord_message_id,
+      buttonSet: r.button_set,
       requestedBy: (r.requested_by && names.get(r.requested_by)) || null,
     })),
   });
@@ -188,6 +191,10 @@ export async function POST(request: Request) {
   const discordMessageId =
     typeof body.discordMessageId === 'string' ? body.discordMessageId : null;
   const error = typeof body.error === 'string' ? body.error : null;
+  // A NOTE IS NOT A THIRD OUTCOME. It rides along with `discordMessageId` on a
+  // message that DID go out, and says something about it the sender should know:
+  // today, that Discord took the words and refused the buttons.
+  const note = typeof body.note === 'string' ? body.note : null;
 
   if (!id) return NextResponse.json({ error: 'id_required' }, { status: 400 });
   if (!discordMessageId && !error) {
@@ -202,7 +209,15 @@ export async function POST(request: Request) {
       .update({
         sent_at: new Date().toISOString(),
         discord_message_id: discordMessageId,
-        last_error: null,
+        // THE NOTE OCCUPIES `last_error`, AND THE ROW IS STILL A SENT ONE:
+        // `sent_at` and the message id are written and `failed_at` stays null.
+        // Bounded like the failure path, because the column has the same CHECK.
+        //
+        // It reaches the screen for nothing: `readOutboxRows` maps
+        // `error: r.last_error` and DiscordRecent renders it in red under any
+        // row whatever the badge says. So `error !== null` no longer implies a
+        // failure, which is the intended cost.
+        last_error: note ? note.slice(0, 500) : null,
       })
       .eq('id', id)
       // ONLY IF IT IS STILL UNSENT. Recording a send twice would be harmless,

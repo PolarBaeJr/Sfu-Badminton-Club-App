@@ -51,6 +51,18 @@ export const DISCORD_CODE_BG = '#1e1f22';
 export const DISCORD_SPOILER_BG = '#232428';
 
 /**
+ * The two button fills, for the pills the preview draws under a message.
+ *
+ * HERE RATHER THAN IN THE COMPONENT THAT USES THEM, so every Discord colour in
+ * the console stays in one file: this is the one panel that must NOT follow the
+ * club's palette, and a second place for its hexes is how half of it drifts.
+ * Blurple is Discord's PRIMARY (style 1) and the grey is SECONDARY (style 2),
+ * the two styles guideComponents() uses.
+ */
+export const DISCORD_BUTTON_PRIMARY = '#5865f2';
+export const DISCORD_BUTTON_SECONDARY = '#4e5058';
+
+/**
  * WHAT AN EMBED DESCRIPTION ACTUALLY RENDERS, one flag per construct, each with
  * the evidence it rests on.
  *

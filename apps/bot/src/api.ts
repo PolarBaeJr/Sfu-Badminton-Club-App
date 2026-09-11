@@ -732,6 +732,20 @@ export interface OutboxMessage {
    * the entry still gets written, it just cannot say who.
    */
   requestedBy: string | null;
+  /**
+   * The member buttons this message carries, as a NAMED SET, or null for none.
+   *
+   * A NAME, RESOLVED HERE, NEVER A PAYLOAD. `componentsForButtonSet` in
+   * commands.ts turns it into real components, beside the handlers that answer
+   * them. The row cannot carry component JSON because the insert path is a
+   * server action in the admin console, and every field on one of those is a
+   * client-controlled POST field: a column holding raw JSON would be a way to
+   * make the club's bot post an arbitrary Discord payload.
+   *
+   * An older relay route sends no such field, which arrives as `undefined` and
+   * resolves to no components.
+   */
+  buttonSet: string | null;
 }
 
 /**
@@ -759,6 +773,13 @@ export function recordOutboxResult(input: {
   id: string;
   discordMessageId?: string;
   error?: string;
+  /**
+   * Something worth saying about a message that DID go out, which is not a
+   * third outcome: it rides along with `discordMessageId`, so the row is closed
+   * as sent and the note is what the console shows underneath it. The one case
+   * today is a message Discord took without its buttons.
+   */
+  note?: string;
 }): Promise<{ ok: true }> {
   return send<{ ok: true }>('POST', '/api/discord/outbox', input);
 }
