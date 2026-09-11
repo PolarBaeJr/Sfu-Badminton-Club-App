@@ -151,8 +151,8 @@ export interface DiscordPreviewProps {
    * REQUIRED, AND DELIBERATELY WITHOUT A DEFAULT, for the same reason
    * `resolvesRoleNames` is:
    *
-   *  - The DISCORD composer: whatever the switch says. Buttons are a thing the
-   *    outbox row can carry (00227) and the bot resolves the name into real
+   *  - The DISCORD composer: whichever set the picker names. Buttons are a thing
+   *    the outbox row can carry (00228) and the bot resolves the name into real
    *    components.
    *  - The WEBSITE composer: null, always. A relayed announcement goes out
    *    through a different path entirely

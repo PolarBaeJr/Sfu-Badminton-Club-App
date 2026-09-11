@@ -81,10 +81,11 @@ export interface QueueDiscordMessageInput {
    * A NAME FROM AN ALLOWLIST AND NEVER COMPONENT JSON, for the reason the
    * comment on this whole block gives: every exported parameter here is a
    * client-controlled POST field, so a parameter carrying a Discord payload
-   * would be a way to make the club's bot post anything at all. The only known
-   * name is `guide`, the buttons themselves live beside their handlers in
-   * apps/bot/src/commands.ts, and 00227's CHECK says the same thing in the
-   * database.
+   * would be a way to make the club's bot post anything at all. The known names
+   * are `guide` and the three one-button subsets of it, `link`, `bug` and
+   * `feedback`, because each club guide message is about one task. The buttons
+   * themselves live beside their handlers in apps/bot/src/commands.ts, and
+   * 00228's CHECK says the same thing in the database.
    */
   buttonSet?: string;
 }
@@ -96,9 +97,10 @@ export interface EditDiscordMessageInput {
   content?: string;
   embed?: { title: string; body: string; type: 'info' | 'warning' | 'urgent' | 'event' };
   /**
-   * The button set, which an edit may ADD but not take off. See the refusal in
-   * `editDiscordMessage` below: Discord's PATCH leaves components standing when
-   * the key is omitted, so a removal here would be a silent no-op.
+   * The button set, which an edit may ADD or SWAP but not take off. See the
+   * refusal in `editDiscordMessage` below: Discord's PATCH leaves components
+   * standing when the key is omitted, so a removal here would be a silent no-op.
+   * Naming a different known set is a real change and passes.
    */
   buttonSet?: string;
 }
@@ -276,10 +278,11 @@ function assertEmbedShape(embed: { title: string; body: string; type: string } |
 /**
  * A button set the bot knows, or nothing at all.
  *
- * CALLED BEFORE THE INSERT, so the CHECK in 00227 is the second line of defence
+ * CALLED BEFORE THE INSERT, so the CHECK in 00228 is the second line of defence
  * rather than the thing an exec reads: a name the column refuses comes back from
  * PostgREST as a raw constraint string. Absent and empty are the same answer,
- * because an unchecked switch sends nothing and a cleared one sends ''.
+ * because a message with no buttons sends no field at all and the picker's "No
+ * buttons" option sends ''.
  */
 function assertButtonSet(value: unknown): string | null {
   if (value === undefined || value === null || value === '') return null;
@@ -472,7 +475,7 @@ export async function queueDiscordMessage(input: QueueDiscordMessageInput) {
       ...(resolved.mentionedRoles.length ? { mentioned_roles: resolved.mentionedRoles } : {}),
       // RECORDED HERE EVEN THOUGH THE DISCORD AUDIT ENTRY DOES NOT SAY IT. That
       // entry quotes what the club said; this one records what an exec asked
-      // for, and a public message that grew three buttons is part of the ask.
+      // for, and a public message that grew buttons is part of the ask.
       ...(buttonSet ? { button_set: buttonSet } : {}),
     },
   });
@@ -556,8 +559,8 @@ export async function loadDiscordMessage(id: string) {
     channelId: data.channel_id as string,
     sentAt: (data.sent_at as string | null) ?? null,
     discordMessageId: (data.discord_message_id as string | null) ?? null,
-    // The composer needs this to know it must show the switch on and disabled:
-    // buttons can be added to a posted message and not taken off.
+    // The composer needs this to know it must not offer "No buttons": they can
+    // be added to a posted message, or swapped, and not taken off.
     buttonSet: (data.button_set as string | null) ?? null,
   };
 }
@@ -652,9 +655,9 @@ export async function editDiscordMessage(input: EditDiscordMessageInput) {
   // would take the ping line off a message in the channel. Nothing is
   // re-notified by leaving it there.
   //
-  // THE BUTTON SET GOES IN BOTH ARMS, or an add would not land in the shape it
-  // was asked for. It is legal under either one: three buttons under a plain
-  // message and three under an embed are the same three buttons.
+  // THE BUTTON SET GOES IN BOTH ARMS, or an add or a swap would not land in the
+  // shape it was asked for. It is legal under either one: a button means the same
+  // thing under a plain message as it does under an embed.
   const changes = wasEmbed
     ? {
         embed_title: embedTitle,

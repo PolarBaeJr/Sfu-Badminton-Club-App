@@ -153,9 +153,11 @@ function payloadFor(message: OutboxMessage, options?: { withComponents?: boolean
  * caps it and SAYS it capped it, which is the behaviour /say already relies on.
  *
  * THE BUTTONS ARE NOT QUOTED, and that is deliberate: the Discord audit entry
- * records what the club SAID, and three fixed buttons that answer the clicker
- * privately are not words anybody said. The admin audit_logs entry does record
- * the set, because there the question is what an exec asked for.
+ * records what the club SAID, and fixed buttons that answer the clicker
+ * privately are not words anybody said. That holds whether the row carries the
+ * whole guide row or one button of it (00228), because the argument is about
+ * what a button is rather than how many there are. The admin audit_logs entry
+ * does record the set, because there the question is what an exec asked for.
  */
 function auditBody(message: OutboxMessage): string {
   if (message.embed) {
