@@ -10,15 +10,17 @@ import {
 
 // The member buttons, drawn where Discord draws them.
 //
-// WHY THE PREVIEW SHOWS THEM AT ALL. The switch that adds them says what they
-// are in words, and words are not what somebody is deciding about: three buttons
-// under a club announcement is a visible change to a channel every member reads,
-// and the only way to see it used to be to post one and go and look.
+// WHY THE PREVIEW SHOWS THEM AT ALL. The picker that adds them says what they
+// are in words, and words are not what somebody is deciding about: a row of
+// buttons under a club announcement is a visible change to a channel every
+// member reads, and the only way to see it used to be to post one and go and
+// look. With four sets to choose between (00228) it also answers the question
+// the names alone cannot, which is how much of the row each one is.
 //
 // IT DRAWS THE LABELS AND NOT THE PAYLOAD. The real buttons are built by
-// guideComponents() in apps/bot/src/commands.ts, which this app cannot import
-// and must not duplicate; DISCORD_BUTTON_SETS holds the console's copy of the
-// labels, pinned against the bot's by a test in both packages.
+// componentsForButtonSet() in apps/bot/src/commands.ts, which this app cannot
+// import and must not duplicate; DISCORD_BUTTON_SETS holds the console's copy of
+// the labels, pinned against the bot's by a test in both packages.
 //
 // A SET IT DOES NOT KNOW DRAWS NOTHING. A guessed row of pills would be a
 // picture of something the bot will not post: the bot resolves an unknown name
@@ -49,7 +51,12 @@ export function DiscordButtonsPreview({ set }: { set: string | null }) {
         ))}
       </div>
       <span className="text-[11px]" style={{ color: DISCORD_MUTED }}>
-        Members see these under the message. Clicking one replies only to them.
+        {/* Conditional because three of the four sets are one button, and "these"
+            and "one" both read as a list. Both wordings keep the same closing
+            clause, which is what the preview test looks for. */}
+        {buttons.length === 1
+          ? 'Members see this under the message. Clicking it replies only to them.'
+          : 'Members see these under the message. Clicking one replies only to them.'}
       </span>
     </div>
   );

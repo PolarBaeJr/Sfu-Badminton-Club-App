@@ -2367,53 +2367,75 @@ function parseEmoji(emoji: string) {
 /** Prefix on every guide button's custom_id. `guide:<keyword>`. */
 const GUIDE_PREFIX = 'guide:';
 
+/**
+ * The three guide buttons, ONE DEFINITION EACH.
+ *
+ * Factored out here rather than written inline below because a console message
+ * may now carry a SUBSET of this row (00228), and a second copy of a button for
+ * the one-button case is how a click on it stops being answered. Every caller
+ * hands out the same object, so a narrow set's button is the guide row's button.
+ */
+const GUIDE_BUTTONS = {
+  link: {
+    type: 2, // BUTTON
+    style: 1, // PRIMARY -- the one thing to do first
+    label: 'Connect my account',
+    custom_id: `${GUIDE_PREFIX}link`,
+  },
+  bug: {
+    type: 2,
+    style: 2, // SECONDARY
+    label: 'Report a bug',
+    custom_id: `${GUIDE_PREFIX}bug`,
+  },
+  feedback: {
+    type: 2,
+    style: 2,
+    label: 'Send feedback',
+    custom_id: `${GUIDE_PREFIX}feedback`,
+  },
+};
+
 export function guideComponents() {
   return [
     {
       type: 1, // ACTION_ROW
-      components: [
-        {
-          type: 2, // BUTTON
-          style: 1, // PRIMARY -- the one thing to do first
-          label: 'Connect my account',
-          custom_id: `${GUIDE_PREFIX}link`,
-        },
-        {
-          type: 2,
-          style: 2, // SECONDARY
-          label: 'Report a bug',
-          custom_id: `${GUIDE_PREFIX}bug`,
-        },
-        {
-          type: 2,
-          style: 2,
-          label: 'Send feedback',
-          custom_id: `${GUIDE_PREFIX}feedback`,
-        },
-      ],
+      components: [GUIDE_BUTTONS.link, GUIDE_BUTTONS.bug, GUIDE_BUTTONS.feedback],
     },
   ];
 }
 
 /**
- * The buttons a NAMED SET means, for a message the console queued (00227).
+ * The buttons a NAMED SET means, for a message the console queued (00228).
  *
  * An outbox row carries the NAME of a set and never component JSON, because the
  * insert path is a server action and every field on one is client-controlled. So
  * the resolution from a name to real buttons happens exactly here, in the file
  * that also holds the handlers answering them.
  *
+ * FOUR NAMES, AND THREE OF THEM ARE SUBSETS OF THE FIRST. `guide` is the whole
+ * row /guidepost posts; `link`, `bug` and `feedback` are each one button OF THAT
+ * ROW, because each club guide message is about one task and a message about
+ * connecting an account should not carry the bug form. NO NEW HANDLER EXISTS OR
+ * IS NEEDED: the custom_ids are the same `guide:` ids, so isGuideButton and
+ * handleGuideButton already answer a click on a narrow set's button.
+ *
  * AN UNKNOWN NAME IS NULL, NOT A THROW, and that is the compatibility property
  * rather than laziness: a row written by a newer console and drained by an older
  * bot image would otherwise throw inside payloadFor and fail a club message
- * three times over. This way it loses its buttons and still posts its words.
+ * three times over. This way it loses its buttons and still posts its words. It
+ * is what makes the migration and the two images deployable in any order.
  *
  * `undefined` is the same case, and it is the version skew in the other
  * direction: a new bot image against an old relay route gets no `buttonSet`
  * field at all.
  */
 export function componentsForButtonSet(name: string | null | undefined) {
-  return name === 'guide' ? guideComponents() : null;
+  if (name === 'guide') return guideComponents();
+  if (name === 'link' || name === 'bug' || name === 'feedback') {
+    return [{ type: 1, components: [GUIDE_BUTTONS[name]] }];
+  }
+  return null;
 }
 
 function handleGuidePost(context: InteractionContext) {

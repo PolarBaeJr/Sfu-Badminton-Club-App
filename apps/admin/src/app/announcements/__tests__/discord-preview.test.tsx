@@ -97,6 +97,18 @@ describe('DiscordPreview', () => {
     expect(without).not.toContain('replies only to them');
   });
 
+  it('draws only the one button a narrow set names', () => {
+    // EACH GUIDE IS ABOUT ONE TASK (00228), and the whole point of the preview
+    // here is that somebody can see the message carries that button and not the
+    // other two before they edit six real messages in the channel.
+    const html = draw({ buttonSet: 'bug' });
+
+    expect(html).toContain('Report a bug');
+    expect(html).not.toContain('Connect my account');
+    expect(html).not.toContain('Send feedback');
+    expect(html).toContain('replies only to them');
+  });
+
   it('draws nothing for a set name the console does not know', () => {
     // The bot resolves an unknown name to no components at all, so a guessed
     // row of pills here would be a picture of something nobody will ever see.

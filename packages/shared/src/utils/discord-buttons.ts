@@ -1,12 +1,20 @@
 // The button sets a console-queued Discord message is allowed to carry.
 //
 // A NAME, NEVER A PAYLOAD. `discord_outbox.button_set` holds one word and its
-// CHECK in 00227 allows exactly the keys below. The insert path is a server
+// CHECK in 00228 allows exactly the four keys below. The insert path is a server
 // action, so every field on it is a client-controlled POST field: a column
 // holding component JSON would be a way to make the club's bot post an
-// arbitrary Discord payload. The buttons themselves live in
-// `guideComponents()` in apps/bot/src/commands.ts, beside the handlers that
-// answer them, so a button that exists is a button something responds to.
+// arbitrary Discord payload. The buttons themselves live in `GUIDE_BUTTONS` in
+// apps/bot/src/commands.ts and a name resolves to them in
+// componentsForButtonSet(), beside the handlers that answer them, so a button
+// that exists is a button something responds to.
+//
+// EACH GUIDE IS ABOUT ONE TASK, which is why there are four sets rather than
+// one. `guide` is the whole row that /guidepost posts; `link`, `bug` and
+// `feedback` are each ONE BUTTON OF THAT SAME ROW, with the same label, the same
+// style and the same custom_id. So a narrow set adds no new button and needs no
+// new handler: the message about connecting an account carries the button for
+// connecting an account and nothing else.
 //
 // THE BOT CANNOT IMPORT THIS FILE. apps/bot has zero production dependencies
 // on purpose, so it keeps its own copy of the literals and BOTH SIDES PIN THEM
@@ -29,10 +37,10 @@
  */
 export const DISCORD_BUTTON_SETS = {
   guide: {
-    /** The Switch's label in the composer. */
-    switchLabel: 'Add the member buttons',
+    /** This entry's label in the composer's picker. */
+    optionLabel: 'All three member buttons',
     /** Its description, written for an exec rather than a developer. */
-    switchDescription:
+    description:
       'Three buttons under the message: Connect my account, Report a bug, Send feedback. ' +
       'A member clicks one and only they see the reply.',
     /**
@@ -48,6 +56,35 @@ export const DISCORD_BUTTON_SETS = {
      */
     styles: [1, 2, 2],
   },
+  // THE THREE NARROW SETS, AND THEIR STYLES ARE NOT A CHOICE. Each is the same
+  // button as the one in `guide` above, so its style is that button's style
+  // inside the three-button row: 1 for Connect my account, 2 for the other two.
+  // A lone SECONDARY button is not a defect, it is the same button in a shorter
+  // row, and the bot's test asserts exactly that subset property.
+  link: {
+    optionLabel: 'Connect my account only',
+    description:
+      'One button under the message: Connect my account. A member clicks it and only they see ' +
+      'the reply.',
+    buttons: ['Connect my account'],
+    styles: [1],
+  },
+  bug: {
+    optionLabel: 'Report a bug only',
+    description:
+      'One button under the message: Report a bug. It opens a small form, and only the member ' +
+      'who clicked sees the reply.',
+    buttons: ['Report a bug'],
+    styles: [2],
+  },
+  feedback: {
+    optionLabel: 'Send feedback only',
+    description:
+      'One button under the message: Send feedback. It opens a small form, and only the member ' +
+      'who clicked sees the reply.',
+    buttons: ['Send feedback'],
+    styles: [2],
+  },
 } as const;
 
 /** The name of a set, which is all the column and the server action carry. */
@@ -56,7 +93,7 @@ export type DiscordButtonSet = keyof typeof DISCORD_BUTTON_SETS;
 /**
  * Whether a client-supplied string is a set the bot knows how to answer.
  *
- * Used by the server action BEFORE the insert, so the CHECK in 00227 is the
+ * Used by the server action BEFORE the insert, so the CHECK in 00228 is the
  * second line of defence rather than the thing an exec reads.
  */
 export function isDiscordButtonSet(value: unknown): value is DiscordButtonSet {

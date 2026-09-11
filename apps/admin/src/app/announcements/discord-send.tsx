@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Badge, Checkbox, Input, Select, Textarea, Switch } from '@badminton/ui';
-import { DISCORD_BUTTON_SETS } from '@badminton/shared';
+import { DISCORD_BUTTON_SETS, isDiscordButtonSet } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import {
   editDiscordMessage,
@@ -147,9 +147,9 @@ export function DiscordSend({
   /**
    * The member buttons this message will carry, by NAME, or null for none.
    *
-   * A name rather than a boolean because the column is one (00227) and the
-   * action takes one: a second set would then be a second switch and nothing
-   * else, with no boolean to untangle.
+   * A name rather than a boolean because the column is one (00228) and the
+   * action takes one. There are four sets now, so this is also the picker's
+   * value, with no boolean to untangle: the empty option maps back to null.
    */
   const [buttonSet, setButtonSet] = useState<string | null>(null);
   /** The message being edited, or null when this is a fresh one. */
@@ -182,7 +182,7 @@ export function DiscordSend({
     }
     // OUTSIDE THE SHAPE BRANCHES, because buttons are legal under either one and
     // both arms would otherwise need the same line. It is also load-bearing for
-    // the happy path rather than only for the switch's appearance: `send()` only
+    // the happy path rather than only for the picker's appearance: `send()` only
     // ships `buttonSet` when it is set, so a row that already has buttons and did
     // not refill this would be an edit the server refuses as a removal.
     setButtonSet(pending.buttonSet);
@@ -191,15 +191,42 @@ export function DiscordSend({
   const editing = editingId !== null;
 
   /**
-   * Whether the buttons switch is fixed on.
+   * Whether this message's buttons can no longer be taken off.
    *
-   * A message Discord already has can GAIN buttons and cannot lose them: its
-   * PATCH leaves a field it is not sent standing, so omitting them would be a
-   * save that appears to work and changes nothing in the channel.
-   * `editDiscordMessage` refuses the removal, and this is that refusal shown
-   * before somebody runs into it.
+   * A message Discord already has can GAIN buttons, or SWAP one set for another,
+   * and cannot lose them: its PATCH leaves a field it is not sent standing, so
+   * omitting them would be a save that appears to work and changes nothing in
+   * the channel. `editDiscordMessage` refuses the removal and nothing else, and
+   * this is that refusal shown before somebody runs into it.
    */
   const buttonsLocked = editing && Boolean(pending?.buttonSet);
+
+  const buttonOptions = [
+    // "No buttons" IS A REAL OPTION rather than an empty field, for the reason
+    // the channel picker's comment above gives: Select renders exactly the
+    // options it is handed and has no placeholder support.
+    //
+    // AND IT IS THE OPTION THAT GOES AWAY WHEN THE ROW IS LOCKED, rather than
+    // the control being disabled. The server refuses set-to-NULL and nothing
+    // else, so add, keep and swap all pass; disabling the picker would
+    // over-enforce that rule and make the actual task impossible, which is
+    // editing the guide messages already in the channel down to one button each.
+    //
+    // `&& buttonSet` keeps the value and the option list agreeing on the single
+    // render between the list handing over a `pending` row and the effect above
+    // refilling `buttonSet` from it.
+    ...(buttonsLocked && buttonSet ? [] : [{ value: '', label: 'No buttons' }]),
+    // BUILT FROM THE ALLOWLIST, so a fifth set is a change to
+    // @badminton/shared and nothing here. The declaration order there is this
+    // picker's option order.
+    ...Object.entries(DISCORD_BUTTON_SETS).map(([value, set]) => ({
+      value,
+      label: set.optionLabel,
+    })),
+  ];
+
+  /** The chosen set, for the helper line under the picker. Null means none. */
+  const chosenButtonSet = isDiscordButtonSet(buttonSet) ? buttonSet : null;
 
   const channelOptions = [
     ...(channels.some((c) => c.key === 'announcement_channel_id')
@@ -332,9 +359,9 @@ export function DiscordSend({
           setPingRoles([]);
           // AND `buttonSet` IS DELIBERATELY LEFT ALONE, which is the opposite of
           // the two lines above and needs saying because of them: the ping
-          // controls are per shape, the buttons are not. Three buttons under a
-          // plain message and three under an embed are the same three buttons,
-          // so clearing them here would throw away a choice for no reason.
+          // controls are per shape, the buttons are not. A button means the same
+          // thing under a plain message as it does under an embed, so clearing
+          // the choice here would throw one away for no reason.
         }}
         options={SHAPE_OPTIONS}
       />
@@ -381,8 +408,8 @@ export function DiscordSend({
               On the Discord surface rather than the console's, for the reason
               discord-markdown.tsx gives about every colour in this panel: it is a
               picture of somebody else's app, and the caption's grey is only
-              legible against it. aria-hidden because the switch's own
-              description says all of this in words. */}
+              legible against it. aria-hidden because the line under the picker
+              says all of this in words. */}
           {buttonSet && (
             <div className="px-3 pt-1 pb-3" style={{ background: DISCORD_BG }} aria-hidden>
               <DiscordButtonsPreview set={buttonSet} />
@@ -490,28 +517,39 @@ export function DiscordSend({
       )}
 
       {/* THE MEMBER BUTTONS, and this one is offered UNDER BOTH SHAPES AND
-          WHILE EDITING, which is the opposite of the two controls below it.
-          Three buttons under a plain message and three under an embed are the
-          same three buttons, and an edit is how the guide messages already in
-          the channel gain theirs. They notify nobody: a click answers the
-          person who clicked and nobody else sees the reply. */}
+          WHILE EDITING, which is the opposite of the two controls below it. A
+          button means the same thing under a plain message as it does under an
+          embed, so there is nothing for the shape to decide, and an edit is how
+          the guide messages already in the channel get theirs cut down to the
+          one button each of them is about. They notify nobody: a click answers
+          the person who clicked and nobody else sees the reply. */}
       <div className="flex flex-col gap-2 border-y border-[var(--line)] py-3">
-        <Switch
-          // The copy lives in @badminton/shared beside the allowlist, so the
-          // switch and the preview cannot describe different buttons.
-          label={DISCORD_BUTTON_SETS.guide.switchLabel}
-          description={DISCORD_BUTTON_SETS.guide.switchDescription}
-          checked={buttonSet === 'guide'}
-          // LOCKED ON once Discord has the message with them, mirroring the
-          // server's refusal the same way the disabled Shape select above
-          // mirrors its own.
-          disabled={buttonsLocked}
-          onChange={(checked) => setButtonSet(checked ? 'guide' : null)}
+        {/* AN EXPLICIT ID, for the same reason the embed branch and the channel
+            picker above carry theirs: both composers are mounted at once and
+            Select derives its element id from the label text. */}
+        <Select
+          id="discord-buttons"
+          label="Member buttons"
+          value={buttonSet ?? ''}
+          // The empty option round-trips back to null, which is what `send()`'s
+          // `...(buttonSet ? { buttonSet } : {})` spread reads.
+          onChange={(e) => setButtonSet(e.target.value || null)}
+          options={buttonOptions}
         />
+        {/* SELECT HAS NO `description` PROP, so the chosen set's own words go in
+            a sibling paragraph, styled like the channel-ID helper above. The
+            copy lives in @badminton/shared beside the allowlist, so the picker
+            and the preview cannot describe different buttons. */}
+        <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+          {chosenButtonSet
+            ? DISCORD_BUTTON_SETS[chosenButtonSet].description
+            : 'Nothing is added under the message.'}
+        </p>
         {buttonsLocked && (
           <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-            Buttons can be added to a message Discord already has, but not taken off again:
-            leaving them out of an edit would change nothing in the channel.
+            Buttons can be added to a message Discord already has, or swapped for a different set,
+            but not taken off again: leaving them out of an edit would change nothing in the
+            channel.
           </p>
         )}
       </div>
@@ -740,8 +778,8 @@ export function DiscordRecent({ recent }: { recent: OutboxRow[] }) {
         embedTitle: message.embedTitle,
         embedBody: message.embedBody,
         embedType: message.embedType,
-        // Carried through so the composer knows the switch is fixed on: buttons
-        // can be added to a posted message and not taken off.
+        // Carried through so the composer knows this row's buttons cannot be
+        // taken off again, only swapped for another set.
         buttonSet: message.buttonSet,
       });
     } catch (error) {

@@ -298,20 +298,94 @@ describe('componentsForButtonSet', () => {
     expect(componentsForButtonSet(undefined)).toBeNull();
   });
 
-  it('says what the console promises it says', async () => {
+  it('says what the console promises it says, for every set', async () => {
     // THE BOT'S HALF OF A TRIPWIRE WITH TWO HALVES. apps/bot has zero
     // production dependencies, so it cannot import
     // packages/shared/src/utils/discord-buttons.ts and the console keeps a
     // second copy of these labels for its preview. A tripwire on only one side
     // catches a change to that side and misses the other, which is how the two
     // Elo weight tables ended up disagreeing with nothing failing.
+    //
+    // WRITTEN OUT RATHER THAN READ OFF THE MODULE, which matters more here than
+    // anywhere else in this suite: apps/bot/tsconfig.json excludes __tests__, so
+    // nothing type-checks this file, and a table derived from the function it is
+    // pinning would agree with any change to it.
     const { componentsForButtonSet } = await import('../commands.js');
-    const buttons = componentsForButtonSet('guide')!.flatMap((row) => row.components);
 
-    expect(
-      buttons.map((b) => b.label),
-      'these labels are also DISCORD_BUTTON_SETS.guide.buttons in ' +
-        'packages/shared/src/utils/discord-buttons.ts: change both or neither',
-    ).toEqual(['Connect my account', 'Report a bug', 'Send feedback']);
+    for (const [name, labels] of Object.entries({
+      guide: ['Connect my account', 'Report a bug', 'Send feedback'],
+      link: ['Connect my account'],
+      bug: ['Report a bug'],
+      feedback: ['Send feedback'],
+    })) {
+      const buttons = componentsForButtonSet(name)!.flatMap((row) => row.components);
+
+      expect(
+        buttons.map((b) => b.label),
+        `these labels are also DISCORD_BUTTON_SETS.${name}.buttons in ` +
+          'packages/shared/src/utils/discord-buttons.ts: change both or neither',
+      ).toEqual(labels);
+    }
+  });
+
+  it('styles and ids every set the way the console says it does', async () => {
+    const { componentsForButtonSet } = await import('../commands.js');
+
+    for (const [name, expected] of Object.entries({
+      guide: { styles: [1, 2, 2], ids: ['guide:link', 'guide:bug', 'guide:feedback'] },
+      link: { styles: [1], ids: ['guide:link'] },
+      bug: { styles: [2], ids: ['guide:bug'] },
+      feedback: { styles: [2], ids: ['guide:feedback'] },
+    })) {
+      const buttons = componentsForButtonSet(name)!.flatMap((row) => row.components);
+
+      expect(
+        buttons.map((b) => b.style),
+        `these styles are also DISCORD_BUTTON_SETS.${name}.styles in ` +
+          'packages/shared/src/utils/discord-buttons.ts: change both or neither',
+      ).toEqual(expected.styles);
+      // THE IDS ARE THE GUIDE IDS IN EVERY SET, which is what makes a narrow set
+      // need no handler of its own: handleGuideButton already answers these.
+      expect(buttons.map((b) => b.custom_id)).toEqual(expected.ids);
+    }
+  });
+
+  it('hands a narrow set the SAME button the three-button row holds', async () => {
+    // THE SUBSET PROPERTY, and it is what stops the one-button rows drifting.
+    // A narrow set is not a new button: it is one button of the row /guidepost
+    // posts, with the same label, the same style and the same custom_id, so a
+    // click on it is answered by the handler that already exists.
+    const { componentsForButtonSet, guideComponents } = await import('../commands.js');
+    const inGuide = guideComponents().flatMap((row) => row.components);
+
+    for (const name of ['link', 'bug', 'feedback']) {
+      const buttons = componentsForButtonSet(name)!.flatMap((row) => row.components);
+
+      expect(buttons).toHaveLength(1);
+      const twin = inGuide.find((b) => b.custom_id === buttons[0]!.custom_id);
+      expect(twin).toBeDefined();
+      expect(buttons[0]).toEqual(twin);
+    }
+  });
+
+  it('fits every set in one action row of clickable buttons', async () => {
+    // Discord's own five-per-row limit, and the style 5 trap: a style 5 button
+    // carries a url instead of a custom_id, renders happily and emits no
+    // interaction at all when clicked.
+    const { componentsForButtonSet } = await import('../commands.js');
+
+    for (const name of ['guide', 'link', 'bug', 'feedback']) {
+      const rows = componentsForButtonSet(name)!;
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.type).toBe(1);
+      expect(rows[0]!.components.length).toBeLessThanOrEqual(5);
+      for (const button of rows[0]!.components) {
+        expect(button.style).not.toBe(5);
+        expect([1, 2]).toContain(button.style);
+        expect(typeof button.custom_id).toBe('string');
+        expect((button as { url?: string }).url).toBeUndefined();
+      }
+    }
   });
 });

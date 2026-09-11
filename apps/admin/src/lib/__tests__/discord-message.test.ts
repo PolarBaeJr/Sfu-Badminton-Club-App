@@ -463,7 +463,7 @@ describe('queueDiscordMessage: the audit entry', () => {
   });
 });
 
-// THE MEMBER BUTTONS (00227). A NAME FROM AN ALLOWLIST, NEVER A PAYLOAD: this
+// THE MEMBER BUTTONS (00228). A NAME FROM AN ALLOWLIST, NEVER A PAYLOAD: this
 // is a server action, so `buttonSet` is a client-controlled POST field, and the
 // one thing that must be impossible is making the club's bot post an arbitrary
 // Discord payload. The refusal is also written for an exec, because the CHECK in
@@ -542,10 +542,52 @@ describe('the member buttons', () => {
     expect(outbox()[0]!.embed_body).toBe('Pay before Monday.');
   });
 
-  it('hands the set back to the composer, which is what disables the switch', async () => {
+  it('hands the set back to the composer, which is what drops "No buttons"', async () => {
     store.db.discord_outbox = [postedRow({ button_set: 'guide' })];
 
     expect((await loadDiscordMessage(POSTED_ID)).buttonSet).toBe('guide');
+  });
+
+  it('stores a narrow set the same way, because each guide is about one task', async () => {
+    await queueDiscordMessage({ content: 'Connect your account', buttonSet: 'link' });
+
+    expect(outbox()[0]!.button_set).toBe('link');
+    expect(store.audit[0]!.new_value).toMatchObject({ button_set: 'link' });
+  });
+
+  it('SWAPS one known set for another on a message already in Discord', async () => {
+    // THE PATH THAT FIXES THE MESSAGES ALREADY IN THE CHANNEL: each of the six
+    // guide messages posted with all three buttons, and each is about one task,
+    // so this is the edit that cuts it down to its own button. It is not a
+    // removal, so the refusal below does not apply to it.
+    store.db.discord_outbox = [postedRow({ button_set: 'guide' })];
+
+    await editDiscordMessage({
+      id: POSTED_ID,
+      embed: { title: 'Fees are due', body: 'Pay before Friday.', type: 'info' },
+      buttonSet: 'link',
+    });
+
+    expect(outbox()[0]!.button_set).toBe('link');
+    // And back in the queue, which is what makes the bot PATCH the real message.
+    expect(outbox()[0]!.sent_at).toBeNull();
+    expect(store.audit[0]!.new_value).toMatchObject({ button_set: 'link' });
+  });
+
+  it('REFUSES to take a narrow set off a message that is already in Discord', async () => {
+    // The refusal is about NULL and nothing else, so it reads a one-button set
+    // exactly as it reads the three-button one.
+    store.db.discord_outbox = [postedRow({ button_set: 'link' })];
+
+    await expect(
+      editDiscordMessage({
+        id: POSTED_ID,
+        embed: { title: 'Fees are due', body: 'Pay before Monday.', type: 'info' },
+      }),
+    ).rejects.toThrow(/can only be added/);
+
+    expect(outbox()[0]!.button_set).toBe('link');
+    expect(outbox()[0]!.embed_body).toBe('Pay before Friday.');
   });
 });
 

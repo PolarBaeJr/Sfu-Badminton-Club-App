@@ -27,9 +27,11 @@ export interface PendingDiscordEdit {
   /**
    * The member buttons the row already carries, or null.
    *
-   * Not decoration: the composer shows the switch on and DISABLED when this is
-   * set, because buttons can be added to a message Discord already has and not
-   * taken off it, and the server refuses the removal either way.
+   * Not decoration: when this is set the composer preselects it in the picker
+   * and STOPS OFFERING "No buttons", because buttons can be added to a message
+   * Discord already has, or swapped for another set, and not taken off it. The
+   * picker itself stays enabled: the server refuses only the removal, and
+   * disabling it would make the swap impossible.
    */
   buttonSet: string | null;
 }

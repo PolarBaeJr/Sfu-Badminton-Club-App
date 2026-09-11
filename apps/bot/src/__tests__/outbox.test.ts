@@ -527,6 +527,24 @@ describe('runOutbox: the member buttons', () => {
     expect(call[0].error).toMatch(/gone from Discord/);
   });
 
+  it('posts one button for a set that names one task', async () => {
+    // EACH CLUB GUIDE IS ABOUT ONE TASK (00228), so the message about connecting
+    // an account carries that button and not the bug form. It is the SAME button
+    // the three-button row holds, ids included, which is why no handler had to
+    // be added for it.
+    claimOutboxMessages.mockResolvedValue({ messages: [{ ...MESSAGE, buttonSet: 'link' }] });
+    const { runOutbox } = await import('../outbox.js');
+    expect(await runOutbox()).toEqual({ sent: 1, failed: 0 });
+
+    const payload = postMessageResult.mock.calls[0]?.[1];
+    expect((payload as { components: unknown[] }).components).toHaveLength(1);
+
+    const buttons = buttonsIn(payload);
+    expect(buttons.map((b) => b.custom_id)).toEqual(['guide:link']);
+    expect(buttons[0]!.style).not.toBe(5);
+    expect(buttons[0]!.url).toBeUndefined();
+  });
+
   it('posts a set name it has never heard of with no buttons, rather than failing', async () => {
     // OLD IMAGE, NEW ROW. A console that learns a second set name before the
     // bot image does must not cost the club a message: the row loses its buttons
