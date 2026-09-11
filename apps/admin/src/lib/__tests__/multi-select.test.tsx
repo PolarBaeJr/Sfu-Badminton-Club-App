@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 // Straight at the modules rather than the '@badminton/ui' barrel, for the reason
 // player-selection.test.ts gives: the barrel pulls in every component in the
@@ -131,6 +133,11 @@ describe('MultiSelect renders', () => {
   // the same limit discord-preview.test.tsx works within. It is a smoke test and
   // nothing more. The list is portalled and only mounts client-side, so what is
   // asserted here is the field, the chips and the help text.
+  //
+  // READ THE BLOCK BELOW THIS ONE BEFORE TRUSTING THAT SENTENCE. An earlier
+  // version of this comment stopped here, and it read as a reason the dropdown
+  // could not be checked. The dropdown was in fact missing entirely, and these
+  // four assertions all passed against a control that never drew a list.
   const draw = () =>
     renderToStaticMarkup(
       <MultiSelect
@@ -165,5 +172,45 @@ describe('MultiSelect renders', () => {
 
   it('carries the help text, which is where the ping warning lives', () => {
     expect(draw()).toContain('Nobody is notified.');
+  });
+});
+
+describe('MultiSelect actually mounts its listbox', () => {
+  /**
+   * A SOURCE ASSERTION, DELIBERATELY, AND THE REASON IS NOT LAZINESS.
+   *
+   * MultiSelect shipped once with `const list = ...` built and never rendered:
+   * createPortal was imported and never called. The control focused, the chevron
+   * turned, aria-expanded flipped to true, and no list ever appeared. It replaced
+   * nine working checkboxes, so an exec could not pick a notify role by mouse or
+   * touch at all.
+   *
+   * NOTHING IN THIS REPO COULD HAVE CAUGHT IT:
+   *   - tsconfig.base.json sets no noUnusedLocals, so tsc is silent on both the
+   *     dead binding and the unused import.
+   *   - this app's vitest is environment: 'node' and there is no jsdom or
+   *     testing-library in the tree, so no test can mount the component.
+   *   - renderToStaticMarkup could never reach it even with a DOM: the portal is
+   *     guarded by `mounted`, which is false until an effect runs, so a server
+   *     render correctly draws no list whether or not the line exists.
+   *
+   * So this reads the file. It is a tripwire on one exact line, not a test of
+   * behaviour, and it is honest about which of those it is. Delete it the day
+   * this package gets a DOM environment and a real open-the-dropdown test.
+   */
+  const source = readFileSync(
+    resolve(__dirname, '../../../../../packages/ui/src/components/MultiSelect.tsx'),
+    'utf8',
+  );
+
+  it('renders the listbox it builds, instead of leaving it as dead JSX', () => {
+    expect(source).toContain('createPortal(list, document.body)');
+  });
+
+  it('still guards the portal on `mounted`, so a server render draws no list', () => {
+    // Without the guard, renderToStaticMarkup throws: the server renderer has no
+    // document.body. The smoke tests above would fail loudly rather than subtly,
+    // but the guard is what makes them meaningful in the first place.
+    expect(source).toContain('{mounted && list && createPortal(list, document.body)}');
   });
 });

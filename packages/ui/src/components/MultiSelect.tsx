@@ -392,6 +392,21 @@ export function MultiSelect({
           {helpText}
         </p>
       )}
+
+      {/* THE LISTBOX IS BUILT ABOVE AND MOUNTED HERE, AND IT IS ONLY A DROPDOWN
+          BECAUSE OF THIS LINE. Without it `list` is dead JSX: the field still
+          focuses, the chevron still turns, aria-expanded still flips to true,
+          and no list ever appears, so the control is operable by blind keyboard
+          alone. That is exactly how this shipped once, and nothing caught it,
+          because tsconfig sets no noUnusedLocals and a server render cannot
+          reach a portal anyway (`mounted` is false until the effect runs). The
+          guard test next to this file's other tests pins the line by name.
+
+          Portalled to document.body rather than positioned in place for the
+          reason PlayerPicker.tsx:475 gives: a listbox inside the field inherits
+          the overflow and stacking context of whatever the field sits in, and
+          both composers sit inside scrolling panels. */}
+      {mounted && list && createPortal(list, document.body)}
     </div>
   );
 }
