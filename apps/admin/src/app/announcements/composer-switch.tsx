@@ -29,6 +29,7 @@ export function ComposerSwitch({
   channelConfigured,
   channels,
   roles,
+  ambiguousRoleNames,
 }: {
   modes: ComposerMode[];
   pushReachable: number | null;
@@ -36,6 +37,8 @@ export function ComposerSwitch({
   channelConfigured: boolean;
   channels: DiscordChannelOption[];
   roles: DiscordRoleOption[];
+  /** Server roles the picker had to drop. Passed through: see DiscordSend. */
+  ambiguousRoleNames: string[];
 }) {
   const [mode, setMode] = useState<ComposerMode>(modes[0] ?? 'website');
   const { pending } = useDiscordConsole();
@@ -81,6 +84,7 @@ export function ComposerSwitch({
             channelConfigured={channelConfigured}
             channels={channels}
             roles={roles}
+            ambiguousRoleNames={ambiguousRoleNames}
           />
         </div>
       )}

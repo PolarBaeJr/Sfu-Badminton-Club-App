@@ -140,6 +140,9 @@ const ANNOUNCEMENTS = '800000000000000001';
 const RESULTS = '800000000000000002';
 const INTERNAL_ROLE = '111111111111111111';
 const INTERNAL = `<@&${INTERNAL_ROLE}>`;
+/** A role that exists in Discord and is no business of the app's (00229). */
+const VARSITY_ROLE = '444444444444444444';
+const VARSITY = `<@&${VARSITY_ROLE}>`;
 const POSTED_ID = '0117b0c0-0000-4000-8000-0000000000aa';
 const DISCORD_MESSAGE = '999000111222333444';
 
@@ -185,6 +188,21 @@ beforeEach(() => {
     discord_guild_roles: [
       { guild_id: GUILD, role_name: 'internal', role_id: INTERNAL_ROLE },
       { guild_id: GUILD, role_name: 'session_staff', role_id: '222222222222222222' },
+    ],
+    // THE CATALOGUE (00229), AND IT IS IN THE FIXTURE FOR A REASON BEYOND ITS
+    // OWN TESTS. This fake client answers an unknown table with `[]` rather than
+    // an error, so a read of a table nobody seeded here resolves nothing at all
+    // and every assertion about resolution passes while proving less than it
+    // says. Seeded, and asserted on beside `discord_guild_roles` at every
+    // `store.touched` site below.
+    //
+    // `internal` appears in BOTH tables and with a DIFFERENT id here, which is
+    // the realistic shape: the bot posts every role in the server, so the
+    // catalogue contains the club's nine too. The merge must answer with the
+    // managed row's id, and this is what would fail if the precedence inverted.
+    discord_server_roles: [
+      { guild_id: GUILD, role_name: 'Varsity', role_id: VARSITY_ROLE },
+      { guild_id: GUILD, role_name: 'internal', role_id: '555555555555555555' },
     ],
     discord_outbox: [],
   };
@@ -254,10 +272,14 @@ describe('queueDiscordMessage: role mentions', () => {
     expect(outbox()).toHaveLength(0);
   });
 
-  it('spends no round trip on the role map when there is no @ in the message', async () => {
+  it('spends no round trip on either role table when there is no @ in the message', async () => {
     await queueDiscordMessage({ content: 'Gym is closed tonight' });
 
+    // BOTH NAMED. Asserting only on the managed table would leave the catalogue
+    // read free to appear without anything failing, and this file's round-trip
+    // thrift is the property being defended.
     expect(store.touched).not.toContain('discord_guild_roles');
+    expect(store.touched).not.toContain('discord_server_roles');
   });
 });
 
@@ -275,7 +297,12 @@ describe('queueDiscordMessage: mentions inside an embed', () => {
     });
 
     expect(outbox()[0]!.embed_body).toBe(`This one is for ${INTERNAL}`);
+    // BOTH TABLES, even though nothing was picked and prose resolves against the
+    // managed one alone. They go out in a single Promise.all, so the round trip
+    // count is unchanged and there is one answer to "which roles did this call
+    // see" rather than one per branch.
     expect(store.touched).toContain('discord_guild_roles');
+    expect(store.touched).toContain('discord_server_roles');
   });
 
   it('still spends no round trip when neither field has an @ in it', async () => {
@@ -284,6 +311,7 @@ describe('queueDiscordMessage: mentions inside an embed', () => {
     });
 
     expect(store.touched).not.toContain('discord_guild_roles');
+    expect(store.touched).not.toContain('discord_server_roles');
   });
 
   it('resolves the body the same way whether or not anything is being pinged', async () => {
@@ -401,17 +429,88 @@ describe('queueDiscordMessage: the ping line', () => {
     expect(outbox()[0]!.ping).toBe(false);
   });
 
-  it('refuses a role the club does not manage, and queues nothing', async () => {
+  it('refuses a role that resolves to nothing, and queues nothing', async () => {
     await expect(
       queueDiscordMessage({
         embed: { title: 'Fees are due', body: 'Pay up.', type: 'info' },
         pingRoles: ['everyone'],
       }),
-    ).rejects.toThrow(/not one of the roles the club manages/);
+    ).rejects.toThrow(/Reload the page/);
 
     // A dropped role would be a message that looks like it pings and rings
     // nobody, which is the failure this feature exists to remove.
     expect(outbox()).toHaveLength(0);
+  });
+
+  it('names reloading as the fix, not picking from the list', async () => {
+    // THE WORDING IS LOAD-BEARING. It used to say the name "is not one of the
+    // roles the club manages", which stopped being true the moment the picker
+    // started offering the server's own roles: the realistic cause is now a role
+    // RENAMED in Discord after the page loaded, since names rather than ids
+    // travel in `pingRoles`. "Pick one from the list" sends an exec back to a
+    // list that still shows the old name.
+    await expect(
+      queueDiscordMessage({
+        embed: { title: 'Fees are due', body: 'Pay up.', type: 'info' },
+        pingRoles: ['Varsity Team'],
+      }),
+    ).rejects.toThrow(/Varsity Team/);
+  });
+
+  it('pings a role out of the catalogue, which the club does not manage', async () => {
+    // The whole point of 00229: @Varsity is a role somebody made in Discord, it
+    // is in no migration and no MANAGED_ROLES list, and the ping line reaches it.
+    await queueDiscordMessage({
+      embed: { title: 'Trials on Friday', body: 'Bring indoor shoes.', type: 'event' },
+      pingRoles: ['Varsity'],
+    });
+
+    expect(outbox()[0]!.content).toBe(VARSITY);
+    expect(outbox()[0]!.ping).toBe(true);
+  });
+
+  it('resolves a name held by both tables to the role the club manages', async () => {
+    // `internal` is in the catalogue too, with a different id, because the bot
+    // posts every role in the server. The managed row wins: that id is the one
+    // the nightly sweep actually hands out, so it is the one whose members the
+    // exec means.
+    await queueDiscordMessage({
+      embed: { title: 'Fees are due', body: 'Pay before Friday.', type: 'info' },
+      pingRoles: ['internal'],
+    });
+
+    expect(outbox()[0]!.content).toBe(INTERNAL);
+  });
+
+  /**
+   * THE ASYMMETRY, AND WHY IT MUST NEVER BE TIDIED AWAY.
+   *
+   * A PICKED `Varsity` becomes a real mention. A TYPED `@Varsity` stays literal
+   * text. Same word, same message, two answers, and that is deliberate:
+   * `resolveRoleMentions` scans prose, and the catalogue holds whatever the server
+   * happens to contain, so pointing it at the merged list would turn every
+   * ordinary English word in a Code of Conduct into a live ping the first time
+   * somebody wrote one. A picked name carries no such risk: it was chosen from a
+   * list for the one line that exists to notify.
+   *
+   * The preview asserts the same split from the other side
+   * (app/announcements/__tests__/discord-preview.test.tsx).
+   */
+  it('chips a picked catalogue role and leaves the same name typed in prose alone', async () => {
+    await queueDiscordMessage({
+      embed: { title: 'Trials on Friday', body: 'Ask @Varsity about it.', type: 'event' },
+      pingRoles: ['Varsity'],
+    });
+
+    const row = outbox()[0]!;
+    expect(row.content).toBe(VARSITY);
+    expect(row.embed_body).toBe('Ask @Varsity about it.');
+    // And the managed roles still resolve in prose, so this is a statement about
+    // WHICH map prose uses rather than about prose having stopped working.
+    await queueDiscordMessage({
+      embed: { title: 'Fees are due', body: 'Ask @internal about it.', type: 'info' },
+    });
+    expect(outbox()[1]!.embed_body).toBe(`Ask ${INTERNAL} about it.`);
   });
 
   it('names the roles it aimed at in the audit entry', async () => {
@@ -769,6 +868,44 @@ describe('loadDiscordMessage', () => {
     await loadDiscordMessage(POSTED_ID);
 
     expect(store.touched).not.toContain('discord_guild_roles');
+    expect(store.touched).not.toContain('discord_server_roles');
+  });
+
+  it('never reads the catalogue, even when there IS a mention to name', async () => {
+    // THE READ IS ABSENT ON PURPOSE and this is the tripwire on it, because the
+    // change that would add it looks like an improvement: naming `<@&444…>` as
+    // `@Varsity` instead of showing a snowflake. See the next test for what that
+    // would cost.
+    store.db.discord_outbox = [postedRow({ embed_body: `Ask ${INTERNAL} about fees.` })];
+
+    await loadDiscordMessage(POSTED_ID);
+
+    expect(store.touched).toContain('discord_guild_roles');
+    expect(store.touched).not.toContain('discord_server_roles');
+  });
+
+  it('keeps a catalogue role as a snowflake, and re-saves it byte for byte', async () => {
+    // WHY A SNOWFLAKE ON SCREEN IS THE RIGHT ANSWER HERE. `unresolveRoleMentions`
+    // proves each substitution by running the forward scanner over the SAME list,
+    // and the send path runs that scanner over the managed roles alone. So a
+    // `@Varsity` handed to the editor would be saved back as literal text: the
+    // round trip would destroy the mention. Showing the id keeps the row
+    // identical, which is this module's own rule.
+    store.db.discord_outbox = [postedRow({ embed_body: `Ask ${VARSITY} about trials.` })];
+
+    const message = await loadDiscordMessage(POSTED_ID);
+    expect(message.embedBody).toBe(`Ask ${VARSITY} about trials.`);
+
+    await editDiscordMessage({
+      id: POSTED_ID,
+      embed: {
+        title: message.embedTitle ?? '',
+        body: message.embedBody ?? '',
+        type: (message.embedType ?? 'info') as 'info',
+      },
+    });
+
+    expect(outbox()[0]!.embed_body).toBe(`Ask ${VARSITY} about trials.`);
   });
 
   it('re-saves what it handed over as the identical row', async () => {

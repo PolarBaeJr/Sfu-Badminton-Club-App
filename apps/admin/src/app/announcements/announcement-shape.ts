@@ -218,6 +218,20 @@ export interface DiscordChannelOption {
 export interface DiscordRoleOption {
   id: string;
   name: string;
+  /**
+   * WHICH TABLE IT CAME OUT OF, and it decides more than a heading.
+   *
+   * `club` is one of the nine in `discord_guild_roles`: the app assigns it, the
+   * nightly sweep reconciles it, and it is the ONLY kind a typed `@name` in prose
+   * resolves to. `server` is a row in the `discord_server_roles` catalogue the
+   * bot syncs from Discord (00229): pickable for the ping line above an embed,
+   * and left as plain text everywhere else.
+   *
+   * So the picker groups on this, and the preview is handed club roles only. A
+   * preview that chipped a server-role name would promise a mention the send
+   * path does not make.
+   */
+  source: 'club' | 'server';
 }
 
 /**

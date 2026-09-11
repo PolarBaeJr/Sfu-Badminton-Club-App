@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  mergeGuildRoles,
   resolveRoleMentions,
   resolveRoleNames,
   unresolveRoleMentions,
@@ -16,6 +17,9 @@ const ROLES = [
 
 const INTERNAL = '<@&111111111111111111>';
 const SESSION_STAFF = '<@&222222222222222222>';
+
+/** A role that exists in the guild and in no migration: a catalogue row (00229). */
+const VARSITY = '444444444444444444';
 
 const resolve = (text: string) => resolveRoleMentions(text, ROLES);
 
@@ -135,6 +139,93 @@ describe('resolveRoleNames', () => {
 
     expect(picked.ids).toEqual(['111111111111111111']);
     expect(picked.unknown).toEqual([]);
+  });
+
+  it('resolves a catalogue name once the merged list is what it is given', () => {
+    // The picker now offers the server's own roles (00229), and this is the one
+    // place a name becomes the id that notifies.
+    const merged = mergeGuildRoles(ROLES, [{ role_name: 'Varsity', role_id: VARSITY }]);
+
+    expect(resolveRoleNames(['Varsity'], merged.roles).ids).toEqual([VARSITY]);
+    // And an unknown name still lands in `unknown` rather than being dropped: a
+    // wider list must not become a list that accepts anything.
+    expect(resolveRoleNames(['Nobody'], merged.roles).unknown).toEqual(['Nobody']);
+  });
+});
+
+// Two tables, one list. `discord_guild_roles` holds the nine the app assigns
+// under a CHECK that must keep matching MANAGED_ROLES; `discord_server_roles`
+// (00229) is a catalogue of everything else the guild has, with no name rules at
+// all. Which row wins is the whole of this function.
+describe('mergeGuildRoles', () => {
+  it('prefers the club row for a role held by both tables, by id', () => {
+    // THE MAIN PATH, not an edge case: the bot posts every non-managed role it
+    // can see, so the catalogue contains all nine. Backwards, the picker would
+    // show nine duplicates filed under the server heading.
+    const merged = mergeGuildRoles(ROLES, [
+      { role_name: 'Internal', role_id: '111111111111111111' },
+    ]);
+
+    expect(merged.roles).toHaveLength(3);
+    expect(merged.roles.every((r) => r.source === 'club')).toBe(true);
+  });
+
+  it('prefers the club row when the names collide under different ids', () => {
+    // A guild role called "Internal" beside the managed `internal`. Deliberate,
+    // and the reason the picker labels which source a row came from: the id the
+    // nightly sweep hands out is the one whose members an exec means.
+    const merged = mergeGuildRoles(ROLES, [
+      { role_name: 'Internal', role_id: '999999999999999999' },
+    ]);
+
+    expect(merged.roles.map((r) => r.role_id)).not.toContain('999999999999999999');
+  });
+
+  it('keeps two near-identical names apart when they normalise differently', () => {
+    // The live case: the guild has both `Competitive` (managed) and `Competitive
+    // Team`. They are different roles and both must be offerable.
+    const merged = mergeGuildRoles(
+      [{ role_name: 'competitive', role_id: '666666666666666666' }],
+      [{ role_name: 'Competitive Team', role_id: '777777777777777777' }],
+    );
+
+    expect(merged.roles).toHaveLength(2);
+    expect(merged.ambiguous).toEqual([]);
+  });
+
+  it('drops BOTH of two catalogue roles whose names read the same, and says so', () => {
+    // planSetup in apps/bot/src/setup.ts refuses to guess between two identically
+    // named roles, for the reason that applies here too: the ping line travels as
+    // a NAME, so picking one of the pair decides who a message actually rings,
+    // and being wrong is not a typo. Reported rather than silently dropped,
+    // because a role plainly visible in Discord and missing from the picker with
+    // no explanation is the worse failure.
+    const merged = mergeGuildRoles(ROLES, [
+      { role_name: 'Session Pings', role_id: '888888888888888881' },
+      { role_name: 'session-pings', role_id: '888888888888888882' },
+    ]);
+
+    expect(merged.roles.map((r) => r.role_name)).toEqual(['internal', 'session_staff', 'executives']);
+    expect(merged.ambiguous).toEqual(['Session Pings']);
+  });
+
+  it('gives back exactly the nine when the catalogue is empty', () => {
+    // The state between 00229 being applied and the bot's first tick, and the
+    // state on any install that never runs the sync. The picker must offer what
+    // it offered before this feature and nothing else.
+    const merged = mergeGuildRoles(ROLES, []);
+
+    expect(merged.roles).toEqual(ROLES.map((r) => ({ ...r, source: 'club' })));
+    expect(merged.ambiguous).toEqual([]);
+  });
+
+  it('tags each row with the table it came out of', () => {
+    // `source` is what the picker groups on and what decides whether the preview
+    // and the prose scanner ever see a row.
+    const merged = mergeGuildRoles(ROLES, [{ role_name: 'Varsity', role_id: VARSITY }]);
+
+    expect(merged.roles.find((r) => r.role_name === 'Varsity')?.source).toBe('server');
+    expect(merged.roles.find((r) => r.role_name === 'internal')?.source).toBe('club');
   });
 });
 

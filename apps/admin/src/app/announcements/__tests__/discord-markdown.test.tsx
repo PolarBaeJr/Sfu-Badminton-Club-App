@@ -21,7 +21,11 @@ import type { DiscordRoleOption } from '../announcement-shape';
  * DISABLED construct says the preview shows the literal characters rather than
  * half-rendering syntax nothing in this console can produce.
  */
-const ROLES: DiscordRoleOption[] = [{ id: '333333333333333333', name: 'executives' }];
+// `club`, because the preview is only ever handed the roles the app manages:
+// those are the ones the send path's prose scanner resolves.
+const ROLES: DiscordRoleOption[] = [
+  { id: '333333333333333333', name: 'executives', source: 'club' },
+];
 
 const draw = (text: string) => renderToStaticMarkup(<DiscordMarkdown text={text} roles={ROLES} />);
 

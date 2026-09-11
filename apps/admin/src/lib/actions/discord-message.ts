@@ -10,6 +10,7 @@ import {
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import {
+  mergeGuildRoles,
   resolveRoleMentions,
   resolveRoleNames,
   unresolveRoleMentions,
@@ -157,7 +158,13 @@ function pickedRoleNames(value: unknown): string[] {
  *
  * THE ROLE READ IS SKIPPED ENTIRELY when neither field carries an `@` and no
  * role was picked: the rest of this feature counts its round trips carefully
- * and this is not the place to stop counting.
+ * and this is not the place to stop counting. When it does run it reads BOTH
+ * role tables in one `Promise.all`, so the count is still one round trip.
+ *
+ * AND THE TWO TABLES ARE NOT USED FOR THE SAME JOB: prose resolves against the
+ * club's nine, a picked name against those plus the server catalogue. The reason
+ * is spelled out at the call below and is the most regression-prone property in
+ * this file.
  *
  * A FAILED READ THROWS RATHER THAN DEGRADING. The whole point of a message like
  * this is the ping, and quietly posting the literal text `@internal` where a
@@ -182,32 +189,64 @@ async function resolveForDiscord(
     };
   }
 
-  const { data: roles, error: rolesError } = await adminClient
-    .from('discord_guild_roles')
-    .select('role_name, role_id')
-    .eq('guild_id', guildId);
+  // BOTH TABLES, ALWAYS, whenever anything needs resolving at all.
+  //
+  // The catalogue could be read only when a role was picked, since prose never
+  // resolves against it. It is read unconditionally instead, and the cost is
+  // nothing: the two go out in one `Promise.all`, so the round trip count this
+  // file counts so carefully is unchanged at ONE, and there is then a single
+  // answer to "which roles did this call see" rather than one per branch.
+  const [clubResult, serverResult] = await Promise.all([
+    adminClient.from('discord_guild_roles').select('role_name, role_id').eq('guild_id', guildId),
+    // `discord_server_roles` (00229) is the catalogue the bot syncs out of
+    // Discord. The generated database types are regenerated after 00229 is
+    // applied, so the row shape is asserted at this call site meanwhile.
+    adminClient.from('discord_server_roles').select('role_name, role_id').eq('guild_id', guildId),
+  ]);
 
-  if (rolesError) {
+  if (clubResult.error || serverResult.error) {
     throw new ExpectedError(
       'Could not read the club\'s Discord roles, so a role name in this message would have ' +
         'posted as plain text instead of a mention. Nothing was queued. Try again.',
     );
   }
 
-  const map = (roles ?? []) as { role_name: string; role_id: string }[];
-  const resolvedContent = resolveRoleMentions(input.content, map);
-  const resolvedBody = resolveRoleMentions(input.embedBody, map);
-  const picked = resolveRoleNames(input.pingRoleNames, map);
+  const club = (clubResult.data ?? []) as { role_name: string; role_id: string }[];
+  const server = (serverResult.data ?? []) as { role_name: string; role_id: string }[];
+  const merged = mergeGuildRoles(club, server);
 
-  // A NAME NOBODY MANAGES IS A REFUSAL, never a silent drop. Dropping it would
+  // THE ASYMMETRY, AND IT IS THE WHOLE DESIGN. PROSE RESOLVES AGAINST THE CLUB'S
+  // NINE; A PICKED NAME RESOLVES AGAINST EVERYTHING.
+  //
+  // The nine are `linked`, `internal`, `external`, `competitive` and so on: names
+  // chosen to be typed, whose CHECK constraint is what stops the list growing.
+  // The catalogue is whatever the server happens to contain, and the owner
+  // intends to add roles like @Advanced. Scanning a Code of Conduct against that
+  // list turns an ordinary English word into a live ping the first time somebody
+  // writes it, which is a notification the club cannot take back. A picked name
+  // carries no such risk: somebody chose it from a list, deliberately, for the
+  // one line that exists to notify.
+  //
+  // DO NOT UNIFY THESE TWO MAPS. The preview asserts the same split
+  // (__tests__/discord-preview.test.tsx) and so does discord-mentions.test.ts.
+  const resolvedContent = resolveRoleMentions(input.content, club);
+  const resolvedBody = resolveRoleMentions(input.embedBody, club);
+  const picked = resolveRoleNames(input.pingRoleNames, merged.roles);
+
+  // A NAME NOTHING RESOLVES IS A REFUSAL, never a silent drop. Dropping it would
   // queue a message that looks like it pings and rings nobody, which is the
   // same failure the throw above exists to prevent. @everyone and @here cannot
-  // arrive here at all: they are not rows in `discord_guild_roles`, so they
-  // fail this check like any other unknown word.
+  // arrive here at all: they are rows in neither table, so they fail this check
+  // like any other unknown word.
+  //
+  // THE MESSAGE NAMES THE REAL FIX, which is not "pick one from the list": the
+  // names travel from a picker built when the page loaded, and a server role
+  // renamed or deleted in Discord since then lands here. Reloading rebuilds the
+  // list from the catalogue as the bot last saw it.
   if (picked.unknown.length > 0) {
     throw new ExpectedError(
-      `"${picked.unknown[0]}" is not one of the roles the club manages, so nothing was queued. ` +
-        'Pick one from the list.',
+      `Nothing in the Discord server is called "${picked.unknown[0]}" any more, so nothing was ` +
+        'queued. Reload the page to pick from the current roles.',
     );
   }
 
@@ -535,6 +574,15 @@ export async function loadDiscordMessage(id: string) {
   // a box and `editDiscordMessage` never writes, and for a plain message it is
   // the message. Neither can be harmed by a substitution that has to prove
   // itself first.
+  // THE CLUB'S NINE ONLY, AND THE CATALOGUE (00229) IS DELIBERATELY NOT READ
+  // HERE. It is tempting: it would turn a server role's `<@&id>` into a readable
+  // `@Varsity` in the editor instead of a snowflake. It would also destroy the
+  // mention. `unresolveRoleMentions` proves each substitution by running
+  // `resolveRoleMentions` forward over the SAME list, and the send path runs that
+  // scanner over the club's nine alone, so `@Varsity` saved back from this
+  // editor reaches Discord as literal text. A snowflake on screen is the lesser
+  // failure, which is this module's own rule (see discord-mentions.ts) and the
+  // reason the preview is handed club roles too.
   const named = { content, embedBody };
   if (content?.includes('<@&') || embedBody?.includes('<@&')) {
     const { data: roles, error: rolesError } = await adminClient

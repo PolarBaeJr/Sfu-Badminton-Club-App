@@ -10,6 +10,7 @@ export {
   type SinglePlayerPickerProps,
   type MultiPlayerPickerProps,
 } from './PlayerPicker';
+export { MultiSelect, type MultiSelectProps } from './MultiSelect';
 export { SearchFilter } from './SearchFilter';
 export { Switch } from './Switch';
 export { Checkbox } from './Checkbox';

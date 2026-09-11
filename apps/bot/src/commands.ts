@@ -17,6 +17,7 @@ import {
   AlreadyLinkedError,
   mintLinkToken,
   writeGuildConfig,
+  writeServerRoleCatalog,
   fetchDiscordSettings,
   writeDiscordSettings,
   submitAnnouncement,
@@ -34,6 +35,7 @@ import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
 import { loadHandles, matchHandles } from './handles.js';
 import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipRole } from './roles.js';
+import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
 import {
@@ -2243,6 +2245,35 @@ export async function handleSetup(
   // The bot re-reads config on a 60s cache; after a deliberate write there is
   // no reason to serve a stale map for the next minute.
   invalidateConfigCache();
+
+  // AND THE CATALOGUE OF EVERY MENTIONABLE ROLE, for the console's notify picker
+  // (00229). Free here: `existing` was already fetched above and the roles just
+  // created are already in hand, so this costs no extra Discord call.
+  //
+  // AFTER writeGuildConfig AND NOT BEFORE. `discord_server_roles.guild_id` has a
+  // foreign key onto `discord_guilds`, and on a first-ever /setup that row does
+  // not exist until the write above lands.
+  //
+  // FAILURE IS LOGGED AND SWALLOWED, unlike the write above. The role map is what
+  // /setup exists to produce and a half-configured guild has to be reported; the
+  // catalogue is a convenience the five minute tick refills on its own, and
+  // telling an admin their /setup failed over it would send them re-running a
+  // command that already worked.
+  try {
+    await writeServerRoleCatalog({
+      guildId,
+      roles: [
+        ...offerableRoles(existing, guildId),
+        // The nine just created, which `existing` predates. No position: it is
+        // not read back from createGuildRole and nothing depends on it, so the
+        // column stays NULL until the next tick fills it in rather than carrying
+        // an invented 0 that would sort them to the bottom.
+        ...created.map((c) => ({ roleId: c.id, name: c.name })),
+      ],
+    });
+  } catch (error) {
+    console.error('[bot] setup could not save the role catalogue:', error);
+  }
 
   const lines: string[] = [];
   if (created.length) {

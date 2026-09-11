@@ -21,7 +21,11 @@ const BASE: DiscordPreviewProps = {
   url: null,
   posted: null,
   updatedAt: null,
-  roles: [{ id: '333333333333333333', name: 'executives' }],
+  // `club`, and the composer hands this component nothing else: a server role
+  // from the 00229 catalogue is pickable for the ping line and resolves nowhere
+  // in prose, so chipping one here would promise a mention the send path does
+  // not make. That asymmetry is the first test below.
+  roles: [{ id: '333333333333333333', name: 'executives', source: 'club' }],
   resolvesRoleNames: false,
   buttonSet: null,
 };
