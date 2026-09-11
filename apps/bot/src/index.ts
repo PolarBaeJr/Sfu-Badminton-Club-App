@@ -13,9 +13,21 @@ import {
   isSayModal,
   handleGuideButton,
   handleSelfRoleButton,
+  handleSessionBoardButton,
+  handleSessionBoardModal,
+  handleSessionListModal,
+  handleSessionPageButton,
+  handleTournamentListModal,
+  handleTournamentPageButton,
   isGuideButton,
   isReportModal,
   isSelfRoleButton,
+  isSessionBoardButton,
+  isSessionBoardModal,
+  isSessionListModal,
+  isSessionPageButton,
+  isTournamentListModal,
+  isTournamentPageButton,
   type CommandOption,
   type ModalComponent,
   type ResolvedAttachment,
@@ -28,6 +40,7 @@ import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
 import { runAnnouncements } from './announcements.js';
 import { runOutbox } from './outbox.js';
+import { runSessionBoard } from './session-board.js';
 import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
@@ -306,11 +319,14 @@ const server = createServer(async (req, res) => {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
     }
-    // TWO JOBS, TWO try/catch BLOCKS, ONE TICK.
+    // THREE JOBS, THREE try/catch BLOCKS, ONE TICK.
     //
     // The console's outbox (00222) rides this tick rather than getting a
     // pg_cron job of its own, because a new job would need an owner to run SQL
     // on production — a step that sits undone while the feature looks shipped.
+    // The session board rides it for the same reason, and because five minutes
+    // is already the right interval for a schedule that changes when somebody
+    // RSVPs.
     //
     // But they must not be able to abort each other. A relay that throws would
     // otherwise leave a queued message unsent with nothing saying why, and an
@@ -318,6 +334,7 @@ const server = createServer(async (req, res) => {
     // to do with the other, and each reports its own counts.
     let announcements: Awaited<ReturnType<typeof runAnnouncements>> | null = null;
     let outbox: Awaited<ReturnType<typeof runOutbox>> | null = null;
+    let board: Awaited<ReturnType<typeof runSessionBoard>> | null = null;
 
     try {
       announcements = await runAnnouncements();
@@ -331,14 +348,22 @@ const server = createServer(async (req, res) => {
       console.error('[bot] outbox drain failed:', error);
     }
 
-    // A 500 only when BOTH halves fell over, which is the shape that means the
-    // tick achieved nothing. One half failing is reported in the body and in
-    // the log, and pg_cron keeps calling either way.
+    try {
+      board = await runSessionBoard();
+    } catch (error) {
+      console.error('[bot] session board failed:', error);
+    }
+
+    // A 500 only when BOTH of the first two halves fell over, which is the shape
+    // that means the tick achieved nothing. DELIBERATELY UNCHANGED by the board:
+    // a board failure must not turn a good announcement tick into a 500, and the
+    // counters in the body are the only way this job is diagnosed at all, because
+    // pg_net follows redirects and a 200 proves nothing.
     if (!announcements && !outbox) {
       return send(res, 500, { error: 'announcements_failed' });
     }
 
-    return send(res, 200, { ...(announcements ?? {}), outbox });
+    return send(res, 200, { ...(announcements ?? {}), outbox, board });
   }
 
   // The match result relay, driven by pg_cron every 10 minutes. Slower than
@@ -424,6 +449,21 @@ const server = createServer(async (req, res) => {
       custom_id?: string;
       /** MODAL_SUBMIT only: the filled-in text inputs, nested in action rows. */
       components?: ModalComponent[];
+      /**
+       * MESSAGE_COMPONENT only, and only for a select: what was chosen.
+       *
+       * The session board's location filter is the first select this bot has
+       * ever emitted, and without this field the choice would be invisible: the
+       * interaction would arrive, be routed by custom_id, and the handler would
+       * have nothing to filter on. It fails closed to "no filter" when this is
+       * absent or empty.
+       *
+       * NOTE what is still NOT declared here: `message`. The response type is
+       * decided by the origin segment in the custom_id, deliberately, and
+       * declaring the field would invite a future reader to read the ephemeral
+       * flag off it instead.
+       */
+      values?: string[];
       /**
        * APPLICATION_COMMAND only: the objects behind id-valued options.
        *
@@ -675,6 +715,35 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // The paged lists' modals: "go to page" and "find". All three read, none of
+    // them writes, so unlike the announce branch above they can say plainly that
+    // nothing happened. Kept adjacent because sesmodal: and sesboardmodal: are
+    // the pair a reader has to see together.
+    if (
+      isSessionListModal(customId) ||
+      isSessionBoardModal(customId) ||
+      isTournamentListModal(customId)
+    ) {
+      const fields = interaction.data.components;
+      try {
+        const response = isSessionListModal(customId)
+          ? await handleSessionListModal(customId as string, fields, modalContext)
+          : isSessionBoardModal(customId)
+            ? await handleSessionBoardModal(customId as string, fields, modalContext)
+            : await handleTournamentListModal(customId as string, fields, modalContext);
+        return send(res, 200, response);
+      } catch (error) {
+        console.error('[bot] list modal failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: {
+            content: "Couldn't reach the club app just now. Try again in a moment.",
+            flags: 64,
+          },
+        });
+      }
+    }
+
     // A modal this build does not know. type 4 rather than the components'
     // type 6, because a modal has no message to leave intact and a silent
     // acknowledgement would look like the submit vanished.
@@ -729,6 +798,43 @@ const server = createServer(async (req, res) => {
         return send(res, 200, response);
       } catch (error) {
         console.error('[bot] guide button failed:', error);
+        return send(res, 200, {
+          type: 4,
+          data: { content: 'Something went wrong. Please try again.', flags: 64 },
+        });
+      }
+    }
+
+    // The paged lists. ses: and sesboard: are checked next to each other on
+    // purpose: they are the pair whose disjointness carries the audience split,
+    // and they diverge at index 3 (`:` against `b`).
+    //
+    // Which page, which filter and which response type are all decided inside the
+    // handlers, from the custom_id they are given. `values` is passed only to the
+    // board, which is the only family with a select on it.
+    //
+    // ON A THROW, a type 4 with flags 64 rather than a type 7: the member keeps
+    // the message they were looking at and gets an apology beside it, exactly as
+    // the self-role path does. A broken type 7 would replace a working list with
+    // an error.
+    if (
+      isSessionPageButton(customId) ||
+      isSessionBoardButton(customId) ||
+      isTournamentPageButton(customId)
+    ) {
+      const context = {
+        discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+        guildId: interaction.guild_id ?? null,
+      };
+      try {
+        const response = isSessionPageButton(customId)
+          ? await handleSessionPageButton(customId as string, context)
+          : isSessionBoardButton(customId)
+            ? await handleSessionBoardButton(customId as string, context, interaction.data.values)
+            : await handleTournamentPageButton(customId as string, context);
+        return send(res, 200, response);
+      } catch (error) {
+        console.error('[bot] list button failed:', error);
         return send(res, 200, {
           type: 4,
           data: { content: 'Something went wrong. Please try again.', flags: 64 },

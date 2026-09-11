@@ -298,7 +298,7 @@ is the gate.
 
 ## 7b. The channels the club has to name
 
-Six features post into a channel, and none of them guesses one — a relay that
+Seven features post into a channel, and none of them guesses one: a relay that
 picked a channel by itself would be a relay putting club business somewhere
 nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 
@@ -306,6 +306,7 @@ nobody chose. Each is a `discord_settings` row, so each is off until it is set:
 |---|---|---|
 | `audit_channel_id` | link/unlink and sweep embeds | `/setup audit_channel:` |
 | `session_ping_channel_id` | the before-each-session ping | SQL (00168) |
+| `session_board_channel_id` | the self-updating upcoming-sessions board | `/config channels session_board:` |
 | `announcement_channel_id` | the announcement relay (00170) | SQL |
 | `match_results_channel_id` | the match result relay (00171) | SQL |
 | `feedback_channel_id` | `/bug` and `/feedback` (00173) | SQL |
@@ -354,6 +355,90 @@ you see it, check the service role's `SELECT` grant (read `pg_class.relacl`, not
 `information_schema`) and reload the PostgREST cache with
 `NOTIFY pgrst, 'reload schema'`. It clears itself as soon as one row is
 readable.
+
+### The upcoming-sessions board
+
+**One message, pointed at a channel once, that keeps itself current.** An exec
+runs `/config channels session_board:#sessions` and never touches it again. The
+schedule is re-rendered on the existing five minute announcements tick and the
+message is edited IN PLACE, so the board stays where the club pinned it instead
+of a new copy arriving every evening. There is no migration and no new cron
+entry: the state lives in two `discord_settings` rows, `session_board_channel_id`
+and `session_board_state`, and the tick is the third job inside
+`POST /announcements`.
+
+**It has no reasoning file of its own, so the reasoning is here.**
+
+**Nothing is sent unless the render changed.** Every tick hashes the whole REST
+body it would send, components included, and stores the first 32 hex characters
+in `session_board_state`. An identical hash means no Discord call and no
+database write at all, which is the branch that runs 287 times a day. The
+consequence is worth knowing before you read the log: `unchanged` is the healthy
+outcome and `edited` on tick after tick is a bug, because it means something
+clock derived crept into the render. Covering the components is the part that is
+load-bearing rather than tidy: when the schedule shrinks from 28 sessions to 8
+the board has to LOSE its pager, and an edit that sent only the embed would leave
+live buttons on a one-page board.
+
+**A member's click never moves the post.** Every button and the location select
+on the board carry `sesboard:p:` ids, and a `p` id can only ever be answered with
+a fresh private message to the person who clicked. Their own copy carries
+`sesboard:e:` ids, which edit that copy and nothing else. So the whole club can
+browse the same board at once, each on their own page and their own location
+filter, and the public message is untouched by all of it. This is why the click
+path and the tick share no state: the board records no page, no filter and no
+copy ids, and the state route refuses any field it does not know.
+
+**`/sessionpost` still exists and is still a one-off snapshot.** The two embeds
+are told apart by one static footer clause on the board saying that it updates
+itself. Without that clause a snapshot from last month sits in the channel
+looking exactly as authoritative as the live board.
+
+**Recovering it.** Deleting the board by hand is respected for exactly one tick:
+the PATCH answers 404, the bot forgets the message id, KEEPS its repost
+counters, and the next tick posts a fresh one. Three reposts in 24 hours is the
+ceiling. A channel that deletes messages on a timer is the case that cap exists
+for, and when it binds the bot logs an error and goes quiet rather than posting a
+new schedule every five minutes forever. If a tick dies between marking a post
+and recording its id, the state is left `pending` with no message id and every
+later tick refuses to post, loudly, rather than risk a second board. The way out
+needs no SQL: `/config clear`, pick **Session board**, which drops the whole row
+and resets the counters. Setting the channel again posts a new board on the next
+tick. The emergency equivalent, if that is ever unavailable, is
+
+```sql
+DELETE FROM public.discord_settings WHERE key = 'session_board_state';
+```
+
+**Clearing the channel setting takes the board down.** That is the off switch,
+not a way to pause it, and it is the one path that deletes the message and the
+state row together. Repointing the setting at a different channel does the same
+to the old copy: a board is a singleton, so unlike a relayed announcement the
+previous one is not left behind as a historical artifact.
+
+**An empty schedule is never POSTED, but a live board is edited to empty.** A
+public "no sessions are open" reads as the club announcing it has cancelled
+everything, which is why `/sessionpost` refuses it too. Leaving the last render
+up is worse than saying so, though: those rows are absolute timestamps that
+quietly become a list of nights that already happened.
+
+> **The nightly snapshot points staging's board at prod's message.** The 04:00
+> prod to staging refresh copies `discord_settings` (see the warning at the top
+> of section 2), so staging can come up holding prod's board channel and prod's
+> message id. Staging's bot is a separate Discord application and is not in the
+> prod server, so its PATCH answers 403, which lands in `failed` and is noise, or
+> 404, which lands in `gone`. The 404 case is why the counters survive a missing
+> message. A refused post does not spend the repost budget, though, because
+> nothing was created: staging retries once per tick and logs an error every time
+> until `session_board_channel_id` is re-set. That is noise, not a loop that
+> posts anything. Re-set
+> `session_board_channel_id` on staging after a refresh, and pause the snapshot
+> if you need staging to hold its own bot config for longer than a day.
+
+**Re-register the commands or none of this is reachable.** The channel is set
+through `/config`, whose options are part of the registered command, so
+`npm run register -w bot` is required and a deploy does not do it. Until it
+propagates the board does nothing, with clean logs.
 
 ### Match results (00171)
 

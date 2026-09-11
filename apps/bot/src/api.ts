@@ -266,19 +266,48 @@ export interface TournamentSummary {
   eligible: boolean | null;
 }
 
+export interface TournamentsPage {
+  tournaments: TournamentSummary[];
+  linked: boolean;
+  page: number;
+  totalPages: number;
+  total: number;
+  /** WHAT THE ROUTE APPLIED, not what was asked for. See fetchSessions. */
+  query: string | null;
+}
+
 /**
  * Upcoming tournaments, annotated for THIS caller.
  *
  * The id is required rather than optional for the same reason fetchSessions's
  * is: a new call site that omitted it would silently get the anonymous view.
+ * The page is optional for the same reason fetchSessions's is: the wrong page is
+ * a cosmetic mistake and the wrong audience is not.
  */
-export function fetchTournaments(
-  discordUserId: string | null
-): Promise<{ tournaments: TournamentSummary[]; linked: boolean }> {
-  return get<{ tournaments: TournamentSummary[]; linked: boolean }>(
-    '/api/discord/tournaments',
-    discordUserId
-  );
+export async function fetchTournaments(
+  discordUserId: string | null,
+  page = 1,
+  q?: string
+): Promise<TournamentsPage> {
+  const params = new URLSearchParams({ page: String(page) });
+  if (q) params.set('q', q);
+
+  const body = await get<{
+    tournaments: TournamentSummary[];
+    linked: boolean;
+    page?: number;
+    totalPages?: number;
+    total?: number;
+    query?: string | null;
+  }>(`/api/discord/tournaments?${params}`, discordUserId);
+
+  return {
+    ...body,
+    page: body.page ?? 1,
+    totalPages: body.totalPages ?? 1,
+    total: body.total ?? body.tournaments.length,
+    query: body.query ?? null,
+  };
 }
 
 export function fetchLeaderboard(
@@ -306,6 +335,28 @@ export function fetchHandles(): Promise<{ members: ClubHandle[] }> {
   return get<{ members: ClubHandle[] }>('/api/discord/handles');
 }
 
+export interface SessionsPage {
+  sessions: SessionSummary[];
+  linked: boolean;
+  page: number;
+  totalPages: number;
+  /** How many MATCHED, which is more than the page holds. */
+  total: number;
+  /**
+   * WHAT THE ROUTE APPLIED, not what was asked for, and the two are checked
+   * against each other before anything is framed as a search or as a filter.
+   * The bot and the app roll independently, so a bot asking an older player
+   * image gets an unfiltered page back; announcing it as "3 matches for club
+   * night" would be a wrong answer rather than a cosmetic one.
+   */
+  query: string | null;
+  location: string | null;
+  /** The distinct locations in the WINDOW, for the select. Ids are the route's. */
+  locations: { id: string; label: string }[];
+  /** Set only when the app's read window came back full, so `total` undercounts. */
+  windowCapReached?: boolean;
+}
+
 /**
  * The schedule as THIS caller should see it.
  *
@@ -313,23 +364,50 @@ export function fetchHandles(): Promise<{ members: ClubHandle[] }> {
  * omit it and get the unlinked view for everybody — the compiler asks. Pass
  * null only where there genuinely is no caller.
  *
- * `total` is how many sessions MATCHED, which the app caps the rows at ten of,
- * so it is the only way a reply can say the list is short.
+ * THE ASYMMETRY IS DELIBERATE: the caller id is required and the page is not.
+ * A defaulted audience widens what somebody sees, which is silent and serious; a
+ * defaulted page is page 1, which is what the public board and every first reply
+ * want anyway.
  */
 export async function fetchSessions(
-  discordUserId: string | null
-): Promise<{ sessions: SessionSummary[]; linked: boolean; total: number }> {
+  discordUserId: string | null,
+  page = 1,
+  q?: string,
+  location?: string
+): Promise<SessionsPage> {
+  // URLSearchParams rather than interpolation: a session name goes in `q`, and
+  // it is club-authored text with spaces and punctuation in it.
+  const params = new URLSearchParams({ page: String(page) });
+  if (q) params.set('q', q);
+  if (location) params.set('location', location);
+
   const body = await get<{
     sessions: SessionSummary[];
     linked: boolean;
+    page?: number;
+    totalPages?: number;
     total?: number;
-  }>('/api/discord/sessions', discordUserId);
+    query?: string | null;
+    location?: string | null;
+    locations?: { id: string; label: string }[];
+    windowCapReached?: boolean;
+  }>(`/api/discord/sessions?${params}`, discordUserId);
 
   // Optional on the wire, required in the model. The bot and the app deploy
   // independently, so the bot can be running against an image that predates
-  // `total`; defaulting to the rows that arrived makes that read as "this is
-  // all of them" rather than printing a truncation that is not happening.
-  return { ...body, total: body.total ?? body.sessions.length };
+  // these fields; defaulting `total` to the rows that arrived makes that read as
+  // "this is all of them" rather than printing a truncation that is not
+  // happening, and defaulting the echoes to "nothing applied" is what makes the
+  // checks at the call sites fail closed.
+  return {
+    ...body,
+    page: body.page ?? 1,
+    totalPages: body.totalPages ?? 1,
+    total: body.total ?? body.sessions.length,
+    query: body.query ?? null,
+    location: body.location ?? null,
+    locations: body.locations ?? [],
+  };
 }
 
 /** Which servers to manage, their role ids, and where the audit log goes. */
@@ -537,6 +615,53 @@ export function writeDiscordSettings(
     '/api/discord/settings',
     { settings }
   );
+}
+
+// ---- SESSION BOARD ---------------------------------------------------------
+//
+// Separate from the settings pair above because the channel and the state are
+// different kinds of thing: the channel is an exec's decision, set with /config
+// and validated by the settings route's whitelist, while the state is the tick's
+// own bookkeeping. The route these two call refuses any field it does not know,
+// which is what keeps a page out of the row.
+//
+// BOTH INHERIT TIMEOUT_MS, which is sized for Discord's interaction deadline and
+// not for a cron tick. Kept anyway: a timeout here defers the board to the next
+// tick five minutes later, and nothing is waiting on a spinner, so the 30s
+// variant fetchLinkedMembers uses would buy a slower failure and nothing else.
+
+export interface SessionBoardState {
+  /** Where the message actually is, which is not always the configured channel. */
+  channelId: string;
+  messageId: string | null;
+  /** A post was started and not confirmed. The tick refuses to post again. */
+  pending: boolean;
+  fingerprint: string | null;
+  postedAt: string | null;
+  reposts: number;
+  repostWindowStart: string | null;
+}
+
+/** Where the board should be, and what the last tick left behind. */
+export function fetchSessionBoard(): Promise<{
+  channelId: string | null;
+  state: SessionBoardState | null;
+}> {
+  return get<{ channelId: string | null; state: SessionBoardState | null }>(
+    '/api/discord/session-board'
+  );
+}
+
+/**
+ * Record the board, or forget it.
+ *
+ * NULL FORGETS THE WHOLE ROW, counters included, and that is only ever right
+ * after a human has touched the setting. Everything else writes the full object:
+ * the route stores it as one string so `pending` and `messageId` can never
+ * disagree.
+ */
+export function writeSessionBoard(state: SessionBoardState | null): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/session-board', { state });
 }
 
 // ---- ANNOUNCEMENT RELAY ----------------------------------------------------

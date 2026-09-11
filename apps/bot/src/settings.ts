@@ -45,6 +45,15 @@ export const CHANNEL_SETTINGS: readonly SettingSpec[] = [
     whenUnset: 'nobody is pinged before a session',
   },
   {
+    key: 'session_board_channel_id',
+    option: 'session_board',
+    label: 'Session board',
+    // BOTH HALVES, because this is the only place either one is written down:
+    // unset, no board is posted at all; and clearing it is also the off switch,
+    // which takes down the board that is already there.
+    whenUnset: 'no upcoming-sessions board is posted, and clearing this takes down the one that is',
+  },
+  {
     key: 'match_results_channel_id',
     option: 'match_results',
     label: 'Match results',

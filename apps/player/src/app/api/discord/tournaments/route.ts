@@ -34,14 +34,17 @@ export const dynamic = 'force-dynamic';
 // annotating a message the whole channel reads tells the channel who is
 // ineligible, which is nobody's business.
 
-const MAX_TOURNAMENTS = 10;
+// A PAGE SIZE, not a maximum: the pager reaches the rest. Ten to match the
+// sessions route, because the two lists sit side by side in the same client and
+// one of them holding twelve rows would read as a rendering fault.
+const PAGE_SIZE = 10;
 
 // How far back to look for something still running. Comfortably longer than any
 // tournament the club has ever run, and the point is only to keep the query off
 // four years of history.
 const LOOKBACK_DAYS = 60;
 
-// Rows fetched before the still-running filter narrows them to MAX_TOURNAMENTS.
+// Rows fetched before the still-running filter narrows them to a page.
 const FETCH_CAP = 40;
 
 interface Row {
@@ -65,6 +68,13 @@ export async function GET(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
 
   const supabase = createServiceRoleClient();
+
+  // A page number and a search string are club data rather than a per-person
+  // identifier, so they travel as query parameters while the caller id below
+  // does not. The sessions route spells the distinction out.
+  const params = new URL(request.url).searchParams;
+  const requestedPage = Number.parseInt(params.get('page') ?? '1', 10);
+  const q = (params.get('q') ?? '').trim().toLowerCase().slice(0, 80);
 
   // Who is asking. A HEADER rather than a query param, for the reason the
   // sessions route spells out: the kong access log records query strings, and a
@@ -125,8 +135,8 @@ export async function GET(request: Request) {
     .gte('start_date', floor)
     .order('start_date', { ascending: true })
     // Read wider than the list, because the coalesce below still has rows to
-    // drop. Capping at MAX_TOURNAMENTS here would let finished tournaments eat
-    // the slots that upcoming ones should have had.
+    // drop. Capping at a page here would let finished tournaments eat the slots
+    // that upcoming ones should have had.
     .limit(FETCH_CAP);
 
   if (error) {
@@ -136,11 +146,34 @@ export async function GET(request: Request) {
 
   // Still running or still to come. A null end_date is a single-day tournament,
   // so its own start date is its last day.
-  const upcoming = ((data ?? []) as Row[])
-    .filter((t) => (t.end_date ?? t.start_date) >= today)
-    .slice(0, MAX_TOURNAMENTS);
+  //
+  // THE PAGE ARITHMETIC COMES AFTER THIS FILTER, which is the whole reason the
+  // window above is wider than a page: counting the rows the database returned
+  // would count tournaments that finished last month, and the last page would
+  // then be empty with no way for the bot to tell.
+  const upcoming = ((data ?? []) as Row[]).filter(
+    (t) => (t.end_date ?? t.start_date) >= today
+  );
 
-  const tournaments = upcoming.map((t) => {
+  // Name only, and a plain includes rather than a pattern match: nothing to
+  // escape and nothing for a crafted string to backtrack on. No location filter
+  // here, unlike sessions, because a tournament's venue is not in this payload.
+  const matched = q ? upcoming.filter((t) => t.name.toLowerCase().includes(q)) : upcoming;
+
+  // A SEARCH ANSWERS WITH THE MATCHES, ON ONE PAGE, exactly as the sessions
+  // route does, and `total` still reports the full match count so the reply can
+  // say the list was trimmed.
+  const total = matched.length;
+  const totalPages = q ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // Clamped at BOTH ends, so a button minted against a longer list lands on the
+  // last real page rather than on nothing.
+  const page = Math.min(
+    Math.max(1, Number.isFinite(requestedPage) ? requestedPage : 1),
+    totalPages
+  );
+  const pageRows = matched.slice((page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE);
+
+  const tournaments = pageRows.map((t) => {
     const allowed = t.allowed_memberships ?? [];
     return {
       id: t.id,
@@ -158,5 +191,10 @@ export async function GET(request: Request) {
     };
   });
 
-  return NextResponse.json({ tournaments, linked });
+  // The totals travel with the rows because the bot has one app call per
+  // interaction and cannot discover totalPages any other way, and `query` is an
+  // echo the bot checks: the two images deploy independently, so a bot asking a
+  // player build that predates the search would otherwise frame an unfiltered
+  // page as a search result.
+  return NextResponse.json({ tournaments, linked, page, totalPages, total, query: q || null });
 }
