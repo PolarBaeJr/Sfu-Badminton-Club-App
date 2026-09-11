@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button, Badge, Dialog, Input, Select, Textarea, Switch, DatePicker } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import {
@@ -17,6 +17,7 @@ import {
   type TargetAudience,
 } from './announcement-shape';
 import { DiscordPreview } from './discord-preview';
+import { FormatBar, formatShortcut } from './format-bar';
 
 /**
  * Everything the Discord preview needs that comes off the server rather than
@@ -87,6 +88,7 @@ function SwitchBlock({ children }: { children: React.ReactNode }) {
 function AnnouncementFields({
   form,
   setForm,
+  idPrefix,
   pushReachable,
   showScope,
   discord,
@@ -96,6 +98,20 @@ function AnnouncementFields({
 }: {
   form: AnnouncementFormData;
   setForm: React.Dispatch<React.SetStateAction<AnnouncementFormData>>;
+  /**
+   * Which of the two mountings this is, so the Body gets a unique element id.
+   *
+   * `Textarea` derives its element id (and the label's htmlFor) from the label
+   * text, and this component is mounted TWICE at once whenever the edit dialog
+   * is open: once in the composer and once in the dialog. A literal
+   * `id="website-body"` would move the collision rather than remove it, so the
+   * caller says which mounting it is.
+   *
+   * The BODY only. The headline, category, audience and expiry fields already
+   * collide with their edit-dialog twins on the label-derived id; that is
+   * pre-existing and out of scope here.
+   */
+  idPrefix: 'new' | 'edit';
   /**
    * How many members a push would actually buzz, or null when the viewer may
    * not read the roster. Null hides the number and keeps the switch — the
@@ -121,6 +137,13 @@ function AnnouncementFields({
   /** null for something being written or saved now — the preview reads it as now. */
   updatedAt: string | null;
 }) {
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const bodyId = `${idPrefix}-announcement-body`;
+  // The adapter is load-bearing, and it is the one signature difference from
+  // discord-send.tsx, which can hand `setContent` straight over: `applyFormat`
+  // calls `commit` with the whole next string, not with an event.
+  const setBody = (next: string) => setForm((f) => ({ ...f, body: next }));
+
   return (
     <div className="flex flex-col gap-[14px]">
       <Input
@@ -131,14 +154,33 @@ function AnnouncementFields({
         required
       />
 
-      <Textarea
-        label="Body"
-        className="min-h-[180px]"
-        value={form.body}
-        onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
-        placeholder="Members read this on a phone, mid-session. Keep it to what changes for them."
-        required
-      />
+      <div className="space-y-1">
+        {/* The label is rendered here rather than through the component's own
+            `label` prop so the formatting buttons can sit on the line beside
+            it, which is where a toolbar belongs. The explicit id is what keeps
+            htmlFor pointing at the right element once the prop is gone, and the
+            asterisk is copied from Textarea's own markup because dropping the
+            `label` prop also drops the required marker this field has today. */}
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <label
+            htmlFor={bodyId}
+            className="block text-[13px] font-medium text-[var(--text-secondary)]"
+          >
+            Body<span className="text-[var(--color-accent)]"> *</span>
+          </label>
+          <FormatBar target={bodyRef} onChange={setBody} surface="website" />
+        </div>
+        <Textarea
+          id={bodyId}
+          ref={bodyRef}
+          className="min-h-[180px]"
+          value={form.body}
+          onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
+          onKeyDown={(e) => formatShortcut(e, setBody)}
+          placeholder="Members read this on a phone, mid-session. Keep it to what changes for them."
+          required
+        />
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-[14px]">
         <Select
@@ -292,6 +334,7 @@ export function Composer({
       <AnnouncementFields
         form={form}
         setForm={setForm}
+        idPrefix="new"
         pushReachable={pushReachable}
         showScope
         discord={discord}
@@ -513,6 +556,7 @@ export function AnnouncementRowActions({
           <AnnouncementFields
             form={form}
             setForm={setForm}
+            idPrefix="edit"
             pushReachable={pushReachable}
             showScope={false}
             discord={discord}

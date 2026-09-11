@@ -2025,9 +2025,15 @@ html, body { overflow-x: clip; }
   color: var(--mute);
   white-space: nowrap;
 }
-/* pre-wrap because the body is plain text typed into a textarea in the console
-   — the paragraph breaks the author put in are the only structure it has.
-   anywhere, because a pasted URL is otherwise wider than a phone. */
+/* The body is no longer plain text typed into a textarea: the console's Body box
+   carries a formatting toolbar and lib/announcement-markdown.tsx parses what it
+   writes, so headings, bullets, quotes and bold arrive as real elements.
+   pre-wrap stays all the same, because a single newline inside a paragraph run
+   is still meaningful and the renderer hands each run down exactly as typed.
+   overflow-wrap: anywhere, because a pasted URL is otherwise wider than a phone.
+
+   The class now sits on a div rather than a p, which changes nothing below:
+   every property here behaves identically on either element. */
 .news-body {
   font-size: 15px;
   line-height: 1.5;

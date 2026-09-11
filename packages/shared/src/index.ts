@@ -26,6 +26,7 @@ export * from './utils/concurrency';
 export * from './utils/challenge-qr';
 export * from './utils/discord-link-token';
 export * from './utils/discord-embed';
+export * from './utils/announcement-markdown';
 export * from './utils/payment-methods';
 export * from './utils/finance-categories';
 export * from './utils/finance-refs';

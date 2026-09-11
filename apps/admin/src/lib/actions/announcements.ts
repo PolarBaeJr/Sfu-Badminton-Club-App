@@ -4,7 +4,14 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, announcementSchema, ExpectedError, requireActiveSeasonId } from '@badminton/shared';
+import {
+  ANNOUNCEMENT_PREVIEW_MAX,
+  parseOrThrow,
+  announcementSchema,
+  ExpectedError,
+  requireActiveSeasonId,
+  stripAnnouncementMarkdown,
+} from '@badminton/shared';
 import { requireCapability } from './_shared';
 
 type Audience = 'all' | 'competitive' | 'recreational' | 'eligible_only';
@@ -54,7 +61,19 @@ async function dispatchAnnouncementNotifications(
   authorId: string,
 ): Promise<void> {
   const playerIds = await resolveAudiencePlayerIds(adminClient, announcement.target_audience, authorId);
-  const preview = announcement.body.length > 140 ? `${announcement.body.slice(0, 139)}…` : announcement.body;
+  // STRIP FIRST, THEN SLICE, which is the same argument discord-preview.tsx
+  // makes about resolving before it truncates. The body can now carry markdown
+  // (apps/player/src/lib/announcement-markdown.tsx renders it on the page), and
+  // neither of the two places this string lands can draw any of it: the
+  // `notifications` row body and the web push payload are both plain text on a
+  // bell row and a lock screen. Slicing first could cut a `**` in half, so
+  // nothing downstream could recover it, and it would spend the 139-character
+  // budget on characters nobody reads.
+  const plain = stripAnnouncementMarkdown(announcement.body);
+  const preview =
+    plain.length > ANNOUNCEMENT_PREVIEW_MAX
+      ? `${plain.slice(0, ANNOUNCEMENT_PREVIEW_MAX - 1)}…`
+      : plain;
   await notifyPlayers(
     adminClient,
     playerIds,
