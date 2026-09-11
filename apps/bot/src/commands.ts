@@ -24,7 +24,9 @@ import {
   type CardFile,
   type FeedbackKind,
   type ProfilePayload,
+  type SessionsPage,
   type SessionSummary,
+  type TournamentsPage,
   type TournamentSummary,
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
@@ -1040,6 +1042,575 @@ function formatSession(s: SessionSummary) {
   return `**${s.name ?? 'Session'}**\n${parts.join(' · ')}`;
 }
 
+// ---------------------------------------------------------------------------
+// PAGED LISTS: /sessions, /tournaments, and the session board
+// ---------------------------------------------------------------------------
+//
+// THE ARITHMETIC IS NOT HERE. The app routes own the page, the search, the
+// location filter and every total, because those files are type-checked and this
+// one's tests are not (apps/bot/tsconfig.json excludes src/**/__tests__/**). The
+// bot is the renderer: it echoes ids it was given and prints numbers it was
+// handed.
+//
+// ONE custom_id GRAMMAR, FIVE SLOTS, ALWAYS PRESENT:
+//
+//     <prefix>:<origin>:<action>:<num|->:<loc|->
+//
+//   prefix   ses: / trn: / sesboard:   WHO THE ROWS ARE FOR
+//   origin   e or p                    WHAT KIND OF MESSAGE WAS CLICKED
+//   action   prev / next / go / find / loc
+//   num      target page, or the page count a `go` modal names, or -
+//   loc      an opaque location id from the route, or -
+//
+// `-` rather than an omitted segment, because a grammar with optional segments
+// puts a page number and a location id in the same slot on different messages,
+// and the parser that reads the wrong one fails silently.
+//
+// THE ORIGIN DECIDES THE RESPONSE TYPE, AND IT FAILS CLOSED. Exactly `e` means
+// the click arrived on a message that is already private to the clicker, which
+// is the only case where type 7 (edit the message the component sits on) is
+// safe. Anything else, including a garbled, truncated or unrecognised id,
+// resolves to public and answers type 4 with flags 64, which cannot edit
+// anything. Had the marker gone the other way a mangled id would type-7 edit
+// whatever it was sitting on, and one of those messages is a post the whole club
+// reads. The bot writes every one of these ids, so unlike a flag read off the
+// interaction it cannot be wrong in the dangerous direction.
+//
+// THE PREFIX DECIDES THE AUDIENCE, and it has to be a separate field from the
+// origin: a private COPY of the public board carries `e`, so a handler that read
+// the audience off the origin would switch audience on the second click.
+//
+// THE ONE MISTAKE WITH THE LARGEST BLAST RADIUS is a public render path emitting
+// `e` ids, because a click would then type-7 edit the club's channel post under
+// every reader. The guard is that no call site anywhere passes a variable
+// origin: sessionPostBoard and sessionBoardWall hardcode `p`, sessionPostCopy is
+// the only function in the codebase that emits `sesboard:e:`, and session-board.ts
+// does not import it.
+//
+// Longest id: sesboard:p:prev:999:a1b2c3d4, 28 characters against Discord's 100.
+
+/** Paging ids on /sessions' own ephemeral reply. */
+const SESSION_PAGE_PREFIX = 'ses:';
+/** Paging ids on /tournaments' own ephemeral reply. */
+const TOURNAMENT_PAGE_PREFIX = 'trn:';
+/**
+ * Paging ids on the two PUBLIC session messages: /sessionpost's snapshot and the
+ * self-updating board.
+ *
+ * A prefix of its own rather than reusing `ses:`, so the audience travels in the
+ * prefix. Disjoint from `ses:` under startsWith in both directions because they
+ * differ at index 3 (`b` against `:`), and from `sesmodal:` at the same index.
+ * Named `sesboard:` rather than `sesp:`, which misreads as `ses:`.
+ */
+const SESSION_BOARD_PREFIX = 'sesboard:';
+
+// Modal ids carry no origin: a modal submit ALWAYS answers type 4 with flags 64,
+// so the board it renders is always ephemeral and always carries `e` ids. Adding
+// an origin here for symmetry would be adding a field nothing may read.
+// Grammar: <prefix><action>:<loc|->
+const SESSION_MODAL_PREFIX = 'sesmodal:';
+const TOURNAMENT_MODAL_PREFIX = 'trnmodal:';
+const SESSION_BOARD_MODAL_PREFIX = 'sesboardmodal:';
+
+/** Discord refuses a select with more than 25 options. */
+const SELECT_OPTIONS_MAX = 25;
+
+// Discord refuses an embed description over 4096 characters and takes the whole
+// message down with it, silently on an interaction response (index.ts writes the
+// callback as the HTTP body, so there is no status to log). 4000 is the same
+// headroom announcements.ts leaves. `sessions.name` is unbounded TEXT, so a
+// 300-character session name is the only way to get near it.
+const DESCRIPTION_MAX = 4000;
+
+/**
+ * What the board says when the schedule really is empty.
+ *
+ * NEVER AN EMPTY STRING: Discord refuses an embed with an empty description, and
+ * every list render goes through here so that cannot happen. Leaving the last
+ * render up instead would be worse than saying nothing, because those rows are
+ * absolute <t:...:F> stamps that quietly become a list of nights that have
+ * already happened.
+ */
+const NO_SESSIONS_LINE = 'No club-wide sessions are open right now.';
+
+function clampDescription(text: string): string {
+  return text.length > DESCRIPTION_MAX ? text.slice(0, DESCRIPTION_MAX) : text;
+}
+
+function idSlots(customId: string): string[] {
+  return customId.split(':');
+}
+
+/** Anything that is not exactly `e` is public. The fail-closed direction. */
+function originFromButtonId(customId: string): 'e' | 'p' {
+  return idSlots(customId)[1] === 'e' ? 'e' : 'p';
+}
+
+/** Dispatch on this FIRST, so the numeric slot is never read for go or find. */
+function actionFromButtonId(customId: string): string {
+  return idSlots(customId)[2] ?? '';
+}
+
+/**
+ * The target page of a prev or next button, and nothing else.
+ *
+ * Named apart from the `go` slot deliberately: `go` puts a page COUNT where
+ * these put a page NUMBER, and one parser for both would read the wrong one on
+ * half the ids. Fails closed to 1, which is the list the member would have got
+ * anyway, and the route clamps the upper end.
+ */
+function targetPageFromButtonId(customId: string): number {
+  const page = Number.parseInt(idSlots(customId)[3] ?? '', 10);
+  return Number.isInteger(page) && page >= 1 ? page : 1;
+}
+
+/** The location filter to carry forward, or null for "all locations". */
+function locationFromButtonId(customId: string): string | null {
+  const slot = idSlots(customId)[4] ?? '-';
+  return slot && slot !== '-' ? slot : null;
+}
+
+/**
+ * One action row of pager buttons, or none at all.
+ *
+ * Takes the ids as opaque strings, so it knows nothing about the grammar above
+ * and cannot be the place an origin goes wrong. Three invariants worth naming:
+ *
+ *  - NEVER style 5. Style 5 is the LINK style; it requires a url, cannot carry a
+ *    custom_id, and emits no interaction at all when clicked. The same trap
+ *    guideComponents documents.
+ *  - The edges are DISABLED rather than omitted, so the row never changes shape
+ *    under the reader's cursor.
+ *  - The ids are distinct in every case, including one page, because direction
+ *    is encoded in them rather than derived from the target. A duplicate
+ *    custom_id makes Discord refuse the whole message, and on an interaction
+ *    response that arrives as "the application did not respond" with nothing
+ *    logged anywhere.
+ *
+ * Returns [] at one page: a UX call, not the uniqueness guard.
+ */
+function pagerRow(input: {
+  prevId: string;
+  nextId: string;
+  goId?: string;
+  findId?: string;
+  page: number;
+  totalPages: number;
+}): Record<string, unknown>[] {
+  if (input.totalPages <= 1) return [];
+
+  const buttons: Record<string, unknown>[] = [
+    {
+      type: 2, // BUTTON
+      style: 2, // SECONDARY -- paging is neither primary nor destructive
+      label: 'Previous',
+      custom_id: input.prevId,
+      disabled: input.page <= 1,
+    },
+    {
+      type: 2,
+      style: 2,
+      label: 'Next',
+      custom_id: input.nextId,
+      disabled: input.page >= input.totalPages,
+    },
+  ];
+  if (input.goId) {
+    buttons.push({ type: 2, style: 2, label: 'Go to page', custom_id: input.goId });
+  }
+  if (input.findId) {
+    buttons.push({ type: 2, style: 2, label: 'Find', custom_id: input.findId });
+  }
+
+  return [{ type: 1, components: buttons }];
+}
+
+/**
+ * The location filter, as a string select on its own row.
+ *
+ * OMITTED BELOW TWO LOCATIONS, mirroring pagerRow's one-page rule: a filter over
+ * a single gym can do nothing, and a dead control on the club's board is worse
+ * than no control. The options come from the route's window rather than from the
+ * page, or a gym with nothing on in the next ten would vanish from its own
+ * filter.
+ *
+ * The current selection is rendered with `default: true` and an explicit "All
+ * locations" option, so the state is visible rather than implied.
+ */
+function locationRow(input: {
+  customId: string;
+  locations: { id: string; label: string }[];
+  applied: string | null;
+}): Record<string, unknown>[] {
+  if (input.locations.length < 2) return [];
+
+  const options: Record<string, unknown>[] = [
+    { label: 'All locations', value: '-', default: input.applied === null },
+    // One slot is spent on "All locations", so the rest is what is left of the 25.
+    ...input.locations.slice(0, SELECT_OPTIONS_MAX - 1).map((l) => ({
+      label: l.label.slice(0, 100),
+      value: l.id,
+      default: l.id === input.applied,
+    })),
+  ];
+
+  return [
+    {
+      type: 1, // ACTION_ROW -- a select must sit alone in one
+      components: [
+        {
+          type: 3, // STRING_SELECT
+          custom_id: input.customId,
+          placeholder: 'Filter by location',
+          min_values: 1,
+          max_values: 1,
+          options,
+        },
+      ],
+    },
+  ];
+}
+
+/** An embed and its control rows, ready to be a response body. */
+type RenderedList = {
+  embeds: Record<string, unknown>[];
+  components: Record<string, unknown>[];
+};
+
+/**
+ * The ONLY permitted way to answer a click with a freshly rendered private copy.
+ *
+ * Not `{ ...board, flags: 64 }` at the call site, for the reason ephemeralEmbed
+ * exists: a flag at the call site is easy to drop in a refactor and the bug is
+ * invisible to whoever caused it, because they see their own message either way.
+ * Here the consequence is not clutter. Drop the flag on a copy of the session
+ * board and one member's personalised schedule posts publicly into the channel,
+ * which is the exact leak the ephemeral rule on /sessions exists to prevent.
+ */
+function ephemeralBoard(board: RenderedList): BotResponse {
+  return { type: 4, data: { ...board, flags: 64 } };
+}
+
+/**
+ * Type 7 for a click that arrived on a private message, type 4 + flags 64 for
+ * one that arrived on a public one.
+ *
+ * THE ASYMMETRY IS THE POINT: the RESPONSE differs, the rendered content does
+ * not. A copy is always built by a wrapper that emits `e` ids, whichever
+ * message was clicked, because a copy is always private and its own buttons have
+ * to page it in place.
+ */
+function listResponse(origin: 'e' | 'p', board: RenderedList): BotResponse {
+  return origin === 'e' ? { type: 7, data: board } : ephemeralBoard(board);
+}
+
+/**
+ * Every session list this bot renders, in one function.
+ *
+ * The wrappers below are what call it, and each of them hardcodes its prefix and
+ * its origin. Nothing takes either as a variable, which is what makes "no public
+ * render path can emit an `e` id" a property of the code rather than a rule in a
+ * comment.
+ */
+function sessionList(
+  data: SessionsPage,
+  render: {
+    prefix: string;
+    origin: 'e' | 'p';
+    /**
+     * Whether these numbers are the reader's own. The wall's are not: it always
+     * fetches as nobody, so its `linked` is always false and its footer must
+     * ignore it entirely, or it would offer /link to explain a narrowing that is
+     * not happening.
+     */
+    personal: boolean;
+    /** A STATIC extra clause. Anything clock derived would refingerprint the
+     *  board on every tick and edit it forever. */
+    note: string | null;
+    withLocations: boolean;
+  }
+): RenderedList {
+  const { page, totalPages, total, locations, location } = data;
+  const head = `${render.prefix}${render.origin}`;
+  const loc = location ?? '-';
+
+  const rows = [
+    ...pagerRow({
+      prevId: `${head}:prev:${Math.max(1, page - 1)}:${loc}`,
+      nextId: `${head}:next:${Math.min(totalPages, page + 1)}:${loc}`,
+      // A PUBLIC `go` CARRIES NO TOTAL. The copy a public click produces is the
+      // clicker's own and may run to more pages than the public message does, so
+      // a range built from the public numbers would understate it and read as a
+      // cap. Only an `e` id's total is the clicker's to quote.
+      goId: `${head}:go:${render.origin === 'e' ? totalPages : '-'}:${loc}`,
+      findId: `${head}:find:-:${loc}`,
+      page,
+      totalPages,
+    }),
+    ...(render.withLocations
+      ? locationRow({ customId: `${head}:loc:-:${loc}`, locations, applied: location })
+      : []),
+  ];
+
+  const appliedLabel = locations.find((l) => l.id === location)?.label ?? null;
+
+  return {
+    embeds: [
+      {
+        title: 'Upcoming sessions',
+        color: CLUB_RED,
+        description: data.sessions.length
+          ? clampDescription(data.sessions.map(formatSession).join('\n\n'))
+          : NO_SESSIONS_LINE,
+        footer: {
+          text: [
+            `Page ${page} of ${totalPages}`,
+            // "for you" is load-bearing on a copy: it is the whole explanation
+            // of why the reader's numbers differ from the ones on the wall they
+            // clicked.
+            `${total} upcoming${render.personal ? ' for you' : ''}`,
+            appliedLabel ? `at ${appliedLabel}` : null,
+            render.personal && !data.linked
+              ? 'Club-wide nights only: run /link to see the sessions for your track.'
+              : 'RSVP on the website',
+            render.note,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        },
+      },
+    ],
+    components: rows,
+  };
+}
+
+/** /sessions' own reply and every private copy of it. `ses:e:` */
+function sessionsBoard(data: SessionsPage): RenderedList {
+  // No location select: that control belongs to the board family, where a public
+  // message needs a way to narrow a club-wide list. Here the reader already has
+  // /sessions and the find button.
+  return sessionList(data, {
+    prefix: SESSION_PAGE_PREFIX,
+    origin: 'e',
+    personal: true,
+    note: null,
+    withLocations: false,
+  });
+}
+
+/** The /sessionpost snapshot. PUBLIC, so `sesboard:p:`. */
+function sessionPostBoard(data: SessionsPage): RenderedList {
+  return sessionList(data, {
+    prefix: SESSION_BOARD_PREFIX,
+    origin: 'p',
+    personal: false,
+    note: 'The buttons give you your own private copy; this post does not move.',
+    withLocations: true,
+  });
+}
+
+/**
+ * The self-updating board. PUBLIC, so `sesboard:p:`, identically to the snapshot.
+ *
+ * It differs from sessionPostBoard in exactly one respect: a static clause saying
+ * the message maintains itself. Without it the live board and a month-old
+ * snapshot in the same channel are byte-identical messages and no member can
+ * tell which is which.
+ */
+export function sessionBoardWall(data: SessionsPage): RenderedList {
+  return sessionList(data, {
+    prefix: SESSION_BOARD_PREFIX,
+    origin: 'p',
+    personal: false,
+    note: 'Updates itself. The buttons give you your own private copy; this post does not move.',
+    withLocations: true,
+  });
+}
+
+/**
+ * A reader's private copy of a public board. THE ONLY EMITTER OF `sesboard:e:`.
+ *
+ * PERSONALISED, and that is not a leak: the copy is ephemeral, so the rows it
+ * shows are the clicker's own and nobody else's, exactly as /sessions already
+ * works. The public post is never edited and never filtered.
+ *
+ * ONE RENDER PATH FOR LINKED AND UNLINKED. They differ only in the footer
+ * clause, which sessionList already handles. An unlinked copy shows every
+ * club-wide row in full: withholding rows that are sitting in the message
+ * directly above the button would hide nothing and make the button read as
+ * broken. The nudge is text, never /link's button, because that button carries a
+ * single-use credential minted per invocation and this path has no call to spend
+ * on minting one.
+ */
+function sessionPostCopy(data: SessionsPage): RenderedList {
+  return sessionList(data, {
+    prefix: SESSION_BOARD_PREFIX,
+    origin: 'e',
+    personal: true,
+    note: 'Your own copy. The board in the channel has not moved.',
+    withLocations: true,
+  });
+}
+
+/** /tournaments' own reply and every private copy of it. `trn:e:` */
+function tournamentsBoard(data: TournamentsPage): RenderedList {
+  const { page, totalPages, total } = data;
+  const head = `${TOURNAMENT_PAGE_PREFIX}e`;
+
+  return {
+    embeds: [
+      {
+        title: 'Upcoming tournaments',
+        color: CLUB_RED,
+        description: data.tournaments.length
+          ? clampDescription(data.tournaments.map(formatTournament).join('\n\n'))
+          : 'No tournaments are scheduled right now.',
+        footer: {
+          text: [
+            `Page ${page} of ${totalPages}`,
+            `${total} upcoming`,
+            data.linked ? 'Enter on the website' : 'Run /link to see which of these you can enter.',
+          ].join(' · '),
+        },
+      },
+    ],
+    // No location slot in use here, and no select: a tournament's venue is not
+    // in this payload at all. The slot is still present as `-` so the grammar is
+    // one grammar and the positions never shift.
+    components: pagerRow({
+      prevId: `${head}:prev:${Math.max(1, page - 1)}:-`,
+      nextId: `${head}:next:${Math.min(totalPages, page + 1)}:-`,
+      goId: `${head}:go:${totalPages}:-`,
+      findId: `${head}:find:-:-`,
+      page,
+      totalPages,
+    }),
+  };
+}
+
+/**
+ * A modal, opened by a click, answered with no app call at all.
+ *
+ * Type 9 in response to a type 3 has no precedent in this bot, so it is on the
+ * staging click list. Instant by construction: nothing here waits on the app, so
+ * the 3 second interaction deadline is never in play.
+ */
+function openListModal(input: {
+  modalPrefix: string;
+  action: 'go' | 'find';
+  /** The raw page-count slot off the button, `-` on a public id. */
+  totalSlot: string;
+  /** The raw location slot, carried through so a modal preserves the filter. */
+  locSlot: string;
+  title: string;
+  findPlaceholder: string;
+}): BotResponse {
+  const custom_id = `${input.modalPrefix}${input.action}:${input.locSlot || '-'}`;
+  const total = Number.parseInt(input.totalSlot, 10);
+
+  const field =
+    input.action === 'go'
+      ? {
+          type: 4, // TEXT_INPUT
+          custom_id: 'page',
+          label: 'Which page?',
+          style: 1, // SHORT
+          required: true,
+          min_length: 1,
+          max_length: 4,
+          // Generic unless the id carried a total, which only an `e` id does.
+          placeholder:
+            Number.isInteger(total) && total >= 1 ? `1 to ${total}` : 'Page number',
+        }
+      : {
+          type: 4,
+          custom_id: 'q',
+          label: 'What are you looking for?',
+          style: 1,
+          required: true,
+          min_length: 1,
+          max_length: 80,
+          placeholder: input.findPlaceholder,
+        };
+
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id,
+      title: input.title.slice(0, MODAL_TITLE_MAX),
+      components: [{ type: 1, components: [field] }],
+    },
+  };
+}
+
+/** The location a modal submit has to carry forward, or null. */
+function locationFromModalId(customId: string): string | null {
+  const slot = idSlots(customId)[2] ?? '-';
+  return slot && slot !== '-' ? slot : null;
+}
+
+/** go or find, off a modal id. */
+function actionFromModalId(customId: string): string {
+  return idSlots(customId)[1] ?? '';
+}
+
+/** A typed page number, failing closed to 1 exactly as the button parser does. */
+function pageFromModalValue(value: string): number {
+  const page = Number.parseInt(value.trim(), 10);
+  return Number.isInteger(page) && page >= 1 ? page : 1;
+}
+
+/**
+ * What a find answers with: THE MATCHES, and no components.
+ *
+ * Not a jump to the page holding the first one. Session names repeat weekly, so
+ * "Club night" matches rows spread over every page, and landing on the first of
+ * them often means landing on the page the member was already looking at while
+ * the other three stay hidden. Position in a time-ordered list carries no
+ * information, so the useful answer is the rows themselves.
+ *
+ * The window note is not decoration: the app searches what it has read, not the
+ * whole calendar, so without it a member searching for something months out gets
+ * a confident wrong answer.
+ */
+function searchMessage(input: {
+  q: string;
+  lines: string[];
+  total: number;
+  nothing: string;
+}): BotResponse {
+  if (input.lines.length === 0) return ephemeral(input.nothing);
+
+  return ephemeralEmbed({
+    title: `Matching "${input.q}"`,
+    color: CLUB_RED,
+    description: clampDescription(input.lines.join('\n\n')),
+    footer: {
+      text: [
+        input.total > input.lines.length
+          ? `Showing ${input.lines.length} of ${input.total}, refine your search`
+          : `${input.total} match${input.total === 1 ? '' : 'es'}`,
+        'Search only reaches what is coming up next',
+      ].join(' · '),
+    },
+  });
+}
+
+/**
+ * The app applied the search this bot asked for. CHECKED, not assumed.
+ *
+ * The bot image and the player image roll independently, so a bot that sends ?q=
+ * to an app that does not read it gets an unfiltered page back. Framing ten
+ * non-matching sessions as search results is a wrong answer rather than a
+ * cosmetic one, so an absent or mismatched echo refuses instead.
+ */
+function searchWasApplied(echo: string | null, sent: string): boolean {
+  return echo !== null && echo === sent.toLowerCase();
+}
+
+const SEARCH_UNAVAILABLE =
+  "Search isn't available yet on this build. Try again in a few minutes.";
+
 /**
  * EPHEMERAL, and that is a correctness property rather than tidiness.
  *
@@ -1051,30 +1622,123 @@ function formatSession(s: SessionSummary) {
  *
  * It also means one person's /sessions no longer buries a busy channel in ten
  * embeds, which is a nice consequence and not the reason.
+ *
+ * PAGING PRESERVES BOTH HALVES. A pager click re-fetches with the clicker's id,
+ * and because the message is ephemeral the clicker is the same person the first
+ * fetch was made for, so the per-caller filter still holds on every page.
  */
 export async function handleSessions(context: InteractionContext) {
-  const { sessions, linked } = await fetchSessions(context.discordUserId);
+  const data = await fetchSessions(context.discordUserId, 1);
 
-  // Said the same way in both branches: an unlinked caller is seeing club-wide
-  // nights only, and should know the list is narrowed rather than empty.
-  const footer = linked
-    ? 'RSVP on the website'
-    : 'Club-wide nights only — run /link to see the sessions for your track.';
-
-  if (sessions.length === 0) {
+  if (data.sessions.length === 0) {
     return ephemeral(
-      linked
+      data.linked
         ? 'No upcoming sessions are open right now.'
         : 'No club-wide sessions are open right now.\n\n' +
             'Run **/link** to connect your club account and see the sessions for your track.'
     );
   }
 
-  return ephemeralEmbed({
-    title: 'Upcoming sessions',
-    color: CLUB_RED,
-    description: sessions.map(formatSession).join('\n\n'),
-    footer: { text: footer },
+  // The footer's linked and unlinked wording lives in sessionList, said the same
+  // way in both branches: an unlinked caller is seeing club-wide nights only and
+  // should know the list is narrowed rather than empty.
+  return ephemeralBoard(sessionsBoard(data));
+}
+
+/**
+ * A pager click on /sessions' own reply, or on a private copy of it.
+ *
+ * ONE HANDLER, ONE RENDER PATH, TWO RESPONSE TYPES, picked by the origin in the
+ * id. Both `data.embeds` AND `data.components` go back on every type 7, because
+ * type 7 replaces what it is given and omitting the components strips the buttons
+ * off the message with no error anywhere. The components key is sent even when
+ * its value is [], so a list that shrank to one page between clicks clears its
+ * buttons instead of stranding live controls on a single page.
+ */
+export async function handleSessionPageButton(
+  customId: string,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const action = actionFromButtonId(customId);
+
+  if (action === 'go' || action === 'find') {
+    return openListModal({
+      modalPrefix: SESSION_MODAL_PREFIX,
+      action,
+      totalSlot: idSlots(customId)[3] ?? '-',
+      locSlot: idSlots(customId)[4] ?? '-',
+      title: action === 'go' ? 'Go to page' : 'Find a session',
+      findPlaceholder: 'Club night, or West Gym',
+    });
+  }
+
+  if (action !== 'prev' && action !== 'next') {
+    // A button from an older build. Type 6 acknowledges and changes nothing,
+    // leaving the message exactly as it was: the same fail-quiet answer index.ts
+    // already gives a component it does not recognise.
+    return { type: 6 };
+  }
+
+  const data = await fetchSessions(
+    // THE CALLER ID COMES FROM THE INTERACTION, NEVER FROM THE custom_id, so
+    // nothing a client controls can widen what comes back.
+    context.discordUserId,
+    targetPageFromButtonId(customId),
+    undefined,
+    locationFromButtonId(customId) ?? undefined
+  );
+
+  if (data.sessions.length === 0) {
+    // Type 4 rather than a type-7 empty embed: Discord refuses an embed with an
+    // empty description, and on an interaction response that refusal reaches the
+    // member as "the application did not respond" with nothing logged.
+    return ephemeral('No upcoming sessions are open right now.');
+  }
+
+  return listResponse(originFromButtonId(customId), sessionsBoard(data));
+}
+
+/**
+ * A submitted "go to page" or "find" from /sessions.
+ *
+ * NEVER TYPE 7, and that is the invariant the two-path design rests on: a modal
+ * submit is its own interaction, so the message it would edit is not the one the
+ * member is looking at. The fresh ephemeral board it answers with is itself
+ * pageable, because its own buttons carry `e`.
+ */
+export async function handleSessionListModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const location = locationFromModalId(customId) ?? undefined;
+
+  if (actionFromModalId(customId) === 'go') {
+    const data = await fetchSessions(
+      context.discordUserId,
+      pageFromModalValue(modalValue(components, 'page')),
+      undefined,
+      location
+    );
+    if (data.sessions.length === 0) return ephemeral('No upcoming sessions are open right now.');
+    return ephemeralBoard(sessionsBoard(data));
+  }
+
+  const q = modalValue(components, 'q').trim().slice(0, 80);
+  if (!q) {
+    // Discord's min_length of 1 lets a space through. Answering with the
+    // unfiltered page would read as a search that matched everything.
+    return ephemeral('Type something to search for.');
+  }
+
+  const data = await fetchSessions(context.discordUserId, 1, q, location);
+  if (!searchWasApplied(data.query, q)) return ephemeral(SEARCH_UNAVAILABLE);
+
+  return searchMessage({
+    q,
+    lines: data.sessions.map(formatSession),
+    total: data.total,
+    nothing: `Nothing coming up matches "${q}".`,
   });
 }
 
@@ -1101,44 +1765,140 @@ export async function handleSessions(context: InteractionContext) {
  * people muting the channel that carries club notices. The scheduled pings in
  * session-pings.ts are the thing that is allowed to mention a role, and they
  * are rate-limited by being tied to a session actually starting.
+ *
+ * IT CARRIES BUTTONS, AND THEY NEVER EDIT THIS MESSAGE. A click answers with a
+ * private copy of the board, so the public post stays on page 1 for every reader
+ * forever and there is no per-message page state anywhere. The truncation apology
+ * this footer used to carry is gone with it: all 28 rows are now reachable from
+ * the post, so there is nothing to apologise for.
+ *
+ * ZERO ARGUMENTS, DELIBERATELY. This is the only function that produces the
+ * public post, and there is no clicker id in scope in it to pass. Adding a
+ * parameter here is a visible signature change a reviewer sees, which is the
+ * whole guard: see the arity assertion in the tests.
  */
 export async function handleSessionPost(): Promise<BotResponse> {
-  const { sessions, total } = await fetchSessions(null);
+  const data = await fetchSessions(null, 1);
 
   // EPHEMERAL, unlike the success case. "There is nothing to post" is feedback
   // for the exec who ran the command, not a notice the channel needs -- and a
   // public "no sessions are open" is worse than saying nothing, because it
   // reads as a club announcement that the club has cancelled everything.
-  if (sessions.length === 0) {
+  if (data.sessions.length === 0) {
     return ephemeral(
       'No club-wide sessions are open right now, so there is nothing to post.'
     );
   }
 
-  // The app caps the list, so on a schedule of twenty-eight a silent post reads
-  // as the club announcing it runs ten sessions. Only said when it is true: a
-  // complete list is the common case and must look exactly as it always has.
-  const footer =
-    total > sessions.length
-      ? `Showing the next ${sessions.length} of ${total} club-wide sessions. Full schedule on the website.`
-      : 'RSVP on the website';
+  // No flags, so it stays public. No "run /link to see your track" line either:
+  // that footer is advice for one reader looking at their own narrowed list, and
+  // on a club-wide post it would imply this list is narrowed, which it is not.
+  return { type: 4, data: sessionPostBoard(data) };
+}
 
-  return {
-    type: 4,
-    data: {
-      embeds: [
-        {
-          title: 'Upcoming sessions',
-          color: CLUB_RED,
-          description: sessions.map(formatSession).join('\n\n'),
-          // No "run /link to see your track" line here. That footer is advice
-          // for one reader looking at their own narrowed list; on a club-wide
-          // post it would imply this list is narrowed, which it is not.
-          footer: { text: footer },
-        },
-      ],
-    },
-  };
+/**
+ * A click on one of the two PUBLIC session messages: the /sessionpost snapshot or
+ * the self-updating board.
+ *
+ * WHAT THE CLICKER GETS IS THEIR OWN PRIVATE COPY, personalised to them, and the
+ * public message is never touched. That is not the leak the ephemeral rule on
+ * /sessions guards against: an ephemeral copy shows the clicker their own view
+ * and nobody else's, which is exactly what /sessions already does. The leak
+ * would be editing the shared message, and no path here can: a `p` id answers
+ * type 4 with flags 64, and only an `e` id, which only sessionPostCopy emits,
+ * reaches type 7.
+ *
+ * THIS HANDLER HAS A CLICKER ID AND THAT IS FINE. The guard lives on the
+ * producers of the public message instead: handleSessionPost takes no arguments,
+ * and the tick fetches with null. Neither has an id in scope to pass.
+ *
+ * `values` is how a string select's choice arrives. The bot has never read that
+ * field before, so it fails closed to no filter.
+ */
+export async function handleSessionBoardButton(
+  customId: string,
+  context: InteractionContext,
+  values?: string[]
+): Promise<BotResponse> {
+  const action = actionFromButtonId(customId);
+
+  if (action === 'go' || action === 'find') {
+    return openListModal({
+      modalPrefix: SESSION_BOARD_MODAL_PREFIX,
+      action,
+      totalSlot: idSlots(customId)[3] ?? '-',
+      locSlot: idSlots(customId)[4] ?? '-',
+      title: action === 'go' ? 'Go to page' : 'Find a session',
+      findPlaceholder: 'Club night, or West Gym',
+    });
+  }
+
+  let location = locationFromButtonId(customId);
+  if (action === 'loc') {
+    // FAILS CLOSED TO NO FILTER. An absent or empty `values` must not leave the
+    // filter the member just changed silently in place, and it must certainly not
+    // be read off the id instead, which is the selection they are replacing.
+    const chosen = values?.[0] ?? '-';
+    location = chosen && chosen !== '-' ? chosen : null;
+  } else if (action !== 'prev' && action !== 'next') {
+    return { type: 6 };
+  }
+
+  const data = await fetchSessions(
+    context.discordUserId,
+    // A new filter is a different list, so it starts at its first page rather
+    // than wherever the reader happened to be.
+    action === 'loc' ? 1 : targetPageFromButtonId(customId),
+    undefined,
+    location ?? undefined
+  );
+
+  if (data.sessions.length === 0) {
+    return ephemeral('No upcoming sessions are open right now.');
+  }
+
+  return listResponse(originFromButtonId(customId), sessionPostCopy(data));
+}
+
+/**
+ * A submitted "go to page" or "find" from a public board or a copy of one.
+ *
+ * FETCHED AS THE CLICKER, like the board's buttons and unlike the board's own
+ * render path. A modal submit always answers with an ephemeral copy, so it takes
+ * the copy's audience; and the numbers it prints are the clicker's own, which is
+ * what "for you" in the footer says. Never type 7, for the reason on
+ * handleSessionListModal.
+ */
+export async function handleSessionBoardModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const location = locationFromModalId(customId) ?? undefined;
+
+  if (actionFromModalId(customId) === 'go') {
+    const data = await fetchSessions(
+      context.discordUserId,
+      pageFromModalValue(modalValue(components, 'page')),
+      undefined,
+      location
+    );
+    if (data.sessions.length === 0) return ephemeral('No upcoming sessions are open right now.');
+    return ephemeralBoard(sessionPostCopy(data));
+  }
+
+  const q = modalValue(components, 'q').trim().slice(0, 80);
+  if (!q) return ephemeral('Type something to search for.');
+
+  const data = await fetchSessions(context.discordUserId, 1, q, location);
+  if (!searchWasApplied(data.query, q)) return ephemeral(SEARCH_UNAVAILABLE);
+
+  return searchMessage({
+    q,
+    lines: data.sessions.map(formatSession),
+    total: data.total,
+    nothing: `Nothing coming up matches "${q}".`,
+  });
 }
 
 /**
@@ -1186,21 +1946,78 @@ function formatTournament(t: TournamentSummary): string {
  * effect of running a command about tournaments.
  */
 export async function handleTournaments(context: InteractionContext) {
-  const { tournaments, linked } = await fetchTournaments(context.discordUserId);
+  const data = await fetchTournaments(context.discordUserId, 1);
 
-  if (tournaments.length === 0) {
+  if (data.tournaments.length === 0) {
     return ephemeral('No tournaments are scheduled right now.');
   }
 
-  return ephemeralEmbed({
-    title: 'Upcoming tournaments',
-    color: CLUB_RED,
-    description: tournaments.map(formatTournament).join('\n\n'),
-    footer: {
-      text: linked
-        ? 'Enter on the website'
-        : 'Run /link to see which of these you can enter.',
-    },
+  return ephemeralBoard(tournamentsBoard(data));
+}
+
+/**
+ * A pager click on /tournaments.
+ *
+ * THIS WILL LOOK LIKE NOTHING CHANGED for a long time: the row is omitted below
+ * eleven upcoming tournaments and the club runs a handful, so the buttons appear
+ * only when there is something to page. That is the design working.
+ */
+export async function handleTournamentPageButton(
+  customId: string,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const action = actionFromButtonId(customId);
+
+  if (action === 'go' || action === 'find') {
+    return openListModal({
+      modalPrefix: TOURNAMENT_MODAL_PREFIX,
+      action,
+      totalSlot: idSlots(customId)[3] ?? '-',
+      locSlot: '-',
+      title: action === 'go' ? 'Go to page' : 'Find a tournament',
+      findPlaceholder: 'Autumn Classic',
+    });
+  }
+
+  if (action !== 'prev' && action !== 'next') return { type: 6 };
+
+  const data = await fetchTournaments(context.discordUserId, targetPageFromButtonId(customId));
+
+  if (data.tournaments.length === 0) {
+    return ephemeral('No tournaments are scheduled right now.');
+  }
+
+  return listResponse(originFromButtonId(customId), tournamentsBoard(data));
+}
+
+/** A submitted "go to page" or "find" from /tournaments. Never type 7. */
+export async function handleTournamentListModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  if (actionFromModalId(customId) === 'go') {
+    const data = await fetchTournaments(
+      context.discordUserId,
+      pageFromModalValue(modalValue(components, 'page'))
+    );
+    if (data.tournaments.length === 0) {
+      return ephemeral('No tournaments are scheduled right now.');
+    }
+    return ephemeralBoard(tournamentsBoard(data));
+  }
+
+  const q = modalValue(components, 'q').trim().slice(0, 80);
+  if (!q) return ephemeral('Type something to search for.');
+
+  const data = await fetchTournaments(context.discordUserId, 1, q);
+  if (!searchWasApplied(data.query, q)) return ephemeral(SEARCH_UNAVAILABLE);
+
+  return searchMessage({
+    q,
+    lines: data.tournaments.map(formatTournament),
+    total: data.total,
+    nothing: `No scheduled tournament matches "${q}".`,
   });
 }
 
@@ -2781,6 +3598,43 @@ export function isSelfRoleButton(customId: string | undefined | null): boolean {
 /** True for a guide button click. */
 export function isGuideButton(customId: string | undefined | null): boolean {
   return typeof customId === 'string' && customId.startsWith(GUIDE_PREFIX);
+}
+
+// The paged lists' guards. Every prefix here is disjoint under startsWith from
+// every other and from selfrole:, guide:, report:, announce:, say: and the
+// leaderboard's lb:, in both directions, so the order they are checked in stays a
+// readability choice rather than a correctness one. The pair that has to be read
+// together is ses: and sesboard:, which diverge at index 3 (`:` against `b`);
+// keep them adjacent wherever they are checked.
+
+/** True for a paging click on /sessions' own reply or a copy of it. */
+export function isSessionPageButton(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SESSION_PAGE_PREFIX);
+}
+
+/** True for a paging click on a PUBLIC session board, or a copy of one. */
+export function isSessionBoardButton(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SESSION_BOARD_PREFIX);
+}
+
+/** True for a paging click on /tournaments. */
+export function isTournamentPageButton(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(TOURNAMENT_PAGE_PREFIX);
+}
+
+/** True for a /sessions modal submit. */
+export function isSessionListModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SESSION_MODAL_PREFIX);
+}
+
+/** True for a session board modal submit. */
+export function isSessionBoardModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SESSION_BOARD_MODAL_PREFIX);
+}
+
+/** True for a /tournaments modal submit. */
+export function isTournamentListModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(TOURNAMENT_MODAL_PREFIX);
 }
 
 /**

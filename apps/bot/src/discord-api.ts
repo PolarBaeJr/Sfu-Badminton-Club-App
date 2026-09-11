@@ -23,6 +23,20 @@ export type RoleCallResult = 'ok' | 'forbidden' | 'not_found' | 'failed';
  */
 export type MessageWriteResult = 'ok' | 'gone' | 'failed';
 
+/**
+ * The outcome of a post whose caller has to record it.
+ *
+ * THE SPLIT IS BETWEEN "DISCORD CREATED NOTHING" AND "IT MAY HAVE". A 4xx is a
+ * refusal: no permission, no channel, a payload Discord will not take, and a
+ * retry of the same request gets the same answer, so the caller can safely try
+ * again later. A 5xx or a thrown fetch may have landed a message the caller
+ * never learned the id of, and a caller that retried that would post twice.
+ *
+ * postMessage folds all three of these into null, which is right for every
+ * caller that has nothing to record.
+ */
+export type MessagePostResult = { id: string } | 'refused' | 'unknown';
+
 export interface DiscordApiOptions {
   token: string;
   /** Injectable for tests; defaults to global fetch. */
@@ -238,6 +252,38 @@ export class DiscordApi {
     } catch (error) {
       console.error(`[bot] post message to ${channelId} threw:`, error);
       return null;
+    }
+  }
+
+  /**
+   * Post, and distinguish a refusal from a maybe.
+   *
+   * For the one caller that maintains a SINGLETON message: the session board
+   * keeps a pending marker across the window between "about to post" and "posted
+   * id recorded", and closing that window needs to know whether an unrecorded
+   * post could exist. postMessage cannot answer that, and changing it to would
+   * change what every existing caller sees.
+   */
+  async postMessageResult(channelId: string, payload: unknown): Promise<MessagePostResult> {
+    try {
+      const response = await this.request('POST', `/channels/${channelId}/messages`, payload);
+      if (response.ok) {
+        const { id } = (await response.json()) as { id?: string };
+        // An accepted post whose body carried no id is 'unknown', not a refusal:
+        // the message exists and nothing here can find it again.
+        if (id) return { id };
+        console.error(`[bot] post message to ${channelId} -> ok with no id`);
+        return 'unknown';
+      }
+      console.error(`[bot] post message to ${channelId} -> ${response.status}`);
+      // 429 is already retried twice inside request(), so one arriving here has
+      // outlasted that and belongs with the refusals: nothing was created and the
+      // next tick is a better place to try than this one.
+      if (response.status >= 400 && response.status < 500) return 'refused';
+      return 'unknown';
+    } catch (error) {
+      console.error(`[bot] post message to ${channelId} threw:`, error);
+      return 'unknown';
     }
   }
 

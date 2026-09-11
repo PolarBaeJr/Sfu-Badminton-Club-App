@@ -45,8 +45,10 @@ vi.mock("@/lib/supabase-server", () => ({
 }));
 
 let bucket = 0;
-function req(caller?: string) {
-  return new Request("http://localhost/api/discord/tournaments", {
+function req(caller?: string, params?: Record<string, string>) {
+  const url = new URL("http://localhost/api/discord/tournaments");
+  for (const [key, value] of Object.entries(params ?? {})) url.searchParams.set(key, value);
+  return new Request(url, {
     headers: {
       authorization: "Bearer test-secret",
       "x-forwarded-for": `10.8.0.${(bucket += 1)}`,
@@ -63,12 +65,19 @@ interface Summary {
   events: string[];
 }
 
-async function list(caller?: string) {
+async function list(caller?: string, params?: Record<string, string>) {
   const { GET } = await import("../route");
-  const res = await GET(req(caller));
+  const res = await GET(req(caller, params));
   return {
     status: res.status,
-    body: (await res.json()) as { tournaments?: Summary[]; linked?: boolean },
+    body: (await res.json()) as {
+      tournaments?: Summary[];
+      linked?: boolean;
+      page?: number;
+      totalPages?: number;
+      total?: number;
+      query?: string | null;
+    },
   };
 }
 
@@ -195,5 +204,78 @@ describe("GET /api/discord/tournaments", () => {
   it("names a failed tournament read rather than reporting an empty schedule", async () => {
     readError = { message: "relation does not exist" };
     expect((await list()).status).toBe(503);
+  });
+});
+
+// Paging here will be invisible for a while: the row is omitted below eleven
+// upcoming tournaments and the club runs a handful. That is the design working,
+// not the work missing, so the arithmetic is pinned by tests rather than by
+// looking at Discord.
+describe("GET /api/discord/tournaments: paging", () => {
+  beforeEach(() => {
+    tournaments = [
+      // Fifteen that finished, which the coalesce filter drops, and twenty-five
+      // still to come. The two counts differ on purpose: paging computed over
+      // the window rather than over the filtered list would report four pages
+      // and hand the bot a last page with nothing on it.
+      ...Array.from({ length: 15 }, (_, i) => ({
+        ...(tournaments[0] as object),
+        id: `done-${i}`,
+        start_date: clubDay(-9),
+        end_date: clubDay(-8),
+      })),
+      ...Array.from({ length: 25 }, (_, i) => ({
+        ...(tournaments[0] as object),
+        id: `live-${i}`,
+        name: i === 0 ? "Autumn Classic" : "Internal Open",
+        start_date: clubDay(3 + i),
+        end_date: null,
+      })),
+    ];
+  });
+
+  it("defaults to page 1 and counts the pages after the still-running filter", async () => {
+    const { body } = await list();
+    expect(body.page).toBe(1);
+    expect(body.total).toBe(25);
+    expect(body.totalPages).toBe(3);
+    expect(body.tournaments).toHaveLength(10);
+  });
+
+  it("returns the second page of rows", async () => {
+    const first = await list(undefined, { page: "1" });
+    const second = await list(undefined, { page: "2" });
+    const firstIds = (first.body.tournaments as Summary[]).map((t) => t.id);
+    const secondIds = (second.body.tournaments as Summary[]).map((t) => t.id);
+
+    expect(second.body.page).toBe(2);
+    expect(secondIds).toHaveLength(10);
+    for (const id of secondIds) expect(firstIds).not.toContain(id);
+  });
+
+  it("clamps a page past the end onto the last real page", async () => {
+    const { body } = await list(undefined, { page: "99" });
+    expect(body.page).toBe(3);
+    expect(body.tournaments).toHaveLength(5);
+  });
+
+  it("treats zero, a negative page and a non-number as page 1", async () => {
+    for (const page of ["0", "-1", "abc"]) {
+      expect((await list(undefined, { page })).body.page).toBe(1);
+    }
+  });
+
+  it("answers a search with the matches, on one page, and echoes it", async () => {
+    const { body } = await list(undefined, { q: "AUTUMN" });
+    expect((body.tournaments as Summary[]).map((t) => t.id)).toEqual(["live-0"]);
+    expect(body.total).toBe(1);
+    expect(body.totalPages).toBe(1);
+    expect(body.query).toBe("autumn");
+  });
+
+  it("treats a whitespace-only search as no search at all", async () => {
+    const { body } = await list(undefined, { q: "  " });
+    expect(body.query).toBeNull();
+    expect(body.total).toBe(25);
   });
 });

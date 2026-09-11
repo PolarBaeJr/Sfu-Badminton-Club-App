@@ -49,6 +49,7 @@ const clock: Check = (v) => (CLOCK.test(v) ? null : 'not a HH:MM time');
 const WRITABLE: Record<string, Check> = {
   announcement_channel_id: channel,
   session_ping_channel_id: channel,
+  session_board_channel_id: channel,
   match_results_channel_id: channel,
   feedback_channel_id: channel,
   event_feedback_channel_id: channel,
