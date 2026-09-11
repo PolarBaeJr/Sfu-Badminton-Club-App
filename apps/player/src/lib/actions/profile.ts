@@ -488,6 +488,19 @@ async function completeOnboardingImpl(data: OnboardingInput) {
   }
 
   if (existingPlayer) {
+    // THE WAIVER GOES ON RECORD BEFORE THE FLAG, not after. self_serve_auto_approve
+    // is a trigger on onboarding_completed, so the statement below is what approves
+    // the member: writing it first meant the club approved somebody whose acceptance
+    // rows did not exist yet, and anything that threw in between left an approved
+    // member with no waiver on record permanently. The acceptance is the durable
+    // fact and has to be written first.
+    //
+    // The call further down stays exactly where it is. It is driven by
+    // getMissingLegalDocuments, so once this one has run it finds nothing missing
+    // and inserts nothing; the account-creation path still needs it because the
+    // player id does not exist until after the insert.
+    await insertAcceptances(supabase, existingPlayer.id, data.age_attestation);
+
     const update: Record<string, unknown> = { onboarding_completed: true };
 
     // THE ADMIN-ENTERED NAME STAYS AUTHORITATIVE, and this branch is newly the

@@ -609,7 +609,57 @@ export async function deleteTournament(tournamentId: string) {
   const admin = await requireCapability('tournaments.manage.delete.write');
   const adminClient = createAdminClient();
 
-  const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
+  // Fail closed on this read. `old` is the audit snapshot, and from here it is
+  // also what decides whether the delete is allowed at all, so a read that came
+  // back empty because it failed would answer that question by accident.
+  const { data: old, error: oldError } = await adminClient
+    .from('tournaments')
+    .select('*')
+    .eq('id', tournamentId)
+    .single();
+  if (oldError) throw new Error(oldError.message);
+  if (!old) throw new ExpectedError('That tournament no longer exists.');
+
+  // A DRAFT IS DELETABLE. A TOURNAMENT THAT HAS BEEN PLAYED IS NOT. Everything
+  // below cascades: deleting the events takes the entrants, the pairs and the
+  // whole draw with them, and there is no undo and no archive of what went. A
+  // draft is a tournament nobody has entered yet, so throwing it away loses
+  // nothing. Once a draw exists, deleting is destroying results, and archiving
+  // is the operation that was actually wanted.
+  //
+  // THE MATCHES ARE COUNTED THROUGH THE EVENTS, and that is not incidental.
+  // tournament_matches hangs off an EVENT and has no tournament_id column at
+  // all, so filtering it on tournament_id would answer 42703 forever: the exact
+  // error the comment below documents, and it would fail OPEN here, reading "no
+  // matches" for every tournament in the club.
+  if (old.status !== 'draft') {
+    const { data: events, error: eventsReadError } = await adminClient
+      .from('tournament_events')
+      .select('id')
+      .eq('tournament_id', tournamentId);
+    if (eventsReadError) throw new Error(eventsReadError.message);
+    const eventIds = (events ?? []).map(e => e.id as string);
+
+    // No events means no matches, so the question is already answered. Asking
+    // anyway would mean an empty `.in()`, which is its own footgun.
+    if (eventIds.length > 0) {
+      // One row is the whole question. A count would do, but this is a plain
+      // read whose failure is an error rather than a zero, and a zero here is
+      // what opens the delete.
+      const { data: matches, error: matchesError } = await adminClient
+        .from('tournament_matches')
+        .select('id')
+        .in('event_id', eventIds)
+        .limit(1);
+      if (matchesError) throw new Error(matchesError.message);
+      if (matches?.length) {
+        throw new ExpectedError(
+          'This tournament has matches in its draw, so deleting it would destroy played results. ' +
+          'Archive it instead, which keeps everything and takes it off the active list.',
+        );
+      }
+    }
+  }
 
   // DELETING THE EVENTS IS ENOUGH, and it is the only statement here that ever
   // did anything.

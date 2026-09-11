@@ -320,14 +320,25 @@ describe('sessions', () => {
     expect(auditsOf('session_archived')).toHaveLength(2);
   });
 
-  it('takes the attendance rows with a deletion, one session at a time', async () => {
+  it('removes one session at a time, its attendance going with it by cascade', async () => {
     // Why Close and Delete stay two buttons: this is the club's record of who
     // actually turned up, and it goes with the night.
+    //
+    // THE ATTENDANCE ROWS GO BY CASCADE, and this store cannot show that. The
+    // action used to delete them itself, one statement ahead of the session
+    // delete, which was always redundant: session_attendance references
+    // sessions(id) ON DELETE CASCADE on production, as do session_rsvp,
+    // session_checkin_tokens and discord_session_pings. This mock is a
+    // PostgREST shim with no foreign keys in it, so a delete touches exactly
+    // the table it names and nothing else. Asserting an empty
+    // session_attendance here would therefore be asserting the redundant
+    // statement, not the club's rule. What the action still owns, and what is
+    // checked instead: the named session goes, the other one does not, and one
+    // audit row is written for it.
     const res = await bulkDeleteSessions(['s-1'], 'Duplicated by the import');
 
     expect(res.ok).toBe(true);
     expect((store.db.sessions ?? []).map((s) => s.id)).toEqual(['s-2']);
-    expect(store.db.session_attendance).toEqual([]);
     expect(auditsOf('session_deleted')).toHaveLength(1);
   });
 

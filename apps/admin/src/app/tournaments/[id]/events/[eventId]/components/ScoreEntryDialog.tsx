@@ -758,6 +758,18 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
               Voiding erases the match: any Elo it applied is reversed and its winner is taken back out
               of the next round. It can be restored later.
             </p>
+            {/* Gated on the event, because this panel is reached on a live event
+                too and there is nothing to reopen there. Only the match that
+                decided the event clears the standings, which is why this says
+                "if": voiding any other match recomputes them and leaves the
+                event finalised. */}
+            {event.status === 'completed' && (
+              <p className="text-xs text-[var(--color-warning)]">
+                This event is already finalised. If this was the match that decided it, voiding clears
+                the final placings and points and puts the event back to live, so the result can be
+                re-entered and the event finalised again.
+              </p>
+            )}
             <Button size="sm" variant="ghost" onClick={handleVoid} loading={walkoverLoading} className="w-full text-[var(--color-danger)] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
               Void Match
             </Button>

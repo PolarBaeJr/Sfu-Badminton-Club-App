@@ -210,9 +210,37 @@ export async function reinstatePlayer(input: ReinstatementInput) {
     throw new ExpectedError('That member is not banned, so there is nothing to reinstate.');
   }
 
+  // Which season this money counts toward. Stamped from the active season
+  // rather than inferred from paid_at later: a reinstatement taken in the gap
+  // before a term opens is for that term, and date-bucketing put it in no
+  // season at all — a real $20 payment sat invisible in every income figure
+  // because it was paid three weeks before the season it belonged to started.
+  //
+  // "Between terms is exactly when a lapsed member comes back, so record the
+  // payment unattached rather than refusing it" was the old reasoning, and it
+  // was wrong about where the money ends up. Season income filters by an exact
+  // season id, so a paid fee with season_id NULL is visible on the member's row,
+  // individually correct, and absent from every season's income permanently —
+  // and recordReinstatementPayment then refuses to repair it, because the amount
+  // is already recorded. Refusing up front is recoverable; a stranded payment is
+  // not.
+  //
+  // RESOLVED BEFORE THE FIRST WRITE, because requireActiveSeasonId throws. Read
+  // after the unban, it threw with the ban already lifted and committed, so a
+  // reinstatement attempted between terms unbanned the member and then reported
+  // a failure: the refusal that was supposed to be recoverable had already done
+  // half the job. This is a read, so it is safe to take before the precondition
+  // work above has committed anything.
+  const { data: activeSeason } = await adminClient
+    .from('seasons')
+    .select('id')
+    .eq('active_flag', true)
+    .maybeSingle();
+  const activeSeasonId = requireActiveSeasonId(activeSeason?.id, 'reinstatement fee');
+
   // Lift the ban FIRST, then record the money. The old order inserted the fee
   // up front, so a failure on the update left the member charged AND still
-  // banned — the worst of the two possible half-states, and invisible until
+  // banned: the worst of the two possible half-states, and invisible until
   // someone reconciled the ledger. This way the bad outcome is "unbanned but
   // the payment was not recorded", which is visible on /fees and fixable.
   const { error } = await adminClient
@@ -229,27 +257,6 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   // Falls back to now() only if the row was banned without a banned_at, which
   // banPlayer never does; the column is NOT NULL.
   const banStartedAt = player.banned_at ?? new Date().toISOString();
-
-  // Which season this money counts toward. Stamped from the active season
-  // rather than inferred from paid_at later: a reinstatement taken in the gap
-  // before a term opens is for that term, and date-bucketing put it in no
-  // season at all — a real $20 payment sat invisible in every income figure
-  // because it was paid three weeks before the season it belonged to started.
-  //
-  // "Between terms is exactly when a lapsed member comes back, so record the
-  // payment unattached rather than refusing it" was the old reasoning, and it
-  // was wrong about where the money ends up. Season income filters by an exact
-  // season id, so a paid fee with season_id NULL is visible on the member's row,
-  // individually correct, and absent from every season's income permanently —
-  // and recordReinstatementPayment then refuses to repair it, because the amount
-  // is already recorded. Refusing up front is recoverable; a stranded payment is
-  // not.
-  const { data: activeSeason } = await adminClient
-    .from('seasons')
-    .select('id')
-    .eq('active_flag', true)
-    .maybeSingle();
-  const activeSeasonId = requireActiveSeasonId(activeSeason?.id, 'reinstatement fee');
 
   // Was the money settled, or is it simply unknown?
   //

@@ -347,7 +347,15 @@ export function TournamentRowActions({
           { label: 'Finalise events & archive', onClick: () => setConfirmArchiveEvents(true) },
         ]
       : []),
-    ...(canDelete ? [{ label: 'Delete', onClick: () => setConfirmDelete(true), danger: true }] : []),
+    // Only on a draft, because deleteTournament refuses anything else that has
+    // a draw, and a menu item that exists to produce a refusal is worse than no
+    // menu item. The server rule is the wider of the two: it also allows a
+    // non-draft tournament with no matches at all. This list does not load the
+    // draw, so the menu takes the narrower rule it can answer here rather than
+    // adding a read to every row of the page.
+    ...(canDelete && tournament.status === 'draft'
+      ? [{ label: 'Delete', onClick: () => setConfirmDelete(true), danger: true }]
+      : []),
   ];
 
   if (!canEdit && overflow.length === 0) return null;

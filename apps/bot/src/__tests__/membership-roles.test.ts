@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const fetchSelfRoles = vi.fn();
 const setMembership = vi.fn();
+const isMemberBanned = vi.fn();
 const loadConfig = vi.fn();
 const addRole = vi.fn();
 const removeRole = vi.fn();
@@ -24,6 +25,7 @@ vi.mock('../api.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api.js')>()),
   fetchSelfRoles,
   setMembership,
+  isMemberBanned,
 }));
 
 vi.mock('../config.js', async (importOriginal) => ({
@@ -56,6 +58,7 @@ beforeEach(() => {
   fetchSelfRoles.mockResolvedValue({ roles: OFFERED, truncated: false });
   loadConfig.mockResolvedValue({ registry: REGISTRY, auditChannelId: null });
   setMembership.mockResolvedValue({ ok: true, updated: 1, unchanged: 0, skipped: 0, failed: 0 });
+  isMemberBanned.mockResolvedValue(false);
   addRole.mockResolvedValue('ok');
   removeRole.mockResolvedValue('ok');
 });
@@ -130,7 +133,51 @@ describe('picking a membership role', () => {
     };
 
     expect(addRole).toHaveBeenCalledWith('g1', '42', '3');
-    expect(res.data.content).toMatch(/nightly sync/i);
+    // And it does NOT promise a nightly sync will fix it. Nothing reads these
+    // roles back any more, so the only repairs are another click or an exec.
+    expect(res.data.content).toMatch(/ask an exec/i);
+    expect(res.data.content).not.toMatch(/nightly/i);
+  });
+});
+
+describe('a banned member cannot set their own membership', () => {
+  // membership_type prices a tournament entry and gates which events a member
+  // may enter, and this click is the only thing that writes it: there is no
+  // sweep behind it to correct a write that should not have happened.
+
+  it('refuses the write, and says nothing about which check failed', async () => {
+    isMemberBanned.mockResolvedValue(true);
+    const { handleSelfRoleButton } = await import('../commands.js');
+    const res = (await handleSelfRoleButton('selfrole:3', CTX, [])) as {
+      data: { content: string };
+    };
+
+    expect(setMembership).not.toHaveBeenCalled();
+    // The ROLE still goes on, and stays on. Taking it off here is the sweep's
+    // job, through revokeMembership, which is the path that always did it.
+    expect(addRole).toHaveBeenCalledWith('g1', '42', '3');
+    expect(res.data.content).not.toMatch(/ban/i);
+  });
+
+  it('fails closed when it cannot find out whether they are banned', async () => {
+    // "I could not find out" is not "they are in good standing", and nothing
+    // revisits this write later.
+    isMemberBanned.mockRejectedValue(new Error('app is down'));
+    const { handleSelfRoleButton } = await import('../commands.js');
+    const res = (await handleSelfRoleButton('selfrole:3', CTX, [])) as {
+      data: { content: string };
+    };
+
+    expect(setMembership).not.toHaveBeenCalled();
+    expect(res.data.content).toMatch(/ask an exec/i);
+  });
+
+  it('is not asked about when a membership role is turned OFF', async () => {
+    // Nothing is written on the way off, so there is nothing to refuse, and
+    // this path must not spend a request out of Discord's 3-second budget.
+    const { handleSelfRoleButton } = await import('../commands.js');
+    await handleSelfRoleButton('selfrole:3', CTX, ['3']);
+    expect(isMemberBanned).not.toHaveBeenCalled();
   });
 });
 
@@ -144,6 +191,9 @@ describe('an ordinary ping role is unaffected', () => {
     expect(addRole).toHaveBeenCalledWith('g1', '42', '900');
     expect(setMembership).not.toHaveBeenCalled();
     expect(res.data.content).toMatch(/pinged/);
+    // And it does not go asking the app about a ban. A ping role has no
+    // consequence on the website, and the whole click has three seconds.
+    expect(isMemberBanned).not.toHaveBeenCalled();
   });
 
   it('is unaffected by a guild whose role map cannot be read', async () => {

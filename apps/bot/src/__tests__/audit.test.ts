@@ -9,7 +9,6 @@ function summary(over: Partial<SweepSummary> = {}): SweepSummary {
   return {
     cleared: [],
     changes: [],
-    membershipUpdates: [],
     members: 0,
     added: 0,
     removed: 0,
@@ -234,33 +233,5 @@ describe('summaryFromOutcomes', () => {
     const s = summaryFromOutcomes('42', [outcome(), outcome({ guildId: 'g2', absent: true })]);
     expect(s.changes).toEqual([]);
     expect(s.absent).toBe(1);
-  });
-});
-
-describe('the membership write-back in the sweep entry', () => {
-  it('counts it as work done, so the entry is not filed as "nothing to do"', () => {
-    const embed = buildAuditEmbed(
-      {
-        kind: 'sweep',
-        summary: summary({
-          members: 1,
-          membershipUpdates: [{ discordUserId: 'u1', membershipType: 'alumni' }],
-        }),
-        guilds: 1,
-        trigger: 'scheduled',
-      },
-      NOW
-    );
-    const field = embed.fields?.find((f) => f.name === 'Membership updated');
-    expect(field?.value).toBe('1');
-    expect(embed.description).not.toMatch(/nothing/i);
-  });
-
-  it('omits the field entirely when nobody picked anything', () => {
-    const embed = buildAuditEmbed(
-      { kind: 'sweep', summary: summary({ members: 3 }), guilds: 1, trigger: 'scheduled' },
-      NOW
-    );
-    expect(embed.fields?.some((f) => f.name === 'Membership updated')).toBe(false);
   });
 });

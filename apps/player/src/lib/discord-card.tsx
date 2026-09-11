@@ -237,6 +237,98 @@ function initials(name: string) {
 }
 
 /**
+ * The hosts an avatar may be fetched from.
+ *
+ * BOTH APP URLS, AND THAT IS NOT BELT AND BRACES. publicStorageUrl
+ * (components/AvatarUpload.tsx) rewrites every uploaded avatar to
+ * `${window.location.origin}/supabase/...`, so a stored avatar_url names the
+ * APP's own origin rather than Supabase's -- all three on prod today are
+ * https://sfubadminton.com/supabase/... . Which variable carries that origin
+ * depends on how the image was built, and challenge-qr.ts records
+ * NEXT_PUBLIC_PLAYER_URL going missing from a build env as something that has
+ * actually happened, so an allowlist resting on one of them would quietly blank
+ * every avatar in the club instead of failing loudly.
+ *
+ * Read per call rather than into a module const: these are NEXT_PUBLIC_ values
+ * and a test that stubs the environment cannot reach a const that was evaluated
+ * at import time. The route is cached for 900s, so the cost is nothing.
+ */
+function allowedAvatarHosts(): Set<string> {
+  // Spelled out one by one on purpose. NEXT_PUBLIC_ values are substituted into
+  // the bundle by literal text match at build time, so process.env[name] with a
+  // computed name reads undefined and the allowlist would come up empty.
+  const configured = [
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.NEXT_PUBLIC_PLAYER_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+  ];
+  const hosts = new Set<string>(['cdn.discordapp.com']);
+  for (const value of configured) {
+    if (!value) continue;
+    try {
+      hosts.add(new URL(value).hostname.toLowerCase());
+    } catch {
+      // A malformed build value contributes no host rather than throwing the
+      // whole render away.
+    }
+  }
+  return hosts;
+}
+
+/** Hostnames that name the inside of the network rather than a place on the web. */
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  // URL.hostname hands back an IPv6 literal still wrapped in its brackets.
+  if (host.startsWith('[')) {
+    const ip = host.slice(1, -1);
+    // ::1 loopback, fc00::/7 unique-local (fc.. or fd..), and the IPv4-mapped
+    // form, which is another way to write 127.0.0.1.
+    return ip === '::1' || /^f[cd]/.test(ip) || ip.startsWith('::ffff:');
+  }
+  return /^(?:127|10)\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^169\.254\./.test(host)
+    || /^172\.(?:1[6-9]|2\d|3[01])\./.test(host);
+}
+
+/**
+ * Whether the card renderer may fetch this URL at all.
+ *
+ * players.avatar_url IS MEMBER-WRITABLE WITH NO HOST RESTRICTION, and this fetch
+ * runs server-side from api/discord/card/[token], a route that is anonymous by
+ * design. Without this a member stores http://10.0.0.5:8000/ or
+ * http://localhost:54321/ and the club's own server makes that request for them,
+ * from inside the network, against anything the container can reach. The
+ * response never comes back to them -- the card either draws or falls back to
+ * initials -- but a blind SSRF is still a port scanner and still reaches
+ * services that trust their own network.
+ *
+ * THE ALLOWLIST IS THE CONTROL. The literal-address checks are defence in depth
+ * only: they read the hostname as written, so they cannot see a name that
+ * RESOLVES to an internal address, and the allowlist is what actually prevents
+ * that. Hosts match exactly and case-insensitively, never by suffix, because
+ * `evil-sfubadminton.com` ends with the club's own domain.
+ */
+export function isFetchableAvatarUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  // http(s) only. file:, data: and the rest are all ways to make one fetch read
+  // something that was never a web page.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  // user:pass@host would send those credentials to whatever the host turns out
+  // to be.
+  if (url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  if (isPrivateHost(host)) return false;
+  return allowedAvatarHosts().has(host);
+}
+
+/**
  * The avatar, inlined.
  *
  * Fetched HERE rather than handed to satori as a remote src, because satori's
@@ -247,6 +339,9 @@ function initials(name: string) {
  */
 export async function avatarDataUri(url: string | null): Promise<string | null> {
   if (!url) return null;
+  // Fails closed, which costs a monogram and nothing else: the caller already
+  // draws initials for null. See isFetchableAvatarUrl for the SSRF this stops.
+  if (!isFetchableAvatarUrl(url)) return null;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(1500) });
     if (!res.ok) return null;

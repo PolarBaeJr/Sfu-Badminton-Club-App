@@ -5,7 +5,7 @@ import {
   LEGAL_DOCUMENT_ORDER,
   LEGAL_DOCUMENT_LABELS,
   LEGAL_DOCUMENT_SLUGS,
-  formatDate,
+  clubDate,
   type WaiverDocument,
 } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
@@ -66,7 +66,7 @@ export default async function LegalIndexPage() {
                   {BLURBS[document]}
                 </div>
                 <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Version {row.version} · updated {formatDate(row.updated_at)}
+                  Version {row.version} · updated {clubDate(row.updated_at)}
                 </div>
               </div>
               <ChevronRight size={16} className="text-[var(--mute)]" style={{ marginLeft: 'auto', flexShrink: 0 }} />

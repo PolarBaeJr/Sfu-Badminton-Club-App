@@ -1016,6 +1016,7 @@ describe('corrective actions on a finished event', () => {
 
   const placing = (id: string) =>
     store.db.tournament_participants!.find(p => p.id === id)!.final_position ?? null;
+  const eventStatus = () => store.db.tournament_events!.find(e => e.id === 'e1')!.status;
 
   it('clears the standings when the match that decided the event is voided', async () => {
     finishTheEvent();
@@ -1042,6 +1043,13 @@ describe('corrective actions on a finished event', () => {
     // and the code picks none of them; it clears and says so.
     expect(placing('p-alice')).toBeNull();
     expect(placing('p-bob')).toBeNull();
+
+    // AND THE EVENT IS OPEN AGAIN. Cleared standings on an event still marked
+    // completed is a dead end: finalizeEvent takes only a live event and result
+    // entry takes only an event still playing, so the officer could neither
+    // re-enter the final nor finalise it a second time. The status moves with
+    // the standings it describes.
+    expect(eventStatus()).toBe('live');
   });
 
   it('clears them when the final is undone rather than voided', async () => {
@@ -1054,6 +1062,7 @@ describe('corrective actions on a finished event', () => {
     expect(res.ok === false && res.error).toMatch(/decided this event/i);
     expect(placing('p-carol')).toBeNull();
     expect(placing('p-alice')).toBeNull();
+    expect(eventStatus()).toBe('live');
   });
 
   it('recomputes rather than clears when the corrected match did NOT decide the event', async () => {
@@ -1073,6 +1082,13 @@ describe('corrective actions on a finished event', () => {
     expect(placing('p-bob')).toBe(3);
     // Fourth place came from the playoff alone and goes with it.
     expect(placing('p-dan')).toBeNull();
+
+    // AND THE EVENT STAYS FINALISED. The other half of the discriminator: the
+    // reopen is scoped to an event that lost its champion, so a correction with
+    // a champion still standing must not hand the event back to the officer as
+    // live. A reopen written on every correction would pass the two tests above
+    // and fail here.
+    expect(eventStatus()).toBe('completed');
   });
 
   it('still refreshes the bracket when the recompute fails after the void landed', async () => {

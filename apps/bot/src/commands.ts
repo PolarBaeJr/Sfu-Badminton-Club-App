@@ -10,6 +10,7 @@ import {
   fetchSelfRoles,
   fetchSessions,
   fetchTournaments,
+  isMemberBanned,
   RateLimitedError,
   removeSelfRole,
   submitFeedback,
@@ -638,6 +639,16 @@ export interface InteractionContext {
    * how a quick command stops being quick.
    */
   channelId?: string | null;
+  /**
+   * The CALLER'S own permissions in this guild, as Discord computed them: a
+   * 64-bit mask sent as a string, and theirs rather than the bot's.
+   *
+   * Populated for a MODAL_SUBMIT, because that is the interaction that actually
+   * posts. Only handleSayModal reads it, and only as defence in depth: see the
+   * note there for why '0' means no mask here can reproduce /say's real
+   * audience.
+   */
+  permissions?: string | null;
   /** Both only present for a deferred command; see DEFERRED_COMMANDS. */
   applicationId?: string | null;
   interactionToken?: string | null;
@@ -2899,6 +2910,43 @@ export async function handleSelfRoleButton(
   const membership = membershipRoleFor(roleId, guildRoles);
 
   if (membership && !holds) {
+    // ---- NOT FOR A BANNED MEMBER ----
+    //
+    // This click is the ONLY writer of membership_type, so a write that should
+    // not have happened has nothing behind it to correct: the sweep no longer
+    // reads these roles back. A ban is the club withdrawing access, and
+    // membership_type prices a tournament entry and decides which events a
+    // member may enter, so somebody the club has just closed setting their own
+    // fee tier on the way out is worth one extra request to prevent.
+    //
+    // FAILING CLOSED, for the same reason. An unreadable answer is not evidence
+    // the member is in good standing, and nothing revisits this later.
+    //
+    // ONLY THE WRITE IS REFUSED. The role is already on and stays on; roleDiff
+    // strips all three from a banned member on the next sweep, which is the
+    // path that has always taken them off.
+    let banned: boolean;
+    try {
+      banned = await isMemberBanned(context.discordUserId);
+    } catch (error) {
+      console.error('[bot] could not check ban state for a membership click:', error);
+      return ephemeral(
+        `Added **${offered.label}**.\n\n` +
+          'I could not update the website just now. Try the button again in a few ' +
+          'minutes, or ask an exec to set your membership in the console.'
+      );
+    }
+    if (banned) {
+      // SAYS NOTHING ABOUT WHICH CHECK FAILED, the same restraint /announce's
+      // 'not_permitted' branch uses: what the club has recorded about a member
+      // is not something to read back to them because they pressed a button.
+      return ephemeral(
+        `Added **${offered.label}**.\n\n` +
+          "I didn't change your membership on the website. Ask an exec if you " +
+          'think that is wrong.'
+      );
+    }
+
     // ONE MEMBERSHIP AT A TIME. membership_type is a single value, and a member
     // holding both @Alumni and @Internal is a state the app cannot store — so
     // the other two come off here rather than being resolved by a guess later.
@@ -2921,14 +2969,15 @@ export async function handleSelfRoleButton(
       linkedToApp = result.skipped === 0;
     } catch (error) {
       // The role is already on. Saying "that failed" would be wrong, and
-      // silently pretending the website updated would be worse — so the reply
-      // says exactly which half landed, and the nightly sweep repairs the rest
-      // by reading this same role back.
-      console.error('[bot] membership write-back failed:', error);
+      // silently pretending the website updated would be worse, so the reply
+      // says exactly which half landed and names the two things that can still
+      // fix it. NOTHING REPAIRS THIS IN THE BACKGROUND any more: the sweep no
+      // longer reads membership roles back, so this click is the only writer.
+      console.error('[bot] membership write failed:', error);
       return ephemeral(
         `Added **${offered.label}**.\n\n` +
-          'I could not update the website just now — it will catch up on the ' +
-          'next nightly sync.'
+          'I could not update the website just now. Try the button again in a few ' +
+          'minutes, or ask an exec to set your membership in the console.'
       );
     }
 
@@ -2966,8 +3015,13 @@ export async function handleSelfRoleButton(
  *
  * Degrading to empty is right HERE and nowhere else in this bot: an empty map
  * names no membership role, so the button behaves as an ordinary ping role and
- * the website is left alone. The sweep, which reads the same roles nightly with
- * `force: true`, is what repairs it.
+ * the website is left alone.
+ *
+ * The cost of that is now real, because no sweep reads these roles back any
+ * more: the member's membership_type stays as it was until they click again
+ * with the config readable, or an exec sets it in the console. Still the right
+ * direction. A fee tier written from a half-read config would be worse than one
+ * that did not move.
  */
 async function guildRolesFor(guildId: string): Promise<GuildRoleMap> {
   try {
@@ -3465,6 +3519,23 @@ export function isSayModal(customId: string | undefined | null): boolean {
   return typeof customId === 'string' && customId.startsWith(SAY_MODAL_PREFIX);
 }
 
+/**
+ * The caller's own permissions, as a mask.
+ *
+ * BigInt, NEVER Number: the field is a 64-bit mask sent as a string, and bits
+ * above 52 do not survive Number() -- discord-api.ts makes the same point where
+ * it reads the bot's own permissions. Anything absent or unparseable reads as
+ * zero, so the one caller fails closed without having to special-case it.
+ */
+function permissionMask(permissions: string | null | undefined): bigint {
+  if (!permissions) return 0n;
+  try {
+    return BigInt(permissions);
+  } catch {
+    return 0n;
+  }
+}
+
 export function openSayModal(
   options: CommandOption[] | undefined,
   context: InteractionContext
@@ -3523,6 +3594,29 @@ export async function handleSayModal(
   components: ModalComponent[] | undefined,
   context: InteractionContext
 ): Promise<BotResponse> {
+  // ---- WHO SUBMITTED THIS ----
+  //
+  // DEFENCE IN DEPTH, NOT THE GATE, and it is worth being exact about which.
+  // Discord shows /say only to the roles the server's integration allowlist
+  // permits, and index.ts verifies the Ed25519 signature on every interaction,
+  // so a submit cannot be forged. What this adds is that Discord RECOMPUTES the
+  // mask for the submit rather than echoing the command's: a member whose
+  // access was taken away while their modal sat open is refused by the second
+  // interaction instead of posting in the club's voice with it.
+  //
+  // '0' IS NOT A PERMISSION. default_member_permissions is EXEC_ONLY, which is
+  // "no default access" rather than a bit anybody holds, so there is no bit
+  // here that reproduces that audience, and checking a named one (Manage
+  // Messages, Manage Guild) would refuse exactly the execs the allowlist exists
+  // to permit. So the check is the weakest one that is still true of every
+  // member Discord would have shown the command to, and false for a caller with
+  // no standing in the guild at all: the mask is there, and it is not empty.
+  if (permissionMask(context.permissions) === 0n) {
+    return ephemeral(
+      "I couldn't check whether you're allowed to post as the club. Nothing was posted."
+    );
+  }
+
   const { channelId, ping } = unpackSay(customId);
   const body = modalValue(components, 'body').trim();
 
@@ -3544,10 +3638,19 @@ export async function handleSayModal(
   const api = new DiscordApi({ token });
   const messageId = await api.postMessage(channelId, {
     content: body,
-    // THE DEFAULT IS SILENCE. An empty `parse` turns every @here, @everyone and
-    // @role in the text into plain text — they still READ as mentions, they
-    // just do not notify. Without this a stray @everyone typed into a paragraph
-    // buzzes the whole server, and there is no way to take that back.
+    // SILENCE UNLESS THE EXEC ASKED. An empty `parse` turns every @here,
+    // @everyone and @role in the text into plain text: they still READ as
+    // mentions and they notify nobody. That is the default, so a stray
+    // @everyone typed into a paragraph cannot buzz the whole server.
+    //
+    // WHEN THE EXEC DID ASK, @everyone IS THE POINT and is left alone
+    // deliberately. Notifying the club is the capability this command exists to
+    // provide, and the gate on it is authorisation rather than scrubbing the
+    // payload: Discord shows /say only to the integration allowlist, index.ts
+    // verifies the Ed25519 signature, and the mask check above refuses a caller
+    // with no standing. Narrowing this to roles named in the text was tried and
+    // reverted: it silently broke the console's own plain-message switch, whose
+    // copy promises that an @everyone in the text will buzz every phone.
     allowed_mentions: ping
       ? { parse: ['users', 'roles', 'everyone'] }
       : { parse: [] },

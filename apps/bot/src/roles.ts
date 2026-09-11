@@ -9,11 +9,13 @@
 // THE THREE MEMBERSHIP ROLES ARE THE DELIBERATE EXCEPTION, and it is an
 // exception the club asked for: @Internal, @Alumni and @External are now
 // MEMBERS' OWN to pick, so the sweep neither asserts nor strips them
-// (MEMBERSHIP_ROLES below), and what the member picked is written back to
-// players.membership_type for a LINKED account. They are the exception because
-// they grant nothing inside the app — they price a tournament entry and decide
-// which events a member may enter, which an exec can see and correct in the
-// console. Nothing else about this file changes direction.
+// (MEMBERSHIP_ROLES below). The member's own pick still writes through to
+// players.membership_type when they click the button, while the sweep no longer
+// reasserts membership, so the console stays authoritative between clicks. They
+// are the exception because they grant nothing inside the app: they price a
+// tournament entry and decide which events a member may enter, which an exec
+// can see and correct in the console. Nothing else about this file changes
+// direction.
 //
 // This module is deliberately pure — no fetch, no Discord client, no clock. The
 // whole of the interesting logic (who gets what, and what a sync should change)

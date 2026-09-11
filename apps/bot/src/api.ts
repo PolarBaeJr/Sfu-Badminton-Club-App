@@ -461,6 +461,32 @@ export async function fetchLinkedMembers(): Promise<LinkedMemberRow[]> {
 }
 
 /**
+ * Whether the app has this member banned.
+ *
+ * THE WHOLE ROSTER, FILTERED HERE. /api/discord/members takes no filter, and
+ * the answer is not on the route a member's own click already calls: the
+ * membership write deliberately reads nothing back. So this asks the list the
+ * sweep asks for and picks one id out of it, rather than growing a second route
+ * to the same rows.
+ *
+ * NOT fetchLinkedMembers(), and the difference is the timeout. That one allows
+ * itself 30 seconds because nobody is watching a sweep; this runs inside a
+ * button click, so it goes through get() and gives up at 2.5s, leaving the
+ * caller room to refuse inside Discord's 3-second deadline.
+ *
+ * False for an id the app does not know. That is not a ban, it is an unlinked
+ * account, and the caller already has an answer for those. THROWS rather than
+ * answering false when the read fails: "I could not find out" and "they are in
+ * good standing" are different answers, and only the caller can decide what to
+ * do about the first.
+ */
+export async function isMemberBanned(discordUserId: string): Promise<boolean> {
+  const body = await get<{ members?: LinkedMemberRow[] }>('/api/discord/members');
+  const row = (body.members ?? []).find((m) => m.discordUserId === discordUserId);
+  return row?.state?.isBanned ?? false;
+}
+
+/**
  * Tell the app which tombstoned accounts are now actually clean.
  *
  * Failure here is deliberately NOT fatal to the sweep: the roles have already

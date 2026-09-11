@@ -22,6 +22,20 @@ describe('hasTournamentEnded', () => {
     expect(hasTournamentEnded({ status: 'active', start_date: '2026-08-04', end_date: '2026-08-04' }, NOW)).toBe(true);
   });
 
+  it('is still running at 19:00 on its final day, when UTC already says tomorrow', () => {
+    // 2026-08-06T02:00Z is 19:00 on the 5th in Vancouver, and the app containers
+    // run with TZ unset, so reading the day off the host closed the window while
+    // the final was still being played. The local-noon NOW above cannot catch
+    // this: it is built from local components, so it agrees with the host by
+    // construction and passed against the broken implementation too.
+    expect(
+      hasTournamentEnded(
+        { status: 'active', start_date: '2026-08-05', end_date: '2026-08-05' },
+        new Date('2026-08-06T02:00:00Z'),
+      ),
+    ).toBe(false);
+  });
+
   it('falls back to start_date for a single-day event with no end_date', () => {
     expect(hasTournamentEnded({ status: 'active', start_date: '2026-08-04', end_date: null }, NOW)).toBe(true);
     expect(hasTournamentEnded({ status: 'active', start_date: '2026-08-05', end_date: null }, NOW)).toBe(false);

@@ -41,7 +41,14 @@ vi.mock('../config.js', async (importOriginal) => ({
 import { COMMAND_DEFINITIONS, dispatch, handleSayModal, isSayModal } from '../commands.js';
 import { buildAuditEmbed } from '../audit.js';
 
-const CONTEXT = { discordUserId: '424242', guildId: 'g1', channelId: 'here-1' };
+// `permissions` is what Discord computed for the caller, recomputed on the
+// submit. '8' is ADMINISTRATOR, which is how a small server usually runs.
+const CONTEXT = {
+  discordUserId: '424242',
+  guildId: 'g1',
+  channelId: 'here-1',
+  permissions: '8',
+};
 
 interface Modal {
   type: number;
@@ -135,10 +142,26 @@ describe('submitting the modal', () => {
   });
 
   it('opens mentions up only when the exec asked', async () => {
+    // Asking means @everyone, on purpose: notifying the club is what the
+    // command is for, and who may ask is settled before this point by the
+    // integration allowlist and the permission mask.
     await handleSayModal('say:c1:1', body('gym is closed'), CONTEXT);
     expect(postMessage.mock.calls[0][1]).toMatchObject({
       allowed_mentions: { parse: ['users', 'roles', 'everyone'] },
     });
+  });
+
+  it('refuses a submit carrying no permissions, and posts nothing', async () => {
+    // DEFENCE IN DEPTH, not the gate: Discord's allowlist decides who sees the
+    // command and the Ed25519 check makes a forged submit impossible. What this
+    // catches is a mask Discord recomputed to nothing, which is what an exec
+    // who lost access while the modal sat open now arrives with.
+    const reply = await handleSayModal('say:c1:0', body('hello'), {
+      ...CONTEXT,
+      permissions: null,
+    });
+    expect(postMessage).not.toHaveBeenCalled();
+    expect((reply as Modal).data.content).toContain('Nothing was posted');
   });
 
   it('fails closed on a custom_id it cannot read', async () => {

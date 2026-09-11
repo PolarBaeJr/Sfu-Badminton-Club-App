@@ -33,11 +33,15 @@ export interface SyncOutcome {
    * "they have not picked, they picked two, or this guild has no such roles".
    *
    * Read, never written for an ordinary member: the three membership roles are
-   * excluded from the diff above unless the caller is revoking. It is here
-   * because the caller that walks every linked member is the
-   * only place with both this and the app's current value to compare it
-   * against, and re-fetching the member's roles to find out would double the
-   * sweep's request count.
+   * excluded from the diff above unless the caller is revoking.
+   *
+   * NOTHING READS THIS ANY MORE. It existed so the sweep could compare what
+   * Discord said against the app's stored value and push the difference back,
+   * and that write-back is gone: the member's own click is the only writer of
+   * membership_type left, and a sweep that reasserted it reverted an exec's
+   * correction in the console. Kept because it costs nothing to compute (the
+   * roles are already in hand) and because it is what any future report of
+   * "what Discord currently claims" would be built from.
    */
   membership: MembershipRole | null;
 }

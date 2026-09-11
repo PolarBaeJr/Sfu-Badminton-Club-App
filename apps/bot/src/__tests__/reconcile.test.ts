@@ -186,78 +186,54 @@ describe('isAuthorizedService', () => {
   });
 });
 
-// ---- THE WRITE-BACK ----
+// ---- WHAT THE SWEEP DOES NOT DO ----
 //
-// The one direction this bot reads Discord and tells the app about it. Reported
-// out of reconcile rather than applied inside it, the same way a tombstone is:
-// index.ts is what POSTs it, so these tests need no fetch stub for the app.
+// It used to read the membership role a member had picked and report it so
+// index.ts could push it into the app. It no longer does. The member's own click
+// is the only writer of membership_type, which is what lets an exec's
+// correction in the console survive: the sweep used to read the unchanged
+// Discord role on the next pass and put it straight back over the correction.
+//
+// What is pinned here is the half that is still live, and it is the half that
+// would be dangerous to lose: the sweep must not TOUCH the three roles for an
+// ordinary member, and must still strip them for a banned one.
 
-describe('reconcile membership write-back', () => {
-  it('reports a member whose picked role disagrees with the app', async () => {
-    const a = api((method) =>
-      method === 'GET' ? { status: 200, body: { roles: ['1', '3'] } } : { status: 204 }
-    );
+describe('the sweep and the three membership roles', () => {
+  it('leaves a picked membership role alone even when the app disagrees', async () => {
+    const touched: string[] = [];
+    const a = api((method, path) => {
+      if (method === 'GET') return { status: 200, body: { roles: ['1', '3'] } };
+      touched.push(path.split('/').pop() as string);
+      return { status: 204 };
+    });
     const summary = await reconcile(
       a, REGISTRY,
+      // Holds @Internal (3) while the app says external. Neither side moves:
+      // not the role, and no longer the column either.
       [{ discordUserId: 'u1', state: state({ membershipType: 'external' }) }],
       () => {}
     );
-    expect(summary.membershipUpdates).toEqual([
-      { discordUserId: 'u1', membershipType: 'internal' },
-    ]);
+    expect(touched).toEqual([]);
+    expect(summary.added).toBe(0);
+    expect(summary.removed).toBe(0);
   });
 
-  it('says nothing when Discord and the app already agree', async () => {
-    const a = api((method) =>
-      method === 'GET' ? { status: 200, body: { roles: ['1', '3'] } } : { status: 204 }
-    );
-    const summary = await reconcile(
-      a, REGISTRY,
-      [{ discordUserId: 'u1', state: state({ membershipType: 'internal' }) }],
-      () => {}
-    );
-    expect(summary.membershipUpdates).toEqual([]);
-  });
-
-  it('leaves a member who has picked nothing alone', async () => {
-    // The important negative. A server where nobody has clicked yet must not
-    // rewrite the whole roster to some default on the first sweep.
-    const a = api((method) =>
-      method === 'GET' ? { status: 200, body: { roles: ['1'] } } : { status: 204 }
-    );
-    const summary = await reconcile(
-      a, REGISTRY,
-      [{ discordUserId: 'u1', state: state({ membershipType: 'alumni' }) }],
-      () => {}
-    );
-    expect(summary.membershipUpdates).toEqual([]);
-  });
-
-  it('never writes back for a tombstone', async () => {
-    // There is no player to write to, and the role is on its way off anyway.
-    const a = api((method) =>
-      method === 'GET' ? { status: 200, body: { roles: ['1', '3'] } } : { status: 204 }
-    );
-    const summary = await reconcile(a, REGISTRY, [{ discordUserId: 'u1', state: null }], () => {});
-    expect(summary.membershipUpdates).toEqual([]);
-  });
-
-  it('strips a banned member’s membership role and writes nothing back', async () => {
-    // A ban is the club withdrawing access, not a member picking. Both halves
-    // matter: the role has to come off, AND the fee tier it implies must not be
-    // written onto the row the club has just closed.
+  it('strips a banned member’s membership role', async () => {
+    // A ban is the club withdrawing access, not a member picking. Member-only
+    // channel visibility in this server IS @Internal + @Alumni, so leaving it
+    // on would keep those channels open to exactly the person just removed
+    // from them.
     const removed: string[] = [];
     const a = api((method, path) => {
       if (method === 'GET') return { status: 200, body: { roles: ['1', '2', '3'] } };
       if (method === 'DELETE') removed.push(path.split('/').pop() as string);
       return { status: 204 };
     });
-    const summary = await reconcile(
+    await reconcile(
       a, REGISTRY,
       [{ discordUserId: 'u1', state: state({ isBanned: true, membershipType: 'external' }) }],
       () => {}
     );
     expect(removed).toContain('3');
-    expect(summary.membershipUpdates).toEqual([]);
   });
 });

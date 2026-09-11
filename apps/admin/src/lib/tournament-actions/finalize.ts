@@ -1111,6 +1111,39 @@ export async function recomputeEventStandings(eventId: string): Promise<{
     });
   }
 
+  // THE EVENT GOES BACK TO LIVE. The standings are gone, so leaving the event
+  // 'completed' is a lie that no path can undo: championUndetermined means the
+  // match that decided this event has been voided or corrected away and every
+  // final_position and points on the field has just been cleared. A completed
+  // event with no placings is not a finished event, it is a stranded one, and
+  // the two ways out are both shut against it -- finalizeEvent requires 'live'
+  // and enterMatchResult requires an event that is still playing -- so the
+  // officer can neither re-enter the deciding result nor finalise it again.
+  //
+  // AFTER the fence rather than folded into it.
+  // rewrite_event_placings_under_field_lock refuses any event whose status is
+  // not 'completed' (00215), so the status can only move once the rewrite it
+  // guards has landed.
+  //
+  // Gated on championUndetermined alone, NOT on moved.length: an event whose
+  // rows already held null placings produces an empty `moved` and no audit row,
+  // and it is stranded in exactly the same way.
+  if (championUndetermined) {
+    const { error: reopenError } = await adminClient
+      .from('tournament_events')
+      .update({ status: 'live' })
+      .eq('id', eventId)
+      // Only from 'completed'. Matching zero rows is not an error in PostgREST,
+      // and that is the right reading here: the only way this matches nothing is
+      // that another writer already moved the event off 'completed', which is
+      // this same outcome reached by another route.
+      .eq('status', 'completed');
+    // Raised, not swallowed. Cleared standings on an event still marked
+    // completed is precisely the stranded state these lines exist to prevent,
+    // and the audit row above has already recorded the clearing either way.
+    if (reopenError) throw new Error(reopenError.message);
+  }
+
   revalidateEventPaths(event.tournament_id, eventId);
   return { moved, bonusesAlreadyPaid, championUndetermined };
 }

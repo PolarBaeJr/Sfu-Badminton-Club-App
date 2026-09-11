@@ -1,3 +1,4 @@
+import { CLUB_TIMEZONE } from './constants';
 import type { UserRole } from '../types/database';
 
 export function formatDate(dateString: string): string {
@@ -8,6 +9,36 @@ export function formatDate(dateString: string): string {
   });
 }
 
+/**
+ * A TIMESTAMPTZ as the club's own calendar day, e.g. "Mar 15, 2024".
+ *
+ * SEPARATE FROM formatDate BECAUSE THE TWO ARE GIVEN DIFFERENT COLUMNS, and one
+ * function cannot serve both. formatDate is handed plain DATE values
+ * ('2026-01-06'), which `new Date()` reads as UTC midnight: formatting those in
+ * a zone behind UTC moves them to the previous day, so putting a timeZone on
+ * formatDate would break every session and tournament date in order to fix the
+ * timestamps. This is the one for instants, where the opposite is true. A
+ * walkover reported at 19:00 in Vancouver happened that day, and the container's
+ * UTC clock calls it the next one.
+ *
+ * Same split, and the same reason, as formatDayMonth/formatPaidDay in the player
+ * app's fees.ts. Note that three local helpers called clubDate already exist in
+ * the apps and none of them returns this shape: two return YYYY-MM-DD for
+ * querying, and my-stats/past-season.tsx returns "18 APR 2027".
+ */
+export function clubDate(dateString: string): string {
+  return new Date(dateString).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: CLUB_TIMEZONE,
+  });
+}
+
+// Every caller passes a TIMESTAMPTZ, so this is pinned to club time. Without a
+// timeZone it rendered in the RUNTIME's zone, and the app containers run with TZ
+// unset: an audit entry or a match recorded on a club evening was shown with
+// tomorrow's date, because past 17:00 here it is already tomorrow in UTC.
 export function formatDateTime(dateString: string): string {
   return new Date(dateString).toLocaleString('en-US', {
     year: 'numeric',
@@ -15,6 +46,7 @@ export function formatDateTime(dateString: string): string {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: CLUB_TIMEZONE,
   });
 }
 

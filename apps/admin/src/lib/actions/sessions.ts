@@ -593,9 +593,12 @@ async function deleteSessionImpl(sessionId: string, reason: string) {
 
   const { data: old } = await adminClient.from('sessions').select('*').eq('id', sessionId).single();
 
-  // Delete attendance records first
-  await adminClient.from('session_attendance').delete().eq('session_id', sessionId);
-
+  // DELETING THE SESSION IS ENOUGH. This used to clear session_attendance first,
+  // which the cascade already does: session_attendance, session_rsvp,
+  // session_checkin_tokens and discord_session_pings all reference sessions(id)
+  // ON DELETE CASCADE, verified against production. challenges.session_id and
+  // matches.session_id are ON DELETE SET NULL, so those rows survive the delete
+  // with the session detached, which is the intended outcome for a played match.
   const { error } = await adminClient.from('sessions').delete().eq('id', sessionId);
   if (error) throw new Error(error.message);
 

@@ -25,6 +25,7 @@ import {
   assertNoConsoleAccessFields,
   assertPlayerCreateFieldAccess,
   assertPlayerFieldAccess,
+  isAdminActor,
 } from '../player-field-access';
 import { isApprovalEdit } from '../player-approval';
 import { assertLevelClosure } from '../console-access';
@@ -296,7 +297,17 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   assertNoConsoleAccessFields([data as Record<string, unknown>, parsed]);
   const adminClient = createAdminClient();
 
-  const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
+  // FAIL CLOSED ON THIS READ. Both guards below decide from this row, and both
+  // read it as optional: a failed read arrives as data null with an error, never
+  // as a rejection, so `oldPlayer?.status` would be undefined and every question
+  // asked of it would answer "no". A transient read failure would silently turn
+  // the approval refusal and the admin-target refusal into approvals.
+  const { data: oldPlayer, error: oldPlayerError } = await adminClient
+    .from('players')
+    .select('*')
+    .eq('id', playerId)
+    .single();
+  if (oldPlayerError) throw new Error(oldPlayerError.message);
   const { data: oldRating } = await adminClient.from('ratings').select('*').eq('player_id', playerId).single();
 
   // LETTING A PENDING SIGNUP INTO A DIVISION IS AN APPROVAL, AND THIS IS NOT THE
@@ -329,6 +340,33 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
     throw new ExpectedError(
       'Letting a pending signup into a division is an approval, not an edit — use Approve, ' +
       'which stamps their membership code and tells them they are in.',
+    );
+  }
+
+  // AN EXEC DOES NOT GET TO SUSPEND AN ADMIN. status is deliberately in neither
+  // PLAYER_FIELD_FLOOR nor PLAYER_FIELD_PRIVILEGED, because on an ordinary
+  // member it is an ordinary field: the division they play in, editable by
+  // anyone who can edit members. On an ADMIN's row it is not ordinary. Writing
+  // 'suspended' there is removePlayer's effect reached through the edit form,
+  // and it takes that admin off the roster; production holds two admins and five
+  // non-admin execs with players.update.write, so without this one exec could
+  // walk the whole admin list from the bulk Edit control.
+  //
+  // The field guard above cannot carry this, because it asks only who the ACTOR
+  // is. This is the first check in the function that asks who the TARGET is,
+  // which is why it waits for the oldPlayer read. Adding status to the
+  // privileged list would be the wrong fix twice over: it would make the
+  // division field admin-only for every member in the club.
+  //
+  // Nothing below this catches it either. The write goes through the service
+  // role, so auth.uid() is NULL and guard_player_privileged_columns returns
+  // early. This is the only place it is refused.
+  //
+  // Same shape as the role restore at the bottom of this file: only an admin
+  // acts on an admin's standing, and an exec who tries is told who to ask.
+  if (data.status && !isAdminActor(actor) && oldPlayer?.role === 'admin') {
+    throw new ExpectedError(
+      'Only an admin can change another admin\'s status. Ask one to make this change.',
     );
   }
 

@@ -16,6 +16,8 @@
 // end_date is nullable; a single-day tournament only carries start_date, so
 // fall back to that rather than treating a missing end as "never ends".
 
+import { clubToday } from './session-window';
+
 const FINISHED_STATUSES = new Set(['completed', 'archived']);
 
 export interface TournamentWindowInput {
@@ -35,16 +37,15 @@ export function hasTournamentEnded(
   if (!last) return false;
 
   // Dates are club-local calendar days (DATE columns), not instants. Compare on
-  // the calendar day so the event stays "on" for the whole of its final day
-  // regardless of the viewer's timezone — parsing "2026-08-05" as an instant
-  // would end the event at midnight UTC, i.e. 5pm the previous afternoon here.
-  const today = toIsoDay(now);
-  return last < today;
-}
-
-function toIsoDay(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  // the calendar day so the event stays "on" for the whole of its final day:
+  // parsing "2026-08-05" as an instant would end the event at midnight UTC, i.e.
+  // 5pm the previous afternoon here.
+  //
+  // AND THE DAY HAS TO BE THE CLUB'S, which is a second question this got wrong.
+  // It used to read getFullYear/getMonth/getDate off the host, and every app
+  // container runs with TZ unset, so from 17:00 club time onwards the server
+  // already called it tomorrow: a tournament's last evening ended the window
+  // seven hours early and opened feedback while the final was still on court.
+  // clubToday is the only correct way to ask what day it is on the server.
+  return last < clubToday(now);
 }

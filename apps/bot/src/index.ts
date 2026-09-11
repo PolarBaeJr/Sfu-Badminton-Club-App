@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { clearRevocations, fetchLinkedMembers, setMembership } from './api.js';
+import { clearRevocations, fetchLinkedMembers } from './api.js';
 import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
 import {
@@ -127,19 +127,6 @@ async function runSweep(res: ServerResponse, trigger: 'scheduled' | 'manual') {
       console.error('[bot] could not clear revocations:', error);
     }
 
-    // What members picked for themselves, pushed back into the app. Same
-    // posture as the revocations above and for the same reason: it runs after
-    // the roles are settled, and a failure here must not turn a good sweep into
-    // a 500. Nothing is lost by dropping it — the next sweep reads the same
-    // roles and reports the same disagreement.
-    try {
-      if (summary.membershipUpdates.length > 0) {
-        await setMembership(summary.membershipUpdates);
-      }
-    } catch (error) {
-      console.error('[bot] could not write back membership:', error);
-    }
-
     // One entry per sweep, never one per member — see rule 3 in audit.ts. It is
     // awaited rather than fired off, so a sweep that has answered 200 has
     // already been written down; the alternative loses the last entry whenever
@@ -203,19 +190,6 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
       await clearRevocations(summary.cleared);
     } catch (error) {
       console.error('[bot] could not clear revocations:', error);
-    }
-
-    // What members picked for themselves, pushed back into the app. Same
-    // posture as the revocations above and for the same reason: it runs after
-    // the roles are settled, and a failure here must not turn a good sweep into
-    // a 500. Nothing is lost by dropping it — the next sweep reads the same
-    // roles and reports the same disagreement.
-    try {
-      if (summary.membershipUpdates.length > 0) {
-        await setMembership(summary.membershipUpdates);
-      }
-    } catch (error) {
-      console.error('[bot] could not write back membership:', error);
     }
 
     await postAuditEntry(api, auditChannelId, {
@@ -490,7 +464,10 @@ const server = createServer(async (req, res) => {
     // `roles` is the caller's current role ids, sent on every guild
     // interaction. The self-role toggle reads it instead of fetching the member
     // again, which keeps the whole round trip inside Discord's 3-second budget.
-    member?: { user?: { id?: string }; roles?: string[] };
+    // `permissions` is the CALLER'S permissions as Discord computed them for
+    // this channel, a 64-bit mask sent as a string. Discarding it was harmless
+    // while nothing checked it; handleSayModal now does.
+    member?: { user?: { id?: string }; roles?: string[]; permissions?: string };
     user?: { id?: string };
     guild_id?: string;
     // Where it was typed. /say's `channel` option defaults to it.
@@ -641,6 +618,12 @@ const server = createServer(async (req, res) => {
       discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
       guildId: interaction.guild_id ?? null,
       channelId: interaction.channel_id ?? null,
+      // THE SUBMIT IS THE INTERACTION THAT POSTS, so it is the one that has to
+      // be able to check who sent it. Discord recomputes this for the submit
+      // rather than echoing what the command carried, which is what makes it
+      // worth reading here and not only when the modal was opened. Absent on a
+      // DM submit, where there is no member and so no permissions.
+      permissions: interaction.member?.permissions ?? null,
     };
 
     if (isAnnounceModal(customId)) {

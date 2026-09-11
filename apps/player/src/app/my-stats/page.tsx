@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getViewer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, formatRelativeTime, clubToday, formatMemberCode, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, clubDate, formatRelativeTime, clubToday, formatMemberCode, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
 import { buildRatingSeries, buildOverallFormFlags, deriveAttendance, deriveSessionCadence, type RatingSourceRow, type FormSourceRow } from '@/lib/stats-charts';
@@ -913,7 +913,7 @@ async function CurrentSeasonStats() {
                       <div key={w.id} className="list-row">
                         <div style={{ flex: 1 }}>
                           <div className="row-title">{label}</div>
-                          <div className="row-sub">{formatDate(w.reported_at)}</div>
+                          <div className="row-sub">{clubDate(w.reported_at)}</div>
                         </div>
                         {challenge && <span className="tag">{challenge.type.toUpperCase()}</span>}
                       </div>

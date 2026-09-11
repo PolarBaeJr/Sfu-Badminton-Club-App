@@ -5,7 +5,7 @@ import { PageHeader, LegalMarkdown } from '@badminton/ui';
 import {
   LEGAL_DOCUMENT_LABELS,
   SLUG_TO_LEGAL_DOCUMENT,
-  formatDate,
+  clubDate,
 } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 
@@ -50,7 +50,7 @@ export default async function LegalDocumentPage({
       <PageHeader
         eyebrow="CLUB LEGAL"
         title={LEGAL_DOCUMENT_LABELS[document]}
-        sub={`Version ${row.version} · updated ${formatDate(row.updated_at)}`}
+        sub={`Version ${row.version} · updated ${clubDate(row.updated_at)}`}
       />
       <div className="card-base">
         <LegalMarkdown content={row.content} />

@@ -1,7 +1,7 @@
 import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { getPublicProfile } from '@/lib/public-profile';
 import { getRatingSettings } from '@/lib/rating-settings';
-import { getKFactor, PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, buildChallengeQrUrl, getAccountStanding } from '@badminton/shared';
+import { getKFactor, PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, clubDate, buildChallengeQrUrl, getAccountStanding } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Crosshair, QrCode, Trophy } from 'lucide-react';
 import Link from 'next/link';
@@ -279,7 +279,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                     </div>
                     <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
                       <span className="tag" style={{ fontSize: 10 }}>{(m.match_type as string)?.toUpperCase()}</span>{' '}
-                      {m.played_at ? formatDate(m.played_at as string).toUpperCase() : ''}
+                      {m.played_at ? clubDate(m.played_at as string).toUpperCase() : ''}
                     </div>
                   </div>
                   {/* Withheld with the Elo cards above, and for a stronger
