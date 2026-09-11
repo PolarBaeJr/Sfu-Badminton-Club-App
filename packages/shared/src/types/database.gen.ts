@@ -9,12 +9,12 @@
 //
 // which is:
 //
-//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-staging-db --database postgres --label staging
+//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-db --database postgres --label production
 //
-// SOURCE DATABASE: staging — container "supabase-staging-db" on ssh host
+// SOURCE DATABASE: production — container "supabase-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 68 tables, 2 views and 26 enums.
+// Covers 69 tables, 2 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -769,6 +769,7 @@ export type Database = {
       discord_outbox: {
         Row: {
           attempts: number
+          button_set: string | null
           channel_id: string
           claimed_at: string | null
           content: string | null
@@ -787,6 +788,7 @@ export type Database = {
         }
         Insert: {
           attempts?: number
+          button_set?: string | null
           channel_id: string
           claimed_at?: string | null
           content?: string | null
@@ -805,6 +807,7 @@ export type Database = {
         }
         Update: {
           attempts?: number
+          button_set?: string | null
           channel_id?: string
           claimed_at?: string | null
           content?: string | null
@@ -880,6 +883,38 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "discord_self_roles_guild_id_fkey"
+            columns: ["guild_id"]
+            isOneToOne: false
+            referencedRelation: "discord_guilds"
+            referencedColumns: ["guild_id"]
+          },
+        ]
+      }
+      discord_server_roles: {
+        Row: {
+          guild_id: string
+          position: number | null
+          role_id: string
+          role_name: string
+          synced_at: string
+        }
+        Insert: {
+          guild_id: string
+          position?: number | null
+          role_id: string
+          role_name: string
+          synced_at?: string
+        }
+        Update: {
+          guild_id?: string
+          position?: number | null
+          role_id?: string
+          role_name?: string
+          synced_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discord_server_roles_guild_id_fkey"
             columns: ["guild_id"]
             isOneToOne: false
             referencedRelation: "discord_guilds"
@@ -3854,7 +3889,6 @@ export type Database = {
         Returns: undefined
       }
       assign_member_code: { Args: { p_player_id: string }; Returns: string }
-      auto_rollover_season: { Args: Record<PropertyKey, never>; Returns: Json }
       auto_seed_field_by_rating: {
         Args: { p_event_id: string; p_is_pair: boolean }
         Returns: Json
