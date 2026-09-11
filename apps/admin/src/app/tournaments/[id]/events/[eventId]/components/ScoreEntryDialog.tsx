@@ -575,13 +575,23 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
               <Button variant="ghost" size="sm" onClick={addGame} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">+ Add Game</Button>
             )}
 
-            {autoWinner && (
-              <div className="text-center text-sm" role="status" aria-live="polite">
+            {/* MOUNTED WHETHER OR NOT THERE IS A WINNER, with one line of
+                text-sm reserved (the min-h is its line-height). autoWinner
+                turning truthy is the SAME render that un-disables Save
+                Corrected Result below, so mounting this conditionally shifted
+                that button down a line at the exact moment it became
+                clickable, and the exec's first real click at it lands where it
+                no longer is.
+                It is also a live region, and one of those has to be in the DOM
+                BEFORE its content changes to be announced dependably: mounted
+                conditionally, this never announced reliably either. */}
+            <div className="min-h-[1.25rem] text-center text-sm" role="status" aria-live="polite">
+              {autoWinner && (
                 <span className="text-[var(--color-success)] font-medium">
                   New winner: {autoWinner === 'a' ? nameA : nameB}
                 </span>
-              </div>
-            )}
+              )}
+            </div>
 
             <Input
               label="Reason (required)"
@@ -673,14 +683,18 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
               />
             </div>
 
-            {/* Winner indicator */}
-            {autoWinner && (
-              <div className="text-center text-sm" role="status" aria-live="polite">
+            {/* Winner indicator. Always mounted, one line of text-sm reserved:
+                see the correction view above for both halves of why. Submit
+                Score is disabled on !autoWinner exactly as Save Corrected
+                Result is, so the render that enables it is the render this line
+                pushed it down by. */}
+            <div className="min-h-[1.25rem] text-center text-sm" role="status" aria-live="polite">
+              {autoWinner && (
                 <span className="text-[var(--color-success)] font-medium">
                   Winner: {autoWinner === 'a' ? nameA : nameB}
                 </span>
-              </div>
-            )}
+              )}
+            </div>
 
             <div className="flex items-center justify-between pt-2">
               <Button variant="ghost" onClick={() => setView('walkover')} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">

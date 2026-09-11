@@ -285,6 +285,27 @@ function assertEventResultsMutable(event: Record<string, unknown>, action: strin
  *
  * Call it AFTER the audit row, never before, so the corrective action is on
  * record even when this throws.
+ *
+ * AND CALL IT IN A `try`, WITH revalidateEventPaths IN THE `finally`. Every
+ * caller runs this after its own corrective write has already committed, so a
+ * throw here is a report, not a rollback.
+ *
+ * THE TWO ExpectedErrors BELOW ARE NOT WHAT THE `finally` IS FOR. Both require
+ * `moved.length > 0`, so recomputeEventStandings has already returned by the
+ * time either is raised, and it calls revalidateEventPaths itself on the line
+ * before that return: the champion-undetermined and bonuses-already-paid
+ * branches always refreshed the page. What the `finally` closes is every throw
+ * EARLIER inside recomputeEventStandings (finalize.ts), all of which sit above
+ * that line and so never reach it: the capability check, the event read, the
+ * placings read, the results fingerprint, the field fence refusing, and
+ * anything championIsUndetermined or assignPositionsAndPoints raises. On those
+ * the corrective write HAS landed, the exec gets an error toast, and the page
+ * behind the dialog still shows the pre-correction bracket.
+ *
+ * revalidateEventPaths only marks paths stale, so the duplicate call on the
+ * branches that already refreshed costs nothing. Note this is a screen-freshness
+ * fix only: a second result entered off a stale page is refused by the
+ * compare-and-swap in enterMatchResultImpl regardless.
  */
 async function recomputeStandingsAfterCorrection(eventId: string, lead: string): Promise<void> {
   const standings = await recomputeEventStandings(eventId);
@@ -867,8 +888,11 @@ async function voidMatchImpl(matchId: string, reason: string) {
 
   // Redo the placings this just invalidated. No-ops unless the event is
   // completed; see recomputeStandingsAfterCorrection.
-  await recomputeStandingsAfterCorrection(match.event_id as string, 'The match was voided');
-  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  try {
+    await recomputeStandingsAfterCorrection(match.event_id as string, 'The match was voided');
+  } finally {
+    revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  }
 }
 
 // ============================================================
@@ -1177,8 +1201,11 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
 
   // Redo the placings this just invalidated. No-ops unless the event is
   // completed; see recomputeStandingsAfterCorrection.
-  await recomputeStandingsAfterCorrection(match.event_id as string, 'The match was restored');
-  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  try {
+    await recomputeStandingsAfterCorrection(match.event_id as string, 'The match was restored');
+  } finally {
+    revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  }
 }
 
 async function setMatchEntryImpl(
@@ -1310,8 +1337,11 @@ async function setMatchEntryImpl(
 
   // Redo the placings this just invalidated. No-ops unless the event is
   // completed; see recomputeStandingsAfterCorrection.
-  await recomputeStandingsAfterCorrection(match.event_id as string, 'The draw was edited');
-  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  try {
+    await recomputeStandingsAfterCorrection(match.event_id as string, 'The draw was edited');
+  } finally {
+    revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  }
 }
 
 // ============================================================
@@ -1587,9 +1617,11 @@ async function editMatchResultImpl(
   //
   // No-ops on an event that is not completed. Deliberately AFTER the audit row,
   // so the correction is on record even if this throws.
-  await recomputeStandingsAfterCorrection(match.event_id as string, 'The result was corrected');
-
-  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  try {
+    await recomputeStandingsAfterCorrection(match.event_id as string, 'The result was corrected');
+  } finally {
+    revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  }
 }
 
 // ============================================================
@@ -1699,8 +1731,11 @@ async function undoMatchResultImpl(matchId: string) {
 
   // Redo the placings this just invalidated. No-ops unless the event is
   // completed; see recomputeStandingsAfterCorrection.
-  await recomputeStandingsAfterCorrection(match.event_id as string, 'The result was undone');
-  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  try {
+    await recomputeStandingsAfterCorrection(match.event_id as string, 'The result was undone');
+  } finally {
+    revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+  }
 }
 
 // ============================================================

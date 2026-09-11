@@ -223,9 +223,16 @@ export function MultiSelect({
     }
     if (e.key === 'Escape') {
       if (!open) return;
-      // Stop here, or a surrounding Dialog closes along with the list.
+      // BOTH STOPS ARE NEEDED, and the second is the one that keeps a
+      // surrounding Dialog open: Dialog.tsx binds Escape on `document`, which a
+      // synthetic stopPropagation cannot reach. See PlayerPicker.tsx for why
+      // the two listeners end up siblings on the same node, and why this is
+      // still only a Dialog-stays-open fix (the selection was never lost).
+      // Both files shipped this bug behind a one-liner claiming the synthetic
+      // stop was sufficient, and both were fixed together.
       e.preventDefault();
       e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
       close();
       return;
     }

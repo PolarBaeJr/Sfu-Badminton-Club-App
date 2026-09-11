@@ -281,9 +281,34 @@ export function PlayerPicker(props: PlayerPickerProps) {
     }
     if (e.key === 'Escape') {
       if (!open) return;
-      // Stop here or the surrounding Dialog closes with the list.
+      // BOTH STOPS ARE NEEDED, and the second is the one that keeps the
+      // surrounding Dialog open. Dialog.tsx binds Escape with a plain
+      // addEventListener on `document`, which a synthetic stopPropagation
+      // cannot reach: that only ends React's walk of the React tree. So the
+      // list closed and Dialog closed with it, on one keypress.
+      //
+      // React 17+ delegates to the ROOT CONTAINER rather than to `document`,
+      // which sounds like it would save us here, except that Next's App Router
+      // hydrates the document itself (`appElement = document` in
+      // next/dist/client/app-index) so the root container IS `document` and
+      // Dialog's listener is a SIBLING of React's, not an ancestor's.
+      // stopImmediatePropagation on the native event is the only one of the two
+      // that stops a sibling listener on the same node.
+      //
+      // It needs React's delegated listener to run before Dialog's, which holds
+      // because root-container listeners are attached during hydrateRoot and
+      // Dialog's is attached later, in an effect, when it opens. Nothing in the
+      // repo tests that ordering, so it is asserted here, not proven. The fix
+      // does not actually rest on it: stopImmediatePropagation implies
+      // stopPropagation, so it still works if React ever moves its listeners
+      // back off `document` onto a descendant.
+      //
+      // Only `query` is lost, NOT the selection: that lives in the parent as
+      // `value`, so it is still there on reopen. Do not go looking for a
+      // selection-restore bug here.
       e.preventDefault();
       e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
       close();
       return;
     }

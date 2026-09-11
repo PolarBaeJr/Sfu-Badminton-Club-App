@@ -23,7 +23,21 @@ const store = vi.hoisted(() => ({
    * behaviour.
    */
   afterMatchRead: null as null | (() => void | Promise<void>),
+  /**
+   * Makes `event_results_fingerprint` fail. TWO functions in finalize.ts read
+   * that rpc, recomputeEventStandings and finalizeEvent, but only the first is
+   * reachable from these tests: finishTheEvent() sets the finished fixture up
+   * by hand rather than finalising, so flipping this after it cannot break the
+   * setup out from under the assertion.
+   *
+   * It is read BEFORE recomputeEventStandings revalidates, which is the whole
+   * point of choosing this read: it reproduces "the corrective write landed,
+   * then the recompute threw with nothing revalidated".
+   */
+  failFingerprint: false,
 }));
+
+const revalidatePath = vi.hoisted(() => vi.fn());
 
 // Minimal PostgREST-shaped query builder: enough of select/eq/in/update/insert
 // for the results actions, and thenable so `await client.from(t).update(x).eq()`
@@ -360,6 +374,9 @@ const makeClient = vi.hoisted(() => () => {
     if (name === 'apply_tournament_match_rating') return applyRpc(args);
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
     if (name === 'event_results_fingerprint') {
+      if (store.failFingerprint) {
+        return Promise.resolve({ data: null, error: { message: 'connection closed' } });
+      }
       return Promise.resolve({ data: resultsFingerprintFor(args.p_event_id as string), error: null });
     }
     if (name === 'rewrite_event_placings_under_field_lock') return rewritePlacingsRpc(args);
@@ -369,7 +386,7 @@ const makeClient = vi.hoisted(() => () => {
   return { from: (table: string) => query(table), rpc };
 });
 
-vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
+vi.mock('next/cache', () => ({ revalidatePath }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'admin-1' }) }));
@@ -395,6 +412,8 @@ function match(id: string) {
 // the stuck bracket this recovery path was written for.
 beforeEach(() => {
   store.afterMatchRead = null;
+  store.failFingerprint = false;
+  revalidatePath.mockClear();
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
     tournament_events: [{
@@ -1054,6 +1073,31 @@ describe('corrective actions on a finished event', () => {
     expect(placing('p-bob')).toBe(3);
     // Fourth place came from the playoff alone and goes with it.
     expect(placing('p-dan')).toBeNull();
+  });
+
+  it('still refreshes the bracket when the recompute fails after the void landed', async () => {
+    // THE STALE SCREEN. The void commits, then the recompute throws, and the
+    // call site's revalidateEventPaths used to sit on the line after the
+    // throw, so the exec got an error toast over a page still showing the
+    // match as it was, on a write that had already happened.
+    //
+    // It has to be a failure BEFORE the recompute's own revalidate (the one at
+    // the end of recomputeEventStandings): the two ExpectedErrors it is
+    // normally refused with are raised by the caller after that line has
+    // already run, so they revalidate anyway. A failed fingerprint read is the
+    // real shape of this: nothing to do with the bonuses.
+    finishTheEvent();
+    store.failFingerprint = true;
+
+    const res = await voidMatch(SF, 'wrong court');
+
+    // The write landed and the officer is told it did not finish.
+    expect(match(SF).status).toBe('voided');
+    expect(res.ok).toBe(false);
+    // ...and the page behind the dialog is marked stale regardless. This is
+    // about the screen only: a double entry is refused by the compare-and-swap
+    // on the match row, stale page or not.
+    expect(revalidatePath).toHaveBeenCalled();
   });
 
   it('leaves a live event alone', async () => {
