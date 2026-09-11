@@ -37,19 +37,55 @@ export interface MatchResultRunResult {
 // not a notice, and reusing the colours would make the two read as one feed.
 const COLOR_RESULT = 0x2ecc71;
 
+// Discord caps an embed field value at 1024 characters, the same class of limit
+// as the 4096 on the description below.
+const MAX_FIELD = 1024;
+
+// One game: two runs of one or two digits separated by a hyphen, an en dash or a
+// colon, with any spacing. Loose enough for how people actually type a game,
+// tight enough that a sentence fails it.
+const GAME_SCORE = /^\d{1,2}\s*[-–:]\s*\d{1,2}$/;
+
+/**
+ * "21-20, 21-20, 21-20" becomes one `Game N:` line per game.
+ *
+ * ONLY IF EVERY COMMA-SEPARATED PART LOOKS LIKE A GAME, AND THAT CONDITION IS
+ * THE POINT. `score` is free text a member typed, flattened by cleanScore in
+ * apps/player/src/app/api/discord/match-results/route.ts: the comma convention
+ * is a habit, not a format anything enforces. Splitting unconditionally would
+ * render "2 sets to 1" as "Game 1: 2 sets to 1", so anything that does not parse
+ * goes out exactly as it was written.
+ */
+function scoreValue(score: string): string {
+  const parts = score.split(',').map((part) => part.trim());
+  if (!parts.every((part) => GAME_SCORE.test(part))) return score.slice(0, MAX_FIELD);
+
+  return parts
+    .map((part, i) => `Game ${i + 1}: ${part}`)
+    .join('\n')
+    .slice(0, MAX_FIELD);
+}
+
 function embedFor(action: MatchResultAction) {
   const winners = action.winner === 'a' ? action.teamA : action.teamB;
   const losers = action.winner === 'a' ? action.teamB : action.teamA;
   const kind = action.matchType === 'doubles' ? 'Doubles' : 'Singles';
+
+  // Doubles carries four names, so the matchup breaks over three lines rather
+  // than running off the side of a phone. Singles fits on one and stays there.
+  const matchup =
+    action.matchType === 'doubles'
+      ? `**${winners}**\nvs\n${losers}`
+      : `**${winners}** vs ${losers}`;
 
   return {
     // No content field, so no mention of any kind can be parsed out of it.
     embeds: [
       {
         title: `${kind} result`.slice(0, 256),
-        description: `**${winners}** def. ${losers}`.slice(0, 4096),
+        description: matchup.slice(0, 4096),
         color: COLOR_RESULT,
-        ...(action.score ? { fields: [{ name: 'Score', value: action.score }] } : {}),
+        ...(action.score ? { fields: [{ name: 'Score', value: scoreValue(action.score) }] } : {}),
         ...(action.playedAt ? { timestamp: action.playedAt } : {}),
       },
     ],

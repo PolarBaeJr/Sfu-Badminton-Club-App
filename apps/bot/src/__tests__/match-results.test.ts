@@ -43,7 +43,7 @@ const POST_ACTION = {
   matchId: 'm1',
   channelId: 'c1',
   discordMessageId: null,
-  summary: 'Alice Nguyen def. Bao Tran — 21-18, 21-15',
+  summary: 'Alice Nguyen vs Bao Tran: 21-18, 21-15',
   teamA: 'Alice Nguyen',
   teamB: 'Bao Tran',
   score: '21-18, 21-15',
@@ -67,6 +67,18 @@ beforeEach(() => {
 async function run() {
   const { runMatchResults } = await import('../match-results.js');
   return runMatchResults();
+}
+
+interface Embed {
+  description: string;
+  fields?: { name: string; value: string }[];
+}
+
+/** The single embed the run posted. */
+async function postedEmbed(): Promise<Embed> {
+  await run();
+  const [, payload] = postMessage.mock.calls[0] as [string, { embeds: Embed[] }];
+  return payload.embeds[0] as Embed;
 }
 
 describe('runMatchResults', () => {
@@ -155,7 +167,76 @@ describe('runMatchResults', () => {
       { embeds: { description: string }[] },
     ];
 
-    expect(payload.embeds[0]?.description).toBe('**Bao Tran** def. Alice Nguyen');
+    expect(payload.embeds[0]?.description).toBe('**Bao Tran** vs Alice Nguyen');
+  });
+
+  it('reads as a matchup, not a defeat', async () => {
+    // Singles keeps the whole thing on one line, where it fits.
+    const e = await postedEmbed();
+
+    expect(e.description).toBe('**Alice Nguyen** vs Bao Tran');
+    expect(JSON.stringify(e)).not.toContain('def.');
+  });
+
+  it('breaks a doubles matchup over three lines', async () => {
+    // Four names on one line runs off the side of a phone.
+    fetchMatchResultActions.mockResolvedValue({
+      actions: [
+        {
+          ...POST_ACTION,
+          matchType: 'doubles',
+          teamA: 'Alice Nguyen & Bao Tran',
+          teamB: 'Cam Diaz & Dev Rao',
+        },
+      ],
+      skipped: [],
+    });
+
+    expect((await postedEmbed()).description).toBe(
+      '**Alice Nguyen & Bao Tran**\nvs\nCam Diaz & Dev Rao'
+    );
+  });
+
+  it('gives each game its own line in the Score field', async () => {
+    fetchMatchResultActions.mockResolvedValue({
+      actions: [{ ...POST_ACTION, score: '21-20, 21-20, 21-20' }],
+      skipped: [],
+    });
+
+    expect((await postedEmbed()).fields).toEqual([
+      { name: 'Score', value: 'Game 1: 21-20\nGame 2: 21-20\nGame 3: 21-20' },
+    ]);
+  });
+
+  it('numbers a single game too', async () => {
+    fetchMatchResultActions.mockResolvedValue({
+      actions: [{ ...POST_ACTION, score: '21-18' }],
+      skipped: [],
+    });
+
+    expect((await postedEmbed()).fields).toEqual([{ name: 'Score', value: 'Game 1: 21-18' }]);
+  });
+
+  it('leaves a score it cannot parse exactly as somebody typed it', async () => {
+    // score_summary is free text, so the comma convention is a habit and not a
+    // format. Whoever wrote "2 sets to 1" must read back "2 sets to 1".
+    fetchMatchResultActions.mockResolvedValue({
+      actions: [{ ...POST_ACTION, score: '2 sets to 1' }],
+      skipped: [],
+    });
+    const e = await postedEmbed();
+
+    expect(e.fields).toEqual([{ name: 'Score', value: '2 sets to 1' }]);
+    expect(JSON.stringify(e)).not.toContain('Game');
+  });
+
+  it('sends no Score field at all when there is no score', async () => {
+    fetchMatchResultActions.mockResolvedValue({
+      actions: [{ ...POST_ACTION, score: '' }],
+      skipped: [],
+    });
+
+    expect('fields' in (await postedEmbed())).toBe(false);
   });
 
   it('deletes before it clears, on a retract', async () => {
