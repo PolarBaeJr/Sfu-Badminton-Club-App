@@ -588,6 +588,51 @@ export async function writeGuildConfig(payload: {
   }
 }
 
+/**
+ * Write the guild's CATALOGUE of mentionable roles, for the console's notify
+ * picker (00229).
+ *
+ * A DIFFERENT ROUTE FROM writeGuildConfig ABOVE, AND THAT IS THE POINT. That one
+ * writes the nine roles the app ASSIGNS, and its payload comes back out of
+ * /api/discord/config into `registryFromPayload`, which throws on any name
+ * outside MANAGED_ROLES: one arbitrary role in there takes the bot's whole
+ * config load down. This one writes a list of names the console may MENTION,
+ * into a table nothing else reads.
+ *
+ * The route REPLACES the guild's rows, so an empty list is refused rather than
+ * obeyed: see its own comment. Callers must post nothing at all when they could
+ * not read the guild's roles.
+ *
+ * Its own 10s timeout, like writeGuildConfig, because this is called from /setup
+ * after a deferred reply and from a five minute tick. Neither is racing Discord's
+ * 3-second interaction deadline, and 250 rows is a bigger body than the shared
+ * 2.5s budget was chosen for.
+ */
+export async function writeServerRoleCatalog(payload: {
+  guildId: string;
+  roles: { roleId: string; name: string; position?: number }[];
+}): Promise<void> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/server-roles', base), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!response.ok) {
+    // 429 is mapped for the same reason `send` maps it: the callers of this
+    // either log and continue (/setup) or count a failure (the tick), and
+    // neither should report a rate limit as an unreachable app.
+    if (response.status === 429) throw new RateLimitedError('rate-limited');
+    throw new AppApiError(`POST /api/discord/server-roles -> ${response.status}`);
+  }
+}
+
 // ---- RUNTIME SETTINGS ------------------------------------------------------
 //
 // The key/value rows every relay reads to decide where it posts. Separate from

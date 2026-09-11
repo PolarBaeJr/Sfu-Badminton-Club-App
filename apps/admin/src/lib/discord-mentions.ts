@@ -39,6 +39,79 @@ function roleKey(name: string): string {
     .trim();
 }
 
+/** A merged role, and which table it came out of. */
+export interface SourcedRole extends GuildRole {
+  source: 'club' | 'server';
+}
+
+/**
+ * The nine the club manages plus every other mentionable role in the server,
+ * made into ONE list a picker can offer and `resolveRoleNames` can resolve.
+ *
+ * TWO TABLES, MERGED HERE AND NOWHERE ELSE. `discord_guild_roles` holds the nine
+ * the app assigns, under a CHECK that must keep matching MANAGED_ROLES;
+ * `discord_server_roles` (00229) is a catalogue the bot syncs out of Discord, with
+ * no name whitelist at all. A database view unioning them was rejected: it would
+ * be one relation name where the console needs to know which side a row came
+ * from, and it would make the round-trip assertions in discord-message.test.ts
+ * vacuous, since the fake client there answers an unknown table with `[]`.
+ *
+ * THREE PRECEDENCE RULES, AND EACH ONE IS A DECISION:
+ *
+ *  - SAME `role_id`: club wins. The catalogue contains all nine, because the bot
+ *    posts every non-managed role it can see, so this is the MAIN path rather
+ *    than an edge case. Backwards, the picker would show nine duplicates filed
+ *    under the server heading.
+ *  - SAME `roleKey`, DIFFERENT ids: club wins. A guild role called "Internal"
+ *    beside the managed `internal` resolves to the managed one. Deliberate, and
+ *    the reason the picker labels which is which.
+ *  - TWO CATALOGUE ROWS on one key: BOTH DROPPED, and named in `ambiguous`. This
+ *    is `planSetup`'s call in apps/bot/src/setup.ts, for its reason: picking one
+ *    of two identically named roles at random decides who a message actually
+ *    rings, and being wrong there is not a typo. The caller says so on screen,
+ *    because a role plainly visible in Discord and missing from the picker with
+ *    no explanation is worse than either.
+ *
+ * The order the offerable list comes back in is club rows first, in the order
+ * they arrived, then catalogue rows in theirs. The caller sorts and groups.
+ */
+export function mergeGuildRoles(
+  club: GuildRole[],
+  server: GuildRole[],
+): { roles: SourcedRole[]; ambiguous: string[] } {
+  const clubRoles: SourcedRole[] = club.map((r) => ({ ...r, source: 'club' }));
+
+  const claimedIds = new Set(clubRoles.map((r) => r.role_id));
+  const claimedKeys = new Set(clubRoles.map((r) => roleKey(r.role_name)));
+
+  // Keyed before anything is dropped, so a name held by three rows is reported
+  // once rather than twice.
+  const byKey = new Map<string, GuildRole[]>();
+  for (const role of server) {
+    if (claimedIds.has(role.role_id)) continue;
+    const key = roleKey(role.role_name);
+    if (!key || claimedKeys.has(key)) continue;
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(role);
+    else byKey.set(key, [role]);
+  }
+
+  const serverRoles: SourcedRole[] = [];
+  const ambiguous: string[] = [];
+  for (const bucket of byKey.values()) {
+    // Two rows sharing an id cannot happen: (guild_id, role_id) is the
+    // catalogue's primary key. Two rows sharing a NAME can, and Discord allows it.
+    if (bucket.length > 1) {
+      ambiguous.push(bucket[0]!.role_name);
+      continue;
+    }
+    const only = bucket[0]!;
+    serverRoles.push({ ...only, source: 'server' });
+  }
+
+  return { roles: [...clubRoles, ...serverRoles], ambiguous };
+}
+
 /**
  * ONE SCAN, ORDERED SO THE PROTECTED FORMS WIN.
  *

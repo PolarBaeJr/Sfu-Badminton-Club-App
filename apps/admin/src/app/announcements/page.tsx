@@ -10,6 +10,7 @@ import {
   type RowAnnouncement,
 } from './actions';
 import { readOutboxRows, type OutboxRow } from '@/lib/discord-outbox';
+import { mergeGuildRoles } from '@/lib/discord-mentions';
 import { DiscordRecent } from './discord-send';
 import { ComposerSwitch } from './composer-switch';
 import { DiscordConsoleProvider } from './discord-console-context';
@@ -261,7 +262,7 @@ export default async function AnnouncementsPage() {
   // "we did not ask" and "it is not in Discord" must not render the same.
   const asked = new Set(rows.slice(0, MAX_MAPPING_LOOKUP).map((r) => r.id));
 
-  const [settingsResult, postsResult, rolesResult] = await Promise.all([
+  const [settingsResult, postsResult, rolesResult, serverRolesResult] = await Promise.all([
     // ALL SIX CHANNEL KEYS, not just the announcements one: the Discord composer
     // offers every channel the club has wired to a relay, and this is the only
     // place the console can learn what those are.
@@ -289,7 +290,44 @@ export default async function AnnouncementsPage() {
     canSendDiscord
       ? supabase.from('discord_guild_roles').select('role_name, role_id')
       : Promise.resolve({ data: [], error: null }),
+    // AND EVERY OTHER MENTIONABLE ROLE IN THE SERVER (00229), which is a second
+    // table rather than a wider CHECK on the first for the reasons that
+    // migration's header sets out: a row in `discord_guild_roles` is read as "a
+    // role the app manages" by three separate paths, one of which is the bot's
+    // whole config load.
+    //
+    // Behind the SAME gate as the read above and read in parallel with it, so
+    // the picker costs one round trip rather than two. The bot fills this on its
+    // five minute tick, so before 00229 is applied, or before the first tick
+    // after it, this is empty and the picker offers exactly the nine it always
+    // has.
+    canSendDiscord
+      ? supabase.from('discord_server_roles').select('role_name, role_id')
+      : Promise.resolve({ data: [], error: null }),
   ]);
+
+  // NAMED, not swallowed, and this is new: both reads used to degrade to an
+  // empty list, which is how a failed PostgREST read arrives. An unapplied
+  // migration, a missing grant or a stale schema cache therefore emptied the
+  // notify picker with nothing anywhere saying so, and the exec's next move was
+  // to type the role name into the body instead, where it does not notify.
+  // Logged rather than thrown: a picker short of its options is a smaller
+  // failure than a page that will not render, and `resolveForDiscord` refuses
+  // any name it cannot resolve, so nothing silently posts unpinged.
+  //
+  // ONLY THESE TWO OF THE FOUR, and the older note above still governs the other
+  // pair. That is a split, not an oversight: a settings or mapping read that
+  // fails costs a chip nobody can act on, so it stays a missing panel, while a
+  // ROLE read that fails costs the ping itself. Do not quieten these two to make
+  // the block uniform, and do not make the other two loud to match.
+  for (const [what, result] of [
+    ['club roles', rolesResult],
+    ['server roles', serverRolesResult],
+  ] as const) {
+    if (result.error) {
+      console.error(`[announcements] ${what} read failed:`, result.error.message);
+    }
+  }
 
   // KEYED BEFORE ANYTHING READS ONE. This used to take `data[0]` and was safe
   // only while the filter was an `.eq()` that could match a single row; under
@@ -315,17 +353,27 @@ export default async function AnnouncementsPage() {
     id: settingsByKey.get(s.key) ?? '',
   })).filter((c) => c.id);
 
-  // Deduped by id rather than by name, because the id is what the chip is keyed
-  // on and one role cannot be two of them. Sorted by name, because the picker
-  // built from this is read by a person.
-  const discordRoles: DiscordRoleOption[] = [
-    ...new Map(
-      ((rolesResult.data ?? []) as { role_name: string; role_id: string }[]).map((r) => [
-        r.role_id,
-        { id: r.role_id, name: r.role_name },
-      ]),
-    ).values(),
-  ].sort((a, b) => a.name.localeCompare(b.name));
+  // MERGED IN ONE PLACE, `mergeGuildRoles`, which owns the precedence: the same
+  // role in both tables is the club's, a catalogue name colliding with a managed
+  // one is the club's, and two catalogue roles whose names normalise alike are
+  // BOTH dropped rather than guessed between. Deduping by id used to live here
+  // and now lives there, because it is the same question the name collision is.
+  //
+  // Sorted by name within each source, because the picker built from this is read
+  // by a person, and grouped by source in the picker itself so the club's nine
+  // sit above the rest.
+  const merged = mergeGuildRoles(
+    (rolesResult.data ?? []) as { role_name: string; role_id: string }[],
+    (serverRolesResult.data ?? []) as { role_name: string; role_id: string }[],
+  );
+
+  const discordRoles: DiscordRoleOption[] = merged.roles
+    .map((r) => ({ id: r.role_id, name: r.role_name, source: r.source }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // The names the picker cannot offer, so it can say why rather than leaving a
+  // role that is plainly there in Discord inexplicably missing.
+  const ambiguousRoleNames = merged.ambiguous;
 
   // Keyed by announcement, not by guild. The club runs one server; if it ever
   // ran two, "already in Discord somewhere" is still the true answer to the
@@ -491,6 +539,7 @@ export default async function AnnouncementsPage() {
                   // beside it need no gate: their query never ran.
                   channels={canSendDiscord ? discordChannels : []}
                   roles={discordRoles}
+                  ambiguousRoleNames={ambiguousRoleNames}
                 />
               ) : (
                 // Withheld, not empty. A blank left column on the widest half of

@@ -41,6 +41,7 @@ import { runTournamentEvents } from './tournament-events.js';
 import { runAnnouncements } from './announcements.js';
 import { runOutbox } from './outbox.js';
 import { runSessionBoard } from './session-board.js';
+import { runServerRoleSync } from './server-roles.js';
 import { runMatchResults } from './match-results.js';
 import { runFeedback } from './feedback.js';
 import { startGateway, type GatewayHandle } from './gateway.js';
@@ -319,22 +320,27 @@ const server = createServer(async (req, res) => {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
     }
-    // THREE JOBS, THREE try/catch BLOCKS, ONE TICK.
+    // FOUR JOBS, FOUR try/catch BLOCKS, ONE TICK.
     //
     // The console's outbox (00222) rides this tick rather than getting a
     // pg_cron job of its own, because a new job would need an owner to run SQL
     // on production — a step that sits undone while the feature looks shipped.
     // The session board rides it for the same reason, and because five minutes
     // is already the right interval for a schedule that changes when somebody
-    // RSVPs.
+    // RSVPs. The role catalogue (00229) is the fourth, for the first reason
+    // again: five minutes is also the staleness a picker can carry, since a role
+    // renamed inside the window fails at send time with a refusal that says so.
     //
     // But they must not be able to abort each other. A relay that throws would
     // otherwise leave a queued message unsent with nothing saying why, and an
     // outbox failure would stop announcements syncing — neither has anything
-    // to do with the other, and each reports its own counts.
+    // to do with the other, and each reports its own counts. The catalogue makes
+    // a Discord call per guild, so a 429 there is the likeliest of the four to
+    // throw and the one that must certainly not cost somebody their message.
     let announcements: Awaited<ReturnType<typeof runAnnouncements>> | null = null;
     let outbox: Awaited<ReturnType<typeof runOutbox>> | null = null;
     let board: Awaited<ReturnType<typeof runSessionBoard>> | null = null;
+    let serverRoles: Awaited<ReturnType<typeof runServerRoleSync>> | null = null;
 
     try {
       announcements = await runAnnouncements();
@@ -354,16 +360,22 @@ const server = createServer(async (req, res) => {
       console.error('[bot] session board failed:', error);
     }
 
+    try {
+      serverRoles = await runServerRoleSync();
+    } catch (error) {
+      console.error('[bot] server role sync failed:', error);
+    }
+
     // A 500 only when BOTH of the first two halves fell over, which is the shape
-    // that means the tick achieved nothing. DELIBERATELY UNCHANGED by the board:
-    // a board failure must not turn a good announcement tick into a 500, and the
-    // counters in the body are the only way this job is diagnosed at all, because
-    // pg_net follows redirects and a 200 proves nothing.
+    // that means the tick achieved nothing. DELIBERATELY UNCHANGED by the board
+    // and by the role catalogue: neither failing must turn a good announcement
+    // tick into a 500, and the counters in the body are the only way this job is
+    // diagnosed at all, because pg_net follows redirects and a 200 proves nothing.
     if (!announcements && !outbox) {
       return send(res, 500, { error: 'announcements_failed' });
     }
 
-    return send(res, 200, { ...(announcements ?? {}), outbox, board });
+    return send(res, 200, { ...(announcements ?? {}), outbox, board, serverRoles });
   }
 
   // The match result relay, driven by pg_cron every 10 minutes. Slower than

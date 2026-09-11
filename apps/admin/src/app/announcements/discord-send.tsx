@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button, Badge, Checkbox, Input, Select, Textarea, Switch } from '@badminton/ui';
+import { Button, Badge, Input, MultiSelect, Select, Textarea, Switch } from '@badminton/ui';
 import { DISCORD_BUTTON_SETS, isDiscordButtonSet } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import {
@@ -111,21 +111,39 @@ export function DiscordSend({
   channelConfigured,
   channels,
   roles,
+  ambiguousRoleNames,
 }: {
   /** Whether /config has been run. Without it there is nowhere to send. */
   channelConfigured: boolean;
   /** The channels the club has wired to a relay. Not the server's channel list. */
   channels: DiscordChannelOption[];
   /**
-   * The roles a mention can name.
+   * Every role the ping line can name: the club's nine and the rest of the
+   * server's, tagged with which they are.
    *
    * THE PICKER STILL SENDS NAMES, not the ids beside them.
    * `QueueDiscordMessageInput.pingRoles` takes names and `resolveRoleNames`
    * turns them into ids server-side, so posting an id from here would add a
    * client-controlled snowflake field for a job already being done. The id is
    * carried for the preview, which needs it to draw a chip.
+   *
+   * `source` IS NOT DECORATION. A `club` role is one of the nine in
+   * `discord_guild_roles`, and it is the only kind a typed `@name` in prose
+   * resolves to; a `server` role comes from the catalogue the bot syncs out of
+   * Discord (00229) and is pickable here and nowhere else. So the picker groups
+   * on it, the typed-@ line below lists only the club names, and the preview is
+   * handed the club roles alone.
    */
   roles: DiscordRoleOption[];
+  /**
+   * Server roles that could not be offered because two of them share a name.
+   *
+   * Named on screen rather than quietly dropped: `mergeGuildRoles` refuses to
+   * guess which of two identically named roles an exec meant, and a role plainly
+   * visible in Discord that is simply missing here, with no reason given, is the
+   * worse of the two failures.
+   */
+  ambiguousRoleNames: string[];
 }) {
   const [shape, setShape] = useState<'message' | 'embed'>('message');
   const [content, setContent] = useState('');
@@ -227,6 +245,33 @@ export function DiscordSend({
 
   /** The chosen set, for the helper line under the picker. Null means none. */
   const chosenButtonSet = isDiscordButtonSet(buttonSet) ? buttonSet : null;
+
+  /**
+   * The nine the app manages, and the only roles the PROSE path resolves.
+   *
+   * Handed to the preview and quoted in the typed-@ line below. A server role
+   * left out of both is deliberate: `resolveForDiscord` runs
+   * `resolveRoleMentions` over the club map alone, so a typed `@Varsity` reaches
+   * Discord as literal text, and a preview or a helper line that said otherwise
+   * would promise a mention nothing makes.
+   */
+  const clubRoles = roles.filter((r) => r.source === 'club');
+
+  /**
+   * The notify picker's options, KEYED ON THE NAME because names are what goes
+   * down the wire. Unique by construction: `mergeGuildRoles` drops a catalogue
+   * row whose name normalises onto another offered role, so no two entries here
+   * can carry the same value.
+   *
+   * Grouped rather than sorted together, so the nine roles the club manages sit
+   * above a list that will grow as the server gains roles like @Advanced.
+   */
+  const roleOptions = [
+    ...clubRoles.map((r) => ({ value: r.name, label: r.name, group: 'Club roles' })),
+    ...roles
+      .filter((r) => r.source === 'server')
+      .map((r) => ({ value: r.name, label: r.name, group: 'Server roles' })),
+  ];
 
   const channelOptions = [
     ...(channels.some((c) => c.key === 'announcement_channel_id')
@@ -584,41 +629,59 @@ export function DiscordSend({
       {shape === 'embed' && !editing && roles.length > 0 && (
         <div className="flex flex-col gap-2 border-y border-[var(--line)] py-3">
           <span className={`${MICRO} text-[var(--mute)]`}>Notify</span>
-          <div className="flex flex-wrap gap-x-4 gap-y-2">
-            {roles.map((role) => (
-              <Checkbox
-                key={role.name}
-                label={role.name}
-                showLabel
-                checked={pingRoles.includes(role.name)}
-                onChange={(checked) =>
-                  setPingRoles((current) =>
-                    checked ? [...current, role.name] : current.filter((r) => r !== role.name),
-                  )
-                }
-              />
-            ))}
-          </div>
-          <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-            {pingRoles.length > 0
-              ? 'Anyone in these roles gets a notification. Their names go on a line above the embed.'
-              : 'Nobody is notified.'}
-          </p>
+          {/* AN EXPLICIT ID, for the same reason the channel and button pickers
+              above carry theirs: both composers are mounted at once, and a
+              control deriving its element id from its label would collide.
+              MultiSelect makes `id` required rather than optional for exactly
+              that reason.
+
+              A MULTI-SELECT AND NOT NINE CHECKBOXES, because the list is no
+              longer nine: it is every mentionable role in the server, and it
+              grows when somebody creates one. A wall of checkboxes does not
+              scale to that and cannot be searched. */}
+          <MultiSelect
+            id="discord-notify"
+            value={pingRoles}
+            onChange={setPingRoles}
+            options={roleOptions}
+            placeholder="Search roles…"
+            helpText={
+              pingRoles.length > 0
+                ? 'Anyone in these roles gets a notification. Their names go on a line above the embed.'
+                : 'Nobody is notified. Server roles come from Discord itself, so the list follows whatever the server has.'
+            }
+          />
+          {ambiguousRoleNames.length > 0 && (
+            // SAID, NOT SWALLOWED. Two Discord roles whose names read the same
+            // cannot be told apart by a name, and the ping line travels as a
+            // name, so neither can be offered. Without this line the role is
+            // simply absent and the exec has no way to learn why.
+            <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+              Not offered, because more than one role in the server is called this:{' '}
+              {ambiguousRoleNames.join(', ')}. Rename one of them in Discord.
+            </p>
+          )}
         </div>
       )}
 
-      {roles.length > 0 && (
+      {clubRoles.length > 0 && (
         <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
           {/* THE VOCABULARY, BEFORE THEY TYPE IT rather than after they send it.
               Three of these names (internal, external, competitive) are ordinary
               English words, so "email us @external" really does ping a role once
               the switch above is on, and seeing the list is what makes that
-              predictable. The list is only the roles the app manages: a member's
-              own ping role lives in `discord_self_roles` (00168), whose trigger
-              guarantees the two sets never overlap, so `@somepingrole` stays
-              literal text. */}
-          Type an @ and a role name to mention it: {roles.map((r) => r.name).join(', ')}.
-          Underscores or spaces both work. Anything else after an @ stays plain text.
+              predictable.
+
+              THE CLUB'S NINE AND NOTHING ELSE, which is now a narrower list than
+              the picker's and must stay that way. `resolveForDiscord` runs the
+              prose scanner over the managed roles alone, deliberately: a
+              catalogue that may hold @Advanced or @Session Pings would turn
+              ordinary words in a Code of Conduct into live pings. A member's own
+              ping role in `discord_self_roles` (00168) is left out for the same
+              reason, and its trigger guarantees the two sets never overlap. */}
+          Type an @ and a role name to mention it: {clubRoles.map((r) => r.name).join(', ')}.
+          Underscores or spaces both work. Anything else after an @ stays plain text, including
+          the server roles in the Notify list above.
         </p>
       )}
 
@@ -653,7 +716,13 @@ export function DiscordSend({
           url={null}
           posted={null}
           updatedAt={null}
-          roles={roles}
+          // CLUB ROLES ONLY, and not the picker's merged list. The preview's
+          // prose path calls `resolveRoleMentions`, which the send path runs over
+          // the managed roles alone, so a merged list here would chip a
+          // server-role name that reaches Discord as plain text: the preview
+          // would lie in exactly the direction the asymmetry test in
+          // __tests__/discord-preview.test.tsx exists to prevent.
+          roles={clubRoles}
           // TRUE HERE AND FALSE ON THE WEBSITE COMPOSER. This body goes through
           // `resolveForDiscord` on its way out, so `@executives` really does
           // reach Discord as a chip and a preview that drew grey text would be
