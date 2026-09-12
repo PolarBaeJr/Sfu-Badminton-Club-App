@@ -459,6 +459,7 @@ export type Database = {
           paid_at: string | null
           paid_by: string | null
           quantity: number | null
+          receipt_path: string | null
           ref_no: number
           reference: string | null
           reimbursed_at: string | null
@@ -477,6 +478,7 @@ export type Database = {
           paid_at?: string | null
           paid_by?: string | null
           quantity?: number | null
+          receipt_path?: string | null
           ref_no?: number
           reference?: string | null
           reimbursed_at?: string | null
@@ -495,6 +497,7 @@ export type Database = {
           paid_at?: string | null
           paid_by?: string | null
           quantity?: number | null
+          receipt_path?: string | null
           ref_no?: number
           reference?: string | null
           reimbursed_at?: string | null
