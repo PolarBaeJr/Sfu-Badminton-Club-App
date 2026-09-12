@@ -478,6 +478,9 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'fees.expenses.read': {
     label: 'Expenses', area: 'fees', group: 'expenses', mode: 'read',
     gate: 'app/fees/page.tsx expenses ledger fetch',
+    also: ['app/fees/receipt/[id]/route.ts GET'],
+    merged:
+      'Rendering an expense row and opening the receipt behind it are one act: seeing what the club spent.',
   },
   'fees.expenses.add.write': {
     label: 'File an expense', area: 'fees', group: 'expenses', mode: 'write',

@@ -627,6 +627,22 @@ export const clubExpenseSchema = z.object({
   // typing the row are different whenever an admin writes up an exec's receipt,
   // and reimbursing the typist is the bug this field exists to prevent.
   paid_by: z.string().uuid().optional(),
+  // The photo of the receipt (00231). Optional, and it has to be: a receipt can
+  // legitimately be lost on the way home or emailed rather than handed over, and
+  // refusing the spend for want of a picture would either stop the money being
+  // recorded or push somebody into attaching the wrong image.
+  //
+  // A STORAGE PATH, NEVER A URL. It is an object path in the private
+  // expense-receipts bucket; the console signs a short-lived URL at the moment
+  // somebody clicks. A signed URL stored in a row rots, and every older receipt
+  // would be dead the next time anyone looked.
+  //
+  // Validated here only as "a string of sane length". The path is
+  // CLIENT-SUPPLIED, so the shape is not the interesting question: addExpense
+  // re-checks it against the uploader's own auth.uid(), because the service-role
+  // client that signs it bypasses RLS and an arbitrary path would otherwise be a
+  // read primitive for the whole bucket.
+  receipt_path: z.string().max(512).optional(),
 });
 
 /**

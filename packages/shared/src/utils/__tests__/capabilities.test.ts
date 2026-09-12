@@ -182,16 +182,24 @@ describe('CAPABILITY_GATES', () => {
   // keeps its own gate.
   // 137 BECAME 138 with `announcements.discord.write`, one capability and one
   // site: queueDiscordMessage. Nothing merged and nothing moved.
-  it('names 138 distinct enforcement points, none of them claimed twice', () => {
+  // 138 BECAME 139 with the expense receipt route (00231):
+  // app/fees/receipt/[id]/route.ts GET, which signs a short-lived URL for the
+  // photo attached to an expense. One new site, NO new capability: CAPABILITIES
+  // is still 120 above. It merged into `fees.expenses.read` rather than minting
+  // a key because rendering a ledger row and opening its receipt are the same
+  // act by the same person, and a separate capability would have meant an admin
+  // ticking two boxes to grant one thing. The reason is argued in that entry's
+  // `merged` prose, which this file's next test requires.
+  it('names 139 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(138);
-    expect(new Set(sites).size).toBe(138);
-    expect(ENFORCEMENT_POINTS).toBe(138);
+    expect(sites.length).toBe(139);
+    expect(new Set(sites).size).toBe(139);
+    expect(ENFORCEMENT_POINTS).toBe(139);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

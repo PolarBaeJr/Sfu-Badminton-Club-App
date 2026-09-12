@@ -18,6 +18,7 @@ import {
 } from './finance-actions';
 import { CardHeading } from './card-heading';
 import { LedgerCharts } from './ledger-charts';
+import { withBase } from '@/lib/base-path';
 
 /**
  * The row list for one of the two non-fee ledgers (00073).
@@ -88,13 +89,31 @@ interface LedgerRow {
   reimbursed_by?: string | null;
   method: string | null;
   reference: string | null;
+  /** Object path of the receipt photo in the private bucket (00231). */
+  receipt_path?: string | null;
   created_at: string;
 }
 
 const INCOME_COLS = 'id, ref_no, category, description, amount_cents, paid_at, method, reference, created_at';
-const EXPENSE_COLS = `${INCOME_COLS}, quantity, paid_by, reimbursed_at, reimbursed_by`;
+// receipt_path CANNOT BE DEPLOYED BEFORE 00231 IS APPLIED. PostgREST refuses a
+// select naming an unknown column and this console reads a refused read as an
+// empty list, so the whole expense ledger would render EMPTY, on a money page,
+// with nothing in any log. The full note is in lib/actions/finance.ts's header.
+const EXPENSE_COLS = `${INCOME_COLS}, quantity, paid_by, reimbursed_at, reimbursed_by, receipt_path`;
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+/**
+ * A plain <a> dressed as a ghost Button, because it has to be an anchor.
+ *
+ * Button renders a bare <button> with no href form, and this file is a SERVER
+ * component: reaching for a client component to hold one link would ship a
+ * bundle to every viewer of the ledger for something a link already does. The
+ * classes are Button's ghost + sm, transcribed, so the control sits level with
+ * the Edit and Delete beside it.
+ */
+const RECEIPT_LINK_CLASS =
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-none border border-[var(--line)] bg-transparent px-3 min-h-[32px] text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ink-2)] transition-all duration-150 hover:bg-[var(--surface-2)] hover:text-[var(--ink)]';
 
 /** Local date only — the time of day a shuttle order was paid is noise. */
 const day = (iso: string | null) =>
@@ -260,6 +279,10 @@ export async function LedgerCard({
     reimbursed_at: row.reimbursed_at ?? null,
     method: row.method,
     reference: row.reference,
+    // Carried into the dialog so an edit RESENDS it. updateExpense's patch is a
+    // full replacement, so a dialog that forgot this field would silently NULL
+    // the receipt on every save of an unrelated one.
+    receipt_path: row.receipt_path ?? null,
   });
 
   return (
@@ -347,6 +370,22 @@ export async function LedgerCard({
                   {/* Somebody who can only READ this ledger sees the state —
                       that is the point of the feature for them — and no control
                       that would reject them. */}
+                  {/* Gated on canRead alone, not on any write flag: looking at
+                      the receipt is reading the row, and the exec who is owed
+                      the money is exactly who needs to check it. withBase
+                      because Next does not prefix a raw string, and an
+                      unprefixed /fees/... here is a LIVE ROUTE ON THE PLAYER
+                      APP rather than a 404. */}
+                  {!isIncome && row.receipt_path && (
+                    <a
+                      href={withBase(`/fees/receipt/${row.id}`)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={RECEIPT_LINK_CLASS}
+                    >
+                      Receipt
+                    </a>
+                  )}
                   {canWrite.update && !isIncome && (
                     <EditExpense expense={editable(row)} payerOptions={payerOptions} />
                   )}
@@ -437,6 +476,18 @@ export async function LedgerCard({
                   )}
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {/* See the card form above for why this is canRead-only
+                          and why the href goes through withBase. */}
+                      {!isIncome && row.receipt_path && (
+                        <a
+                          href={withBase(`/fees/receipt/${row.id}`)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={RECEIPT_LINK_CLASS}
+                        >
+                          Receipt
+                        </a>
+                      )}
                       {canWrite.update && !isIncome && (
                         <EditExpense expense={editable(row)} payerOptions={payerOptions} />
                       )}

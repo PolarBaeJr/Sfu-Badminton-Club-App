@@ -945,6 +945,26 @@ describe('otherIncomeSchema / clubExpenseSchema', () => {
     expect('quantity' in parsed).toBe(false);
   });
 
+  // A receipt is evidence for a payment the row already asserts (00231), so the
+  // spend records with or without one. A receipt can be lost on the way home or
+  // emailed instead of handed over, and an expense that could not be filed
+  // without a photograph would be an expense nobody files.
+  it('accepts an expense with no receipt, and one with a path', () => {
+    expect(clubExpenseSchema.safeParse(expense).success).toBe(true);
+    expect(
+      clubExpenseSchema.safeParse({ ...expense, receipt_path: `${UUID_B}/${UUID_A}.jpg` }).success,
+    ).toBe(true);
+  });
+
+  // Expenses only, for the same reason quantity is: a donation has nobody to
+  // reimburse and therefore no evidence of a reimbursement to hold. 00231's
+  // widened club_ledger_reimbursement_is_expense CHECK refuses it at the
+  // database too, so this keeps the validator and the constraint agreeing.
+  it('does not carry receipt_path through on other income', () => {
+    const parsed = otherIncomeSchema.parse({ ...income, receipt_path: 'a/b.jpg' } as never);
+    expect('receipt_path' in parsed).toBe(false);
+  });
+
   // The date the money moved, which is not the date the entry was typed: an
   // exec writing up September's receipts in October has to be able to say
   // September. It never changes which season the row counts toward.

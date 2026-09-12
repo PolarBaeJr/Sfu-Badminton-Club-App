@@ -51,6 +51,23 @@ import { requireCapability } from './_shared';
  * what a successful one returns. Several bugs shipped by trusting an error that
  * never arrives. Every mutation below asks for the affected rows back with
  * .select() and refuses to report success unless exactly one came out.
+ *
+ * THE RECEIPT PHOTO (00231), in four sentences, because it touches three of the
+ * functions below. It is OPTIONAL: a receipt can be lost or emailed, and the row
+ * already asserts the payment on its own. The PATH IS RE-CHECKED AGAINST THE
+ * UPLOADER in addExpense, because it is client-supplied and the client here is
+ * service-role. It is FROZEN ONCE THE EXPENSE IS SETTLED, for the same reason
+ * the amount and the payer are. And THE FILE NEVER PASSES THROUGH A SERVER
+ * ACTION: the browser uploads it straight to storage and these actions see only
+ * a path, which keeps a multi-megabyte body off the Node process that renders
+ * every other page.
+ *
+ * ALL FOUR READS OF receipt_path NEED 00231 APPLIED FIRST. PostgREST refuses a
+ * select naming a column it does not know, and this console reads a refused read
+ * as an EMPTY RESULT. So with this code deployed against a database still at
+ * 00230 the expense ledger renders empty and every Edit and every Delete below
+ * reports "Expense not found", because `existing` comes back null. On a money
+ * page, with nothing in any log saying why. The migration goes first.
  */
 
 /** paid_at defaults to now: recording an entry means the money already moved. */
@@ -191,6 +208,32 @@ export async function addExpense(input: ClubExpenseInput) {
   const adminClient = createAdminClient();
   await assertEligiblePayer(adminClient, parsed.paid_by ?? null);
 
+  // THE PATH IS CLIENT-SUPPLIED, so it is checked rather than trusted. 00231's
+  // storage policy already stopped them WRITING outside their own folder, but
+  // nothing stopped them naming somebody else's folder in THIS call, and the
+  // receipt route signs whatever path the row holds using createAdminClient(),
+  // which is service-role and bypasses RLS. Without this check, filing a $0
+  // expense whose receipt_path names another member's folder is a read primitive
+  // for the entire bucket.
+  //
+  // IT KEYS ON THE UPLOADER AND NOT ON paid_by, and the difference is the whole
+  // reason this line reads the way it does. The folder is named after the person
+  // whose browser uploaded the file (auth.uid(), which is what storage RLS can
+  // see), and that is routinely NOT the payer: 00077 documents the commonest
+  // flow as an exec texting a receipt to an admin who records it, so the admin
+  // uploads while the exec is owed the money. Validating the path against
+  // `paid_by` would refuse exactly that flow, every time, and would let nothing
+  // useful through in exchange.
+  //
+  // actor.user_id, not actor.id: requireCapability resolves its row by
+  // .eq('user_id', user.id) with select('*') (supabase-server.ts:128-132), so
+  // user_id IS the auth.uid() the folder is named after. players.id is a
+  // different uuid and would match no folder anybody could ever upload into.
+  const receiptPath = parsed.receipt_path ?? null;
+  if (receiptPath && !receiptPath.startsWith(`${actor.user_id}/`)) {
+    throw new Error('That receipt could not be attached');
+  }
+
   const row = {
     season_id: parsed.season_id,
     // See addOtherIncome. `direction` also gates the CHECK constraints: only an
@@ -207,6 +250,7 @@ export async function addExpense(input: ClubExpenseInput) {
     paid_by: parsed.paid_by ?? null,
     method: parsed.method ?? null,
     reference: parsed.reference ?? null,
+    receipt_path: receiptPath,
   };
 
   const { data: created, error } = await adminClient
@@ -216,6 +260,9 @@ export async function addExpense(input: ClubExpenseInput) {
     .single();
   if (error) throw new Error(error.message);
 
+  // The audit call records the whole `row`, so the receipt path rides along with
+  // no extra field here: the log answers "which file was filed as the evidence
+  // for this spend" even after the row itself is deleted.
   await logAdminAudit(adminClient, {
     actor_id: actor.id,
     action_type: 'expense_added',
@@ -273,7 +320,7 @@ export async function updateExpense(input: ClubExpenseUpdateInput) {
 
   const { data: existing } = await adminClient
     .from('club_ledger')
-    .select('id, season_id, category, description, amount_cents, quantity, paid_at, paid_by, reimbursed_at, reimbursed_by, method, reference')
+    .select('id, season_id, category, description, amount_cents, quantity, paid_at, paid_by, reimbursed_at, reimbursed_by, method, reference, receipt_path')
     .eq('id', parsed.id)
     .eq('direction', 'expense')
     .maybeSingle();
@@ -296,6 +343,32 @@ export async function updateExpense(input: ClubExpenseUpdateInput) {
       'This expense has already been reimbursed — who paid it can no longer be changed.',
     );
   }
+  // AND THE RECEIPT IS FROZEN WITH THEM (00231). The receipt is the evidence for
+  // a payment that has already been asserted and then settled against, so
+  // letting it change after the fact is letting somebody swap the proof: the row
+  // would go on claiming the club reimbursed $84 for shuttles while the attached
+  // picture became a receipt for something else entirely, and the badge on the
+  // row asserts the settlement without anyone reading the audit log to check it.
+  //
+  // THE NULL-TO-PATH DIRECTION IS REFUSED TOO, and that is deliberate rather
+  // than an oversight in the comparison. Attaching a receipt an exec finally
+  // found to a reimbursement paid last month is a sympathetic case, and it is
+  // still refused, because a settled row's evidence is frozen AS A WHOLE.
+  // Allowing it would mean this guard has to tell "supplementing" from
+  // "swapping", and the stored row cannot support that distinction: once one
+  // direction is open, a receipt can be removed and re-added in two saves. As
+  // with the amount, a settled expense whose evidence is genuinely wrong needs an
+  // admin to delete it and re-record it, which is a statement that a
+  // reimbursement was paid against the wrong proof.
+  //
+  // It belongs in the action and not in the validator for the same reason the
+  // amount and payer checks do: the boundary depends on the STORED row, which a
+  // validator cannot see.
+  if (settled && (parsed.receipt_path ?? null) !== (existing.receipt_path ?? null)) {
+    throw new Error(
+      'This expense has already been reimbursed. Its receipt can no longer be changed.',
+    );
+  }
   await assertEligiblePayer(adminClient, nextPaidBy);
 
   const patch = {
@@ -311,6 +384,12 @@ export async function updateExpense(input: ClubExpenseUpdateInput) {
     paid_by: nextPaidBy,
     method: parsed.method ?? null,
     reference: parsed.reference ?? null,
+    // A FULL REPLACEMENT, like every other field here, which is exactly why the
+    // edit dialog always resends the stored path. A save of an unrelated field
+    // that omitted this would NULL the receipt silently: the same trap
+    // paymentFromStored() exists to avoid one column over, and the one this
+    // patch's shape makes easy to fall into.
+    receipt_path: parsed.receipt_path ?? null,
   };
 
   // The reimbursement state is re-checked BY THE DATABASE, not just by the read
@@ -457,7 +536,14 @@ export async function removeExpense(id: string) {
 
   const { data: existing } = await adminClient
     .from('club_ledger')
-    .select('id, season_id, category, description, amount_cents, quantity, paid_at, paid_by, reimbursed_at, reimbursed_by, method, reference')
+    // receipt_path included so the audit old_value names the file. THE STORAGE
+    // OBJECT IS DELIBERATELY NOT DELETED with the row: the audit entry below
+    // records the path as part of what was destroyed, and destroying the very
+    // evidence the deletion was audited against is worse than leaving an orphan
+    // in a private bucket nothing links to. An orphaned object costs a few
+    // kilobytes; an audit row pointing at a file that no longer exists costs the
+    // only way to check what was deleted and why.
+    .select('id, season_id, category, description, amount_cents, quantity, paid_at, paid_by, reimbursed_at, reimbursed_by, method, reference, receipt_path')
     .eq('id', id)
     .eq('direction', 'expense')
     .maybeSingle();
