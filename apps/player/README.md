@@ -44,7 +44,7 @@ src/
   components/     App-specific React components (nav, scanner, gates, banners).
                   Anything reusable across both apps belongs in packages/ui.
   lib/            Plain modules: rules, queries, formatting. This is the tested
-                  layer — 43 suites in lib/__tests__ point here.
+                  layer — 44 suites in lib/__tests__ point here.
     actions/      'use server' Server Actions, one file per domain.
   fonts/          Barlow Condensed. .woff2 for the browser, .ttf for next/og.
   middleware.ts   Auth gate + redirects on every non-static request.

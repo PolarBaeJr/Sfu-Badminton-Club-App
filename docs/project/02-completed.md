@@ -70,11 +70,12 @@ A full tournament system, not just a bracket generator:
 
 ## 🛠️ Admin console & finance
 
-- **Role-filtered navigation** — the console shows execs the club-management tools and reserves finance/member tools for admins.
+- **Role-filtered navigation:** the console shows each officer only the sections their permissions cover. Every exec can open the club-management sections and read them, finance and members included; ratings, the audit log, permissions and accounts stay admin-only. Writing anything is a separate grant, made on the Permissions page.
 - **Member management** — admins manage player records, roles, and exec status. The role dropdown includes **Executive**, and **Suspended** and **Inactive** members have their own tabs so they don't clutter the active roster. "Add Player" **cannot create Admin accounts** (that promotion is a separate, deliberate step).
 - **Audit log tools** — the audit log can be **sorted by operator or by time** and **filtered by category**, making it easy to review who did what.
 - **Platform settings editor** — settings are edited one value per row, so changing a single knob no longer risks overwriting the rest.
-- **Finance / income tracking** — the admin side tracks club income.
+- **Finance tracking:** one ledger records both what the club takes in and what it spends. An exec who pays for something personally files it as an expense against their own name, and it stands as money owed until an admin marks it reimbursed.
+- **Receipt photos:** an expense can carry a photo of its receipt, attached when the expense is filed or added later. It is optional, and it is frozen once the expense has been reimbursed, so the evidence behind a settled payment cannot be swapped afterwards.
 - **Announcements** — post announcements to the membership.
 - **Themed confirmation dialogs** — every "are you sure?" prompt is now a branded in-app dialog rather than the browser's plain grey pop-up.
 

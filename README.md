@@ -21,7 +21,7 @@ apps/
   bot/           Discord bot — plain Node, no framework, no runtime deps
 packages/
   shared/        ELO rating engine, Zod validators, email + push senders
-  ui/            Reusable React component library (~2 dozen components)
+  ui/            Reusable React component library (31 components)
   config/        Shared configuration (placeholder — nothing imports it yet)
 supabase/
   migrations/    Database schema, functions, RLS — applied MANUALLY, never by CI

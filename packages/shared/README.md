@@ -9,7 +9,7 @@ at `src/index.ts`, and the apps list it in `transpilePackages`. There is no buil
 step and no `dist/`.
 
 ```sh
-npm run test -w @badminton/shared        # vitest — 73 test files
+npm run test -w @badminton/shared        # vitest — 76 test files
 npm run type-check -w @badminton/shared
 ```
 
@@ -31,7 +31,7 @@ src/
 ```
 
 `utils/` is where most of the club's actual rules live, one concern per file,
-all pure. That is why the package carries 73 test files and the apps' route
+all pure. That is why the package carries 76 test files and the apps' route
 handlers carry almost none.
 
 ## The barrel has rules

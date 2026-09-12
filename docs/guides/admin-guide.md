@@ -79,11 +79,23 @@ Seasons are the backbone — sessions and fees attach to the active season.
 
 ---
 
-## Fees (admin only)
+## Finances
+
+The console calls this page **Finances**.
 
 - Fees follow the **active season** and its track amounts.
 - Track who has paid / owes.
-- *(Online payment collection is on the roadmap — today this is tracking.)*
+- *(Online payment collection is on the roadmap: today this is tracking.)*
+
+**Who sees what.** Every exec can open Finances and read the **Expenses** tab, including the receipt behind any row. The club fee roster and other income are not part of that: those need their own permission. Filing, editing, reimbursing or deleting an expense each need a permission too, granted on the **Permissions** page or held by an admin. So an officer with no grants sees the spending and changes none of it.
+
+### Expenses, and getting your money back
+
+- An exec who pays for something out of their own pocket files it on the **Expenses** tab with themselves recorded as the person who paid. It then sits as money the club owes them until an admin marks it **reimbursed**.
+- **Attach a photo of the receipt** when filing the expense, or add one later by editing it. This is optional. A receipt can be lost, emailed, or never printed, and the expense record stands on its own without one.
+- Accepted formats are JPEG, PNG and WebP, up to 8 MB.
+- Anyone who can read the Expenses tab can open the photo through the **Receipt** link on that row.
+- **Once an expense is marked reimbursed, its receipt is frozen.** The photo is the evidence for a payment the club has already made, so it cannot be changed after the fact.
 
 ---
 

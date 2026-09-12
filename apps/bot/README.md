@@ -20,7 +20,7 @@ the design is in [`docs/design/discord-bot.md`](../../docs/design/discord-bot.md
 ```sh
 npm run build -w bot      # tsc → dist/
 npm run start -w bot      # node dist/index.js, listens on $PORT (default 3002)
-npm run test -w bot       # vitest, ~29 suites
+npm run test -w bot       # vitest, 37 suites
 npm run register -w bot   # push the slash-command definitions to Discord
 ```
 

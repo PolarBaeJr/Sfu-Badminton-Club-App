@@ -32,7 +32,7 @@ production.
 | `start` | serve a production build on 3001 |
 | `lint` | `next lint` |
 | `type-check` | `tsc --noEmit` |
-| `test` | Vitest, one run (~79 suites in `src/lib/__tests__`) |
+| `test` | Vitest, one run (89 suites in `src/lib/__tests__`, 93 across the app) |
 
 > `type-check` runs separately in CI and is not implied by `build` or `test`.
 > Run it at the repo root before pushing.
