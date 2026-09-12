@@ -2,7 +2,7 @@
 
 A members' web app (installable PWA) for running a university badminton club: a live **ELO ladder** (singles + doubles), **seasons & fees**, **sessions with attendance**, a full **tournament system**, and a private **admin console** — plus a public landing page, leaderboard, and exec roster.
 
-**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin) · **Status:** deployed to production, not yet released to members (September 2026) · **Version:** see `version` in the root `package.json` (also shown in the app under Settings → About)
+**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin) · **Status:** first official release (September 2026) · **Version:** see `version` in the root `package.json` (also shown in the app under Settings → About)
 
 > `badminton.polardev.org` is **staging**, not a second live site. Its database is wiped and refreshed from production nightly — see [docs/STAGING.md](docs/STAGING.md).
 
