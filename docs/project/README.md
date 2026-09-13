@@ -2,7 +2,7 @@
 
 *A living overview of the club's app: what it is, what's built, what's next, and how it's kept safe and running. Written for the executive team — no engineering background needed.*
 
-**Status:** **First official release** (September 2026). General sign-up opens with the semester.
+**Status:** Built and deployed to production. **The first official release to members is Monday 2026-09-14**, so it is not live to them yet. General sign-up opens with the semester.
 **Live at:** [sfubadminton.com](https://sfubadminton.com) — admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin)
 
 > `badminton.polardev.org` is **staging**, not the live site. It runs against a
