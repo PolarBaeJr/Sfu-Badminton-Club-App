@@ -211,6 +211,7 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
       // Destructive or identity-altering roster work.
       'players.remove.write',
       'players.merge.write',
+      'players.discordlink.write',
       'players.deletion.cancel.write',
       'players.reliability.write',
       // Setting or moving money, as opposed to seeing it.

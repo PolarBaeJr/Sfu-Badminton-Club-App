@@ -698,6 +698,228 @@ export async function mergePlayers(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Force-link a Discord account
+// ---------------------------------------------------------------------------
+// 00165 gave a member `/link`: they run it, spend a single-use token, and their
+// Discord account is attached to their roster row. That remains the ordinary
+// path and nothing here relaxes its expiry or its single use. What did not
+// exist was any way for an officer to do it FOR somebody, so the member who
+// will not or cannot walk that flow could not be linked at all.
+//
+// THE CONSOLE CANNOT STRIP ROLES FROM THE ACCOUNT IT DISPLACES, and must not
+// pretend to. It holds no Discord token. The mechanism is the tombstone: an
+// AFTER-row trigger on player_discord_links queues the displaced id into
+// discord_role_revocations, and the bot's sweep is what actually takes the
+// roles off. Everything this file has to get right is making that trigger fire.
+
+/** What a force-link would do, as the server sees it. Read-only. */
+export interface DiscordForceLinkPreview {
+  discordUserId: string;
+  targetName: string;
+  currentDiscordUserId: string | null;
+  conflictPlayerId: string | null;
+  conflictPlayerName: string | null;
+}
+
+// The message the SQL path already uses for this case (consume_discord_link_token
+// in 00165), kept word for word so a member hears the same sentence whichever
+// door refused them.
+const DISCORD_ALREADY_LINKED = 'That Discord account is already linked to a different member.';
+
+/**
+ * Validate the id and read the two facts both entry points need.
+ *
+ * EVERY EXPORTED PARAMETER OF A SERVER ACTION IS A CLIENT-CONTROLLED POST
+ * FIELD, not something the panel decides: the id arrives as whatever the caller
+ * put in the request body. So it is validated here rather than trusted, and the
+ * shape is the one the player app's link route already enforces
+ * (apps/player/src/app/api/discord/link/route.ts).
+ */
+async function discordForceLinkFacts(
+  adminClient: ReturnType<typeof createAdminClient>,
+  playerId: string,
+  discordUserId: string,
+): Promise<DiscordForceLinkPreview & { discordUserId: string }> {
+  const trimmed = discordUserId.trim();
+  if (!/^\d{5,25}$/.test(trimmed)) {
+    throw new ExpectedError(
+      'That is not a Discord user ID. In Discord, turn on Settings, Advanced, Developer Mode, '
+      + 'then right-click the member and choose Copy User ID. It is a number, not their username.',
+    );
+  }
+
+  const { data: target } = await adminClient
+    .from('players')
+    .select('id, full_name')
+    .eq('id', playerId)
+    .maybeSingle();
+  if (!target) throw new ExpectedError('That member no longer exists.');
+
+  // Who holds this snowflake now. FOR THE MESSAGE ONLY: the UNIQUE index on
+  // player_discord_links.discord_user_id is the actual guarantee, and the write
+  // below still handles the refusal, because two officers can pass this check at
+  // the same moment and only one of them can win the insert.
+  const { data: owner } = await adminClient
+    .from('player_discord_links')
+    .select('player_id')
+    .eq('discord_user_id', trimmed)
+    .maybeSingle();
+  let conflictPlayerId: string | null = null;
+  let conflictPlayerName: string | null = null;
+  if (owner && owner.player_id !== playerId) {
+    conflictPlayerId = owner.player_id;
+    const { data: other } = await adminClient
+      .from('players')
+      .select('full_name')
+      .eq('id', owner.player_id)
+      .maybeSingle();
+    conflictPlayerName = other?.full_name ?? null;
+  }
+
+  // What this member is linked to TODAY, read before anything is written,
+  // because after the write it is unrecoverable: this is the account the
+  // upsert displaces.
+  const { data: current } = await adminClient
+    .from('player_discord_links')
+    .select('discord_user_id')
+    .eq('player_id', playerId)
+    .maybeSingle();
+
+  return {
+    discordUserId: trimmed,
+    targetName: target.full_name,
+    currentDiscordUserId: current?.discord_user_id ?? null,
+    conflictPlayerId,
+    conflictPlayerName,
+  };
+}
+
+/**
+ * The dry run of forceLinkDiscordAccount, over the same row, writing nothing.
+ *
+ * NOTHING IT RETURNS IS TRUSTED BY THE CONFIRM STEP. forceLinkDiscordAccount
+ * re-runs the capability check, the validation and both reads itself, so this
+ * is only what the officer is shown before deciding. A preview that the write
+ * then believed would be a client-supplied fact wearing a server's clothes.
+ */
+export async function previewDiscordForceLink(
+  playerId: string,
+  discordUserId: string,
+): Promise<ActionResult<DiscordForceLinkPreview>> {
+  return runAction(async () => {
+    await requireCapability('players.discordlink.write');
+    const adminClient = createAdminClient();
+    return discordForceLinkFacts(adminClient, playerId, discordUserId);
+  });
+}
+
+export async function forceLinkDiscordAccount(
+  playerId: string,
+  discordUserId: string,
+  reason: string,
+): Promise<ActionResult<{ displacedDiscordUserId: string | null }>> {
+  return runAction(async () => {
+    const admin = await requireCapability('players.discordlink.write');
+    // The service-role client, because it is the only role with any grant on
+    // player_discord_links at all: 00165 revokes the table from PUBLIC, anon
+    // and authenticated, and leaves RLS on with zero policies.
+    const adminClient = createAdminClient();
+
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      throw new ExpectedError('Say why this account is being linked by hand.');
+    }
+
+    const facts = await discordForceLinkFacts(adminClient, playerId, discordUserId);
+    if (facts.conflictPlayerId) {
+      throw new ExpectedError(
+        facts.conflictPlayerName
+          ? `That Discord account is already linked to ${facts.conflictPlayerName}. Unlink it there first.`
+          : DISCORD_ALREADY_LINKED,
+      );
+    }
+
+    // Re-linking to the same id displaces nothing, which is the NULLIF the SQL
+    // path returns for this case (consume_discord_link_token, 00165).
+    const displacedDiscordUserId =
+      facts.currentDiscordUserId && facts.currentDiscordUserId !== facts.discordUserId
+        ? facts.currentDiscordUserId
+        : null;
+
+    // ONE UPSERT, CONFLICT TARGET `player_id`. THIS SHAPE IS LOAD-BEARING AND
+    // IS NOT INTERCHANGEABLE WITH THE ALTERNATIVES.
+    //
+    // queue_discord_role_revocation() (supabase/migrations/00165_discord_links.sql)
+    // is an AFTER INSERT OR UPDATE OR DELETE ... FOR EACH ROW trigger on this
+    // table, and it is what takes the club roles off the account being
+    // displaced. It tombstones OLD.discord_user_id into
+    // discord_role_revocations on DELETE always, and on UPDATE ONLY when
+    // `OLD.discord_user_id IS DISTINCT FROM NEW.discord_user_id`. So:
+    //
+    //   - A plain INSERT violates the player_id primary key on a re-link, so
+    //     the re-link simply fails.
+    //   - `ignoreDuplicates: true` turns that failure into a silent no-op: the
+    //     action reports success, the link never moves, and the displaced
+    //     account keeps its club roles for good.
+    //   - A DELETE followed by an INSERT does tombstone the displaced account
+    //     correctly: the trigger's second half only clears a tombstone naming
+    //     NEW.discord_user_id, and that is the ARRIVING account, not the
+    //     displaced one. It is rejected for a different reason. It is two
+    //     PostgREST round trips with no transaction around them, so a failure
+    //     between them leaves the member with no link row at all while the old
+    //     account has already been queued for a strip.
+    //
+    // NO TEST IN THIS REPO CAN CATCH ANY OF THAT, because every test here mocks
+    // PostgREST and none of them run the trigger. The UPDATE path is the only
+    // one that both satisfies the IS DISTINCT FROM condition and gets there in a
+    // single statement, so the write has to be one upsert that conflicts on
+    // player_id and updates in place.
+    // last_synced_at goes back to null so the bot re-syncs this member's roles
+    // from scratch rather than trusting a sync that happened to the old account.
+    const { error } = await adminClient
+      .from('player_discord_links')
+      .upsert(
+        {
+          player_id: playerId,
+          discord_user_id: facts.discordUserId,
+          linked_at: new Date().toISOString(),
+          last_synced_at: null,
+        },
+        { onConflict: 'player_id' },
+      );
+    if (error) {
+      // The UNIQUE on discord_user_id, which is the real guarantee behind the
+      // pre-check above and the one that holds when two officers race.
+      if (error.code === '23505' || error.message.includes('player_discord_links_discord_user_id_key')) {
+        throw new ExpectedError(DISCORD_ALREADY_LINKED);
+      }
+      throw new Error(error.message);
+    }
+
+    // THE DISPLACED ID GOES IN THE REASON, not only in old_value. Two things
+    // erase it otherwise: a refused audit insert is retried WITHOUT
+    // old_value/new_value (see logAdminAudit), and the tombstone that currently
+    // names it is deleted by the bot as soon as the sweep clears it. Put it in
+    // the one field the degraded row keeps and it survives both.
+    await logAdminAudit(adminClient, {
+      actor_id: admin.id,
+      action_type: 'discord_link_forced',
+      target_type: 'player',
+      target_id: playerId,
+      old_value: { discord_user_id: facts.currentDiscordUserId },
+      new_value: { discord_user_id: facts.discordUserId },
+      reason: displacedDiscordUserId
+        ? `${trimmedReason} (displaced Discord account ${displacedDiscordUserId}, which loses its club roles on the next sweep)`
+        : trimmedReason,
+    }, { playerId });
+
+    revalidatePath('/players');
+    revalidatePath(`/players/${playerId}`);
+    return { displacedDiscordUserId };
+  });
+}
+
 /**
  * Resolve a permission review left by a roster claim (00132).
  *

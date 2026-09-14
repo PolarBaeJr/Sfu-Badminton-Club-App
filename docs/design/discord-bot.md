@@ -170,6 +170,26 @@ password and never becomes an identity provider.
 Together: **one Discord account ↔ one badminton account.** No sharing, no proxy
 registration through a second Discord identity.
 
+### The admin-initiated path
+
+An officer holding `players.discordlink.write` can attach a Discord account to a member
+from the console, on that member's own record, without the member running `/link`.
+
+This does **not** relax the token. `link_token` still expires in 5 to 10 minutes and is
+still single-use, because the console neither issues nor accepts one: it writes the link
+row directly under the service role, and records who did it, to whom, and why.
+
+**The cardinality above is unchanged.** The console's write is the same single upsert on
+`player_discord_links` conflicting on `player_id` that the token path performs, so both
+UNIQUE constraints still hold and re-linking a member still displaces exactly one Discord
+account. Displacing it is what queues the role revocation, which is why the shape of that
+write is load-bearing rather than an implementation detail.
+
+The first bullet below is **stale for this change.** The privilege-escalation guard lists
+columns on `players`, and 00165 chose the separate `player_discord_links` table precisely
+to sidestep it. No column is added to `players` here, so there is nothing for that guard
+to cover and no guard update belongs in that migration.
+
 Two implementation notes specific to this codebase:
 
 - Adding `discord_user_id` to `players` (or a `player_discord_links` table) touches the

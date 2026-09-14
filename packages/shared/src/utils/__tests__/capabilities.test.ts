@@ -20,7 +20,7 @@ import {
 } from '../access-level';
 import { CAPABILITY_GATES, ENFORCEMENT_POINTS } from '../capability-gates';
 
-// 120 capabilities is 120 promises that something is enforced. This suite is
+// 121 capabilities is 121 promises that something is enforced. This suite is
 // what keeps the vocabulary closed: it pins the list literally, refuses the
 // shapes that would let one capability quietly imply another, and asserts that
 // every one of them names a place in the app that reads it.
@@ -38,9 +38,20 @@ describe('the capability vocabulary', () => {
   //
   // It is NOT a new AREA, and the test below is why that matters — a `discord`
   // area would need a `discord.page`, and there is no Discord page to open.
-  it('is exactly 120 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(120);
-    expect(new Set(CAPABILITIES).size).toBe(120);
+  //
+  // 120 BECAME 121 with `players.discordlink.write`, the console attaching a
+  // Discord account to a member without the member. A new capability rather
+  // than a reuse of `players.merge.write`, which is the nearest neighbour:
+  // merging folds two roster rows into a single member, while this attaches an
+  // EXTERNAL identity to a roster row that is already whole. No column on
+  // `players` moves and the row it writes lives in a table of its own.
+  //
+  // Not a new area either, for the reason the entry above is not: a `discord`
+  // area would need a `discord.page`, and this panel lives on the member page
+  // behind that page's key.
+  it('is exactly 121 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(121);
+    expect(new Set(CAPABILITIES).size).toBe(121);
   });
 
   it('has 16 areas, every one of them used', () => {
@@ -165,7 +176,7 @@ describe('CAPABILITY_GATES', () => {
   // The failure it guards against is the opposite one — a site disappearing
   // while the entry claiming it stays. `tournaments.draw.participants.remove.write`
   // itself survives, still gated on removeParticipantFromEvent, and no
-  // capability was added or removed there: CAPABILITIES is 120 above, and the
+  // capability was added or removed there: CAPABILITIES is 121 above, and the
   // one added by `players.consoleaccess.write` is the 134th site — setConsoleAccess,
   // which no other capability claims.
   // 133 BECAME 137 over two changes to the Court Management tab.
@@ -173,7 +184,7 @@ describe('CAPABILITY_GATES', () => {
   // setMatchCourt (136), then setMatchLive (137) once it turned out that
   // `tournament_matches.status = 'live'` had no writer anywhere in either app —
   // see 00136. Three new sites, NO new capability and none removed: CAPABILITIES
-  // is still 120 above. All three are the desk answering or acting on "are you
+  // is still 121 above. All three are the desk answering or acting on "are you
   // here", which is why they merged rather than minting keys; the reason is
   // argued in that entry's `merged` prose, which this file's next test requires.
   //
@@ -185,21 +196,31 @@ describe('CAPABILITY_GATES', () => {
   // 138 BECAME 139 with the expense receipt route (00231):
   // app/fees/receipt/[id]/route.ts GET, which signs a short-lived URL for the
   // photo attached to an expense. One new site, NO new capability: CAPABILITIES
-  // is still 120 above. It merged into `fees.expenses.read` rather than minting
+  // is still 121 above. It merged into `fees.expenses.read` rather than minting
   // a key because rendering a ledger row and opening its receipt are the same
   // act by the same person, and a separate capability would have meant an admin
   // ticking two boxes to grant one thing. The reason is argued in that entry's
   // `merged` prose, which this file's next test requires.
-  it('names 139 distinct enforcement points, none of them claimed twice', () => {
+  // 139 BECAME 142 with `players.discordlink.write`: one capability and THREE
+  // sites, the largest single jump in this list, and each one is the same act
+  // reached differently. forceLinkDiscordAccount performs it,
+  // previewDiscordForceLink is the dry run of it over the same row, and the
+  // member page's discord link fetch is the reading of what it has already
+  // done. That third one is gated here rather than on `players.read` because
+  // the link row is not roster data: whoever may read the roster has no claim
+  // by that alone on which Discord account a member holds. The reason they
+  // merged is argued in that entry's `merged` prose, which this file's next
+  // test requires.
+  it('names 142 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(139);
-    expect(new Set(sites).size).toBe(139);
-    expect(ENFORCEMENT_POINTS).toBe(139);
+    expect(sites.length).toBe(142);
+    expect(new Set(sites).size).toBe(142);
+    expect(ENFORCEMENT_POINTS).toBe(142);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -808,11 +829,11 @@ describe('EDITOR_OFFERABLE', () => {
 // ---------------------------------------------------------------------------
 
 describe('permits', () => {
-  it('makes an admin a superuser BY LEVEL, holding all 120', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 121', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(120);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(121);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

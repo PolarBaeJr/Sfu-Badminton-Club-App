@@ -134,6 +134,16 @@ const TODAY: Row[] = [
   // baseline somebody deliberately puts it in — see the EDITOR_OFFERABLE block
   // in capabilities.test.ts, which is where that decision is pinned.
   { capability: 'players.consoleaccess.write',         admin: T, exec: F, trainer: F, was: "permissions.write + isAdminActor() — actions/permissions.ts setConsoleAccess" },
+  // THE ROW WITH NO PREDECESSOR TO TRANSCRIBE. Every other `was:` in this table
+  // records a door that already existed. This one records that there was none:
+  // the only way a Discord account ever reached a member was the member running
+  // /link and spending a token, and the console had no surface for it at all.
+  // So these three answers are a CHOICE rather than a transcription, and the
+  // choice is admin only, matching the row above. It is identity-altering, and
+  // it is so in a direction that reaches somebody who is not the target, since
+  // re-linking displaces whatever account was there and that account loses its
+  // club roles on the next sweep.
+  { capability: 'players.discordlink.write',           admin: T, exec: F, trainer: F, was: 'no prior gate: there was no admin surface, only the member-run /link token flow' },
 
   // ---- seasons ---------------------------------------------------------
   { capability: 'seasons.page',                        admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('internal') — seasons/page.tsx:16" },

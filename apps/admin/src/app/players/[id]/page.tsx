@@ -12,9 +12,10 @@ import { VarsityNotes } from './varsity-notes';
 import { ReliabilityEditor } from './reliability-editor';
 import { CancelDeletionButton } from './cancel-deletion-button';
 import { RequireWaiverResignatureButton } from './require-waiver-resignature-button';
+import { DiscordLinkPanel } from './discord-link-panel';
 import { Panel, PanelLabel, PanelRow } from './panel';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Shield, Trophy, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight, SquarePen } from 'lucide-react';
+import { ArrowLeft, Shield, Trophy, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight, SquarePen, Link2 } from 'lucide-react';
 import Link from 'next/link';
 import { SeasonPicker } from './season-picker';
 import { RecentMatches } from './recent-matches';
@@ -82,6 +83,11 @@ export default async function PlayerDetailPage({
   const canConsoleAccess = viewerSet.has('players.consoleaccess.write');
   const canComposePermissions = viewerSet.has('permissions.write');
   const showPermissions = canComposePermissions || canConsoleAccess;
+  // ATTACHING A DISCORD ACCOUNT BY HAND, off the same resolved set. It gates the
+  // fetch below as well as the panel, because what the panel shows is not roster
+  // data: it is the current state of the act this capability performs, so
+  // `players.read` is not the right question to ask about it.
+  const canForceLink = viewerSet.has('players.discordlink.write');
   // Nobody with a claim on this member at all. Every query below is skipped —
   // including the one that decides notFound(), which is deliberate: whether a
   // particular id exists is itself something the roster would tell them.
@@ -135,6 +141,7 @@ export default async function PlayerDetailPage({
     { data: walkoverEvents },
     { data: tournamentNoShows },
     { data: baselineRows },
+    { data: discordLink },
   ] = await Promise.all([
     // The member row itself stays: it is what notFound() reads, what the
     // identity header draws, and what seeds the edit form for somebody who may
@@ -202,6 +209,19 @@ export default async function PlayerDetailPage({
           .select('id, name, capabilities, builtin_role, created_at, updated_at')
           .order('name')
       : Promise.resolve({ data: [] }),
+    // The Discord link, behind the force-link capability rather than behind
+    // players.read, for the reason given where that flag is resolved. SKIPPED
+    // and not merely undrawn, exactly like the detail queries above: a row that
+    // reaches this component reaches the RSC payload whether or not anything
+    // renders it, and which Discord account a member holds is not something to
+    // ship to a browser that may not ask for it.
+    canForceLink
+      ? supabase
+          .from('player_discord_links')
+          .select('discord_user_id, linked_at, last_synced_at')
+          .eq('player_id', id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   if (!player) notFound();
@@ -655,6 +675,27 @@ export default async function PlayerDetailPage({
               </div>
             ))}
           </dl>
+        </Panel>
+      )}
+
+      {/* DISCORD, AND DELIBERATELY OUTSIDE THE THREE-COLUMN GRID ABOVE.
+          `panelCount` counts exactly three panels and the grid's column
+          arithmetic is derived from it, so a fourth panel up there would change
+          the layout for every viewer, including the ones who cannot see this.
+
+          The member-run /link flow is unchanged and is still the ordinary way
+          this row appears. What this panel adds is the officer's path for the
+          member who will not or cannot walk it. */}
+      {canForceLink && (
+        <Panel title="Discord" icon={<Link2 className="h-4 w-4 text-[var(--text-muted)]" />}>
+          <div className="divide-y divide-[var(--border)]">
+            <PanelRow
+              label="Discord account"
+              value={discordLink?.discord_user_id ?? 'Not linked'}
+            />
+            {discordLink && <PanelRow label="Linked" value={day(discordLink.linked_at)} />}
+          </div>
+          <DiscordLinkPanel playerId={player.id} playerName={player.full_name} />
         </Panel>
       )}
 

@@ -38,8 +38,10 @@ export {
   mergePlayers,
   resolvePrivilegeClaimReview,
   resolveEloReview,
+  previewDiscordForceLink,
+  forceLinkDiscordAccount,
 } from './actions/players';
-export type { MergePreviewRow } from './actions/players';
+export type { MergePreviewRow, DiscordForceLinkPreview } from './actions/players';
 
 export {
   voidMatch,

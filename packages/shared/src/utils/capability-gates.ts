@@ -131,6 +131,19 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     label: 'Give or take console access', area: 'players', group: null, mode: 'write',
     gate: 'actions/permissions.ts setConsoleAccess',
   },
+  'players.discordlink.write': {
+    label: 'Link a Discord account', area: 'players', group: null, mode: 'write',
+    gate: 'actions/players.ts forceLinkDiscordAccount',
+    also: [
+      'actions/players.ts previewDiscordForceLink',
+      'app/players/[id]/page.tsx discord link fetch',
+    ],
+    merged:
+      'The preview is the dry run of the same act, over the same row. The panel fetch ' +
+      'is the third because the link row is not roster data and so is not covered by ' +
+      'players.read: what it shows is the current state of the very act this ' +
+      'capability performs, so the capability that performs it is what guards reading it.',
+  },
 
   // ---- seasons -----------------------------------------------------------
   'seasons.page': {

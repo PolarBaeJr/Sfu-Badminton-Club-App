@@ -206,6 +206,29 @@ export const CAPABILITIES = [
   // refuses the save in the same words.
   'players.consoleaccess.write',
 
+  // ATTACHING A DISCORD ACCOUNT TO A MEMBER from the console, without the
+  // member. The member-run `/link` flow still exists and is still the ordinary
+  // path; this is the one for the member who will not or cannot walk it.
+  //
+  // A NEW CAPABILITY RATHER THAN `players.merge.write`, which is the nearest
+  // neighbour and the wrong one. Merging folds two roster rows into a single
+  // member. This attaches an EXTERNAL identity to a roster row that is already
+  // whole: no column on `players` is touched, and the row it writes lives in a
+  // table of its own. Reusing the merge string would hand everyone who holds it
+  // a second act sharing none of the bounds that made the first one safe.
+  //
+  // ADMIN-ONLY, and deliberately absent from OFFERABLE_BEYOND_EXEC for the same
+  // reason `players.merge.write` and `players.remove.write` are withheld below:
+  // it is identity-altering, and it is so in a direction that reaches somebody
+  // who is not the target. Re-linking a member displaces whatever Discord
+  // account they were linked to, and that account loses its club roles on the
+  // next sweep without anybody asking it.
+  //
+  // NEEDS `players.page` ALONGSIDE IT, exactly as its neighbour above does: the
+  // resolver prunes any capability whose area page is absent, so granted alone
+  // it evaporates.
+  'players.discordlink.write',
+
   // ---- seasons -----------------------------------------------------------
   'seasons.page',
   'seasons.create.write',

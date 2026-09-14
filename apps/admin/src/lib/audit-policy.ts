@@ -73,6 +73,13 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'permission_baseline_deleted',
   'platform_setting_updated',
 
+  // Identity. No RISK_CLASS_PATTERNS prefix matches this name, so nothing would
+  // force it into the required class: it is classified by hand because linking
+  // a Discord account from the console DISPLACES whatever account was attached,
+  // and the displaced id survives nowhere else once the bot clears its
+  // tombstone.
+  'discord_link_forced',
+
   // Moderation and account standing.
   'player_banned',
   'player_reinstated',
