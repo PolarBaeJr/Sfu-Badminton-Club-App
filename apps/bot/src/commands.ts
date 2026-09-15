@@ -10,6 +10,7 @@ import {
   fetchSelfRoles,
   fetchSessions,
   fetchTournaments,
+  forceLinkDiscordAccount,
   isMemberBanned,
   RateLimitedError,
   removeSelfRole,
@@ -387,6 +388,73 @@ export const COMMAND_DEFINITIONS = [
     options: [],
   },
   {
+    // The Discord-side door to the console's force-link panel. The member it is
+    // for is the one who cannot walk /link: no browser session they can get to,
+    // an account they have lost, or a signup still pending approval.
+    //
+    // EXEC_ONLY IS GATE 1 ONLY, and on the doctrine at the top of this file that
+    // makes it TIDINESS RATHER THAN SECURITY: it keeps the command out of every
+    // member's picker and it is not authorization. Discord will execute it for
+    // anyone a server admin grants it to, and the bot in a second guild carries
+    // no such filter at all. THE REAL BOUNDARY IS THE ROUTE'S CAPABILITY CHECK,
+    // which resolves the caller's own club account and asks it for
+    // `players.discordlink.write`: the same capability the console's panel
+    // requires, through the same resolver.
+    name: 'forcelink',
+    description: 'Connect a Discord account to a club member who cannot run /link',
+    default_member_permissions: EXEC_ONLY,
+    // A guild only, and LOAD-BEARING rather than copied: EXEC_ONLY is a
+    // guild-only filter with no meaning in a DM, so without this any member
+    // could DM the bot and gate 1 would be decorative.
+    dm_permission: false,
+    options: [
+      {
+        type: 6, // USER
+        name: 'account',
+        description: 'The Discord account to connect',
+        required: true,
+      },
+      {
+        // A STRING, NOT A SECOND USER OPTION, and the club member cannot be one:
+        // a USER option is populated from the server's own member list, and the
+        // member being linked is by definition somebody the club's records and
+        // Discord do not yet agree about. A handle is the only key the bot holds
+        // for a club member who is not in that list.
+        //
+        // It also has to be a string to autocomplete at all: Discord accepts
+        // autocomplete only on STRING, INTEGER and NUMBER, which is the same
+        // limitation /profile's `member` option runs into (see :170-173).
+        //
+        // THE DESCRIPTION SAYS WHAT THE PICKER CANNOT OFFER, deliberately. The
+        // suggestions come from the club ladder, and a pending or hidden member
+        // has no ladder row, so the member this command exists for is exactly
+        // the one that will never be suggested. An officer who does not know
+        // that reads an empty picker as "no such member".
+        type: 3, // STRING
+        name: 'member',
+        description: 'Club handle. The picker only suggests ladder members; type one in full.',
+        required: true,
+        autocomplete: true,
+      },
+      {
+        // AN OPTION, NOT A MODAL, unlike /bug, /feedback, /announce and /say.
+        // Those four collect a paragraph, and a slash option is one line that
+        // truncates at the width of the input. This is one sentence saying why,
+        // which fits.
+        //
+        // And a modal could not carry this command anyway: a modal's only
+        // component is a text input, so the USER option above has nowhere to
+        // live in one. Going that way would force the two-interaction split
+        // /announce uses, with both Discord ids packed into a custom_id and read
+        // back out, for no gain.
+        type: 3, // STRING
+        name: 'reason',
+        description: 'Why this is being done by hand (goes in the club audit log)',
+        required: true,
+      },
+    ],
+  },
+  {
     name: 'setup',
     description: 'Create and wire up the club roles in this server',
     options: [
@@ -617,8 +685,18 @@ export const COMMAND_DEFINITIONS = [
  * /discord MUST NEVER BE ADDED TO THIS SET. It makes no network call of any
  * kind, so there is nothing to defer for, and deferring buys a second HTTP
  * round trip to Discord to say the same thing a few hundred milliseconds later.
+ *
+ * /forcelink IS HERE ON PURPOSE, and the two warnings elsewhere in this file
+ * about NOT deferring do not apply to it. Those are about what deferring costs:
+ * a deferred interaction can no longer open a MODAL (so /link, /bug, /feedback,
+ * /announce and /say cannot be here), and a deferred acknowledgement fixes the
+ * reply as ephemeral (so /guidepost cannot, because its reply is the public
+ * guide). /forcelink opens no modal, takes its reason as a plain string option,
+ * and answers ephemerally anyway. What it does do is call an app route that
+ * makes about six round trips and then strip roles in every guild, which does
+ * not fit in three seconds with any margin.
  */
-export const DEFERRED_COMMANDS = new Set(['setup', 'config']);
+export const DEFERRED_COMMANDS = new Set(['setup', 'config', 'forcelink']);
 
 /**
  * Who ran the command, and where.
@@ -2151,6 +2229,184 @@ export async function handleUnlink(context: InteractionContext) {
       : // Deliberately not "some roles could not be removed": the tombstone
         // means it is a matter of when, not whether.
         'Disconnected. Your roles will update shortly.'
+  );
+}
+
+/**
+ * /forcelink: attach a Discord account to a club member, on an officer's word.
+ *
+ * THE DISCORD-SIDE DOOR TO THE CONSOLE'S FORCE-LINK PANEL. The app route
+ * (apps/player/src/app/api/discord/force-link/route.ts) owns every rule there
+ * is: who may do this, which member the handle names, the shape of the write and
+ * what goes in the audit log. This function collects three options, renders one
+ * bespoke sentence per refusal, and then does the ONE thing the console cannot.
+ *
+ * WHAT THE CONSOLE CANNOT DO: strip the displaced account's club roles now. The
+ * admin app holds no Discord token, so its half of this feature can only rely on
+ * 00165's tombstone and the nightly sweep. The bot has a token, so it does the
+ * same fast path /unlink does and the officer sees it happen.
+ *
+ * Deferred; see DEFERRED_COMMANDS for why that is correct here and wrong for the
+ * modal commands.
+ */
+export async function handleForceLink(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  if (!context.discordUserId) {
+    // Should be unreachable, since Discord always identifies the caller. Checked
+    // because this id is the OFFICER: the route resolves it to a club account and
+    // asks that account for the capability, so a null here would ask it to check
+    // the permissions of "null".
+    return ephemeral("Couldn't work out who you are on Discord. Try again.");
+  }
+
+  const targetDiscordUserId = String(option(options, 'account') ?? '');
+  const handle = String(option(options, 'member') ?? '');
+  const reason = String(option(options, 'reason') ?? '');
+
+  const result = await forceLinkDiscordAccount({
+    discordUserId: context.discordUserId,
+    targetDiscordUserId,
+    handle,
+    reason,
+  });
+
+  if (!result.ok) {
+    // MATCHED AGAINST A CLOSED SET, never printed. The refusal is a code the
+    // route chose from a union; turning it into a sentence is this file's job,
+    // and interpolating whatever arrived would put an app response body into a
+    // Discord message.
+    switch (result.refusal) {
+      case 'not_linked':
+        // THE CALLER'S OWN LINK, not the target's. The route resolves the
+        // officer by their Discord id, so an officer who is not linked has no
+        // club account for the capability check to ask about. Said in full
+        // because the first instinct on reading "not linked" here is to assume
+        // this command can repair it, and it cannot: it is the one case
+        // /forcelink can never fix.
+        return ephemeral(
+          'Run `/link` on your own account first. This command acts as **your** club ' +
+            'account, and this Discord account is not connected to one yet, so there is ' +
+            'no officer for the club to check.\n\n' +
+            'It cannot fix your own account either. Use `/link`, or ask another exec to ' +
+            'run this for you, or use the admin console, which signs you in through a ' +
+            'browser instead. Nothing was changed.'
+        );
+      case 'no_such_member':
+        return ephemeral(
+          'No club member has that handle. The suggestions only cover members who are on ' +
+            'the club ladder, so somebody pending approval or hidden from it is never ' +
+            'offered: type their handle in full instead of picking it. Nothing was changed.'
+        );
+      case 'already_linked_elsewhere':
+        return ephemeral(
+          'That Discord account is already connected to a different club member. ' +
+            'Disconnect it from that member first, in the console under Players, then run ' +
+            'this again. Nothing was changed.'
+        );
+      case 'no_reason':
+        return ephemeral(
+          'Say why this is being done by hand. It is recorded in the club audit log beside ' +
+            'your name, and that record is what makes linking an account on somebody ' +
+            "else's behalf acceptable. Nothing was changed."
+        );
+      default:
+        // 'not_permitted', and anything a newer app adds. Deliberately says
+        // nothing about which check failed: a banned exec and a member who never
+        // had the capability get the same sentence.
+        return ephemeral(
+          'You do not have permission to connect Discord accounts to club members. An ' +
+            'admin grants that in the console under Permissions. Nothing was changed.'
+        );
+    }
+  }
+
+  const { displacedDiscordUserId, memberName, alreadyThatAccount } = result;
+  const member = memberName ?? 'that member';
+  const account = `<@${targetDiscordUserId}>`;
+
+  // The link is already written, and 00165's trigger has already tombstoned the
+  // displaced account, so its roles WILL come off at the next sweep whatever
+  // happens below. This is the fast path, exactly as /unlink's is.
+  let cleared = false;
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    console.error('[bot] /forcelink: DISCORD_BOT_TOKEN is not set, roles left to the sweep');
+  } else {
+    try {
+      const { registry, auditChannelId } = await loadConfig();
+      const api = new DiscordApi({ token });
+
+      // ONLY THE DISPLACED ACCOUNT IS TOUCHED HERE, and only to strip it.
+      //
+      // Nothing is granted to the ARRIVING account: a grant needs the member's
+      // desired role set, which comes from the app's linked-members read that
+      // the sweep does, and syncMemberEverywhere with a null desired state is a
+      // strip by definition. The arriving account picks its roles up on the next
+      // sync, which is what the reply says.
+      const outcomes = displacedDiscordUserId
+        ? await syncMemberEverywhere(api, registry, displacedDiscordUserId, null, {
+            // Including the membership role, on /unlink's argument: an account
+            // the app no longer knows must not keep the role that opens the
+            // member-only channels.
+            revokeMembership: true,
+          })
+        : [];
+
+      cleared = outcomes.every((o) => !o.forbidden && !o.failed);
+      // ONLY for the displaced account, and only when the strip really landed
+      // everywhere. A 403 is the ordinary answer for an exec, and clearing a
+      // tombstone on one would discard the revocation permanently.
+      //
+      // NEVER FOR THE ARRIVING ACCOUNT: the trigger's second half already
+      // deleted any tombstone naming it (00165), so there is nothing to clear,
+      // and clearing on its behalf here would be a second copy of a rule the
+      // database already enforces.
+      if (displacedDiscordUserId && cleared) await clearRevocations([displacedDiscordUserId]);
+
+      // ONE ENTRY, MENTIONS ONLY. audit.ts's rule is Discord ids rendered as
+      // mentions and nothing else: no player ids, no real names, no handles. The
+      // officer's ephemeral reply above may name the member because only they
+      // read it; an audit channel inherits whatever permissions somebody set on
+      // it.
+      //
+      // The summary is keyed to the DISPLACED account, because these outcomes are
+      // its role removals. Keying it to the arriving account would render the
+      // removals beside the account that just gained a link.
+      await postAuditEntry(api, auditChannelId, {
+        kind: 'member',
+        reason: 'linked',
+        discordUserIds: displacedDiscordUserId
+          ? [targetDiscordUserId, displacedDiscordUserId]
+          : [targetDiscordUserId],
+        summary: summaryFromOutcomes(displacedDiscordUserId ?? targetDiscordUserId, outcomes),
+      });
+    } catch (error) {
+      // Logged and continued, for /unlink's reason: the write is done and the
+      // tombstone guarantees the strip, so failing the command here would invite
+      // an officer to run it again against a link that is already correct.
+      console.error('[bot] /forcelink: immediate strip failed, left to the sweep:', error);
+    }
+  }
+
+  if (alreadyThatAccount) {
+    return ephemeral(
+      `${account} was already connected to **${member}**. Nothing moved, and their roles ` +
+        'are checked on the next sync.'
+    );
+  }
+
+  const opening = `**${member}** is now connected to ${account}. Their club roles are applied on the next sync.`;
+  if (!displacedDiscordUserId) return ephemeral(opening);
+
+  return ephemeral(
+    `${opening}\n\n` +
+      (cleared
+        ? `<@${displacedDiscordUserId}> was disconnected, and its club roles have been removed.`
+        : // Deliberately not "some roles could not be removed": the tombstone
+          // means it is a matter of when, not whether.
+          `<@${displacedDiscordUserId}> was disconnected. Its club roles will be removed shortly.`)
   );
 }
 
@@ -3918,6 +4174,8 @@ export async function dispatch(
         return await handleLink(context);
       case 'unlink':
         return await handleUnlink(context);
+      case 'forcelink':
+        return await handleForceLink(options, context);
       case 'setup':
         return await handleSetup(options, context);
       case 'config':

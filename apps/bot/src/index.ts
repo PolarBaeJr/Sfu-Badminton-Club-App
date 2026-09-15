@@ -847,6 +847,16 @@ const server = createServer(async (req, res) => {
   // APPLICATION_COMMAND_AUTOCOMPLETE — the /profile handle picker, refiring on
   // every keystroke.
   //
+  // TWO COMMANDS ARRIVE HERE NOW, and this branch needed no change for the
+  // second. /forcelink's `member` option is a handle picker too, and
+  // handleProfileAutocomplete reads the FOCUSED option rather than one named
+  // 'handle' (commands.ts:1024-1041), so it answers the new slot for free. That
+  // is the property its own comment predicted, now load-bearing rather than
+  // hypothetical: matching by name would have answered the wrong slot the moment
+  // a second autocompleting option existed. The name is left alone deliberately
+  // -- renaming it is a rename of an exported function across the test suite,
+  // and it buys nothing this comment does not.
+  //
   // CANNOT BE DEFERRED. Type 8 within about three seconds is the only valid
   // answer there is, and the fall-through below would reply type 1, which the
   // picker renders as "loading options failed".

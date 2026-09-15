@@ -582,6 +582,79 @@ export async function deleteLink(discordUserId: string): Promise<boolean> {
   return body.unlinked === true;
 }
 
+// ---- FORCE LINK ------------------------------------------------------------
+
+/** Why the app declined to link by hand. Closed set; see the route. */
+export type ForceLinkRefusal =
+  | 'not_linked'
+  | 'not_permitted'
+  | 'no_such_member'
+  | 'already_linked_elsewhere'
+  | 'no_reason';
+
+export type ForceLinkResult =
+  | {
+      ok: true;
+      /** The account this member was linked to before, which is now loose. */
+      displacedDiscordUserId: string | null;
+      memberName: string | null;
+      /** The link already named this account, so nothing actually moved. */
+      alreadyThatAccount: boolean;
+    }
+  | { ok: false; refusal: ForceLinkRefusal };
+
+/**
+ * Attach a Discord account to a club member on an officer's word, for /forcelink.
+ *
+ * TWO DISCORD IDS, AND THEY ARE NOT INTERCHANGEABLE. `discordUserId` is the
+ * CALLER, the officer who typed the command, and it is what the app resolves to a
+ * club account to check `players.discordlink.write` against. Swapping the two
+ * would ask the app whether the member being linked is allowed to link
+ * themselves, which is the whole gate inverted.
+ *
+ * A BESPOKE FETCH RATHER THAN send(), for two independent reasons:
+ *
+ *   send()'s TIMEOUT_MS is 2.5s (see the constant), sized for a command racing
+ *   Discord's three-second interaction deadline. /forcelink defers first, so it
+ *   is not racing that, and this route makes about six round trips: the caller
+ *   read, the member read, the conflict read, the current-link read, the upsert
+ *   and the audit insert. Failing at 2.5s would abandon a write that was about
+ *   to succeed, and a half-done one here means a link row with no audit row.
+ *
+ *   send() maps 409 to SweepManagedRoleError and 429 to RateLimitedError, and
+ *   both sentences would be wrong here. This route answers neither status: every
+ *   refusal it has arrives as a 200 carrying a code, for the reason its own
+ *   header gives.
+ *
+ * The `refusal` is matched against the union above at the call site rather than
+ * printed. Nothing the app puts in a response body is ever interpolated into a
+ * Discord message.
+ */
+export async function forceLinkDiscordAccount(input: {
+  discordUserId: string;
+  targetDiscordUserId: string;
+  handle: string;
+  reason: string;
+}): Promise<ForceLinkResult> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/force-link', base), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!response.ok) {
+    throw new AppApiError(`POST /api/discord/force-link -> ${response.status}`);
+  }
+
+  return (await response.json()) as ForceLinkResult;
+}
+
 /**
  * Write a guild's role map, for /setup.
  *
