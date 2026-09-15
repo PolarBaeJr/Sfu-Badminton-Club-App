@@ -185,6 +185,44 @@ UNIQUE constraints still hold and re-linking a member still displaces exactly on
 account. Displacing it is what queues the role revocation, which is why the shape of that
 write is load-bearing rather than an implementation detail.
 
+### The Discord door: `/forcelink`
+
+The same act is also reachable from Discord. An officer runs `/forcelink` naming the
+Discord account, the member's handle, and a reason. The command collects three options and
+renders the answer; every rule lives in a service-authenticated POST route in the player
+app, so the two doors cannot drift apart on what is allowed.
+
+**Two gates, and only the second is security.** `default_member_permissions: EXEC_ONLY`
+(the string `'0'`) hides the command until a server admin grants it to a role, which keeps
+exec tooling out of every member's picker. That is tidiness. Discord will execute the
+command for anyone that admin grants it to, and the bot in a second guild carries no such
+filter at all. The boundary is the route's capability check on the caller's LINKED member:
+`consoleAccessLevelFor` resolves standing first, so a banned officer is refused for the
+same reason they cannot open the console panel, and `permits()` then asks that account for
+`players.discordlink.write`.
+
+**`/forcelink` cannot rescue an unlinked officer.** The capability check resolves the
+CALLER's linked member, so an officer whose own Discord account is not linked has no club
+account to ask about and is refused with `not_linked`. The command is only ever a linked
+officer fixing somebody else. An officer in that position uses `/link`, asks another
+officer to run it for them, or uses the console panel, which authenticates through a
+browser session rather than through a Discord id.
+
+**The route reads `players.handle` directly, not the ladder,** because the member this
+feature exists for is very often pending approval with no ladder row at all. Two
+consequences are worth keeping in mind. The lookup uses `.eq` and never `.ilike`:
+underscore is a single-character LIKE wildcard and underscores are legal under 00092's
+handle CHECK, so an ilike on `a_b` would also match `axb` and link the wrong member. And
+the capability check sits ABOVE the lookup, because reversed, `no_such_member` becomes a
+handle-existence oracle for members the ladder deliberately hides.
+
+**Neither the command nor the capability arrives by deploying.** A slash command exists in
+Discord only after a manual `npm run register -w bot`; no deploy registers commands, so
+until it runs the command is live in the image and invisible in Discord with clean logs. A
+server admin must then grant it to a role. And `players.discordlink.write` sits outside the
+offerable ceiling, so it appears in no editor tick box and is granted explicitly, per
+person, by an admin.
+
 The first bullet below is **stale for this change.** The privilege-escalation guard lists
 columns on `players`, and 00165 chose the separate `player_discord_links` table precisely
 to sidestep it. No column is added to `players` here, so there is nothing for that guard
