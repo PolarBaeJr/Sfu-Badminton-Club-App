@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Tabs } from '@badminton/ui';
 import { Composer, type DiscordContext } from './actions';
 import { DiscordSend } from './discord-send';
@@ -40,8 +40,11 @@ export function ComposerSwitch({
   /** Server roles the picker had to drop. Passed through: see DiscordSend. */
   ambiguousRoleNames: string[];
 }) {
-  const [mode, setMode] = useState<ComposerMode>(modes[0] ?? 'website');
-  const { pending } = useDiscordConsole();
+  // MODE IS NOT LOCAL STATE ANY MORE. The list card in the right column follows
+  // it (right-rail.tsx), and the provider is the only boundary that spans both
+  // columns. Which mode opens is still `modes[0]`, handed to the provider as
+  // `initialMode` in page.tsx.
+  const { pending, mode, setMode } = useDiscordConsole();
 
   // EDITING A DISCORD MESSAGE HAS TO SHOW THE DISCORD COMPOSER. The Edit button
   // is in the card below this one, and without this an exec who was writing a

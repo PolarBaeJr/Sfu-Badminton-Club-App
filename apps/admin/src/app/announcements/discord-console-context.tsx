@@ -1,16 +1,23 @@
 'use client';
 
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import type { ComposerMode } from './announcement-shape';
 
-// The one piece of state the Discord composer and the list underneath it share.
+// The state the Discord composer and the recent list share.
 //
-// WHY A CONTEXT AND NOT A PROP. The two halves are siblings in two different
-// cards: the composer is inside `ComposerSwitch` in the card at the top of the
-// left column, and the recent list is its own card below, because a queued row
+// WHY A CONTEXT AND NOT A PROP. The two halves sit in different grid COLUMNS:
+// the composer is inside `ComposerSwitch` at the top of the left column, and
+// the recent list is a PANEL of the single list card in the right one
+// (`right-rail.tsx`), shown when that card's switch is on Discord. A queued row
 // that is about to fail must stay on screen while somebody goes back to the
-// website composer. Pressing Edit in the second has to fill the first, and
-// hoisting either one into the other would either nest a card inside a card or
-// hide a failure behind a tab.
+// website composer, so it cannot be folded into the composer's own card.
+// Pressing Edit in that list has to fill the composer, and with the whole grid
+// between them a prop would have to be threaded down through every card in both
+// columns.
+//
+// IT ALSO CARRIES THE MODE, because the list card follows the composer: picking
+// "Discord message" on the left swaps that card from the posted list to the
+// Discord log. The provider is the only boundary that spans both columns.
 //
 // IT CARRIES A NUDGE AS WELL AS AN EDIT. The list polls itself while anything
 // is queued, but a message that has just been sent or re-queued should appear
@@ -49,13 +56,31 @@ interface DiscordConsoleValue {
   /** Bumped by the composer after a send or an edit. */
   nudge: number;
   refreshRecent: () => void;
+  /**
+   * Which composer is showing.
+   *
+   * IT LIVES HERE RATHER THAN IN `ComposerSwitch` because the list card in the
+   * other column follows it: picking "Discord message" swaps that card from the
+   * posted list to the Discord log. The provider already spans the whole grid,
+   * so it is the only place both columns can read.
+   */
+  mode: ComposerMode;
+  setMode: (mode: ComposerMode) => void;
 }
 
 const DiscordConsoleContext = createContext<DiscordConsoleValue | null>(null);
 
-export function DiscordConsoleProvider({ children }: { children: ReactNode }) {
+export function DiscordConsoleProvider({
+  children,
+  initialMode,
+}: {
+  children: ReactNode;
+  /** Which composer opens. `composerModes` puts website first when both are held. */
+  initialMode: ComposerMode;
+}) {
   const [pending, setPending] = useState<PendingDiscordEdit | null>(null);
   const [nudge, setNudge] = useState(0);
+  const [mode, setMode] = useState<ComposerMode>(initialMode);
 
   const value = useMemo<DiscordConsoleValue>(
     () => ({
@@ -64,13 +89,15 @@ export function DiscordConsoleProvider({ children }: { children: ReactNode }) {
       clearEdit: () => setPending(null),
       nudge,
       refreshRecent: () => setNudge((n) => n + 1),
+      mode,
+      setMode,
     }),
-    [pending, nudge],
+    [pending, nudge, mode],
   );
 
   return (
-    // NO ELEMENT OF ITS OWN. This wraps a grid column, and any wrapper here
-    // would become the grid item instead of the column it holds.
+    // NO ELEMENT OF ITS OWN. This wraps the whole grid, and any wrapper here
+    // would become the grid's only child, collapsing both columns into one.
     <DiscordConsoleContext.Provider value={value}>{children}</DiscordConsoleContext.Provider>
   );
 }

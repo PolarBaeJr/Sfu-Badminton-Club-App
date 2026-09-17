@@ -1,7 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button, Badge, Input, MultiSelect, Select, Textarea, Switch } from '@badminton/ui';
+import {
+  Button,
+  Badge,
+  Input,
+  MultiSelect,
+  Select,
+  Textarea,
+  Switch,
+  ResponsiveTable,
+  TableCard,
+  Atomic,
+} from '@badminton/ui';
 import { DISCORD_BUTTON_SETS, isDiscordButtonSet } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import {
@@ -858,46 +869,112 @@ export function DiscordRecent({ recent }: { recent: OutboxRow[] }) {
     }
   };
 
+  // EDIT IS OFFERED ON A ROW DISCORD HAS SEEN, and that is not the same as a
+  // sent one: saving an edit re-queues the row, so the badge beside this button
+  // reads QUEUED for up to five minutes while the message is still very much in
+  // the channel. Gating on the badge would take the button away from the one
+  // person who has just noticed a second typo.
+  //
+  // IT IS THE POSTED LIST'S OWN CONTROL (actions.tsx:537), deliberately: the two
+  // lists are now two panels of one card, so the same affordance has to sit in
+  // the same place and look the same in both. Returns null rather than a
+  // disabled button when Discord has never seen the row, which leaves the cell
+  // empty exactly as the posted table does for a viewer who cannot act.
+  const editButton = (row: OutboxRow) =>
+    row.discordMessageId ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        className="min-h-[44px] min-w-[44px]"
+        onClick={() => openForEdit(row)}
+        disabled={opening !== null}
+      >
+        {opening === row.id ? 'Opening…' : 'Edit'}
+      </Button>
+    ) : null;
+
+  // THE SAME TABLE THE POSTED LIST DRAWS (page.tsx:664). These two are panels of
+  // a single card that a switch moves between, so anything that differs between
+  // them reads as the card breaking rather than as the list changing. The column
+  // classes are copied verbatim from that table on purpose: `MICRO` here is
+  // 10px/0.16em and the posted headers are 9px/0.14em, so reusing `MICRO` for
+  // the `th` would leave the two headers subtly mismatched.
   return (
-    <div className="flex flex-col gap-2">
-      <span className={`${MICRO} text-[var(--mute)]`}>Recently sent to Discord</span>
-      {rows.map((row) => {
+    <ResponsiveTable
+      cards={rows.map((row) => {
         const badge = stateBadge(row);
         return (
-          <div key={row.id} className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <Badge variant={badge.variant}>{badge.label}</Badge>
-              <span className={`${MICRO} text-[var(--mute)]`}>{shortTime(row.createdAt)}</span>
-              {row.ping && <Badge variant="danger">PINGED</Badge>}
-              {/* EDIT IS OFFERED ON A ROW DISCORD HAS SEEN, and that is not the
-                  same as a sent one: saving an edit re-queues the row, so the
-                  badge beside this button reads QUEUED for up to five minutes
-                  while the message is still very much in the channel. Gating on
-                  the badge would take the button away from the one person who
-                  has just noticed a second typo. */}
-              {row.discordMessageId && (
-                <button
-                  type="button"
-                  onClick={() => openForEdit(row)}
-                  disabled={opening !== null}
-                  className={`${MICRO} ml-auto text-[var(--ink-2)] hover:text-[var(--ink)] underline underline-offset-2 disabled:opacity-50`}
-                >
-                  {opening === row.id ? 'Opening…' : 'Edit'}
-                </button>
-              )}
-            </div>
-            <span className="text-xs text-[var(--text-secondary)] break-words">
-              {row.preview}
-            </span>
-            {row.error && (
-              // Discord's own words. The person who can fix a missing
-              // permission is the one reading this, and paraphrasing the
-              // error would take away the only clue they have.
-              <span className="text-xs text-[var(--red)] break-words">{row.error}</span>
-            )}
-          </div>
+          <TableCard
+            key={row.id}
+            title={row.preview}
+            badges={
+              <>
+                <Badge variant={badge.variant}>{badge.label}</Badge>
+                {row.ping && <Badge variant="danger">PINGED</Badge>}
+              </>
+            }
+            fields={[
+              { label: 'Sent', value: <Atomic>{shortTime(row.createdAt)}</Atomic> },
+              ...(row.error ? [{ label: 'Error', wide: true, value: row.error }] : []),
+            ]}
+            actions={editButton(row)}
+          />
         );
       })}
-    </div>
+    >
+      <table className="w-full">
+        <thead>
+          <tr>
+            <th className="px-5 pb-2 pt-4 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              Message
+            </th>
+            <th className="px-5 pb-2 pt-4 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              Sent
+            </th>
+            <th className="px-5 pb-2 pt-4 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <span className="sr-only">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const badge = stateBadge(row);
+            return (
+              <tr key={row.id} className="border-t border-[var(--line)] align-top">
+                <td className="px-5 py-4">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant={badge.variant}>{badge.label}</Badge>
+                    {row.ping && <Badge variant="danger">PINGED</Badge>}
+                  </div>
+                  <div className="mt-2 text-[15px] leading-snug text-[var(--text-primary)] break-words">
+                    {row.preview}
+                  </div>
+                  {row.error && (
+                    // Discord's own words. The person who can fix a missing
+                    // permission is the one reading this, and paraphrasing the
+                    // error would take away the only clue they have. NOT set in
+                    // `MICRO` like the posted byline beside it: that utility
+                    // uppercases, and shouting a sentence Discord wrote makes it
+                    // harder to read at the moment it matters most.
+                    <div className="mt-1.5 text-xs text-[var(--red)] break-words">{row.error}</div>
+                  )}
+                </td>
+                <td className="px-5 py-4 text-right">
+                  <span className={`${MICRO} text-[var(--mute)]`}>
+                    <Atomic>{shortTime(row.createdAt)}</Atomic>
+                  </span>
+                </td>
+                <td className="px-5 py-4 text-right">
+                  <div className="flex justify-end [&_button]:min-h-[44px] [&_button]:min-w-[44px]">
+                    {editButton(row)}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </ResponsiveTable>
   );
 }

@@ -13,6 +13,7 @@ import { readOutboxRows, type OutboxRow } from '@/lib/discord-outbox';
 import { mergeGuildRoles } from '@/lib/discord-mentions';
 import { DiscordRecent } from './discord-send';
 import { ComposerSwitch } from './composer-switch';
+import { RightRail } from './right-rail';
 import { DiscordConsoleProvider } from './discord-console-context';
 import {
   DISCORD_CHANNEL_SETTINGS,
@@ -507,231 +508,240 @@ export default async function AnnouncementsPage() {
         watermark="N"
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-5 items-start">
-        {/* ---------------------------------------------------------------- */}
-        {/* LEFT — the composer, and what Discord already has                */}
-        {/* ---------------------------------------------------------------- */}
-        {/* THE PROVIDER WRAPS BOTH CARDS AND RENDERS NO ELEMENT OF ITS OWN.
-            Pressing Edit in the recent list has to fill the composer above it,
-            and the two are siblings; this is the only thing they share. The
-            cards below stay server-rendered, because children handed to a
-            client component are not made into client components. */}
-        <DiscordConsoleProvider>
-          <div className="flex flex-col gap-5">
-            <Card className="p-5">
-              {/* `modes.length > 0`, NOT `canCreate`, and that is a deliberate
-                  behaviour change. Until now a viewer holding
-                  `announcements.discord.write` but not
-                  `announcements.create.write` was told writing was not part of
-                  their access in this column, while a working Discord composer
-                  sat in the other one. The refusal below now means "neither
-                  composer", not "not the website composer". */}
-              {modes.length > 0 ? (
-                <ComposerSwitch
-                  modes={modes}
-                  pushReachable={pushReachable}
-                  discord={discord}
-                  channelConfigured={channelConfigured}
-                  // GATED HERE TOO, not only at the read. Props to a client
-                  // component are serialised into the RSC payload whether or not
-                  // the component renders, so a viewer without the Discord key
-                  // would otherwise be shipped the club's channel ids. The roles
-                  // beside it need no gate: their query never ran.
-                  channels={canSendDiscord ? discordChannels : []}
-                  roles={discordRoles}
-                  ambiguousRoleNames={ambiguousRoleNames}
-                />
-              ) : (
-                // Withheld, not empty. A blank left column on the widest half of
-                // the screen reads as a page that failed to load.
-                <div className="flex flex-col gap-2">
-                  <span className={`${MICRO} text-[var(--mute)]`}>New post</span>
-                  <p className="text-sm text-[var(--text-secondary)]">
-                    Writing announcements is not part of your access. You can read what the club has
-                    posted below.
-                  </p>
-                </div>
-              )}
-            </Card>
-
-            {/* Its own card, below whichever composer is showing, so a queued or
-                failed row stays visible in both modes. */}
-            {canSendDiscord && outboxRows.length > 0 && (
+      {/* THE PROVIDER WRAPS THE WHOLE GRID AND RENDERS NO ELEMENT OF ITS OWN.
+          Pressing Edit in the recent list has to fill the composer, and the two
+          now sit in different columns, so the boundary has to span both of them.
+          A context provider emits no DOM node, so the grid below still has
+          exactly two children and the two-column layout is unchanged. The cards
+          inside stay server-rendered, because children handed to a client
+          component are not made into client components. */}
+      <DiscordConsoleProvider initialMode={modes[0] ?? 'website'}>
+        <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-5 items-start">
+          {/* ---------------------------------------------------------------- */}
+          {/* LEFT — the composer                                              */}
+          {/* ---------------------------------------------------------------- */}
+            <div className="flex flex-col gap-5">
               <Card className="p-5">
-                <DiscordRecent recent={outboxRows} />
+                {/* `modes.length > 0`, NOT `canCreate`, and that is a deliberate
+                    behaviour change. Until now a viewer holding
+                    `announcements.discord.write` but not
+                    `announcements.create.write` was told writing was not part of
+                    their access in this column, while a working Discord composer
+                    sat in the other one. The refusal below now means "neither
+                    composer", not "not the website composer". */}
+                {modes.length > 0 ? (
+                  <ComposerSwitch
+                    modes={modes}
+                    pushReachable={pushReachable}
+                    discord={discord}
+                    channelConfigured={channelConfigured}
+                    // GATED HERE TOO, not only at the read. Props to a client
+                    // component are serialised into the RSC payload whether or not
+                    // the component renders, so a viewer without the Discord key
+                    // would otherwise be shipped the club's channel ids. The roles
+                    // beside it need no gate: their query never ran.
+                    channels={canSendDiscord ? discordChannels : []}
+                    roles={discordRoles}
+                    ambiguousRoleNames={ambiguousRoleNames}
+                  />
+                ) : (
+                  // Withheld, not empty. A blank left column on the widest half of
+                  // the screen reads as a page that failed to load.
+                  <div className="flex flex-col gap-2">
+                    <span className={`${MICRO} text-[var(--mute)]`}>New post</span>
+                    <p className="text-sm text-[var(--text-secondary)]">
+                      Writing announcements is not part of your access. You can read what the club has
+                      posted below.
+                    </p>
+                  </div>
+                )}
               </Card>
-            )}
-          </div>
-        </DiscordConsoleProvider>
-
-        {/* ---------------------------------------------------------------- */}
-        {/* RIGHT — reach, then the posted list                              */}
-        {/* ---------------------------------------------------------------- */}
-        <div className="flex flex-col gap-5">
-          {lastPost && (
-            <Card className="p-5">
-              <div className="flex items-center justify-between">
-                <span className={`${MICRO} text-[var(--mute)]`}>Reach · last post</span>
-              </div>
-
-              {lastPercent === null ? (
-                // The numerator is announcements data and the viewer holds the
-                // key for it; the denominator is the roster and they do not.
-                // Half an answer, said as half an answer.
-                <>
-                  <div className="mt-3 flex items-baseline gap-3">
-                    <span className="font-mono text-[36px] leading-none text-[var(--text-primary)]">
-                      {lastOpened}
-                    </span>
-                    <span className={`${MICRO} text-[var(--mute)]`}>opened</span>
-                  </div>
-                  <p className="mt-3 text-xs text-[var(--text-muted)]">
-                    The share of the audience is not shown to you — it needs roster access.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div className="mt-3 flex items-baseline gap-3">
-                    <span className="font-mono text-[36px] leading-none text-[var(--text-primary)]">
-                      {lastPercent}%
-                    </span>
-                    <span className={`${MICRO} text-[var(--mute)]`}>
-                      <Atomic>{`${lastOpened} of ${lastAudience} opened`}</Atomic>
-                    </span>
-                  </div>
-
-                  <div
-                    className="mt-4 flex h-[10px] w-full overflow-hidden bg-[var(--surface-2)]"
-                    role="img"
-                    aria-label={`${lastOpened} of ${lastAudience} members opened this post`}
-                  >
-                    <div className="bg-[var(--red)]" style={{ width: `${lastPercent}%` }} />
-                  </div>
-
-                  <div className="mt-2 flex items-center justify-between">
-                    <span className={`${MICRO} text-[var(--mute)]`}>Opened</span>
-                    <span className={`${MICRO} text-[var(--mute)]`}>Not yet</span>
-                  </div>
-                </>
-              )}
-
-              <p className="mt-4 text-xs text-[var(--text-muted)] leading-relaxed">
-                {lastPost.title} · {audienceLabel(lastPost.target_audience)}
-              </p>
-            </Card>
-          )}
-
-          <Card padding={false}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--line)]">
-              <span className={`${MICRO} text-[var(--mute)]`}>Posted</span>
-              {/* The mockup said THIS TERM. This list is deliberately NOT
-                  term-scoped — an admin has to be able to reach a retired
-                  season's posts to edit or remove them, and 00085 retires them
-                  from the MEMBER feed, not from here. So the slot says what the
-                  list actually is. */}
-              <span className={`${MICRO} text-[var(--mute)]`}>
-                {rows.length} {rows.length === 1 ? 'post' : 'posts'}
-              </span>
             </div>
 
-            {rows.length === 0 ? (
-              <div className="p-5">
-                <EmptyState
-                  title="Nothing posted yet"
-                  description="The first announcement you write will land here and on every member's phone."
-                />
-              </div>
-            ) : (
-              <ResponsiveTable
-                cards={rows.map((row) => (
-                  <TableCard
-                    key={row.id}
-                    // A pinned post carries the same 2px red edge on both
-                    // renderings, so the phone and the laptop agree about which
-                    // notice is sitting at the top of the feed.
-                    className={row.pinned ? 'border-l-2 border-l-[var(--red)]' : undefined}
-                    title={row.title}
-                    badges={
-                      <>
-                        <Badge variant={typeBadge(row.type).variant}>
-                          {typeBadge(row.type).label}
-                        </Badge>
-                        {row.status === 'draft' && <Badge variant="warning">DRAFT</Badge>}
-                        {row.pinned && <Badge variant="default">PINNED</Badge>}
-                      </>
-                    }
-                    fields={[
-                      { label: 'Posted', value: <Atomic>{shortDate(row.created_at)}</Atomic> },
-                      { label: 'Audience', value: audienceLabel(row.target_audience) },
-                      ...(discordChip(row) ? [{ label: 'Discord', value: discordChip(row) as string }] : []),
-                      ...(byline(row)
-                        ? [{ label: 'Detail', wide: true, value: byline(row) as string }]
-                        : []),
-                    ]}
-                    actions={rowActions(row)}
-                  />
-                ))}
-              >
-                <table className="w-full">
-                  <thead>
-                    <tr>
-                      <th className="px-5 pb-2 pt-4 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                        Post
-                      </th>
-                      <th className="px-5 pb-2 pt-4 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                        Posted
-                      </th>
-                      <th className="px-5 pb-2 pt-4 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                        <span className="sr-only">Actions</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr
+          {/* ---------------------------------------------------------------- */}
+          {/* RIGHT — reach, then one list card: posted, or Discord            */}
+          {/* ---------------------------------------------------------------- */}
+          <div className="flex flex-col gap-5">
+            {lastPost && (
+              <Card className="p-5">
+                <div className="flex items-center justify-between">
+                  <span className={`${MICRO} text-[var(--mute)]`}>Reach · last post</span>
+                </div>
+
+                {lastPercent === null ? (
+                  // The numerator is announcements data and the viewer holds the
+                  // key for it; the denominator is the roster and they do not.
+                  // Half an answer, said as half an answer.
+                  <>
+                    <div className="mt-3 flex items-baseline gap-3">
+                      <span className="font-mono text-[36px] leading-none text-[var(--text-primary)]">
+                        {lastOpened}
+                      </span>
+                      <span className={`${MICRO} text-[var(--mute)]`}>opened</span>
+                    </div>
+                    <p className="mt-3 text-xs text-[var(--text-muted)]">
+                      The share of the audience is not shown to you — it needs roster access.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-3 flex items-baseline gap-3">
+                      <span className="font-mono text-[36px] leading-none text-[var(--text-primary)]">
+                        {lastPercent}%
+                      </span>
+                      <span className={`${MICRO} text-[var(--mute)]`}>
+                        <Atomic>{`${lastOpened} of ${lastAudience} opened`}</Atomic>
+                      </span>
+                    </div>
+
+                    <div
+                      className="mt-4 flex h-[10px] w-full overflow-hidden bg-[var(--surface-2)]"
+                      role="img"
+                      aria-label={`${lastOpened} of ${lastAudience} members opened this post`}
+                    >
+                      <div className="bg-[var(--red)]" style={{ width: `${lastPercent}%` }} />
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className={`${MICRO} text-[var(--mute)]`}>Opened</span>
+                      <span className={`${MICRO} text-[var(--mute)]`}>Not yet</span>
+                    </div>
+                  </>
+                )}
+
+                <p className="mt-4 text-xs text-[var(--text-muted)] leading-relaxed">
+                  {lastPost.title} · {audienceLabel(lastPost.target_audience)}
+                </p>
+              </Card>
+            )}
+
+            {/* ONE CARD, TWO LISTS, and a switch that follows the composer.
+                `showDiscord` is the viewer's Discord key: without it there is
+                no second list, no switch, and this stays the posted list. */}
+            <RightRail
+              postedCount={rows.length}
+              discordCount={outboxRows.length}
+              showDiscord={canSendDiscord}
+              posted={
+                rows.length === 0 ? (
+                  <div className="p-5">
+                    <EmptyState
+                      title="Nothing posted yet"
+                      description="The first announcement you write will land here and on every member's phone."
+                    />
+                  </div>
+                ) : (
+                  <ResponsiveTable
+                    cards={rows.map((row) => (
+                      <TableCard
                         key={row.id}
-                        className={`border-t border-[var(--line)] align-top ${
-                          row.pinned ? 'border-l-2 border-l-[var(--red)]' : ''
-                        }`}
-                      >
-                        <td className="px-5 py-4">
-                          <div className="flex flex-wrap items-center gap-1.5">
+                        // A pinned post carries the same 2px red edge on both
+                        // renderings, so the phone and the laptop agree about which
+                        // notice is sitting at the top of the feed.
+                        className={row.pinned ? 'border-l-2 border-l-[var(--red)]' : undefined}
+                        title={row.title}
+                        badges={
+                          <>
                             <Badge variant={typeBadge(row.type).variant}>
                               {typeBadge(row.type).label}
                             </Badge>
                             {row.status === 'draft' && <Badge variant="warning">DRAFT</Badge>}
                             {row.pinned && <Badge variant="default">PINNED</Badge>}
-                          </div>
-                          <div className="mt-2 text-[15px] leading-snug text-[var(--text-primary)]">
-                            {row.title}
-                          </div>
-                          {(byline(row) || discordChip(row)) && (
-                            <div className={`mt-1.5 ${MICRO} text-[var(--mute)]`}>
-                              {[byline(row), discordChip(row) && `Discord: ${discordChip(row)}`]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-5 py-4 text-right">
-                          <span className={`${MICRO} text-[var(--mute)]`}>
-                            <Atomic>{shortDate(row.created_at)}</Atomic>
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-right">
-                          <div className="flex justify-end [&_button]:min-h-[44px] [&_button]:min-w-[44px]">
-                            {rowActions(row)}
-                          </div>
-                        </td>
-                      </tr>
+                          </>
+                        }
+                        fields={[
+                          { label: 'Posted', value: <Atomic>{shortDate(row.created_at)}</Atomic> },
+                          { label: 'Audience', value: audienceLabel(row.target_audience) },
+                          ...(discordChip(row) ? [{ label: 'Discord', value: discordChip(row) as string }] : []),
+                          ...(byline(row)
+                            ? [{ label: 'Detail', wide: true, value: byline(row) as string }]
+                            : []),
+                        ]}
+                        actions={rowActions(row)}
+                      />
                     ))}
-                  </tbody>
-                </table>
-              </ResponsiveTable>
-            )}
-          </Card>
+                  >
+                    <table className="w-full">
+                      <thead>
+                        <tr>
+                          <th className="px-5 pb-2 pt-4 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                            Post
+                          </th>
+                          <th className="px-5 pb-2 pt-4 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                            Posted
+                          </th>
+                          <th className="px-5 pb-2 pt-4 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                            <span className="sr-only">Actions</span>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row) => (
+                          <tr
+                            key={row.id}
+                            className={`border-t border-[var(--line)] align-top ${
+                              row.pinned ? 'border-l-2 border-l-[var(--red)]' : ''
+                            }`}
+                          >
+                            <td className="px-5 py-4">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <Badge variant={typeBadge(row.type).variant}>
+                                  {typeBadge(row.type).label}
+                                </Badge>
+                                {row.status === 'draft' && <Badge variant="warning">DRAFT</Badge>}
+                                {row.pinned && <Badge variant="default">PINNED</Badge>}
+                              </div>
+                              <div className="mt-2 text-[15px] leading-snug text-[var(--text-primary)]">
+                                {row.title}
+                              </div>
+                              {(byline(row) || discordChip(row)) && (
+                                <div className={`mt-1.5 ${MICRO} text-[var(--mute)]`}>
+                                  {[byline(row), discordChip(row) && `Discord: ${discordChip(row)}`]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-5 py-4 text-right">
+                              <span className={`${MICRO} text-[var(--mute)]`}>
+                                <Atomic>{shortDate(row.created_at)}</Atomic>
+                              </span>
+                            </td>
+                            <td className="px-5 py-4 text-right">
+                              <div className="flex justify-end [&_button]:min-h-[44px] [&_button]:min-w-[44px]">
+                                {rowActions(row)}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ResponsiveTable>
+                )
+              }
+              discord={
+                outboxRows.length === 0 ? (
+                  // A switch that lands on a blank panel reads as broken. The
+                  // old card was hidden outright when the outbox was empty;
+                  // now the tab exists, so the empty case has to say so.
+                  <div className="p-5">
+                    <EmptyState
+                      title="Nothing sent to Discord yet"
+                      description="Messages this console sends to the club's Discord channel are listed here."
+                    />
+                  </div>
+                ) : (
+                  // BARE, exactly like the posted table above. The table draws
+                  // its own `px-5`, so a padded box here would inset this list
+                  // further than the other one and the two panels would stop
+                  // lining up the moment you switched between them.
+                  <DiscordRecent recent={outboxRows} />
+                )
+              }
+            />
+          </div>
         </div>
-      </div>
+      </DiscordConsoleProvider>
     </div>
   );
 }
