@@ -108,7 +108,10 @@ function firstName(name: string): string {
 /** The id put on the viewer's own row, so "jump to my row" can scroll to it. */
 const MY_ROW_ID = 'my-ladder-row';
 
-function LadderRow({
+// Exported for the render test beside this file, nothing else imports it. The
+// subline it builds carries a flag whose correctness depends on which tab is
+// showing, and that is only observable in the rendered output.
+export function LadderRow({
   player,
   rank,
   isMe,
@@ -135,9 +138,17 @@ function LadderRow({
   const streak = formatStreak(
     player.ratings ? (isDoubles ? player.ratings.current_doubles_streak : player.ratings.current_singles_streak) : null,
   );
-  const provisional = player.ratings
-    ? (isDoubles ? player.ratings.doubles_provisional : player.ratings.singles_provisional)
-    : false;
+  // NOT on the tournament-points tab. These are the ELO provisional flags: they
+  // say how settled a rating is, and they describe nothing whatsoever about a
+  // points total. The metrics below already guard on !isTpts; this line was
+  // missed, so a points row rendered "@handle · Provisional" next to a tournament
+  // points figure, labelling it with another number's confidence. Worse, isTpts
+  // implies isDoubles is false, so it was specifically the SINGLES elo flag
+  // sitting beside a points total earned partly in doubles events.
+  const provisional =
+    !isTpts && player.ratings
+      ? (isDoubles ? player.ratings.doubles_provisional : player.ratings.singles_provisional)
+      : false;
 
   // Real name first, handle beside it. A row reading only `@kiera` tells a
   // reader less than both together do, and handle is nullable.
