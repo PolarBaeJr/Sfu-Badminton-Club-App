@@ -40,6 +40,12 @@ vi.mock('../audit.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../audit.js')>()),
   postAuditEntry,
 }));
+// MUST BE MOCKED, and it was not before. syncMembersNow loads config and builds a
+// Discord client of its own, so unmocked it reaches the network, throws, and is
+// swallowed by the grant's catch. Every test in this file passed that way, which
+// is exactly why a grant that never ran looked fine here.
+const { syncMembersNow } = vi.hoisted(() => ({ syncMembersNow: vi.fn() }));
+vi.mock('../member-sync.js', () => ({ syncMembersNow }));
 
 import { COMMAND_DEFINITIONS, DEFERRED_COMMANDS, dispatch, handleForceLink } from '../commands.js';
 
@@ -78,6 +84,11 @@ beforeEach(() => {
   });
   syncMemberEverywhere.mockResolvedValue(clean);
   postAuditEntry.mockResolvedValue(true);
+  syncMembersNow.mockResolvedValue({
+    summary: { added: 2, removed: 0, forbidden: 0, failed: 0, changes: [] },
+    api: {},
+    auditChannelId: 'audit-1',
+  });
 });
 
 afterEach(() => {
@@ -307,5 +318,143 @@ describe('a link that displaced nothing', () => {
 
     expect(postAuditEntry).not.toHaveBeenCalled();
     expect(reply.data.content).toContain('Kiera Tan');
+  });
+});
+
+describe('the grant, which is the half the sweep used to do', () => {
+  const displaced = () =>
+    forceLinkDiscordAccount.mockResolvedValue({
+      ok: true,
+      displacedDiscordUserId: OLD,
+      memberName: 'Kiera Tan',
+      alreadyThatAccount: false,
+    });
+
+  it('applies the ARRIVING account, never the displaced one', async () => {
+    displaced();
+
+    await run();
+
+    // The strip's account and the grant's account are different people. Passing
+    // the displaced id here would re-grant roles to the account just stripped.
+    expect(syncMembersNow).toHaveBeenCalledWith([ARRIVING]);
+    expect(syncMembersNow).not.toHaveBeenCalledWith([OLD]);
+  });
+
+  it('runs when the link displaced nothing at all', async () => {
+    // The ordinary way somebody says "their roles are missing" is an officer
+    // re-running /forcelink on an account that is already linked correctly.
+    // Nothing moves, and the grant is the entire point of the run.
+    await run();
+
+    expect(syncMemberEverywhere).not.toHaveBeenCalled();
+    expect(syncMembersNow).toHaveBeenCalledWith([ARRIVING]);
+  });
+
+  // THE REGRESSION TEST is the next one, and only the next one. The grant used to
+  // sit INSIDE the try wrapping the strip, so a THROW in the strip jumped to that
+  // catch and skipped the grant entirely. That made the worst case the one it
+  // failed in: Discord being unwell is precisely when a member's roles go missing
+  // and an officer reaches for this command. Verified by restoring the pre-fix
+  // commands.ts and watching it, alone out of 32, fail.
+  //
+  // The 403 test below passes against the nested version TOO, and that is not a
+  // weakness in it: a refused strip returns normally rather than throwing, so
+  // control reached the grant even then. It pins behaviour that was already
+  // correct, which is worth keeping and worth not mistaking for the regression.
+  it('STILL grants when the strip THROWS', async () => {
+    displaced();
+    syncMemberEverywhere.mockRejectedValue(new Error('discord down'));
+
+    const reply = await run();
+
+    expect(syncMembersNow).toHaveBeenCalledWith([ARRIVING]);
+    // And the officer is still told the link itself worked, because it did.
+    expect(reply.data.content).toContain('Kiera Tan');
+  });
+
+  it('STILL grants when Discord REFUSES the strip with a 403', async () => {
+    // A 403 is the ordinary answer for an exec whose top role outranks the bot,
+    // so this is not an exotic path.
+    displaced();
+    syncMemberEverywhere.mockResolvedValue(refused);
+
+    await run();
+
+    expect(syncMembersNow).toHaveBeenCalledWith([ARRIVING]);
+  });
+
+  it('files its own audit entry, keyed to the arriving account', async () => {
+    displaced();
+
+    await run();
+
+    // Two acts on two accounts, two entries. The strip's entry is first.
+    expect(postAuditEntry).toHaveBeenCalledTimes(2);
+    const grant = postAuditEntry.mock.calls[1][2];
+    expect(grant.kind).toBe('member');
+    expect(grant.reason).toBe('linked');
+    expect(grant.discordUserIds).toEqual([ARRIVING]);
+  });
+
+  it('names no member and no handle in the grant entry either', async () => {
+    await run();
+
+    const posted = JSON.stringify(postAuditEntry.mock.calls.at(-1)[2]);
+    expect(posted).not.toContain('Kiera Tan');
+    expect(posted).not.toContain('kiera');
+  });
+
+  it('does not fail the command when the grant itself throws', async () => {
+    // The link is written and the tombstone guarantees the strip, so a hiccup
+    // here must never tell the officer the force-link failed.
+    syncMembersNow.mockRejectedValue(new Error('app unreachable'));
+
+    const reply = await run();
+
+    expect(reply.data.content).toContain('Kiera Tan');
+    expect(reply.data.flags).toBe(64);
+  });
+
+  it('promises "shortly" rather than claiming roles it could not apply', async () => {
+    // forbidden or failed above zero means the grant did not fully land. Saying
+    // it had would send the officer away from a member still missing roles.
+    forceLinkDiscordAccount.mockResolvedValue({
+      ok: true,
+      displacedDiscordUserId: null,
+      memberName: 'Kiera Tan',
+      alreadyThatAccount: true,
+    });
+    syncMembersNow.mockResolvedValue({
+      summary: { added: 0, removed: 0, forbidden: 3, failed: 0, changes: [] },
+      api: {},
+      auditChannelId: 'audit-1',
+    });
+
+    const reply = await run();
+
+    expect(reply.data.content).toMatch(/shortly/);
+    expect(reply.data.content).not.toMatch(/have been applied/);
+  });
+
+  it('says the roles ARE applied when the sync came back clean', async () => {
+    forceLinkDiscordAccount.mockResolvedValue({
+      ok: true,
+      displacedDiscordUserId: null,
+      memberName: 'Kiera Tan',
+      alreadyThatAccount: true,
+    });
+
+    const reply = await run();
+
+    expect(reply.data.content).toMatch(/have been applied/);
+  });
+
+  it('is skipped entirely without a bot token', async () => {
+    delete process.env.DISCORD_BOT_TOKEN;
+
+    await run();
+
+    expect(syncMembersNow).not.toHaveBeenCalled();
   });
 });
