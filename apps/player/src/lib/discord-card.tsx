@@ -918,7 +918,16 @@ function RivalPanel({
  * that exists today — is not a gap, and the day awards ship the layout does not
  * change at all.
  */
-function Rail({ awards, provisional }: { awards: CardAward[]; provisional: boolean }) {
+function Rail({
+  awards,
+  provisional,
+  ranked,
+}: {
+  awards: CardAward[];
+  provisional: boolean;
+  /** Only a ranked card draws rating panels, so only it has clocks to explain. */
+  ranked: boolean;
+}) {
   return (
     <div
       style={{
@@ -962,6 +971,38 @@ function Rail({ awards, provisional }: { awards: CardAward[]; provisional: boole
             }}
           >
             * RATING STILL PROVISIONAL
+          </div>
+        ) : null}
+        {/* THE TWO NUMBERS IN A RATING PANEL ARE ON DIFFERENT CLOCKS, and the
+            card never said so. activate_season REBASES elo at a rollover but
+            resets no other counter, so the "24W 9L" and the "73% · W4" drawn
+            under that big figure are cumulative across every season the member
+            has played while the figure itself is not.
+
+            HERE AND NOT IN THE PANEL. StatPanel is a fixed 132px with room for
+            exactly two sub-lines, and satori CLIPS a fixed-height box rather
+            than overflowing it, so a third line would vanish in silence and
+            fail nothing -- the same trap rankSub records above. The rail is
+            this card's footnote home for precisely that reason, which is why
+            the provisional note already lives here.
+
+            DELIBERATELY TERSE. Awards fill this rail from the right and the row
+            is space-between, so every character spent here is headroom taken
+            from the day they ship. Measured against the rendered cards: the
+            club line and the provisional note together end near x=460 of 1000,
+            and this adds roughly 250px to a rail with about 490px spare. */}
+        {ranked ? (
+          <div
+            style={{
+              display: 'flex',
+              fontFamily: 'Barlow',
+              fontWeight: 600,
+              fontSize: 14,
+              letterSpacing: 1.7,
+              color: FAINT,
+            }}
+          >
+            SEASON ELO · ALL-TIME RECORD
           </div>
         ) : null}
       </div>
@@ -1318,7 +1359,7 @@ export function Card({
           </div>
         ) : null}
 
-        <Rail awards={profile.awards} provisional={isProvisional(profile)} />
+        <Rail awards={profile.awards} provisional={isProvisional(profile)} ranked={profile.ranked} />
       </div>
     </div>
   );
