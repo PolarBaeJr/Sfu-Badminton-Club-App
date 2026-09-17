@@ -34,6 +34,7 @@ import {
 } from './commands.js';
 import { DiscordApi, editDeferredReply } from './discord-api.js';
 import { warmHandles } from './handles.js';
+import { syncMembersNow } from './member-sync.js';
 import { sendMultipart } from './multipart.js';
 import { reconcile } from './reconcile.js';
 import { runSessionPings } from './session-pings.js';
@@ -170,27 +171,17 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
     body.reason === 'linked' || body.reason === 'unlinked' ? body.reason : 'resynced';
 
   try {
-    const { registry, auditChannelId } = await loadConfig();
-    const token = process.env.DISCORD_BOT_TOKEN;
-    if (!token) return send(res, 500, { error: 'DISCORD_BOT_TOKEN is not set' });
-
-    // The whole roster, then filtered. Wasteful by one request and correct by
-    // construction: the app remains the only thing that decides what a member
-    // is, and an id that is NOT in the list is a tombstone the app wants
-    // stripped — which this handles for free, because reconcile already reads
-    // a missing state as "strip everything".
-    const roster = await fetchLinkedMembers();
-    const members = (ids as string[]).map(
-      (id) => roster.find((m) => m.discordUserId === id) ?? { discordUserId: id, state: null }
-    );
-
-    const api = new DiscordApi({ token });
-    const summary = await reconcile(api, registry, members);
-    try {
-      await clearRevocations(summary.cleared);
-    } catch (error) {
-      console.error('[bot] could not clear revocations:', error);
+    // CHECKED HERE as well as inside syncMembersNow, which throws on the same
+    // condition. This endpoint answers a missing token with its own 500 body
+    // rather than the generic sync_failed, and that distinction is the whole
+    // value of it: one names the thing an operator can fix.
+    if (!process.env.DISCORD_BOT_TOKEN) {
+      return send(res, 500, { error: 'DISCORD_BOT_TOKEN is not set' });
     }
+
+    // The sync itself is shared with /forcelink; see member-sync.ts. The audit
+    // entry deliberately is not, which is why it is still written here.
+    const { summary, api, auditChannelId } = await syncMembersNow(ids as string[]);
 
     await postAuditEntry(api, auditChannelId, {
       kind: 'member',

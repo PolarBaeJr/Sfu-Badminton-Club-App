@@ -36,6 +36,7 @@ import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
 import { DiscordApi } from './discord-api.js';
 import { loadHandles, matchHandles } from './handles.js';
+import { syncMembersNow } from './member-sync.js';
 import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipRole } from './roles.js';
 import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
@@ -2241,10 +2242,11 @@ export async function handleUnlink(context: InteractionContext) {
  * what goes in the audit log. This function collects three options, renders one
  * bespoke sentence per refusal, and then does the ONE thing the console cannot.
  *
- * WHAT THE CONSOLE CANNOT DO: strip the displaced account's club roles now. The
+ * WHAT THE CONSOLE CANNOT DO: move club roles now, in either direction. The
  * admin app holds no Discord token, so its half of this feature can only rely on
- * 00165's tombstone and the nightly sweep. The bot has a token, so it does the
- * same fast path /unlink does and the officer sees it happen.
+ * 00165's tombstone and the nightly sweep. The bot has a token, so it does both
+ * halves while the officer waits: the displaced account is stripped, and the
+ * arriving one is granted whatever the app says it should hold.
  *
  * Deferred; see DEFERRED_COMMANDS for why that is correct here and wrong for the
  * modal commands.
@@ -2330,6 +2332,10 @@ export async function handleForceLink(
   // displaced account, so its roles WILL come off at the next sweep whatever
   // happens below. This is the fast path, exactly as /unlink's is.
   let cleared = false;
+  // Whether the ARRIVING account's roles actually landed. False until a sync
+  // says otherwise, so every path that never reached one promises "shortly"
+  // rather than claiming work it did not do.
+  let synced = false;
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     console.error('[bot] /forcelink: DISCORD_BOT_TOKEN is not set, roles left to the sweep');
@@ -2338,13 +2344,11 @@ export async function handleForceLink(
       const { registry, auditChannelId } = await loadConfig();
       const api = new DiscordApi({ token });
 
-      // ONLY THE DISPLACED ACCOUNT IS TOUCHED HERE, and only to strip it.
-      //
-      // Nothing is granted to the ARRIVING account: a grant needs the member's
-      // desired role set, which comes from the app's linked-members read that
-      // the sweep does, and syncMemberEverywhere with a null desired state is a
-      // strip by definition. The arriving account picks its roles up on the next
-      // sync, which is what the reply says.
+      // ONLY THE DISPLACED ACCOUNT IS TOUCHED BY THIS CALL, and only to strip
+      // it: syncMemberEverywhere with a null desired state is a strip by
+      // definition. The ARRIVING account is granted further down instead of
+      // here, because a grant needs the member's desired role set and that comes
+      // from the app's linked-members read, which this call does not make.
       const outcomes = displacedDiscordUserId
         ? await syncMemberEverywhere(api, registry, displacedDiscordUserId, null, {
             // Including the membership role, on /unlink's argument: an account
@@ -2382,6 +2386,47 @@ export async function handleForceLink(
           : [targetDiscordUserId],
         summary: summaryFromOutcomes(displacedDiscordUserId ?? targetDiscordUserId, outcomes),
       });
+
+      // NOW THE ARRIVING ACCOUNT: the half the console cannot do either, and the
+      // half this command used to leave to the nightly sweep. It is a second
+      // pass rather than an argument to the strip above because it needs the
+      // app's linked-members read to know what the member should hold.
+      //
+      // RUN EVEN WHEN NOTHING MOVED. An officer re-running /forcelink on an
+      // account that is already linked is the ordinary way somebody says "their
+      // roles are missing", and that is exactly the case a conditional here
+      // would skip.
+      //
+      // ITS OWN try/catch, deliberately not the outer one: that one reports a
+      // failed STRIP, and filing a failed grant under it would point whoever
+      // reads the log at the wrong account. Swallowed all the same, on the
+      // reason the outer one gives: the link is written and 00165's tombstone
+      // guarantees the strip, so no hiccup here may tell the officer that the
+      // force-link failed.
+      try {
+        const {
+          summary,
+          api: syncApi,
+          auditChannelId: syncAuditChannelId,
+        } = await syncMembersNow([targetDiscordUserId]);
+        // Clean means nothing was refused and nothing failed. NOT that anything
+        // was added: a member whose roles were already correct adds zero, and
+        // saying "shortly" at them would be inventing a problem.
+        synced = summary.forbidden === 0 && summary.failed === 0;
+
+        // A SECOND ENTRY, never merged into the one above. That summary is rolled
+        // up from a single account's outcomes and this one is a SweepSummary;
+        // there is no helper that adds the two together, and two acts on two
+        // accounts read more honestly as two entries in any case.
+        await postAuditEntry(syncApi, syncAuditChannelId, {
+          kind: 'member',
+          reason: 'linked',
+          discordUserIds: [targetDiscordUserId],
+          summary,
+        });
+      } catch (error) {
+        console.error('[bot] /forcelink: role grant failed, left to the sweep:', error);
+      }
     } catch (error) {
       // Logged and continued, for /unlink's reason: the write is done and the
       // tombstone guarantees the strip, so failing the command here would invite
@@ -2392,12 +2437,21 @@ export async function handleForceLink(
 
   if (alreadyThatAccount) {
     return ephemeral(
-      `${account} was already connected to **${member}**. Nothing moved, and their roles ` +
-        'are checked on the next sync.'
+      `${account} was already connected to **${member}**. Nothing moved, and ` +
+        (synced
+          ? 'their club roles have been applied.'
+          : // Deliberately not "their roles could not be applied": the app is the
+            // authority on what they hold and the sweep reapplies it, so this is
+            // a matter of when, not whether.
+            'their club roles will appear shortly.')
     );
   }
 
-  const opening = `**${member}** is now connected to ${account}. Their club roles are applied on the next sync.`;
+  const opening =
+    `**${member}** is now connected to ${account}. ` +
+    (synced
+      ? 'Their club roles have been applied.'
+      : 'Their club roles will appear shortly.');
   if (!displacedDiscordUserId) return ephemeral(opening);
 
   return ephemeral(
