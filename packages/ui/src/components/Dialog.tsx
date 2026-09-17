@@ -109,7 +109,18 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
         // white-space is inherited, so the prose refused to wrap and every
         // sentence was clipped at the panel's right edge. break-words covers the
         // same class of problem for a long unbroken string (an email, a URL).
-        className="relative bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[16px] p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto whitespace-normal break-words"
+        //
+        // text-left IS THE THIRD MEMBER OF THAT FAMILY, and it was missing.
+        // The announcements table opens its edit dialog from an actions cell
+        // that sets text-right, and text-align inherits through position: fixed
+        // exactly as white-space does, so every plain block label in the panel
+        // sat against the right edge. Labels inside a flex row were unaffected,
+        // because flex placement ignores text-align, and that split is what made
+        // it read as a quirk of certain fields rather than one inherited
+        // property. Set here rather than on the cell: a dialog can be triggered
+        // from any aligned container, and the panel is the one place that knows
+        // it is no longer in that container's layout.
+        className="relative bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[16px] p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto whitespace-normal break-words text-left"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 id="dialog-title" className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
