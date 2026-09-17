@@ -875,9 +875,9 @@ export function DiscordRecent({ recent }: { recent: OutboxRow[] }) {
   // the channel. Gating on the badge would take the button away from the one
   // person who has just noticed a second typo.
   //
-  // IT IS THE POSTED LIST'S OWN CONTROL (actions.tsx:537), deliberately: the two
-  // lists are now two panels of one card, so the same affordance has to sit in
-  // the same place and look the same in both. Returns null rather than a
+  // IT IS THE POSTED LIST'S OWN CONTROL (actions.tsx:758-766), deliberately:
+  // the two lists are now two panels of one card, so the same affordance has to
+  // sit in the same place and look the same in both. Returns null rather than a
   // disabled button when Discord has never seen the row, which leaves the cell
   // empty exactly as the posted table does for a viewer who cannot act.
   const editButton = (row: OutboxRow) =>

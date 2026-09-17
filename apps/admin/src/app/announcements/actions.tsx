@@ -332,7 +332,18 @@ export function Composer({
   // a second press on the same row refills, and nothing else is allowed to
   // re-run this over somebody's typing.
   useEffect(() => {
-    if (!pendingWebsite) return;
+    // A NULL HERE IS SOMEBODY LETTING GO OF THE ROW, not a quiet state to skip.
+    // `handleDelete` clears the context when the row being edited is deleted,
+    // and without this branch the composer went on showing that post's words,
+    // its Editing header and its PUBLISHED badge until somebody pressed Cancel.
+    // Back to a blank new post instead: the row those words describe is gone, so
+    // keeping them offers a draft of something nobody can look at any more.
+    if (!pendingWebsite) {
+      setEditing(null);
+      setEditReason('');
+      setForm(EMPTY_FORM);
+      return;
+    }
     setEditing(pendingWebsite);
     setForm({
       title: pendingWebsite.title,
@@ -371,10 +382,10 @@ export function Composer({
   /** Back to a blank new post, from a save or a cancel. */
   const clearComposer = () => {
     setForm(EMPTY_FORM);
-    // ALL OF IT, the way discord-send.tsx:327-337 clears all of its own. Nulling
-    // the context alone would not do: the effect above early-returns on null, so
-    // it never clears `editing`, and the next fresh post would silently
-    // overwrite the row that was just edited.
+    // ALL OF IT, the way discord-send.tsx:327-337 clears all of its own, and
+    // here rather than by nulling the context and waiting on the effect above.
+    // That effect does now answer an external clear, but it runs a render later,
+    // so a save or a cancel would leave the finished row on screen for a frame.
     setEditing(null);
     setEditReason('');
     clearWebsiteEdit();
