@@ -1,9 +1,16 @@
 'use client';
 
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { ComposerMode } from './announcement-shape';
+import type {
+  AnnouncementStatus,
+  AnnouncementType,
+  ComposerMode,
+  PostedMapping,
+  TargetAudience,
+} from './announcement-shape';
 
-// The state the Discord composer and the recent list share.
+// The state each composer shares with the list its Edit button lives in: the
+// Discord one, and now the website one too.
 //
 // WHY A CONTEXT AND NOT A PROP. The two halves sit in different grid COLUMNS:
 // the composer is inside `ComposerSwitch` at the top of the left column, and
@@ -14,6 +21,13 @@ import type { ComposerMode } from './announcement-shape';
 // Pressing Edit in that list has to fill the composer, and with the whole grid
 // between them a prop would have to be threaded down through every card in both
 // columns.
+//
+// THE WEBSITE PENDING EDIT BELONGS HERE FOR THE SAME REASON, NOT AS A SECOND
+// PROVIDER. Pressing Edit on a posted row fills the website composer, and the
+// posted list is the OTHER panel of that same right-hand card while the composer
+// is at the top of the left one. This provider is the only boundary spanning
+// both columns, so a sibling context would be a second copy of the same
+// boundary, drawn around the same two cards.
 //
 // IT ALSO CARRIES THE MODE, because the list card follows the composer: picking
 // "Discord message" on the left swaps that card from the posted list to the
@@ -43,6 +57,34 @@ export interface PendingDiscordEdit {
   buttonSet: string | null;
 }
 
+export interface PendingWebsiteEdit {
+  /** The announcement row somebody pressed Edit on. */
+  id: string;
+  title: string;
+  body: string;
+  type: AnnouncementType;
+  target_audience: TargetAudience;
+  pinned: boolean;
+  send_push: boolean;
+  status: AnnouncementStatus;
+  expires_at: string | null;
+  /**
+   * The row's Discord mapping, or null when Discord has never had this post.
+   *
+   * Carried rather than looked up because the composer is SHARED: it has no row
+   * of its own to read a mapping off, and the preview it draws needs one to say
+   * whether the channel is already holding an older version of these words. The
+   * page threads the same mapping into the row that hands this over, so the two
+   * cannot answer differently.
+   */
+  posted: PostedMapping | null;
+}
+
+// The fields above are declared here rather than imported as `RowAnnouncement`
+// from `actions.tsx`, which is where that shape lives: `actions.tsx` imports
+// this file, so reaching back for the row type would be an import cycle. Only
+// leaf types from `announcement-shape.ts` come in.
+
 interface DiscordConsoleValue {
   /**
    * The message somebody has asked to edit.
@@ -66,6 +108,24 @@ interface DiscordConsoleValue {
    */
   mode: ComposerMode;
   setMode: (mode: ComposerMode) => void;
+  /**
+   * The announcement somebody has asked to edit in the website composer.
+   *
+   * ITS IDENTITY IS THE SIGNAL, not its contents, exactly as `pending` above:
+   * pressing Edit twice on the same row hands over a fresh object, so the
+   * composer refills both times.
+   */
+  pendingWebsite: PendingWebsiteEdit | null;
+  startWebsiteEdit: (edit: PendingWebsiteEdit) => void;
+  clearWebsiteEdit: () => void;
+  /**
+   * Whether the left card actually draws the website composer.
+   *
+   * The posted list's Edit button asks this before it routes: update and create
+   * are separate keys, so a viewer can hold Edit with no composer to fill, and
+   * for them Edit has to keep opening the dialog.
+   */
+  hasWebsiteComposer: boolean;
 }
 
 const DiscordConsoleContext = createContext<DiscordConsoleValue | null>(null);
@@ -73,26 +133,52 @@ const DiscordConsoleContext = createContext<DiscordConsoleValue | null>(null);
 export function DiscordConsoleProvider({
   children,
   initialMode,
+  hasWebsiteComposer,
 }: {
   children: ReactNode;
   /** Which composer opens. `composerModes` puts website first when both are held. */
   initialMode: ComposerMode;
+  /** Whether `modes` includes 'website', so the posted list knows where Edit goes. */
+  hasWebsiteComposer: boolean;
 }) {
   const [pending, setPending] = useState<PendingDiscordEdit | null>(null);
+  const [pendingWebsite, setPendingWebsite] = useState<PendingWebsiteEdit | null>(null);
   const [nudge, setNudge] = useState(0);
   const [mode, setMode] = useState<ComposerMode>(initialMode);
 
   const value = useMemo<DiscordConsoleValue>(
     () => ({
       pending,
+      // NEITHER OF THESE TWO TOUCHES THE OTHER'S PENDING EDIT. Starting a
+      // website edit leaves a half-composed Discord message exactly where it
+      // was, and the other way round: that is the same rule `composer-switch`
+      // keeps by hiding the inactive composer rather than unmounting it
+      // (composer-switch.tsx:18-23), and clearing the other side here would
+      // throw away typing the switch itself is careful to preserve.
       startEdit: setPending,
       clearEdit: () => setPending(null),
       nudge,
       refreshRecent: () => setNudge((n) => n + 1),
       mode,
       setMode,
+      pendingWebsite,
+      // THE MODE SWITCH HAPPENS HERE, IN THE SAME HANDLER, and deliberately NOT
+      // in an effect inside `ComposerSwitch` the way the Discord path does it
+      // (composer-switch.tsx:65-67). Do not "fix" this back into symmetry.
+      // React commits a child's effects before its parent's, so the composer's
+      // own scroll effect, keyed on this object, would run while the wrapper
+      // around it is still `hidden`: `scrollIntoView` on a `display:none`
+      // element does nothing, and the effect would not run again once the
+      // parent effect un-hid it. Batching both updates means the composer is
+      // already visible when its effect fires.
+      startWebsiteEdit: (edit: PendingWebsiteEdit) => {
+        setPendingWebsite(edit);
+        setMode('website');
+      },
+      clearWebsiteEdit: () => setPendingWebsite(null),
+      hasWebsiteComposer,
     }),
-    [pending, nudge, mode],
+    [pending, nudge, mode, pendingWebsite, hasWebsiteComposer],
   );
 
   return (

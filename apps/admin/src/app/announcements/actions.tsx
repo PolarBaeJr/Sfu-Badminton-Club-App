@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Badge, Dialog, Input, Select, Textarea, Switch, DatePicker } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import {
@@ -16,6 +16,11 @@ import {
   type PostedMapping,
   type TargetAudience,
 } from './announcement-shape';
+// NO CYCLE. `discord-console-context` imports leaf types from
+// `announcement-shape` and nothing from this file, which is why the pending
+// website edit declares the row's fields there rather than importing
+// `RowAnnouncement` from here.
+import { useDiscordConsole, type PendingWebsiteEdit } from './discord-console-context';
 import { DiscordPreview } from './discord-preview';
 import { FormatBar, formatShortcut } from './format-bar';
 
@@ -102,10 +107,15 @@ function AnnouncementFields({
    * Which of the two mountings this is, so the Body gets a unique element id.
    *
    * `Textarea` derives its element id (and the label's htmlFor) from the label
-   * text, and this component is mounted TWICE at once whenever the edit dialog
-   * is open: once in the composer and once in the dialog. A literal
+   * text, and this component used to be mounted TWICE at once whenever the edit
+   * dialog was open: once in the composer and once in the dialog. A literal
    * `id="website-body"` would move the collision rather than remove it, so the
    * caller says which mounting it is.
+   *
+   * THE TWO ARE NO LONGER ON SCREEN TOGETHER. Edit now fills the composer in
+   * place wherever there is one, and the dialog opens only for the viewer who
+   * has no composer at all. The prop stays because that fallback still mounts
+   * this component and still needs an id nothing else is using.
    *
    * The BODY only. The headline, category, audience and expiry fields already
    * collide with their edit-dialog twins on the label-derived id; that is
@@ -302,39 +312,151 @@ export function Composer({
 }) {
   const [form, setForm] = useState<AnnouncementFormData>(EMPTY_FORM);
   const [busy, setBusy] = useState<null | AnnouncementStatus>(null);
+  /**
+   * The posted row this composer is editing, or null for a fresh post.
+   *
+   * THE WHOLE OBJECT, not its id. The save needs `status`, because an edit must
+   * leave a draft a draft, and the preview needs `posted`; a shared composer has
+   * no row of its own to read either of them off.
+   */
+  const [editing, setEditing] = useState<PendingWebsiteEdit | null>(null);
+  const [editReason, setEditReason] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const { pendingWebsite, clearWebsiteEdit } = useDiscordConsole();
 
-  const ready = form.title.trim().length > 0 && form.body.trim().length > 0;
+  // FILLING THE COMPOSER FROM THE ROW SOMEBODY PRESSED EDIT ON, the same shape
+  // the Discord composer uses (discord-send.tsx:200-218). `pendingWebsite` alone
+  // in the dependency list, deliberately and for the same reason that file and
+  // composer-switch.tsx:65-67 both give: the object's IDENTITY is the signal, so
+  // a second press on the same row refills, and nothing else is allowed to
+  // re-run this over somebody's typing.
+  useEffect(() => {
+    if (!pendingWebsite) return;
+    setEditing(pendingWebsite);
+    setForm({
+      title: pendingWebsite.title,
+      body: pendingWebsite.body,
+      type: pendingWebsite.type,
+      target_audience: pendingWebsite.target_audience,
+      pinned: pendingWebsite.pinned,
+      send_push: pendingWebsite.send_push,
+      expires_at: pendingWebsite.expires_at ?? '',
+      // Carried only to satisfy the shared form shape. Editing never moves a
+      // post between seasons, which is why the scope control is not drawn.
+      all_seasons: false,
+    });
+    setEditReason('');
+    // TO THE TOP OF THE COMPOSER, not to its middle like the two player-side
+    // scrolls (leaderboard/leaderboard-client.tsx:424,
+    // sessions/deep-link-scroll.tsx:13). Those centre a single table row. This
+    // element is a whole form several screens tall, and centring it would push
+    // the Editing header and the headline off the top of the window, which is
+    // the half somebody who has just pressed Edit needs to see.
+    rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [pendingWebsite]);
+
+  // A live post has already been read by members, so changing it is audited and
+  // takes an explanation. A draft has been said to nobody.
+  const editingLive = editing?.status === 'published';
+
+  const ready =
+    form.title.trim().length > 0 &&
+    form.body.trim().length > 0 &&
+    // THE THIRD CLAUSE IS NOT COSMETIC. `updateAnnouncement` refuses an edit to
+    // a published post with no reason (lib/actions/announcements.ts:193-197), so
+    // without this the button is enabled and the save throws.
+    (!editingLive || editReason.trim().length > 0);
+
+  /** Back to a blank new post, from a save or a cancel. */
+  const clearComposer = () => {
+    setForm(EMPTY_FORM);
+    // ALL OF IT, the way discord-send.tsx:327-337 clears all of its own. Nulling
+    // the context alone would not do: the effect above early-returns on null, so
+    // it never clears `editing`, and the next fresh post would silently
+    // overwrite the row that was just edited.
+    setEditing(null);
+    setEditReason('');
+    clearWebsiteEdit();
+  };
 
   const submit = async (status: AnnouncementStatus) => {
     if (!ready || busy) return;
     setBusy(status);
     try {
-      await createAnnouncement({
-        title: form.title.trim(),
-        body: form.body.trim(),
-        type: form.type,
-        target_audience: form.target_audience,
-        pinned: form.pinned,
-        send_push: form.send_push,
-        status,
-        all_seasons: form.all_seasons,
-        ...(form.expires_at ? { expires_at: form.expires_at } : {}),
-      });
-      toast(status === 'published' ? 'Posted to the club' : 'Draft saved', 'success');
-      setForm(EMPTY_FORM);
-    } catch {
-      toast(status === 'published' ? 'Failed to post' : 'Failed to save the draft', 'error');
+      if (editing) {
+        await updateAnnouncement(
+          editing.id,
+          {
+            title: form.title.trim() || editing.title,
+            body: form.body.trim() || editing.body,
+            type: form.type,
+            target_audience: form.target_audience,
+            pinned: form.pinned,
+            send_push: form.send_push,
+            status,
+            ...(form.expires_at ? { expires_at: form.expires_at } : {}),
+          },
+          editReason.trim(),
+        );
+        toast(
+          status === 'published' && editing.status === 'draft'
+            ? 'Posted to the club'
+            : 'Announcement updated',
+          'success',
+        );
+      } else {
+        await createAnnouncement({
+          title: form.title.trim(),
+          body: form.body.trim(),
+          type: form.type,
+          target_audience: form.target_audience,
+          pinned: form.pinned,
+          send_push: form.send_push,
+          status,
+          all_seasons: form.all_seasons,
+          ...(form.expires_at ? { expires_at: form.expires_at } : {}),
+        });
+        toast(status === 'published' ? 'Posted to the club' : 'Draft saved', 'success');
+      }
+      // NOTHING NUDGES THE LIST IN THE OTHER COLUMN, unlike the Discord composer.
+      // Both writes end in revalidatePath('/announcements')
+      // (lib/actions/announcements.ts:157 and 244), so the posted list is
+      // server-rendered again on its own.
+      clearComposer();
+    } catch (err) {
+      // THE SERVER'S OWN WORDS ON THE EDIT PATH, and the generic line on the
+      // create one. `updateAnnouncement` throws ExpectedError text that IS the
+      // explanation: "it was deleted while you were editing it. Nothing was
+      // saved." A fixed "Failed to update" would drop the only account anybody
+      // gets of where their typing went.
+      if (editing) {
+        toast(err instanceof Error ? err.message : 'Failed to update announcement', 'error');
+      } else {
+        toast(status === 'published' ? 'Failed to post' : 'Failed to save the draft', 'error');
+      }
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <div className="flex flex-col gap-[14px]">
-      <div className="flex items-center justify-between">
-        <span className={`${MICRO} text-[var(--mute)]`}>New post</span>
-        <Badge variant="neutral">DRAFT</Badge>
+    <div ref={rootRef} className="flex flex-col gap-[14px]">
+      <div className="flex items-center justify-between gap-2">
+        {/* `min-w-0 truncate` because the headline field above carries no length
+            cap, unlike the Discord composer's, and this label repeats whatever
+            was typed into it: without them a long title pushes the badge beside
+            it out of the card. */}
+        <span className={`${MICRO} min-w-0 truncate text-[var(--mute)]`}>
+          {editing ? `Editing · ${editing.title}` : 'New post'}
+        </span>
+        {/* THE ROW'S OWN STATUS WHILE EDITING, where this used to be a fixed
+            DRAFT. A live post under a DRAFT badge is not a cosmetic slip: it
+            says the words on screen have reached nobody, which is the one thing
+            about them that is certainly false. */}
+        <Badge variant={editingLive ? 'success' : 'neutral'}>
+          {editingLive ? 'PUBLISHED' : 'DRAFT'}
+        </Badge>
       </div>
 
       <AnnouncementFields
@@ -342,43 +464,114 @@ export function Composer({
         setForm={setForm}
         idPrefix="new"
         pushReachable={pushReachable}
-        showScope
+        // ONLY WHEN CREATING. `updateAnnouncement` has no `all_seasons`
+        // parameter at all (lib/actions/announcements.ts:176-185), so offering
+        // the scope on an edit would promise a move between seasons that the
+        // save never makes. The edit dialog below makes the same call.
+        showScope={!editing}
         discord={discord}
-        // Nothing to be mapped to yet, and nothing to be stale — this row does
-        // not exist until the button below is pressed.
-        posted={null}
-        // ALWAYS 'published' here. The preview answers "what happens when this
-        // goes out", and previewing the draft path would only ever say that
-        // drafts are not relayed — which Save draft already means.
-        status="published"
+        // The row's mapping while editing. On a fresh post there is nothing to
+        // be mapped to and nothing to be stale: that row does not exist until
+        // one of the buttons below is pressed.
+        posted={editing?.posted ?? null}
+        // 'published' ON A NEW POST, because the preview answers "what happens
+        // when this goes out" and previewing the draft path would only ever say
+        // that drafts are not relayed, which Save draft already means. While
+        // editing it is the row's own status, because editing a draft leaves it
+        // a draft.
+        status={editing ? editing.status : 'published'}
         updatedAt={null}
       />
 
+      {editingLive && (
+        <Textarea
+          // AN EXPLICIT ID, and this is the one collision editing in place
+          // genuinely creates. `Textarea` derives its element id from the label
+          // text (packages/ui/src/components/Textarea.tsx:13), so without this
+          // line the box would claim `reason-(required)`, the id the delete
+          // dialog's identically labelled box derives, and that dialog can open
+          // straight over a live post being edited here, where the edit dialog
+          // it replaces never overlapped anything. The same guard
+          // discord-send.tsx:476-482 puts on the three labels it shares with
+          // this composer.
+          id="website-edit-reason"
+          label="Reason (required)"
+          value={editReason}
+          onChange={(e) => setEditReason(e.target.value)}
+          placeholder="Members have already read this. Why is it changing?"
+          rows={3}
+          required
+        />
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          className="min-h-[44px] flex-1"
-          disabled={!ready || busy !== null}
-          onClick={() => submit('draft')}
-        >
-          {busy === 'draft' ? 'Saving…' : 'Save draft'}
-        </Button>
-        <Button
-          type="button"
-          variant="primary"
-          className="min-h-[44px] flex-1"
-          disabled={!ready || busy !== null}
-          onClick={() => submit('published')}
-        >
-          {busy === 'published' ? 'Posting…' : 'Post now'}
-        </Button>
+        {editing ? (
+          <>
+            {/* POST NOW ONLY ON A DRAFT, carried over from the edit dialog's own
+                button. A published post has nowhere left to be published to, and
+                the primary beside this already saves it. */}
+            {editing.status === 'draft' && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="min-h-[44px] flex-1"
+                disabled={!ready || busy !== null}
+                onClick={() => submit('published')}
+              >
+                {busy === 'published' ? 'Posting…' : 'Post now'}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="primary"
+              className="min-h-[44px] flex-1"
+              disabled={!ready || busy !== null}
+              onClick={() => submit(editing.status)}
+            >
+              {/* KEYED ON THE ROW'S OWN STATUS, not on 'published'. Saving an
+                  edit to a live post saves it AS published, so a label switched
+                  on the busy value alone would read "Posting…" for a save that
+                  posts nothing. */}
+              {busy === editing.status ? 'Saving…' : 'Save changes'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-[44px] flex-1"
+              disabled={busy !== null}
+              onClick={clearComposer}
+            >
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-[44px] flex-1"
+              disabled={!ready || busy !== null}
+              onClick={() => submit('draft')}
+            >
+              {busy === 'draft' ? 'Saving…' : 'Save draft'}
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              className="min-h-[44px] flex-1"
+              disabled={!ready || busy !== null}
+              onClick={() => submit('published')}
+            >
+              {busy === 'published' ? 'Posting…' : 'Post now'}
+            </Button>
+          </>
+        )}
       </div>
 
       {/* Both halves of this are true. A published post reaches the bell and,
           when push is on, the phone — neither can be recalled. And editing a
           live post writes an `announcement_updated` row carrying the actor, the
-          before, the after and the reason typed into the dialog.
+          before, the after and the reason typed above.
 
           The mockup's line was "editing a live post leaves an edited mark",
           which is NOT true: nothing on the player side renders one — neither
@@ -428,6 +621,11 @@ export function AnnouncementRowActions({
   const [editReason, setEditReason] = useState('');
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  // SAFE TO CALL UNCONDITIONALLY. This component is rendered from one place,
+  // page.tsx, inside `DiscordConsoleProvider` (page.tsx:519), and the hook
+  // throws loudly rather than returning null when it is not (see its own note).
+  const { startWebsiteEdit, hasWebsiteComposer, pendingWebsite, clearWebsiteEdit } =
+    useDiscordConsole();
 
   // A live post has already been read by members, so changing it is audited and
   // takes an explanation. A draft has been said to nobody — it is exempt, and
@@ -451,7 +649,20 @@ export function AnnouncementRowActions({
     };
   }
 
+  // WHERE EDIT GOES, which is now two places. With a website composer on screen
+  // it fills that, in place, exactly as the Discord console's Edit already
+  // fills its own composer. Without one there is nothing to fill and the dialog
+  // below is the only thing this button can do: `announcements.update.write` and
+  // `announcements.create.write` are separate keys, so a viewer holding Edit and
+  // no composer is a live case rather than a hypothetical one.
   const openEdit = () => {
+    if (hasWebsiteComposer) {
+      // A NEW OBJECT ON EVERY PRESS. The composer refills on the pending edit's
+      // IDENTITY rather than its contents, so a second press on the same row
+      // has to hand over a fresh one or it would appear to do nothing.
+      startWebsiteEdit({ ...announcement, posted });
+      return;
+    }
     setForm(fromRow(announcement));
     setEditReason('');
     setEditOpen(true);
@@ -518,6 +729,11 @@ export function AnnouncementRowActions({
       toast('Announcement deleted', 'success');
       setDeleteOpen(false);
       setReason('');
+      // THE CONTEXT LETS GO, THE COMPOSER DOES NOT: its effect early-returns on
+      // null, so a form already filled from this row keeps those words and its
+      // Editing header until somebody presses Cancel. Saving from there writes
+      // nothing, because `updateAnnouncement` refuses an update matching no rows.
+      if (pendingWebsite?.id === announcement.id) clearWebsiteEdit();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to delete announcement', 'error');
     } finally {
@@ -534,15 +750,39 @@ export function AnnouncementRowActions({
   return (
     <>
       {canUpdate ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          className="min-h-[44px] min-w-[44px]"
-          onClick={openEdit}
-        >
-          Edit
-        </Button>
+        // A FLEX OF ITS OWN, because the two cells that render this put no gap
+        // between two buttons: the desktop row's wrapper (page.tsx) sets only
+        // the 44px floor, and both that floor and TableCard's reach through this
+        // div as descendant selectors.
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="min-h-[44px] min-w-[44px]"
+            onClick={openEdit}
+          >
+            Edit
+          </Button>
+          {/* DELETE COMES OUT OF THE DIALOG WHEN EDIT NO LONGER OPENS ONE. On
+              the in-place path that dialog is never drawn, so leaving Delete
+              inside it would take the control away from everybody who can use
+              it. Ghost, like the standalone below rather than the dialog's
+              danger red: two viewers looking at the same column should not see
+              the destructive action in two different weights, and the mis-tap
+              guard is the typed reason it still asks for. */}
+          {hasWebsiteComposer && canDelete && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="min-h-[44px] min-w-[44px]"
+              onClick={() => setDeleteOpen(true)}
+            >
+              Delete
+            </Button>
+          )}
+        </div>
       ) : (
         // Delete without edit: the danger action is the only one, and it is
         // never the thing a thumb finds first, so it keeps its own label.
@@ -588,10 +828,14 @@ export function AnnouncementRowActions({
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
-            {/* Delete lives inside the edit dialog rather than as a second
-                control in a 480px rail. It is labelled, it names the post, and
-                it takes a reason — the three things the console asks of a
-                destructive action. */}
+            {/* THE FALLBACK PATH'S DELETE, and that is now the whole of what
+                this describes. For a viewer with no composer to fill, Edit opens
+                this dialog and nothing else, so inside it is the only place a
+                Delete can sit without being a second control in a 480px rail.
+                Where Edit fills the composer instead, this dialog never opens
+                and Delete is drawn beside Edit in the row. It is labelled, it
+                names the post, and it takes a reason either way: the three
+                things the console asks of a destructive action. */}
             {canDelete ? (
               <Button
                 type="button"

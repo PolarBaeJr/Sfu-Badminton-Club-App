@@ -299,3 +299,21 @@ export function composerModes(caps: {
 export function showsModeSelector(modes: ComposerMode[]): boolean {
   return modes.length > 1;
 }
+
+/**
+ * WHETHER THERE IS A WEBSITE COMPOSER ON SCREEN TO FILL, which is the one
+ * question the posted list's Edit button asks before it decides between filling
+ * the composer in place and opening the dialog.
+ *
+ * DERIVED FROM THE SAME `modes` ARRAY THAT DECIDES THE RENDER (page.tsx:540),
+ * never re-derived from `canCreate`, so the button and the composer cannot drift
+ * apart: whatever moves one moves the other.
+ *
+ * And it is genuinely a different question from "may this viewer edit".
+ * `announcements.update.write` and `announcements.create.write` are independent
+ * keys, so somebody can hold Edit with no composer anywhere on the page, and for
+ * them the dialog is not a fallback but the only thing Edit can do.
+ */
+export function hasWebsiteComposer(modes: ComposerMode[]): boolean {
+  return modes.includes('website');
+}

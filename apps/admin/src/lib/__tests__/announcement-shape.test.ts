@@ -6,6 +6,7 @@ import {
   audienceLabel,
   bylineName,
   composerModes,
+  hasWebsiteComposer,
   reachPercent,
   relayChip,
   showsModeSelector,
@@ -277,6 +278,33 @@ describe('composerModes', () => {
     // Empty is what makes the page draw the withheld message.
     expect(modes).toEqual([]);
     expect(showsModeSelector(modes)).toBe(false);
+  });
+
+  // WHERE EDIT ON A POSTED ROW GOES, across the same four combinations.
+  //
+  // Edit fills the composer in place when there is one, and falls back to the
+  // dialog when there is not, so the routing decision is exactly "does `modes`
+  // include website". It is asserted through `composerModes` rather than against
+  // a hand-written array because that is the pair the screen actually uses: the
+  // page renders from one and the button routes on the other, and a test that
+  // skipped the first could not catch them drifting.
+  //
+  // THIS IS THE ONLY REACHABLE TEST OF IT. Nothing in this repo mounts a
+  // component, so a routing decision living inside the button would be testable
+  // by nothing at all.
+  it('fills the composer in place exactly when the viewer has one', () => {
+    expect(hasWebsiteComposer(composerModes({ canCreate: true, canSendDiscord: true }))).toBe(true);
+    expect(hasWebsiteComposer(composerModes({ canCreate: true, canSendDiscord: false }))).toBe(true);
+    // Discord alone: the left card IS the Discord composer, so an Edit on a
+    // posted row has nothing to fill and must open the dialog.
+    expect(hasWebsiteComposer(composerModes({ canCreate: false, canSendDiscord: true }))).toBe(
+      false,
+    );
+    // And a viewer holding update but neither composer key: the dialog is not a
+    // fallback for them, it is the only thing Edit can do.
+    expect(hasWebsiteComposer(composerModes({ canCreate: false, canSendDiscord: false }))).toBe(
+      false,
+    );
   });
 
   it('keeps the order stable regardless of how the capabilities are given', () => {

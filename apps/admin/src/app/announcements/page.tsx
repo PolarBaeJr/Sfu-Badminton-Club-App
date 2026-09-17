@@ -20,6 +20,7 @@ import {
   audienceLabel,
   bylineName,
   composerModes,
+  hasWebsiteComposer,
   reachPercent,
   relayChip,
   shortDate,
@@ -515,7 +516,14 @@ export default async function AnnouncementsPage() {
           exactly two children and the two-column layout is unchanged. The cards
           inside stay server-rendered, because children handed to a client
           component are not made into client components. */}
-      <DiscordConsoleProvider initialMode={modes[0] ?? 'website'}>
+      <DiscordConsoleProvider
+        initialMode={modes[0] ?? 'website'}
+        // Whether Edit on a posted row fills the composer in place or opens the
+        // dialog. Read off `modes`, the same array the card below renders from,
+        // so the button cannot offer an in-place edit into a composer that is
+        // not there.
+        hasWebsiteComposer={hasWebsiteComposer(modes)}
+      >
         <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-5 items-start">
           {/* ---------------------------------------------------------------- */}
           {/* LEFT — the composer                                              */}

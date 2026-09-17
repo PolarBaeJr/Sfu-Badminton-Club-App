@@ -54,6 +54,14 @@ export function ComposerSwitch({
   // `pending` alone in the dependency list, deliberately. `modes` is a fresh
   // array on every render, so including it would re-run this after each one and
   // pin the tab strip to Discord for as long as an edit is open.
+  //
+  // THE WEBSITE PATH HAS NO TWIN OF THIS EFFECT, and that asymmetry is on
+  // purpose rather than an oversight to tidy away: `startWebsiteEdit` sets the
+  // mode in the same handler that sets the pending row
+  // (discord-console-context.tsx). The website composer scrolls itself into
+  // view, and a child's effects commit before a parent's, so switching the mode
+  // from up here would leave that scroll running against a `display:none`
+  // element, where it does nothing and never runs again.
   useEffect(() => {
     if (pending) setMode('discord');
   }, [pending]);
