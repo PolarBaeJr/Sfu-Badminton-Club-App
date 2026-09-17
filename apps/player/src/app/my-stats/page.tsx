@@ -490,7 +490,15 @@ async function CurrentSeasonStats() {
                 <span className={'pill ' + (player.status === 'competitive' ? 'pill-red' : 'pill-out')}>
                   {(player.status as string).replace('_', ' ').toUpperCase()}
                 </span>
-                {r?.current_singles_streak && r.current_singles_streak > 0 && (
+                {/* (x ?? 0) > 0, NOT `x && x > 0`. The original put the
+                    truthiness test FIRST, so a streak of exactly 0 made that
+                    first operand falsy and && returned the NUMBER 0, which React
+                    renders as a literal "0" floating next to the status pill.
+                    The `> 0` guard written immediately after it never ran. Only
+                    zero ever leaked, which is why this survived review: a losing
+                    streak is negative, negative is truthy, and -3 > 0 is false,
+                    which React renders as nothing at all. */}
+                {(r?.current_singles_streak ?? 0) > 0 && (
                   <span className="pill pill-out">W{r.current_singles_streak} singles</span>
                 )}
               </div>
