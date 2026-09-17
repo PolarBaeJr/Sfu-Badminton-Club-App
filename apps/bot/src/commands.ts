@@ -2387,51 +2387,61 @@ export async function handleForceLink(
         summary: summaryFromOutcomes(displacedDiscordUserId ?? targetDiscordUserId, outcomes),
       });
 
-      // NOW THE ARRIVING ACCOUNT: the half the console cannot do either, and the
-      // half this command used to leave to the nightly sweep. It is a second
-      // pass rather than an argument to the strip above because it needs the
-      // app's linked-members read to know what the member should hold.
-      //
-      // RUN EVEN WHEN NOTHING MOVED. An officer re-running /forcelink on an
-      // account that is already linked is the ordinary way somebody says "their
-      // roles are missing", and that is exactly the case a conditional here
-      // would skip.
-      //
-      // ITS OWN try/catch, deliberately not the outer one: that one reports a
-      // failed STRIP, and filing a failed grant under it would point whoever
-      // reads the log at the wrong account. Swallowed all the same, on the
-      // reason the outer one gives: the link is written and 00165's tombstone
-      // guarantees the strip, so no hiccup here may tell the officer that the
-      // force-link failed.
-      try {
-        const {
-          summary,
-          api: syncApi,
-          auditChannelId: syncAuditChannelId,
-        } = await syncMembersNow([targetDiscordUserId]);
-        // Clean means nothing was refused and nothing failed. NOT that anything
-        // was added: a member whose roles were already correct adds zero, and
-        // saying "shortly" at them would be inventing a problem.
-        synced = summary.forbidden === 0 && summary.failed === 0;
-
-        // A SECOND ENTRY, never merged into the one above. That summary is rolled
-        // up from a single account's outcomes and this one is a SweepSummary;
-        // there is no helper that adds the two together, and two acts on two
-        // accounts read more honestly as two entries in any case.
-        await postAuditEntry(syncApi, syncAuditChannelId, {
-          kind: 'member',
-          reason: 'linked',
-          discordUserIds: [targetDiscordUserId],
-          summary,
-        });
-      } catch (error) {
-        console.error('[bot] /forcelink: role grant failed, left to the sweep:', error);
-      }
     } catch (error) {
       // Logged and continued, for /unlink's reason: the write is done and the
       // tombstone guarantees the strip, so failing the command here would invite
       // an officer to run it again against a link that is already correct.
       console.error('[bot] /forcelink: immediate strip failed, left to the sweep:', error);
+    }
+
+    // NOW THE ARRIVING ACCOUNT: the half the console cannot do either, and the
+    // half this command used to leave to the nightly sweep. It is a second
+    // pass rather than an argument to the strip above because it needs the
+    // app's linked-members read to know what the member should hold.
+    //
+    // RUN EVEN WHEN NOTHING MOVED. An officer re-running /forcelink on an
+    // account that is already linked is the ordinary way somebody says "their
+    // roles are missing", and that is exactly the case a conditional here
+    // would skip.
+    //
+    // OUTSIDE THE STRIP'S try, NOT NESTED IN IT. This block used to sit inside
+    // it, which quietly broke the promise the paragraph above makes: a throw
+    // anywhere in the strip jumped to that catch and skipped the grant
+    // entirely, so the one case an officer most often runs this for, a member
+    // whose roles are missing, was also a case where a bad strip meant no
+    // grant. The two halves touch DIFFERENT accounts and share no state:
+    // syncMembersNow loads its own config and builds its own client, so it
+    // needs nothing the strip above computed. Neither may cancel the other.
+    //
+    // ITS OWN catch, for the same reason it is its own block: the strip's
+    // reports a failed STRIP, and filing a failed grant under it would point
+    // whoever reads the log at the wrong account. Swallowed all the same, on
+    // the reason the strip's gives: the link is written and 00165's tombstone
+    // guarantees the strip, so no hiccup here may tell the officer that the
+    // force-link failed.
+    try {
+      const {
+        summary,
+        api: syncApi,
+        auditChannelId: syncAuditChannelId,
+      } = await syncMembersNow([targetDiscordUserId]);
+      // Clean means nothing was refused and nothing failed. NOT that anything
+      // was added: a member whose roles were already correct adds zero, and
+      // saying "shortly" at them would be inventing a problem.
+      synced = summary.forbidden === 0 && summary.failed === 0;
+
+      // A SECOND ENTRY, never merged into the one above. That summary is rolled
+      // up from a single account's outcomes and this one is a SweepSummary;
+      // there is no helper that adds the two together, and two acts on two
+      // accounts read more honestly as two entries in any case.
+      await postAuditEntry(syncApi, syncAuditChannelId, {
+        kind: 'member',
+        reason: 'linked',
+        discordUserIds: [targetDiscordUserId],
+        summary,
+      });
+    } catch (error) {
+      console.error('[bot] /forcelink: role grant failed, left to the sweep:', error);
     }
   }
 
