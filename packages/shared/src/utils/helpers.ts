@@ -72,7 +72,15 @@ export function formatRelativeTime(dateString: string): string {
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
   if (days < 7) return `${days}d ago`;
-  return formatDate(dateString);
+  // clubDate, NOT formatDate. Every caller of this function passes a TIMESTAMPTZ
+  // (played_at, created_at, reported_at, last_active_at), so the fallback is an
+  // instant and belongs in club time for the same reason formatDateTime above
+  // does. formatDate has no timeZone and rendered it in the container's zone,
+  // which is UTC: a match played at 19:00 in Vancouver is already the next day
+  // there, so the feed printed a row date one ahead of its own day header, which
+  // groups by CLUB_TIMEZONE. Only rows past the 7-day cutoff reach this line,
+  // which is why the newer half of the feed always looked right.
+  return clubDate(dateString);
 }
 
 export function isAdmin(role: UserRole): boolean {

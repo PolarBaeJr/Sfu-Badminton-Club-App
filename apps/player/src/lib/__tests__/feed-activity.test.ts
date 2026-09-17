@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+// Imported the same way feed/page.tsx imports them, because the point of the
+// last describe in this file is to check these against the local helpers the
+// way the page composes them, not the way a test would like them to behave.
+import { CLUB_TIMEZONE, formatRelativeTime } from '@badminton/shared';
 import {
   attendanceStreak,
   clubDayKey,
@@ -109,6 +113,56 @@ describe('groupByDay', () => {
       TZ,
     );
     expect(sections[0]?.items.map((i) => i.id)).toEqual(['a', 'b']);
+  });
+});
+
+/**
+ * The day header and the row underneath it, checked TOGETHER.
+ *
+ * This file already tested both halves and they were both right. dayLabel above
+ * has asserted 'SAT 1 AUG' since it was written, and clubDayKey has asserted
+ * that an evening in Vancouver is not the next UTC day. They still contradicted
+ * each other on screen, because the row's own date does not come from this
+ * module at all: feed/page.tsx builds it with shared's formatRelativeTime, which
+ * past its 7-day cutoff fell through to formatDate, which carries no timeZone
+ * and so rendered in the RUNTIME's zone. The containers run with TZ unset.
+ *
+ * So a header reading SAT 1 AUG sat directly above a row reading "Aug 2, 2026",
+ * and every suite in the repo stayed green, because no test crossed the seam
+ * between the two modules. That seam is the only thing this block exists to
+ * hold. Testing either side alone is what let the bug ship.
+ *
+ * REQUIRES TZ=UTC, WHICH THIS PACKAGE PINS IN ITS TEST SCRIPT. On a maintainer's
+ * laptop in America/Vancouver the broken and the fixed output are byte-identical
+ * and these assertions pass against the bug. Dropping the pin does not turn this
+ * red, it silently stops it testing anything.
+ */
+describe('a feed row and the day header above it', () => {
+  // 02:00 UTC is 19:00 the previous evening in Vancouver: a club night, and the
+  // one case where the two zones disagree about which day it was.
+  const CLUB_EVENING = '2026-08-02T02:00:00Z';
+  // 20:00 UTC is 13:00 the same afternoon in Vancouver: the zones agree.
+  const CLUB_AFTERNOON = '2026-08-02T20:00:00Z';
+
+  const headerFor = (at: string) =>
+    groupByDay([{ at, id: 'm' }], new Date('2026-08-05T18:00:00Z'), CLUB_TIMEZONE)[0];
+
+  it('agree on the day for a match played on a club evening', () => {
+    const section = headerFor(CLUB_EVENING);
+    // The header groups by club day and always did.
+    expect(section?.key).toBe('2026-08-01');
+    expect(section?.label).toBe('SAT 1 AUG');
+    // The row has to name that same 1 August. It used to say Aug 2.
+    expect(formatRelativeTime(CLUB_EVENING)).toBe('Aug 1, 2026');
+  });
+
+  it('agree on the day for an afternoon match, where nothing was ever wrong', () => {
+    // Guards the over-correction: a fix that shifted every date back a day would
+    // satisfy the test above and break this one.
+    const section = headerFor(CLUB_AFTERNOON);
+    expect(section?.key).toBe('2026-08-02');
+    expect(section?.label).toBe('SUN 2 AUG');
+    expect(formatRelativeTime(CLUB_AFTERNOON)).toBe('Aug 2, 2026');
   });
 });
 

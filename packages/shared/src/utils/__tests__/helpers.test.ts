@@ -75,11 +75,37 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(twoDaysAgo)).toBe('2d ago');
   });
 
-  it('falls back to formatDate for timestamps older than a week', () => {
+  it('stops counting and shows a date once older than a week', () => {
     const twoWeeksAgo = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
     const result = formatRelativeTime(twoWeeksAgo);
     expect(result).not.toContain('ago');
     expect(result).toContain('202');
+  });
+
+  // THESE TWO ONLY MEAN ANYTHING BECAUSE THE PACKAGE PINS TZ=UTC IN ITS TEST
+  // SCRIPT. The bug they guard is formatRelativeTime's over-a-week fallback
+  // rendering in the RUNTIME's zone instead of the club's, and a runtime already
+  // in America/Vancouver makes the broken and the fixed output byte-identical.
+  // On a maintainer's laptop, which is very often in exactly that zone, an
+  // unpinned version of these assertions passes against the bug. Removing the
+  // TZ pin does not fail these tests, it silently stops them testing anything.
+  //
+  // This is not hypothetical: the assertion these replaced was a toContain('202')
+  // spot check, and CI has been running this suite on a UTC runner, over the
+  // broken line, staying green the whole time.
+  it('renders the over-a-week fallback in club time, not the runtime zone', () => {
+    // 02:00 UTC is 19:00 the previous evening in Vancouver, so the two zones
+    // disagree about the calendar day. A match played on a club evening was
+    // being stamped with tomorrow's date, one day ahead of the feed's own day
+    // header, which groups by CLUB_TIMEZONE.
+    expect(formatRelativeTime('2026-08-02T02:00:00Z')).toBe('Aug 1, 2026');
+  });
+
+  it('leaves the date alone when both zones agree on the day', () => {
+    // Guards the opposite error: a fix that shifted every date back a day would
+    // pass the test above and break this one. 20:00 UTC is 13:00 in Vancouver,
+    // the same calendar day in both.
+    expect(formatRelativeTime('2026-08-02T20:00:00Z')).toBe('Aug 2, 2026');
   });
 });
 
