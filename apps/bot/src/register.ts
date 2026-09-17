@@ -1,4 +1,4 @@
-import { COMMAND_DEFINITIONS } from './commands.js';
+import { putCommandSet, scopeLabel } from './register-commands.js';
 
 // Registers slash commands GLOBALLY.
 //
@@ -24,6 +24,13 @@ import { COMMAND_DEFINITIONS } from './commands.js';
 // than debugging the wrong layer.
 //
 // Run manually: `npm run register -w bot`
+//
+// THIS FILE IS ONLY THE COMMAND-LINE WRAPPER now. The request lives in
+// register-commands.ts, shared with the bot's own startup, which registers the
+// same set on a prod deploy when REGISTER_COMMANDS_ON_BOOT is set - see that
+// file's header. Running this by hand still works exactly as it always has,
+// and still writes UNCONDITIONALLY: a human typing the command has a reason,
+// and the comparison the boot path does would only stand between them and it.
 async function main() {
   const token = process.env.DISCORD_BOT_TOKEN;
   const applicationId = process.env.DISCORD_APPLICATION_ID;
@@ -34,29 +41,17 @@ async function main() {
     process.exit(1);
   }
 
-  const scope = devGuildId ? `/guilds/${devGuildId}` : '';
-  const response = await fetch(
-    `https://discord.com/api/v10/applications/${applicationId}${scope}/commands`,
-    {
-      method: 'PUT', // PUT replaces the full set, so removals take effect too.
-      headers: {
-        authorization: `Bot ${token}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(COMMAND_DEFINITIONS),
-    }
-  );
+  const result = await putCommandSet({ token, applicationId, devGuildId });
 
-  if (!response.ok) {
-    console.error(`Registration failed: ${response.status}`);
-    console.error(await response.text());
+  if (!result.ok) {
+    console.error(`Registration failed: ${result.status}`);
+    console.error(result.body);
     process.exit(1);
   }
 
-  const registered = (await response.json()) as { name: string }[];
   console.log(
-    `Registered ${registered.length} ${devGuildId ? `to guild ${devGuildId} (live now)` : 'globally (up to 1h to appear)'}: ` +
-      registered.map((c) => c.name).join(', ')
+    `Registered ${result.registered.length} ${scopeLabel(devGuildId)}: ` +
+      result.registered.map((c) => c.name).join(', ')
   );
 }
 
