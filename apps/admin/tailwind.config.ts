@@ -6,18 +6,31 @@ const config: Config = {
     '../../packages/ui/src/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
-    // Reference design is sharp-cornered: zero the whole radius scale so every
-    // rounded-* class flattens app-wide. `full` stays for avatars/pill dots;
-    // dialogs opt back in with literal rounded-[16px]/[8px] (bypasses the scale).
+    // The scale was zeroed app-wide for a sharp-cornered reference design. The
+    // owner asked for rounded boxes on 2026-09-17, so it carries real values
+    // again and the ~150 rounded-* classes already written throughout both apps
+    // start taking effect at once — no sweep of call sites, because they were
+    // never removed.
+    //
+    // THE VALUES DELIBERATELY MATCH THE LITERALS ALREADY IN THE CODE, which are
+    // what the scale's zeroes forced people to write to get a corner at all:
+    // md === the 23 rounded-[8px] controls and rounded-[var(--r-control,8px)],
+    // xl === Dialog's rounded-[16px]. Picking anything else would leave the
+    // opted-in sites and the scale sites disagreeing by a few pixels, which
+    // reads as sloppiness rather than as two different intentions.
+    //
+    // rounded-none becomes load-bearing here. While the scale was zero it was a
+    // no-op restating the default; now it is the only way a corner stays square,
+    // so the 14 sites using it keep their sharp edges on purpose.
     borderRadius: {
       none: '0',
-      sm: '0',
-      DEFAULT: '0',
-      md: '0',
-      lg: '0',
-      xl: '0',
-      '2xl': '0',
-      '3xl': '0',
+      sm: '4px',
+      DEFAULT: '6px',
+      md: '8px',
+      lg: '12px',
+      xl: '16px',
+      '2xl': '20px',
+      '3xl': '24px',
       full: '9999px',
     },
     extend: {
