@@ -350,8 +350,8 @@ export default async function TournamentsPage() {
               <h2 className="ptourn-open-name">No entries being taken</h2>
               <p className="ptourn-open-meta">
                 {tournaments.length > 0
-                  ? 'Every event this season has closed its entries.'
-                  : 'No tournaments have been scheduled this season yet.'}
+                  ? 'Every event on the calendar has closed its entries.'
+                  : 'No tournaments have been scheduled yet.'}
               </p>
               <p className="wide-note">
                 When the exec opens a draw it appears here, and you can enter from
@@ -442,12 +442,19 @@ export default async function TournamentsPage() {
 
           {/* ── THE REST OF THE CALENDAR ───────────────────────────────── */}
           <section className="card-base">
-            <div className="wide-cap">Also this season</div>
+            {/* "Also on the calendar", NOT "Also this season". The list under
+                this heading comes from scopeToActiveSeason, which also admits
+                rows whose season_id IS NULL and drops the season filter
+                ENTIRELY when no season is active (active-season.ts:39). The
+                season claim was therefore false in two real states, and naming
+                the active season here would only have made a false claim more
+                specific. The claim is dropped rather than sharpened. */}
+            <div className="wide-cap">Also on the calendar</div>
             {otherUpcoming.length === 0 && otherDone.length === 0 ? (
               <p className="wide-note">
                 {hero
-                  ? 'Nothing else on the calendar this season.'
-                  : 'The season’s tournaments will be listed here once they are scheduled.'}
+                  ? 'Nothing else on the calendar.'
+                  : 'Tournaments will be listed here once they are scheduled.'}
               </p>
             ) : (
               <div className="ptourn-also">

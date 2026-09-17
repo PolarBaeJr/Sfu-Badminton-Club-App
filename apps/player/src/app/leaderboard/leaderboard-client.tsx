@@ -730,6 +730,30 @@ export default function LeaderboardClient({
                   <span>Player</span>
                   <span className="right">{isTpts ? 'Points' : 'ELO · W–L · Win % · Streak'}</span>
                 </div>
+                {/* THE TWO HALVES OF A ROW ARE ON DIFFERENT CLOCKS, and until
+                    now nothing on screen said so.
+
+                    activate_season REBASES Elo at a rollover — compressed
+                    toward the mean, or reset outright under the 'full' policy
+                    in 00068 — but it resets no other counter. So the wins,
+                    losses, win rate and streak printed beside that Elo are
+                    cumulative across every season the member has ever played,
+                    and a row reading "1847 · 18–6 · 75%" stated one
+                    since-rollover figure and three all-time ones in a single
+                    line with no visual seam. Tournament points are all-time
+                    too: get_leaderboard() sums tournament_participants.points
+                    with no season predicate and no join to tournaments.
+
+                    Nothing stores a per-season record, so this can only be
+                    labelled, not scoped. It sits on its own line because the
+                    legend above is a right-aligned cell in a three-column key
+                    and wraps at 400px if it is lengthened — the same trap
+                    past-rating-card.tsx:130-137 records. */}
+                <div className="mono muted" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+                  {isTpts
+                    ? 'Tournament points are all-time, across every season.'
+                    : 'Elo is rebased each season. Record, win rate and streak are all-time.'}
+                </div>
               </div>
             </div>
             {visible.length === 0 ? (

@@ -824,6 +824,31 @@ function formatLeaderboardRow(e: {
   return `${medal} **${e.name}** — ${rating} (${e.wins}W ${e.losses}L)`;
 }
 
+/**
+ * THE TWO NUMBERS ON A ROW ARE ON DIFFERENT CLOCKS, and nothing said so.
+ *
+ * activate_season REBASES Elo at a rollover -- compressed toward the mean, or
+ * reset outright under the 'full' policy in 00068 -- but it resets no other
+ * counter. So the W-L printed beside that Elo is cumulative across every season
+ * the member has ever played, and a row reading "1847 (18W 6L)" stated one
+ * since-rollover figure and one all-time figure side by side.
+ *
+ * The points ladder is all-time on BOTH sides: get_leaderboard() sums
+ * tournament_participants.points with no season predicate and no join to
+ * tournaments, so there is no rebase to mention and the caveat is a different
+ * one.
+ *
+ * In the footer, not on each row: a row already carries a medal, a name, a
+ * rating and a record, and Discord wraps it on a phone. The footer is also
+ * where this embed already puts its other caveat, the provisional asterisk. The
+ * same statement sits under the column key on the web ladder.
+ */
+function ladderTimeBase(ladder: string): string {
+  return ladder === 'points'
+    ? 'Tournament points are all-time, across every season.'
+    : 'Elo is rebased each season. W-L is all-time.';
+}
+
 export async function handleLeaderboard(options: CommandOption[] | undefined) {
   const ladder = String(option(options, 'ladder') ?? 'doubles');
   const page = Number(option(options, 'page') ?? 1);
@@ -845,13 +870,18 @@ export async function handleLeaderboard(options: CommandOption[] | undefined) {
     color: CLUB_RED,
     description: data.entries.map(formatLeaderboardRow).join('\n'),
     footer: {
-      text: [
-        `Page ${data.page} of ${data.totalPages}`,
-        `${data.totalPlayers} ranked`,
-        anyProvisional ? '* rating still provisional' : null,
-      ]
-        .filter(Boolean)
-        .join(' · '),
+      text:
+        [
+          `Page ${data.page} of ${data.totalPages}`,
+          `${data.totalPlayers} ranked`,
+          anyProvisional ? '* rating still provisional' : null,
+        ]
+          .filter(Boolean)
+          .join(' · ') +
+        // On its own line rather than joined with ' · ': it is a sentence, not
+        // another count, and a leaderboard posted in a channel outlives the
+        // message that asked for it.
+        `\n${ladderTimeBase(data.ladder)}`,
     },
   });
 }
