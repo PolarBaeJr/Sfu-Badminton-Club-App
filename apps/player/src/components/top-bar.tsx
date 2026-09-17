@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@badminton/ui';
 import { ShuttleMark } from './shuttle-mark';
 import {
@@ -37,6 +37,7 @@ export function TopBar({
   isAuthenticated,
   isExecOrAdmin,
   activeSeasonName,
+  activeSeasonId,
   isApproved = true,
 }: {
   playerName: string;
@@ -45,10 +46,30 @@ export function TopBar({
   isAuthenticated: boolean;
   isExecOrAdmin: boolean;
   activeSeasonName?: string;
+  /** The id of the season `activeSeasonName` names, to compare against `?season=`. */
+  activeSeasonId?: string;
   /** False while the account is pending approval or suspended. */
   isApproved?: boolean;
 }) {
   const pathname = usePathname();
+  // This chrome renders above every page, and a LAYOUT never receives
+  // searchParams — only a page does. So the label had no way to learn that the
+  // screen under it is a finished term, and went on asserting the active season
+  // over a past one. `?season=<id>` is the contract season-pick.tsx already
+  // writes and my-stats/page.tsx already dispatches on.
+  //
+  // useSearchParams and NOT the window.location read login/page.tsx uses: the
+  // picker changes only the query string, so pathname never changes and an
+  // effect keyed on it would never re-run, leaving the label stale after every
+  // switch. The hook's production-build <Suspense> requirement applies to
+  // STATICALLY PRERENDERED routes; app/layout.tsx is force-dynamic at the root,
+  // so nothing in this app prerenders, and season-pick.tsx already calls this
+  // same hook under this same layout and ships.
+  const viewedSeasonId = useSearchParams()?.get('season') ?? '';
+  // Suppression, not substitution: this component has no id-to-name map, and
+  // every past-season screen already names its own term (past-season.tsx:267).
+  // The only job here is to stop claiming a season the viewer is not looking at.
+  const viewingPastSeason = viewedSeasonId !== '' && viewedSeasonId !== activeSeasonId;
   const navItems = isAuthenticated
     ? desktopNavItems.filter((item) => isApproved || !item.gated)
     : [];
@@ -72,7 +93,13 @@ export function TopBar({
           <div className="brand-mark"><ShuttleMark /></div>
           <div className="brand-wrap">
             <div>SFU Badminton</div>
-            {activeSeasonName && <div className="brand-sub">{activeSeasonName}</div>}
+            {/* Explicit ternaries rather than a chain of && : the bare-truthy
+                shape is what put a literal 0 in the profile header (758d0790). */}
+            {viewingPastSeason ? (
+              <div className="brand-sub">PAST SEASON</div>
+            ) : activeSeasonName ? (
+              <div className="brand-sub">{activeSeasonName}</div>
+            ) : null}
           </div>
         </Link>
 

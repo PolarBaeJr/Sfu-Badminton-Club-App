@@ -333,7 +333,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <DeletionGate deletionRequestedAt={deletionRequestedAt} />
                 {/* Deletion screen wins when both gates would apply. */}
                 <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
-                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} />
+                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} activeSeasonId={season?.id ?? ''} />
                 {/* Under the top bar, above the page: the one place that says
                     why the controls below are missing. Nav gating is left as
                     it was — a link that still loads its page is not a control
