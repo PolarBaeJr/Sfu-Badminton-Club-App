@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Select } from '@badminton/ui';
+import { Tabs } from '@badminton/ui';
 import { Composer, type DiscordContext } from './actions';
 import { DiscordSend } from './discord-send';
 import { useDiscordConsole } from './discord-console-context';
@@ -13,11 +13,7 @@ import {
   type DiscordRoleOption,
 } from './announcement-shape';
 
-// One card, two composers, a dropdown at the top to choose between them.
-//
-// A `Select` rather than a tab strip, so the destination reads as the first
-// field of the form it governs and matches the Category/Audience/Visible in
-// controls below it.
+// One card, two composers, a strip at the top to choose between them.
 //
 // BOTH COMPOSERS STAY MOUNTED AND THE INACTIVE ONE IS HIDDEN, because switching
 // modes must not silently destroy a half-typed announcement. `Composer` holds
@@ -54,7 +50,7 @@ export function ComposerSwitch({
   //
   // `pending` alone in the dependency list, deliberately. `modes` is a fresh
   // array on every render, so including it would re-run this after each one and
-  // pin the dropdown to Discord for as long as an edit is open.
+  // pin the tab strip to Discord for as long as an edit is open.
   useEffect(() => {
     if (pending) setMode('discord');
   }, [pending]);
@@ -64,11 +60,10 @@ export function ComposerSwitch({
     // discord-send.tsx:109). A display:none panel contributes no flex gap.
     <div className="flex flex-col gap-[14px]">
       {showsModeSelector(modes) && (
-        <Select
-          label="Post to"
-          value={mode}
-          onChange={(e) => setMode(e.target.value as ComposerMode)}
-          options={modes.map((m) => ({ value: m, label: COMPOSER_MODE_LABELS[m] }))}
+        <Tabs
+          tabs={modes.map((m) => ({ id: m, label: COMPOSER_MODE_LABELS[m] }))}
+          activeTab={mode}
+          onChange={(id) => setMode(id as ComposerMode)}
         />
       )}
 
