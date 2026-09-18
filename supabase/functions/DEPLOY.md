@@ -23,9 +23,27 @@ request is rejected — so the secret MUST be set before deploying.
 
    Functions with schedules: expire-challenges, expire-walkover-pending,
    send-challenge-reminders, send-stale-confirmation-alerts,
-   detect-noshow-patterns, mark-inactive-players, purge-deleted-accounts.
+   detect-noshow-patterns, mark-inactive-players, purge-deleted-accounts,
+   purge-inactive-accounts, purge-unfinished-signups.
    (apply-season-compression and capture-season-snapshot are invoked on demand
    — include the header there too.)
+
+   The last two are listed on the authority of their own file headers and
+   nothing else. `purge-inactive-accounts:1` says "Runs daily via cron (host
+   crontab -> ~/bin/run-edge-fn.sh)" and `purge-unfinished-signups:1-2` claims
+   the same mechanism. That is NOT the dashboard schedule the step above
+   describes, so for those two the header belongs in the crontab line on the
+   host, and what is actually installed there has not been checked against this
+   list. purge-inactive-accounts had been missing from it entirely while
+   running, which is how the omission is known to be an omission rather than a
+   statement that it has no schedule.
+
+   Both are dry-run unless armed, with SEPARATE switches on purpose:
+   `PURGE_INACTIVE_ENABLED=true` arms anonymisation of lapsed members,
+   `PURGE_UNFINISHED_ENABLED=true` arms outright DELETION of abandoned signup
+   stubs (view `purgeable_unfinished_signups`, migration 00233). Setting one
+   does not set the other, and an unset variable means "report and change
+   nothing", so deploying either function cannot purge anybody.
 
 3. Deploy all functions:
 
