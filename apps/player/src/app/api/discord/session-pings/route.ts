@@ -81,7 +81,19 @@ export async function GET(request: Request) {
     channel_id: string | null;
   }[];
 
-  if (pingRoles.length === 0) return NextResponse.json({ pings: [] });
+  // Says so out loud, because this is the shape the feature fails in. A ping
+  // role exists in Discord long before it exists HERE: being offered on the
+  // server's Onboarding screen, or handed out by /rolepicker, puts a role on
+  // members without giving any row a `track`, and `track` is what binds a role
+  // to competitive/recreational sessions. Until an exec runs the UPDATE in
+  // 00168, this returns an empty list and the cron records a clean success
+  // having pinged nobody, which is indistinguishable from a quiet week.
+  if (pingRoles.length === 0) {
+    console.warn(
+      `[discord] session-pings: no role in guild ${guildId} has a track set, so nothing can be pinged`
+    );
+    return NextResponse.json({ pings: [] });
+  }
 
   const settings = new Map(
     ((settingsResult.data ?? []) as { key: string; value: string }[]).map((s) => [s.key, s.value])
