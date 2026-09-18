@@ -38,6 +38,7 @@ Names only — values live in the deployment's secret store, never in the repo.
 | `DISCORD_GUILDS` | which guilds the bot manages |
 | `DISCORD_AUDIT_CHANNEL_ID` | where audit entries are posted |
 | `DISCORD_DEV_GUILD_ID` | *optional* — register commands to one guild instantly |
+| `REGISTER_COMMANDS_ON_BOOT` | *optional*: `true` lets this bot register its own commands at startup |
 | `DISCORD_SERVICE_SECRET` | shared secret for the service endpoints below |
 | `APP_API_URL` | where the bot calls the player app's `/api/discord/*` |
 | `APP_PUBLIC_URL` | origin used in links the bot posts |
@@ -113,6 +114,14 @@ server shows both copies until the global set catches up.
 **`autocomplete: true` is part of the stored definition.** Deploying the handler
 alone changes nothing; Discord will not send an autocomplete interaction for an
 option it hasn't been told is one. Re-run `register`.
+
+**`REGISTER_COMMANDS_ON_BOOT=true` makes a deploy do that for you.** A deploy
+here is a pull and a restart, so the bot compares the registered set with
+`COMMAND_DEFINITIONS` on startup and PUTs only when they differ. Off unless the
+value is exactly `true`, because registration is *global*: two stacks sharing
+one Discord application would take turns publishing each other's command set.
+See `src/register-commands.ts` for the whole argument. It never fails a boot,
+so the log is the only place it reports anything.
 
 **The interaction signature covers the raw body.** Parse-and-re-serialise
 reorders keys and drops whitespace, which invalidates every signature — and the

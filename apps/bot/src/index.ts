@@ -37,6 +37,7 @@ import { warmHandles } from './handles.js';
 import { syncMembersNow } from './member-sync.js';
 import { sendMultipart } from './multipart.js';
 import { reconcile } from './reconcile.js';
+import { registerCommandsOnBoot } from './register-commands.js';
 import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
 import { runAnnouncements } from './announcements.js';
@@ -918,6 +919,22 @@ server.listen(PORT, '0.0.0.0', () => {
       // re-reads config anyway; this is a startup diagnostic, not a gate.
       console.error(`[bot] could not read config at startup: ${String(error)}`);
     });
+
+  // Slash commands, if this deployment is the one allowed to publish them. A
+  // deploy here is a pull and a restart, so this callback IS the deploy hook:
+  // register-commands.ts says why that beats a CI step, and why
+  // REGISTER_COMMANDS_ON_BOOT has to be set by hand first.
+  //
+  // IN HERE, AND NOT AWAITED, so nothing about readiness waits on Discord: the
+  // listener is already bound by the time this callback runs and the gateway
+  // was started synchronously above, so a hung or rate-limited registration
+  // costs nothing but its own log line. The .catch is the second net - the
+  // function swallows its own failures, and an unhandled rejection escaping
+  // here would kill the process, which is the one thing registration must
+  // never do.
+  registerCommandsOnBoot().catch((error) => {
+    console.error(`[bot] command registration threw: ${String(error)}`);
+  });
 });
 
 // The proxy and Docker both stop containers with SIGTERM. Closing the server
