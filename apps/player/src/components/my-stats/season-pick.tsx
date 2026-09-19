@@ -23,11 +23,12 @@ import type { HistorySeason } from '@/lib/season-history';
  * Renders nothing when there is only the current term to look at, so a club in
  * its first season never sees a control with one option in it.
  *
- * `basePath` is required rather than defaulted to /my-stats. Two screens are
- * season-scoped now (/my-stats and /leaderboard) and each is the canonical
- * address for its own "now", so a control that guessed wrong would silently move
- * a reader to the other page, and a default is exactly how the third one would
- * inherit the wrong guess.
+ * `basePath` is required rather than defaulted to /my-stats. Three screens are
+ * season-scoped now (/my-stats, /leaderboard and /tournaments) and each is the
+ * canonical address for its own "now", so a control that guessed wrong would
+ * silently move a reader to a different page, and a default is exactly how a
+ * fourth one would inherit the wrong guess. The third arrived without needing
+ * to touch this file, which is the argument for keeping it required.
  */
 export function SeasonPick({
   options,
