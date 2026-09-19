@@ -24,6 +24,22 @@ export const dynamic = 'force-dynamic';
 // competitive ping role at a competitive-only channel and lets Discord's own
 // permissions do the work. Nothing in this route tries to guess who should see
 // what, because at broadcast time there is nobody to guess about.
+//
+// THAT PER-ROLE CHANNEL MECHANISM SURVIVES ON THE discord_self_roles FALLBACK
+// PATH ONLY. The settings path below has no per-role channel to point anywhere:
+// a settings-sourced role carries channel_id: null and therefore posts to
+// session_ping_channel_id like everything else. A club that needs competitive
+// nights kept out of the server-wide channel has to bind its roles through
+// discord_self_roles, because there is nowhere in discord_settings to say it.
+//
+// AND THE SETTINGS KEYS ARE GLOBAL, NOT PER-GUILD, for the reason the settings
+// route documents at its own head: discord_settings is keyed on `key` alone
+// (00167) with no guild_id column, so session_ping_competitive_role_id means
+// the same role id in every guild this app answers for. That is inherited, not
+// new: session_ping_channel_id has always been global, and the guildId in the
+// query string only ever narrowed the discord_self_roles read. One club, one
+// server per environment, so no guard is added here for a second guild that
+// does not exist; widening the table comes first if one ever does.
 
 const DEFAULT_LEAD_MINUTES = 120;
 
@@ -32,6 +48,38 @@ const DEFAULT_LEAD_MINUTES = 120;
 // cron has not run for longer than this, the window has passed and the ping is
 // dropped rather than fired stale.
 const MAX_LATENESS_MINUTES = 30;
+
+// PING ROLES READ STRAIGHT OUT OF discord_settings, one key per session track.
+//
+// Why these exist at all: this route originally learned its ping roles only
+// from discord_self_roles rows carrying a `track`, and on production that read
+// returns ZERO rows. The club hands its `@session ping` role out through
+// Discord's built-in Onboarding screen, which writes nothing to this database,
+// so no row ever existed to put a `track` on and the pings had never once
+// fired. The obvious fix, binding the role with /rolepicker add, was rejected
+// by the owner and rightly: that would also list the role in the picker UI and
+// give members a SECOND way to get a role Onboarding already grants them, so
+// the two grant paths would drift and a member could hold one view of it.
+//
+// session_ping_all_role_id IS NOT A WILDCARD. It mirrors the session_group
+// enum: it is the role pinged on club-wide nights ONLY, the same way
+// session_ping_competitive_role_id is the role pinged on competitive nights.
+// A club that runs a single ping role for everything therefore sets all THREE
+// keys to that one id, which is exactly the case the per-session dedup in the
+// loop below exists to survive.
+//
+// Deliberately NOT in the WRITABLE map in the settings route, so nothing can
+// write them over HTTP: an exec sets them with SQL. That also means nothing
+// validated them on the way in, which is why the id is regex-checked here on
+// the way out rather than trusted.
+const SETTINGS_PING_ROLES: Record<string, string> = {
+  competitive: 'session_ping_competitive_role_id',
+  recreational: 'session_ping_recreational_role_id',
+  all: 'session_ping_all_role_id',
+};
+
+// Same shape the settings route checks channel ids against.
+const SNOWFLAKE = /^\d{17,20}$/;
 
 function clubTimeToUtc(date: string, time: string): Date {
   const [y, mo, d] = date.split('-').map(Number) as [number, number, number];
@@ -59,7 +107,9 @@ export async function GET(request: Request) {
   const [rolesResult, settingsResult] = await Promise.all([
     supabase
       .from('discord_self_roles')
-      .select('role_id, label, track, channel_id')
+      // No `label`: the only consumer of it is the /rolepicker route, which
+      // renders the picker menu. The bot builds its mentions from ids alone.
+      .select('role_id, track, channel_id')
       .eq('guild_id', guildId)
       .not('track', 'is', null),
     supabase.from('discord_settings').select('key, value'),
@@ -74,33 +124,65 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'config_unavailable', detail }, { status: 503 });
   }
 
-  const pingRoles = (rolesResult.data ?? []) as {
-    role_id: string;
-    label: string;
-    track: string;
-    channel_id: string | null;
-  }[];
-
-  // Says so out loud, because this is the shape the feature fails in. A ping
-  // role exists in Discord long before it exists HERE: being offered on the
-  // server's Onboarding screen, or handed out by /rolepicker, puts a role on
-  // members without giving any row a `track`, and `track` is what binds a role
-  // to competitive/recreational sessions. Until an exec runs the UPDATE in
-  // 00168, this returns an empty list and the cron records a clean success
-  // having pinged nobody, which is indistinguishable from a quiet week.
-  if (pingRoles.length === 0) {
-    console.warn(
-      `[discord] session-pings: no role in guild ${guildId} has a track set, so nothing can be pinged`
-    );
-    return NextResponse.json({ pings: [] });
-  }
-
+  // READ BEFORE THE EMPTINESS DECISION, which is why this sits above the role
+  // rows rather than below them: the settings now carry a whole source of ping
+  // roles, so "is there anything to ping?" cannot be answered until they have
+  // been parsed.
   const settings = new Map(
     ((settingsResult.data ?? []) as { key: string; value: string }[]).map((s) => [s.key, s.value])
   );
   const defaultChannel = settings.get('session_ping_channel_id') ?? null;
   const leadRaw = Number(settings.get('session_ping_lead_minutes'));
   const leadMinutes = Number.isFinite(leadRaw) && leadRaw > 0 ? leadRaw : DEFAULT_LEAD_MINUTES;
+
+  const selfRoleRows = (rolesResult.data ?? []) as {
+    role_id: string;
+    track: string;
+    channel_id: string | null;
+  }[];
+
+  const settingsRoles: { role_id: string; track: string; channel_id: string | null }[] = [];
+  for (const [track, key] of Object.entries(SETTINGS_PING_ROLES)) {
+    const raw = settings.get(key);
+    // An absent key is the normal case for a club that only runs one track, so
+    // it passes quietly. A key that is PRESENT and unusable is a typo somebody
+    // made in SQL and would otherwise show up as silence, so it is named.
+    if (raw === undefined) continue;
+    const roleId = raw.trim();
+    if (!SNOWFLAKE.test(roleId)) {
+      console.warn(
+        `[discord] session-pings: discord_settings.${key} is not a role id (${raw}), skipping it`
+      );
+      continue;
+    }
+    // channel_id: null on purpose. There is no per-key channel, so every
+    // settings-sourced role falls through to defaultChannel below.
+    settingsRoles.push({ role_id: roleId, track, channel_id: null });
+  }
+
+  // SETTINGS WIN OUTRIGHT, and the two lists are deliberately NOT merged. A
+  // club that has written the keys has said where its ping roles come from;
+  // folding in whatever discord_self_roles happens to hold as well would ping a
+  // role nobody asked to be pinged and there would be no way to turn it off
+  // short of editing rows that exist for the picker, not for this.
+  const pingRoles = settingsRoles.length > 0 ? settingsRoles : selfRoleRows;
+
+  // Says so out loud, because this is the shape the feature fails in, and it is
+  // how the feature actually shipped: BOTH sources can be empty at once. A ping
+  // role exists in Discord long before it exists HERE, since Discord's
+  // Onboarding screen hands a role out without writing anything to this
+  // database, and /rolepicker writes a row without giving it a `track`. So
+  // nothing can be pinged unless either an exec has set one of the
+  // session_ping_*_role_id keys in SQL or a discord_self_roles row has been
+  // given a track by the UPDATE in 00168. With neither, this returns an empty
+  // list and the cron records a clean success having pinged nobody, which is
+  // indistinguishable from a quiet week.
+  if (pingRoles.length === 0) {
+    console.warn(
+      `[discord] session-pings: nothing can be pinged for guild ${guildId}. None of the three session_ping_*_role_id keys in discord_settings holds a valid role id, and no discord_self_roles row for the guild has a track. The cron will record a clean success having pinged nobody, which is indistinguishable from a quiet week.`
+    );
+    return NextResponse.json({ pings: [] });
+  }
 
   // Sessions starting between now and the lead time, plus the lateness grace.
   // Filtered on `date` because that is the indexed column; the precise instant
@@ -181,12 +263,33 @@ export async function GET(request: Request) {
     // matching role was configured rather than in hash order.
     const byChannel = new Map<string, string[]>();
 
+    // ONE ROLE ID AT MOST ONCE PER SESSION, and per SESSION rather than per
+    // channel, because (session_id, role_id) is the idempotency key.
+    //
+    // The settings path makes a repeated role id representable for the first
+    // time: a club with a single ping role sets all three
+    // session_ping_*_role_id keys to the same id, so a club-wide night matches
+    // that id three times over. Without this, the id lands in `roleIds` three
+    // times, the bot renders the same mention three times in one message, and
+    // the POST that records the ping sends three identical
+    // (session_id, role_id) rows in ONE upsert statement, which Postgres
+    // rejects with 21000 "ON CONFLICT DO UPDATE command cannot affect row a
+    // second time". The ping posts, fails to record, and posts again every five
+    // minutes until the lateness window closes.
+    //
+    // discord_self_roles could not express this: its primary key is
+    // (guild_id, role_id), so the same role appearing twice in one guild was
+    // unrepresentable, which is why no test predating the settings path covers
+    // it.
+    const emitted = new Set<string>();
+
     for (const role of pingRoles) {
       // An 'all' session pings every configured ping role — a club-wide night is
       // for everybody, so anyone who asked to hear about nights hears about it.
       // Otherwise the tracks must match exactly.
       if (session.track !== 'all' && role.track !== session.track) continue;
       if (sent.has(`${session.id}:${role.role_id}`)) continue;
+      if (emitted.has(role.role_id)) continue;
 
       const channelId = role.channel_id ?? defaultChannel;
       // No channel configured anywhere means this role cannot be pinged. Skip
@@ -194,6 +297,7 @@ export async function GET(request: Request) {
       // the others going out.
       if (!channelId) continue;
 
+      emitted.add(role.role_id);
       const roles = byChannel.get(channelId);
       if (roles) roles.push(role.role_id);
       else byChannel.set(channelId, [role.role_id]);
