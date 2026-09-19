@@ -246,11 +246,26 @@
   --dur-fast:  160ms;
   --dur-med:   240ms;
   --dur-slow:  420ms;
-  --radius:    0;
-  --r-sm: 0;
-  --r-md: 0;
-  --r-lg: 0;
-  --r-xl: 0;
+  /* THE RADIUS SCALE, AND IT IS LOAD-BEARING IN A WAY THE TAILWIND ONE IS NOT.
+     These were all 0 to match a sharp-cornered reference design. Zeroing them
+     did not remove the rounding from the markup, it removed it from the tokens,
+     so every rule that says border-radius: var(--r-lg) kept saying it and kept
+     rendering square. .card-base is the one that matters: every panel on every
+     page draws its shape from it.
+
+     Giving the Tailwind scale real values (apps/player/tailwind.config.ts) did
+     NOTHING visible here, because the player app's cards are CSS classes that
+     never carried a rounded-* utility. That is why the admin app rounded and
+     this one did not. The numbers below match that Tailwind scale on purpose:
+     md is 8px there and 8px here, lg is 12px in both. A component styled either
+     way should land on the same corner.
+
+     --radius is the older generic one and stays in step with --r-md. */
+  --radius:    8px;
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
 }
 
 * {
@@ -297,7 +312,7 @@ body {
 :focus-visible {
   outline: 2px solid var(--red);
   outline-offset: 2px;
-  border-radius: 0;
+  border-radius: var(--r-sm);
 }
 
 @layer base {
@@ -339,7 +354,7 @@ body {
 }
 .brand-wrap { display: flex; flex-direction: column; line-height: 1; }
 .brand-mark {
-  width: 34px; height: 34px; border-radius: 0;
+  width: 34px; height: 34px; border-radius: var(--r-md);
   background: var(--red); color: #fff;
   display: grid; place-items: center;
   font-weight: 700; font-family: var(--display);
@@ -358,7 +373,7 @@ body {
 
 .nav { display: flex; gap: 2px; margin-left: 12px; }
 .nav-item {
-  padding: 8px 14px; border-radius: 0;
+  padding: 8px 14px; border-radius: var(--r-md);
   color: var(--mute); font-weight: 600; font-size: 12px;
   text-transform: uppercase; letter-spacing: .08em;
   display: flex; align-items: center; gap: 8px;
@@ -376,7 +391,7 @@ body {
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 
 .icon-btn {
-  width: 36px; height: 36px; border-radius: 0;
+  width: 36px; height: 36px; border-radius: var(--r-md);
   display: grid; place-items: center;
   border: 1px solid var(--line); color: var(--ink-2);
   background: transparent;
@@ -387,7 +402,7 @@ body {
 
 .me-chip {
   display: flex; align-items: center; gap: 10px;
-  padding: 4px 12px 4px 4px; border-radius: 0;
+  padding: 4px 12px 4px 4px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--surface);
   cursor: pointer;
   transition: background-color .15s;
@@ -442,7 +457,7 @@ body {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   font-size: 10px; font-weight: 500;
   color: var(--mute);
-  border-radius: 0;
+  border-radius: var(--r-md);
   min-height: 48px;
   position: relative;
 }
@@ -467,7 +482,7 @@ body {
 
 .btn {
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 9px 14px; border-radius: 0;
+  padding: 9px 14px; border-radius: var(--r-md);
   font-weight: 700; font-size: 11px;
   text-transform: uppercase; letter-spacing: .16em;
   transition: all .15s;
@@ -522,7 +537,7 @@ body {
 
 .pill {
   display: inline-flex; align-items: center;
-  padding: 3px 8px; border-radius: 0;
+  padding: 3px 8px; border-radius: 999px;
   font-size: 11px; font-family: var(--mono); font-weight: 500;
 }
 .pill-red { background: var(--red); color: #fff; }
@@ -619,12 +634,12 @@ body {
   margin-top: 6px;
 }
 .score-mini span {
-  padding: 1px 6px; border-radius: 0;
+  padding: 1px 6px; border-radius: var(--r-sm);
   background: var(--surface-2);
 }
 
 @media (max-width: 980px) {
-  .hero-banner       { grid-template-columns: 1fr; padding: 22px; border-radius: 0; gap: 22px; }
+  .hero-banner       { grid-template-columns: 1fr; padding: 22px; border-radius: var(--r-xl); gap: 22px; }
   .hero-banner h2    { font-size: 24px; line-height: 1.1; word-break: break-word; overflow-wrap: anywhere; }
   .hero-banner .lead { font-size: 13px; }
   .hero-stats        { grid-template-columns: 1fr 1fr; border-left: 0; border-top: 1px solid color-mix(in oklab, var(--hero-fg) 15%, transparent); padding: 20px 0 0; gap: 14px; }
@@ -643,14 +658,14 @@ body {
    ═══════════════════════════════════════════════════════════ */
 
 .capacity-bar {
-  height: 6px; border-radius: 0;
+  height: 6px; border-radius: 999px;
   background: var(--surface-2);
   overflow: hidden;
   position: relative;
 }
 .capacity-bar .fill {
   height: 100%; background: var(--ink);
-  border-radius: 0;
+  border-radius: 999px;
   transition: width .3s;
 }
 .capacity-bar .fill.warn { background: var(--gold); }
@@ -667,7 +682,7 @@ body {
   gap: 10px;
 }
 .empty-icon {
-  width: 44px; height: 44px; border-radius: 0;
+  width: 44px; height: 44px; border-radius: var(--r-md);
   background: var(--surface-2);
   display: grid; place-items: center;
   color: var(--mute);
@@ -682,7 +697,7 @@ body {
 .input-base {
   width: 100%;
   padding: 13px 16px;
-  border-radius: 0;
+  border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: var(--surface);
   font-size: 14px;
@@ -700,7 +715,7 @@ body {
   color: var(--loss);
   background: var(--red-wash);
   padding: 10px 12px;
-  border-radius: 0;
+  border-radius: var(--r-md);
 }
 
 .list-row {
@@ -709,7 +724,7 @@ body {
   gap: 12px;
   padding: 12px 14px;
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: var(--r-md);
   background: var(--surface);
 }
 a.list-row { transition: border-color var(--dur-fast), background-color var(--dur-fast); }
@@ -722,7 +737,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   align-items: center;
   gap: 6px;
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: 999px;
   padding: 4px 6px 4px 14px;
   background: var(--surface);
 }
@@ -997,7 +1012,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   /* Tags (small mono labels — different from chips) */
   .tag {
     display: inline-flex; align-items: center; gap: 6px;
-    padding: 3px 8px; border-radius: 0;
+    padding: 3px 8px; border-radius: var(--r-sm);
     background: var(--surface-2); color: var(--ink-2);
     font-size: 11px; font-weight: 500;
     font-family: var(--mono); letter-spacing: .02em; text-transform: uppercase;
@@ -1141,7 +1156,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
     align-items: center;
     gap: 0.375rem;
     padding: 0.25rem 0.625rem;
-    border-radius: 0;
+    border-radius: 999px;
     font-size: 0.6875rem;
     font-weight: 700;
     text-transform: uppercase;
@@ -1205,7 +1220,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; }
   .filter-chip {
     padding: 8px 14px;
-    border-radius: 0;
+    border-radius: 999px;
     border: 1px solid var(--line);
     background: var(--surface);
     color: var(--ink-2);
@@ -1280,7 +1295,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
     );
     background-size: 200% 100%;
     animation: shimmer 1.6s linear infinite;
-    border-radius: 0;
+    border-radius: var(--r-sm);
   }
   @keyframes shimmer {
     0% { background-position: 200% 0; }
@@ -1402,7 +1417,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 
 .lp-btn {
   display: inline-flex; align-items: center; gap: 8px;
-  font-weight: 600; font-size: 15px; border-radius: 0;
+  font-weight: 600; font-size: 15px; border-radius: var(--r-md);
   padding: 12px 22px; text-decoration: none; transition: all .15s ease;
   border: 1px solid transparent; cursor: pointer;
 }
@@ -1443,7 +1458,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 .lp-feature { padding-top: 26px; }
 .lp-feature-icon {
   display: grid; place-items: center;
-  width: 40px; height: 40px; border-radius: 0;
+  width: 40px; height: 40px; border-radius: var(--r-md);
   background: var(--red-wash); color: var(--red);
   margin-bottom: 14px;
 }
@@ -3902,7 +3917,7 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 44px; min-height: 44px;
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--ink-2);
   cursor: pointer;
