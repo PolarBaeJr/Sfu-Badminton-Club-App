@@ -35,9 +35,9 @@
 -- delta. Run against ratings that never received those deltas, it would push
 -- clean baselines to 323, 477 and so on. There is nothing to reverse.
 --
--- Confirm that premise still holds before running section 1 (it is section 0).
--- If any row comes back non-zero, STOP: something has been played since, and
--- the whole premise of this script needs re-deriving.
+-- Section 0 re-checks that premise and RAISES if it no longer holds, so the
+-- file cannot delete anything against ratings that have moved since. If it
+-- aborts, something has been played and the whole premise needs re-deriving.
 --
 -- ============================================================================
 -- THREE DISCORD MESSAGES WILL BE LEFT BEHIND, AND SQL CANNOT REACH THEM
@@ -56,9 +56,12 @@
 -- ============================================================================
 --   ssh pi "docker exec -i supabase-db psql -U postgres -d postgres" < this-file
 --
--- Sections 1 to 4 each carry their own BEGIN/COMMIT, so run the file as a
+-- Sections 1 to 5 each carry their own BEGIN/COMMIT, so run the file as a
 -- whole or paste one section at a time. NEVER with --single-transaction: the
 -- explicit COMMITs and the \echo meta-commands both break under it.
+--
+-- If you paste section by section, do NOT stop before section 5. Section 1
+-- destroys the only way to work out who section 5 has to repair.
 -- ============================================================================
 
 
@@ -89,6 +92,27 @@ SELECT id, name, status FROM tournaments;
 
 -- (d) No live money. Expect 0: club_ledger is what makes a fee irreversible.
 SELECT count(*) AS ledger_rows FROM club_ledger;
+
+-- (e) THE GATE. Everything above prints; only this one stops the file.
+--     ON_ERROR_STOP catches errors, and a SELECT returning inconvenient
+--     numbers is not an error, so without this block psql would print (a)
+--     and then commit section 1 regardless of what it said. The ratings
+--     premise is the single thing the whole script rests on, so it raises.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM ratings
+     WHERE singles_matches_played  <> 0 OR doubles_matches_played  <> 0
+        OR singles_wins            <> 0 OR singles_losses          <> 0
+        OR doubles_wins            <> 0 OR doubles_losses          <> 0
+        OR current_singles_streak  <> 0 OR current_doubles_streak  <> 0
+  ) THEN
+    RAISE EXCEPTION
+      'ABORT: ratings counters are not all zero. The void-vs-delete premise '
+      'in this script is stale - real play has happened since 2026-09-10. '
+      'Re-derive before running any section.';
+  END IF;
+END $$;
 
 
 \echo ''
@@ -229,6 +253,69 @@ DELETE FROM season_final_ratings
 
 -- Expect 0 rows.
 SELECT season_id, count(*) FROM season_final_ratings GROUP BY 1;
+COMMIT;
+
+
+\echo ''
+\echo '=== SECTION 5: derived stats, which hold NO foreign key to matches ==='
+-- These two tables are populated by the result-application path and reference
+-- `matches` through no constraint at all, so the FK sweep that found the
+-- cascades and the strands could not see them. Nothing above touches them and
+-- nothing decrements them. Left alone, prod ends up in exactly the shape the
+-- Summer 2026 retirement was caught in once already: a page stating a record
+-- beside zero matches played.
+--
+-- RUN THIS IN THE SAME SITTING AS SECTION 1. Once section 1 commits,
+-- `match_participants` is gone and WHICH players were affected can no longer
+-- be derived. Recorded here so the work survives that:
+--
+--   reliability_metrics, non-zero today
+--     ba250ca7-a097-4a3a-a499-715380eccadf  Matthew Cheng    4 issued, 3 completed
+--     c0bced90-4a39-4e8b-b1b5-ae8a75bdb517  wui KI Cheng     1 issued, 2 completed
+--     ee871221-4fa7-4083-a156-a0d0e9a3d4aa  Aditya Kulkarni  1 completed
+--     f4d388d5-992b-48e2-880d-9d1bedabfc71  Steven Sun       1 issued, 1 expired
+--
+--   head_to_head_stats, both rows
+--     ba250ca7 vs c0bced90  singles  2 matches, 1-1, 67-102
+--     ba250ca7 vs ee871221  singles  1 match,   1-0, 21-18
+--
+-- partnership_stats is already empty (0 rows): all three matches were singles.
+BEGIN;
+
+-- Deleted, not zeroed. `recompute_player_stats(uuid)` (00123) is the supported
+-- repair and would work here, but it zeroes the row in place and leaves a
+-- 0-match pair behind. Every match on prod is test data, so an EMPTY table is
+-- the honest end state, and it is what a pair that never played looks like.
+DELETE FROM head_to_head_stats
+ WHERE (player_a_id, player_b_id) IN (
+         ('ba250ca7-a097-4a3a-a499-715380eccadf', 'c0bced90-4a39-4e8b-b1b5-ae8a75bdb517'),
+         ('ba250ca7-a097-4a3a-a499-715380eccadf', 'ee871221-4fa7-4083-a156-a0d0e9a3d4aa')
+       );
+
+-- Zeroed, not deleted: a member is expected to have a reliability row, and the
+-- other columns are session-derived rather than match-derived. Verified
+-- 2026-09-19 that no_shows, late_cancellations, early_withdrawals,
+-- walkovers_received, dispute_involvement_count, avg_confirmation_minutes and
+-- walkover_flag are zero/false on all 37 rows, so this clears only what the
+-- 6 test challenges and 3 test matches put there. NOT touching `no_shows`
+-- also keeps the check_noshow_threshold trigger out of it.
+UPDATE reliability_metrics
+   SET challenges_issued   = 0,
+       challenges_accepted = 0,
+       challenges_rejected = 0,
+       challenges_expired  = 0,
+       matches_completed   = 0,
+       updated_at          = NOW()
+ WHERE challenges_issued <> 0 OR challenges_accepted <> 0
+    OR challenges_rejected <> 0 OR challenges_expired <> 0
+    OR matches_completed <> 0;
+
+-- Expect 0 and 0.
+SELECT (SELECT count(*) FROM head_to_head_stats) AS h2h_rows_left,
+       (SELECT count(*) FROM reliability_metrics
+         WHERE challenges_issued <> 0 OR challenges_accepted <> 0
+            OR challenges_rejected <> 0 OR challenges_expired <> 0
+            OR matches_completed <> 0) AS reliability_rows_left;
 COMMIT;
 
 
