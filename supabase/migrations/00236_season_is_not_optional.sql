@@ -554,4 +554,47 @@ END;
 $function$;
 
 
+
+-- ============================================================================
+-- SECTION 4: grants, restated so the guard can see them
+--
+-- CREATE OR REPLACE preserves the existing ACL, so nothing above changes who
+-- can call these three. The grant-drift test cannot know that from the file,
+-- and it is right not to guess: the failure mode it exists to catch is a
+-- migration that looks service-role-only and is world-callable, and
+-- "it was fine before" is exactly what that one says too.
+--
+-- So the grants are restated here, matching the live ACL read off prod on
+-- 2026-09-19 rather than invented:
+--
+--   submit_match_result   postgres=X | authenticated=X | service_role=X
+--   apply_walkover_result postgres=X |                   service_role=X
+--   activate_season       postgres=X |                   service_role=X
+--
+-- REVOKE ... FROM PUBLIC alone would not do it. Supabase ships
+-- ALTER DEFAULT PRIVILEGES ... GRANT EXECUTE ON FUNCTIONS TO anon,
+-- authenticated, service_role, so a function is born with EXPLICIT anon and
+-- authenticated entries that a PUBLIC revoke does not touch. See 00126.
+--
+-- Net effect on a database already at prod's ACL: none. This is the assertion,
+-- written as SQL.
+-- ============================================================================
+
+REVOKE ALL ON FUNCTION public.submit_match_result(uuid, jsonb, boolean)
+  FROM PUBLIC, anon, authenticated;
+-- Members submit their own results. This is the one of the three a browser key
+-- is meant to reach, and apply_match_result behind it re-checks the actor.
+GRANT EXECUTE ON FUNCTION public.submit_match_result(uuid, jsonb, boolean)
+  TO authenticated;
+
+-- Admin-only, both of them, and both take an actor id as a parameter. Reachable
+-- by `authenticated` they would be impersonation primitives, so neither gets a
+-- grant back: the console calls them with the service key.
+REVOKE ALL ON FUNCTION public.apply_walkover_result(uuid, uuid, text)
+  FROM PUBLIC, anon, authenticated;
+
+REVOKE ALL ON FUNCTION public.activate_season(uuid, text, numeric)
+  FROM PUBLIC, anon, authenticated;
+
+
 NOTIFY pgrst, 'reload schema';
