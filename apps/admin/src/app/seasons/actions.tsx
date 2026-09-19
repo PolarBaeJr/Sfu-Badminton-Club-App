@@ -304,8 +304,21 @@ const ELO_POLICY_OPTIONS: { value: SeasonEloPolicy; label: string }[] = [
 const POLICY_WARNING: Record<SeasonEloPolicy, string | null> = {
   carry: null,
   soft: 'Every player’s ELO is compressed toward the ladder floor, and nobody drops below the tier they earned. The floor, the compression factor and the tier size are all set in Settings → Rating Defaults and Season Settings. Match history and win–loss records are preserved.',
-  full: 'Every player’s ELO will be reset to 400 and made provisional again. Match history and win–loss records are preserved, but the current ladder standings are wiped.',
+  full: 'Every player’s ELO will be reset to 400 and made provisional again, and every season counter on their profile goes back to zero: wins, losses, points, games and streaks. Match history is untouched, so last season still reads correctly on past-season pages, but the current ladder standings and the current season’s record both start over.',
 };
+
+// THE `full` WARNING CHANGED WITH 00236, AND THE OLD ONE WAS HALF TRUE.
+//
+// It used to promise that "win–loss records are preserved". They were, in the
+// sense that no `matches` row was deleted. They were not, in the sense the
+// person clicking the button cares about: `activate_season` zeroed
+// matches_played and left the other sixteen counters on `ratings` standing, so
+// a member came out of the rollover reading a career record beside "0 matches
+// played". 00236 zeros all twenty, which is coherent, and makes this sentence
+// a promise the function keeps.
+//
+// `soft` is deliberately unchanged, both here and in the function: it really
+// does leave the counters running.
 
 export interface SeasonRowCapabilities {
   /** seasons.fees.write */
