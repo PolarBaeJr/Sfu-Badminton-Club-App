@@ -394,19 +394,48 @@ async function loadForm(
     .order('total_matches', { ascending: false })
     .limit(20);
 
-  const [matchesRes, h2hRes, nightsRes] = await Promise.all([
-    matchesQuery,
-    h2hQuery,
+  // READ FIRST AND ON ITS OWN, because the nights count below needs the id to
+  // filter on. Not getActiveSeason(): that builds a user-session client, and
+  // nothing here has a session -- the card is rendered for a Discord request.
+  //
+  // A null id means no season is running. The nights count is then left
+  // unscoped rather than forced to zero: "0 nights" is a claim about the
+  // member, and no active season is a fact about the club.
+  const { data: activeSeason } = await supabase
+    .from('seasons')
+    .select('id')
+    .eq('active_flag', true)
+    .maybeSingle();
+
+  // SCOPED TO THE ACTIVE SEASON, which this card has always claimed and never
+  // did. The comment beside the NIGHTS panel in discord-card.tsx said "It is a
+  // season-long figure like the three beside it" while the query counted every
+  // night the member had ever attended, so a three-year member's card read
+  // NIGHTS 214 under a rail that frames the card as this season. `sessions`
+  // carries `season_id`; it was simply never joined.
+  //
+  // One level of embedded filter, deliberately: the two-level alias path
+  // (sessions.seasons.active_flag) is unverified against this deployment's
+  // PostgREST, and a refused read arrives as a count of 0 rather than an
+  // error, which would look exactly like a member who never turns up.
+  const nightsBase = supabase
+    .from('session_attendance')
     // Nights the member was actually there -- not nights on their record.
     // `no_show` and `excused` are rows too. See PRESENT_STATUSES.
     //
     // NOT narrowed by discipline, on purpose: a night attended is a night
     // attended, and there is no doubles-only version of turning up.
-    supabase
-      .from('session_attendance')
-      .select('id', { count: 'exact', head: true })
-      .eq('player_id', playerId)
-      .in('status', [...PRESENT_STATUSES]),
+    .select(activeSeason ? 'id, session:sessions!inner(season_id)' : 'id', {
+      count: 'exact',
+      head: true,
+    })
+    .eq('player_id', playerId)
+    .in('status', [...PRESENT_STATUSES]);
+
+  const [matchesRes, h2hRes, nightsRes] = await Promise.all([
+    matchesQuery,
+    h2hQuery,
+    activeSeason ? nightsBase.eq('sessions.season_id', activeSeason.id) : nightsBase,
   ]);
 
   type MatchRow = {
