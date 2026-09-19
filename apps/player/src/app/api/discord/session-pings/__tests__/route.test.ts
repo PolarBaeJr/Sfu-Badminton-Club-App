@@ -241,6 +241,130 @@ describe("GET /api/discord/session-pings", () => {
   });
 });
 
+// The second source of ping roles. discord_self_roles is empty on production
+// because the club hands its ping role out through Discord's Onboarding screen,
+// which writes nothing to this database, so the pings had never fired. These
+// keys are set in SQL instead of binding the role into the picker.
+const COMP_ROLE = "111111111111111111";
+const REC_ROLE = "222222222222222222";
+const ALL_ROLE = "333333333333333333";
+const ONE_ROLE = "444444444444444444";
+const CHANNEL = { key: "session_ping_channel_id", value: "default-channel" };
+
+describe("GET /api/discord/session-pings, ping roles from discord_settings", () => {
+  it("pings the roles named by the settings keys when no self-role is bound", async () => {
+    // The production shape: nothing in discord_self_roles at all.
+    selfRoles = [];
+    settings = [
+      CHANNEL,
+      { key: "session_ping_competitive_role_id", value: COMP_ROLE },
+      { key: "session_ping_recreational_role_id", value: REC_ROLE },
+      { key: "session_ping_all_role_id", value: ALL_ROLE },
+    ];
+
+    const ping = only(await due());
+
+    expect(ping.roleIds).toEqual([COMP_ROLE, REC_ROLE, ALL_ROLE]);
+    // There is no per-key channel, so everything lands in the default one.
+    expect(ping.channelId).toBe("default-channel");
+  });
+
+  it("lets the settings keys win outright when both sources are populated", async () => {
+    // Not merged. A club that wrote the keys has said where its ping roles come
+    // from, and folding in leftover picker rows would ping a role nobody asked
+    // for with no way to switch it off.
+    settings = [
+      CHANNEL,
+      { key: "session_ping_competitive_role_id", value: COMP_ROLE },
+      { key: "session_ping_recreational_role_id", value: REC_ROLE },
+      { key: "session_ping_all_role_id", value: ALL_ROLE },
+    ];
+
+    const ping = only(await due());
+
+    expect(ping.roleIds).toEqual([COMP_ROLE, REC_ROLE, ALL_ROLE]);
+    expect(ping.roleIds).not.toContain("900");
+    expect(ping.roleIds).not.toContain("901");
+  });
+
+  it("falls back to discord_self_roles when no ping-role key is set", async () => {
+    // Asserted by name rather than by count, because the fallback has to be
+    // chosen on the ABSENCE of the role keys, not on the settings being empty.
+    expect(settings.map((s) => s.key)).toEqual(["session_ping_channel_id"]);
+
+    expect(only(await due()).roleIds).toEqual(["900", "901"]);
+  });
+
+  it("names BOTH paths when neither is configured", async () => {
+    // Both can be empty at once, which is how the feature actually shipped, and
+    // the log line is the only trace: the cron records a clean success having
+    // pinged nobody, indistinguishable from a quiet week.
+    selfRoles = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await due()).toEqual([]);
+
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("session_ping_*_role_id");
+    expect(logged).toContain("discord_self_roles");
+    warn.mockRestore();
+  });
+
+  it("pings a role sitting under all three keys ONCE on a club-wide night", async () => {
+    // THE DEDUP. A club with a single ping role sets all three keys to the same
+    // id, an 'all' session matches every one of them, and the id would reach
+    // roleIds three times: three identical mentions in one message, and three
+    // identical (session_id, role_id) rows in ONE upsert, which Postgres
+    // rejects with 21000. The ping posts, fails to record, and repeats every
+    // five minutes until the lateness window closes.
+    selfRoles = [];
+    settings = [
+      CHANNEL,
+      { key: "session_ping_competitive_role_id", value: ONE_ROLE },
+      { key: "session_ping_recreational_role_id", value: ONE_ROLE },
+      { key: "session_ping_all_role_id", value: ONE_ROLE },
+    ];
+
+    expect(only(await due()).roleIds).toEqual([ONE_ROLE]);
+  });
+
+  it("pings a role sitting under both its track key and the 'all' key ONCE", async () => {
+    // session_ping_all_role_id is the club-wide-night role, NOT a wildcard, so
+    // a competitive session matches the competitive key only. The single entry
+    // has to survive whichever way the filter and the dedup interact.
+    selfRoles = [];
+    sessions = [session(SOON, "competitive")];
+    settings = [
+      CHANNEL,
+      { key: "session_ping_competitive_role_id", value: ONE_ROLE },
+      { key: "session_ping_all_role_id", value: ONE_ROLE },
+    ];
+
+    expect(only(await due()).roleIds).toEqual([ONE_ROLE]);
+  });
+
+  it("skips a key holding something that is not a role id and pings the rest", async () => {
+    // These keys are absent from the settings route's WRITABLE map, so they are
+    // set by hand in SQL and nothing validated them on the way in. One typo
+    // must not take the other two down with it.
+    selfRoles = [];
+    settings = [
+      CHANNEL,
+      { key: "session_ping_competitive_role_id", value: "@session ping" },
+      { key: "session_ping_recreational_role_id", value: REC_ROLE },
+      { key: "session_ping_all_role_id", value: ALL_ROLE },
+    ];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(only(await due()).roleIds).toEqual([REC_ROLE, ALL_ROLE]);
+
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("session_ping_competitive_role_id");
+    expect(logged).toContain("@session ping");
+    warn.mockRestore();
+  });
+});
+
 describe("POST /api/discord/session-pings", () => {
   it("records every role from one message in a single statement", async () => {
     // Half-recording a multi-role post would re-ping the missing subset on the
@@ -257,6 +381,39 @@ describe("POST /api/discord/session-pings", () => {
     expect(upserted).toHaveBeenCalledWith([
       { session_id: "s1", role_id: "900" },
       { session_id: "s1", role_id: "901" },
+    ]);
+  });
+
+  it("records ONE row for a role that sits under all three settings keys", async () => {
+    // The end of the dedup story, and the half that actually breaks Postgres:
+    // three identical (session_id, role_id) rows in one upsert statement fail
+    // with 21000 "ON CONFLICT DO UPDATE command cannot affect row a second
+    // time", so the ping posts, records nothing, and fires again next tick.
+    // Driven off the real GET output rather than a hand-written body, because
+    // the bot posts exactly what it was handed.
+    selfRoles = [];
+    settings = [
+      CHANNEL,
+      { key: "session_ping_competitive_role_id", value: ONE_ROLE },
+      { key: "session_ping_recreational_role_id", value: ONE_ROLE },
+      { key: "session_ping_all_role_id", value: ONE_ROLE },
+    ];
+    const ping = only(await due());
+
+    const { POST } = await import("../route");
+    const res = await POST(
+      req("/api/discord/session-pings", {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: ping.sessionId,
+          roleIds: ping.roleIds,
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(upserted).toHaveBeenCalledWith([
+      { session_id: "s1", role_id: ONE_ROLE },
     ]);
   });
 
