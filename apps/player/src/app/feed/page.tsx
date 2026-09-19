@@ -135,6 +135,41 @@ export default async function FeedPage() {
   const inActiveSeason = <T extends { or: (f: string) => T }>(q: T): T =>
     activeSeason ? q.or(`season_id.eq.${activeSeason.id},season_id.is.null`) : q;
 
+  // THE RIVER IS BUILT HERE AND NOT INLINE, and not through inActiveSeason
+  // either. Its select is by far the widest on this page — a two-level embed
+  // with five columns under it — and passing that chain through the generic
+  // above makes tsc give up with "type instantiation is excessively deep",
+  // which is the same wall discord-profile.ts documents hitting. A plain const
+  // and a conditional .or() is the same filter with none of the inference.
+  //
+  // SCOPED, and it was the only card on this page that was not. Everything
+  // else here is season-filtered, so on the first day of a term the feed drew
+  // an empty session list above a river of last term's results. Worse than the
+  // inconsistency: the river renders `rating_delta` and `post_rating`, and a
+  // post_rating from before a rollover is measured against a ladder that no
+  // longer exists, so it read as a current standing.
+  //
+  // The nullable shape, matching the sessions above: `matches.season_id` really
+  // can be NULL, because submit_match_result stamps it from an unguarded
+  // `WHERE active_flag LIMIT 1` and a result entered between terms gets none.
+  // Excluding those would hide a real match from the club's own feed forever.
+  const riverBase = supabase
+    .from('matches')
+    .select(`
+      id, played_at, match_type, format, score_summary,
+      match_participants(team_side, win_flag, rating_delta, post_rating,
+        player:players(id, full_name, handle, avatar_url))
+    `)
+    .eq('result_status', 'confirmed')
+    .not('played_at', 'is', null);
+  const riverQuery = (
+    activeSeason
+      ? riverBase.or(`season_id.eq.${activeSeason.id},season_id.is.null`)
+      : riverBase
+  )
+    .order('played_at', { ascending: false })
+    .limit(15);
+
   const [
     nextSessionRes,
     pastSessionsRes,
@@ -208,17 +243,8 @@ export default async function FeedPage() {
     // results and not only the member's own, and a top-level query is the only
     // one PostgREST will order by played_at — ordering by an embedded to-one
     // relation is silently a no-op.
-    supabase
-      .from('matches')
-      .select(`
-        id, played_at, match_type, format, score_summary,
-        match_participants(team_side, win_flag, rating_delta, post_rating,
-          player:players(id, full_name, handle, avatar_url))
-      `)
-      .eq('result_status', 'confirmed')
-      .not('played_at', 'is', null)
-      .order('played_at', { ascending: false })
-      .limit(15),
+    // Built above, where the reason it is season-scoped is written down.
+    riverQuery,
     supabase
       .from('challenge_participants')
       // NOT `created_at` on the outer row: challenge_participants has no such

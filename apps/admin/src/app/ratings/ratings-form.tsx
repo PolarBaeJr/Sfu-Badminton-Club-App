@@ -8,6 +8,7 @@ import { Button, Input, Switch, Textarea } from '@badminton/ui';
 // tables is the same mistake lib/permissions.ts documents for the edge
 // middleware.
 import { EVENT_MULTIPLIERS, FORMAT_WEIGHTS } from '@badminton/shared/src/elo/engine';
+import { FORMAT_RULES, derivedFormatWeight } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { updatePlatformSettings } from '@/lib/actions';
 import { FIELD_META, type PlatformSetting } from '@/lib/platform-setting-fields';
@@ -104,15 +105,51 @@ function MatchWeighting() {
         Fixed in the engine, not configurable here. A match&rsquo;s rating change is
         multiplied by its format weight and its event multiplier before the
         K-factor is applied. Changing any of these needs a migration, because the
-        same numbers are compiled into the database.
+        same numbers are compiled into the database. These weights are the same
+        for every season; there is no per-season override.
       </p>
-      {Object.entries(FORMAT_WEIGHTS).map(([format, weight]) => (
-        <ReferenceRow
-          key={format}
-          name={FORMAT_LABELS[format] ?? format}
-          value={weight.toFixed(2)}
-        />
-      ))}
+      {/* The panel drew only the enum column and said the SQL side held the
+          same values, which is true of the branch it drew and silent about the
+          other one. */}
+      <p className="border-t border-[var(--line)] px-4 py-4 text-[13px] leading-[1.5] text-[var(--mute)]">
+        Two of these have a second value. A match that carries its own
+        points-per-game is weighed by formula rather than by this table, so the
+        short formats are priced slightly differently depending on how the match
+        was created. Both are intentional and the ladder applies whichever
+        matches the match; the second figure is shown beside the rows it affects.
+      </p>
+      {Object.entries(FORMAT_WEIGHTS).map(([format, weight]) => {
+        // THE SECOND BRANCH, which this panel used to draw no trace of.
+        //
+        // trigger_set_match_weights (00031) picks the table only when
+        // `points_per_game IS NULL`. A match with a typed shape — every custom
+        // challenge, everything knockoutLadder() stamps, every per-round
+        // override — is weighed by derivedFormatWeight instead, and the two
+        // disagree on the short formats: one game to 15 is 0.75 by table and
+        // 0.71 by formula. That is a deliberate 2026-08-17 ruling, locked by a
+        // test in engine.test.ts, not a bug to reconcile here. But an officer
+        // reading only the table was being told 0.75 about matches the ladder
+        // had priced at 0.71, so the panel now shows both where they differ.
+        // Object.entries widens the key to string; FORMAT_WEIGHTS and
+        // FORMAT_RULES are both keyed by MatchFormat, so the lookup is total.
+        const rules = FORMAT_RULES[format as keyof typeof FORMAT_RULES] as
+          | { bestOf: number; target: number }
+          | undefined;
+        const derived = rules ? derivedFormatWeight(rules.bestOf, rules.target) : null;
+        const differs = derived !== null && Math.abs(derived - weight) > 0.005;
+        return (
+          <ReferenceRow
+            key={format}
+            name={FORMAT_LABELS[format] ?? format}
+            hint={
+              differs
+                ? `${derived.toFixed(4).replace(/0+$/, '')} when the match carries its own points-per-game, which every custom and tournament-round shape does.`
+                : undefined
+            }
+            value={weight.toFixed(2)}
+          />
+        );
+      })}
       {Object.entries(EVENT_MULTIPLIERS).map(([event, multiplier]) => (
         <ReferenceRow
           key={event}

@@ -54,6 +54,20 @@ function queryOf(url: string): URLSearchParams {
 }
 
 /**
+ * The query string of the single request that was recorded.
+ *
+ * Indexing is checked rather than asserted with `!`: the root type-check runs
+ * with noUncheckedIndexedAccess and vitest itself type-checks nothing, so an
+ * unguarded urls[0] passes the test run and fails the build.
+ */
+function onlyQuery(urls: readonly string[]): URLSearchParams {
+  expect(urls).toHaveLength(1);
+  const [first] = urls;
+  if (first === undefined) throw new Error('no request was recorded');
+  return queryOf(first);
+}
+
+/**
  * The nights read, reproduced exactly as discord-profile.ts builds it.
  *
  * Reproduced rather than imported because loadForm is not exported and pulling
@@ -81,8 +95,7 @@ describe('the Discord card nights count', () => {
     const { client, urls } = recordingClient();
     await nightsRead(client, SEASON);
 
-    expect(urls).toHaveLength(1);
-    const q = queryOf(urls[0]);
+    const q = onlyQuery(urls);
 
     // !inner, so the season filter EXCLUDES the attendance row rather than
     // nulling the embed. Without it every night comes back and the filter is
@@ -100,7 +113,7 @@ describe('the Discord card nights count', () => {
     const { client, urls } = recordingClient();
     await nightsRead(client, SEASON);
 
-    const status = queryOf(urls[0]).get('status') ?? '';
+    const status = onlyQuery(urls).get('status') ?? '';
     // A night on the record is not a night attended. If this ever starts
     // including no_show the card rewards not turning up.
     expect(status).not.toContain('no_show');
@@ -113,14 +126,14 @@ describe('the Discord card nights count', () => {
     await nightsRead(client, SEASON);
     // head:true means no rows cross the wire. A member with 200 nights must
     // not ship 200 rows into a card render.
-    expect(queryOf(urls[0]).has('limit')).toBe(false);
+    expect(onlyQuery(urls).has('limit')).toBe(false);
   });
 
   it('drops the join entirely when no season is active', async () => {
     const { client, urls } = recordingClient();
     await nightsRead(client, null);
 
-    const q = queryOf(urls[0]);
+    const q = onlyQuery(urls);
     // No season running is a fact about the CLUB. Filtering on a null id would
     // make every member read NIGHTS 0, which is a claim about the member.
     expect(q.get('select')).toBe('id');
