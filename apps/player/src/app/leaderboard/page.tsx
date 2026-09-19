@@ -2,7 +2,13 @@ import { redirect } from 'next/navigation';
 import { CLUB_TIMEZONE } from '@badminton/shared';
 import { createServerSupabaseClient, createServiceRoleClient, getViewer } from '@/lib/supabase-server';
 import { clubDayKey } from '@/lib/feed-activity';
-import { formatDayKey, formatSeasonRange, seasonPickerOptions, type HistorySeason } from '@/lib/season-history';
+import {
+  finishedSeasonIds,
+  formatDayKey,
+  formatSeasonRange,
+  seasonPickerOptions,
+  type HistorySeason,
+} from '@/lib/season-history';
 import { pastLeaderboardEntries, type SnapshotRow } from '@/lib/past-leaderboard';
 import LeaderboardClient, { type LeaderboardEntry, type LeaderboardRow } from './leaderboard-client';
 
@@ -205,24 +211,5 @@ async function PastSeasonLadder({ seasonId }: { seasonId: string }) {
       }}
       seasonOptions={seasonPickerOptions(seasons, finishedSeasonIds(seasons), seasonId)}
     />
-  );
-}
-
-/**
- * Every finished season, for the picker.
- *
- * THE LEADERBOARD'S PICKER IS CLUB-WIDE, where /my-stats offers only the terms
- * the reader has an archived row of their own in. This is the club's ladder and
- * not anybody's history, so every season that is not the active one is offered,
- * including one that was created and never rolled over. That season's ladder is
- * empty, and the empty state says which of those two things happened.
- */
-function finishedSeasonIds(seasons: HistorySeason[]): Set<string> {
-  // `hidden_flag === true` rather than a truthy test, so a row that arrived
-  // without the key (see HistorySeason) stays offered rather than vanishing.
-  // The direct-URL guard in PastSeasonLadder repeats this: dropping a season
-  // from the picker hides the door, not the room, and the two have to agree.
-  return new Set(
-    seasons.filter((s) => !s.active_flag && s.hidden_flag !== true).map((s) => s.id)
   );
 }

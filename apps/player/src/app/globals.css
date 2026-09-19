@@ -3110,6 +3110,21 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
 
 .ptourn-head { margin-bottom: 20px; }
 
+/* Title on the left, the season control on the right. This is .page-header's
+   composition restated, because the header above is hand-rolled rather than
+   that component, and it stacks at the same 980px for the same reason: below
+   it the control and a 38px title cannot share a line without one of them
+   being squeezed. */
+.ptourn-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+@media (max-width: 980px) {
+  .ptourn-head-row { flex-direction: column; align-items: flex-start; gap: 16px; }
+}
+
 /* Not a chevron and not a button: the five-tab bar is the navigation, and this
    is a label saying where you came from. Sized as a mono micro-cap so it reads
    as furniture and never competes with the title under it. */

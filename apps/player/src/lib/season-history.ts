@@ -136,6 +136,29 @@ export function seasonPickerOptions(
 }
 
 /**
+ * Every finished season, for a picker on a CLUB-WIDE screen.
+ *
+ * The counterpart to the `archivedSeasonIds` /my-stats passes, which offers only
+ * the terms the reader has an archived row of their own in. The leaderboard's
+ * ladder and the tournament calendar are the club's and not anybody's history,
+ * so every season that is not the active one is offered, including one that was
+ * created and never rolled over. That season's page is empty, and its own empty
+ * state says which of those two things happened.
+ *
+ * Lives here rather than in either page so the two cannot drift: a season this
+ * offers is a season both of those screens must be willing to serve.
+ */
+export function finishedSeasonIds(seasons: readonly HistorySeason[]): Set<string> {
+  // `hidden_flag === true` rather than a truthy test, so a row that arrived
+  // without the key (see HistorySeason) stays offered rather than vanishing.
+  // Each caller's direct-URL guard repeats this: dropping a season from the
+  // picker hides the door, not the room, and the two have to agree.
+  return new Set(
+    seasons.filter((s) => !s.active_flag && s.hidden_flag !== true).map((s) => s.id)
+  );
+}
+
+/**
  * Whether the member joined the club after a season had finished — or `null`
  * when that cannot be answered.
  *
