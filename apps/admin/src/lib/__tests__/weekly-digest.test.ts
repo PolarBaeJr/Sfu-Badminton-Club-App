@@ -46,6 +46,7 @@ const dkey = (w: string, p: string) => `${w}|${p}`;
 // whether to withhold the Elo figures.
 let archivedAt: string[];
 let rolloverReadError: string | null;
+let rolloverReadNulled: boolean;
 
 vi.mock('@/lib/supabase-server', () => ({
   createAdminClient: () => ({
@@ -107,7 +108,10 @@ vi.mock('@/lib/supabase-server', () => ({
             Promise.resolve(
               rolloverReadError
                 ? { count: null, error: { message: rolloverReadError } }
-                : { count: archivedAt.filter((a) => a >= lo && a < hi).length, error: null },
+                : rolloverReadNulled
+                  // How a head count really fails: no body, so no error either.
+                  ? { count: null, error: null }
+                  : { count: archivedAt.filter((a) => a >= lo && a < hi).length, error: null },
             ).then(resolve),
         };
         return q;
@@ -173,6 +177,7 @@ beforeEach(() => {
   matchRows = [];
   archivedAt = [];
   rolloverReadError = null;
+  rolloverReadNulled = false;
   filters.gte = [];
   filters.lt = [];
   process.env.CRON_SECRET = SECRET;
@@ -555,6 +560,28 @@ describe('weekly-digest: a season that rolled over mid-week', () => {
     // And the whole club's digest is not cancelled over a stat line.
     expect(body.sent).toBe(1);
     expect(data().matchesPlayed).toBe(1);
+  });
+
+  it('withholds for the way a head count ACTUALLY fails', async () => {
+    // THE TEST ABOVE DOES NOT COVER THIS, and the original guard here only
+    // checked `error`. A HEAD request has no body, so PostgREST's error
+    // document never arrives and supabase-js resolves the failure as
+    // { count: null, error: null, status: 204 }. Measured against this stack:
+    // a head count on a missing table returns exactly that, while the same
+    // read as a GET returns PGRST205.
+    //
+    // Through `count ?? 0` that becomes `0 > 0`, which is false, which mails
+    // the numbers. This is the failure this detection is most likely to meet
+    // and it is the one that defeats it silently.
+    matchRows = [row('p-00', { postRating: 1100 })];
+    rolloverReadNulled = true;
+
+    const body = await (await run()).json();
+
+    expect(data().eloChange).toBeNull();
+    expect(data().singlesRating).toBeNull();
+    expect(body.across_rollover).toBe(true);
+    expect(body.sent).toBe(1);
   });
 
   it('reports the decision in the run summary', async () => {

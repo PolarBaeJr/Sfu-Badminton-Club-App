@@ -48,6 +48,7 @@ function fakeDb(opts: {
   rpcError?: unknown;
   counts?: number[];
   countError?: unknown;
+  nullCount?: boolean;
 }) {
   const rpcCalls: string[] = [];
   const ratingsCalls: RatingsCall[] = [];
@@ -71,7 +72,10 @@ function fakeDb(opts: {
         Promise.resolve(
           opts.countError
             ? { count: null, error: opts.countError }
-            : { count: opts.counts?.[nth++] ?? 0, error: null },
+            : opts.nullCount
+              // How a head count really fails: no body, so no error either.
+              ? { count: null, error: null }
+              : { count: opts.counts?.[nth++] ?? 0, error: null },
         ).then(resolve),
     };
     return self;
@@ -182,6 +186,22 @@ describe('the admin ladder card population', () => {
 
   it('says the count is unavailable when a provisional count fails', async () => {
     const { db } = fakeDb({ rpcRows: roster(4), countError: { message: 'permission denied' } });
+    expect(await loadLadder(db, true, THRESHOLD)).toEqual({ state: 'unavailable' });
+  });
+
+  it('says unavailable for the way a head count ACTUALLY fails', async () => {
+    // THE TEST ABOVE DOES NOT COVER THIS, and the original guard here only
+    // checked `error`. A HEAD request has no body, so PostgREST's error
+    // document never arrives and supabase-js resolves the failure as
+    // { count: null, error: null, status: 204 }. Measured against this stack:
+    // a head count on a missing table returns exactly that, while the same
+    // read as a GET returns PGRST205.
+    //
+    // With `?? 0` that renders "31 members, 0 provisional", and KFactorPanel
+    // then draws all 31 of them on the established K-factor. A confident,
+    // wrong, entirely plausible chart.
+    const { db } = fakeDb({ rpcRows: roster(31), nullCount: true });
+
     expect(await loadLadder(db, true, THRESHOLD)).toEqual({ state: 'unavailable' });
   });
 

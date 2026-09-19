@@ -76,12 +76,22 @@ export async function loadLadder(db: Db, allowed: boolean, threshold: number): P
       .or(`${discipline}_provisional.eq.true,${discipline}_matches_played.lt.${threshold}`);
 
   const [singles, doubles] = await Promise.all([provisional('singles'), provisional('doubles')]);
+  // *** A HEAD COUNT CANNOT REPORT ITS OWN FAILURE THROUGH `error`. ***
+  //
+  // Checking `error` alone was this function's original guard and it was not
+  // enough. A HEAD request carries no body by definition, so PostgREST's error
+  // document never arrives and supabase-js resolves the failure as
+  // `{ count: null, error: null, status: 204 }`. Measured against this club's
+  // own stack: a head count on a missing table returns exactly that, while the
+  // same read issued as a GET returns PGRST205. So the count itself is the only
+  // honest signal, and `?? 0` would have reported every member as established.
   if (singles.error || doubles.error) return { state: 'unavailable' };
+  if (singles.count === null || doubles.count === null) return { state: 'unavailable' };
 
   return {
     state: 'ok',
     total: ids.length,
-    singlesProvisional: singles.count ?? 0,
-    doublesProvisional: doubles.count ?? 0,
+    singlesProvisional: singles.count,
+    doublesProvisional: doubles.count,
   };
 }

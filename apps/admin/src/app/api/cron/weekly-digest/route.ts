@@ -234,10 +234,20 @@ export async function POST(request: Request) {
     // settled read above fail closed with a throw because their failure mode is
     // mailing somebody twice. This one's failure mode is asserting a number we
     // cannot stand behind, so the lever is different: a read that did not
-    // answer is not evidence that no season rolled over, and `count ?? 0` here
-    // would turn a broken grant into a confident claim that none did. Throwing
-    // instead would cancel the whole club's digest over a stat line.
-    const acrossRollover = rollover.error ? true : (rollover.count ?? 0) > 0;
+    // answer is not evidence that no season rolled over. Throwing instead would
+    // cancel the whole club's digest over a stat line.
+    //
+    // *** AND A HEAD COUNT CANNOT REPORT ITS OWN FAILURE THROUGH `error`. ***
+    //
+    // A HEAD request carries no body by definition, so PostgREST's error
+    // document never arrives and supabase-js resolves the failure as
+    // `{ count: null, error: null, status: 204 }`. Measured against this club's
+    // own stack: a head count on a missing table returns exactly that, while
+    // the same read issued as a GET returns PGRST205. Checking `error` alone
+    // was this line's original guard, and it would have let a broken read fall
+    // through `count ?? 0` to `0 > 0`, which is false, which mails the numbers.
+    // A null count is the failure, so it has to be read as one.
+    const acrossRollover = rollover.error || rollover.count === null ? true : rollover.count > 0;
 
     // Only players who actually played. A digest saying "0 matches, no change"
     // is the kind of mail that earns a spam complaint, and a complaint is the
