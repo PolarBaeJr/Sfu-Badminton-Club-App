@@ -44,7 +44,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   if (!player) notFound();
 
   // FIX-LIST #14. `get_leaderboard()` honours this flag; this page did not, and
-  // the feed links every match row straight to it — so the control the settings
+  // the feed links every match row straight to it, so the control the settings
   // screen offers ("Show on leaderboard · Your rank will be visible to others")
   // was undone by one tap on somebody's name.
   //
@@ -111,7 +111,15 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
           .from('match_participants')
           .select('win_flag, points_scored, points_allowed, match:matches!inner(match_type, result_status, played_at)')
           .eq('player_id', playerId)
-          .eq('matches.season_id', activeSeason.id)
+          // The filter is spelled with the EMBED ALIAS, `match`, not the table
+          // name `matches`. Both work against the PostgREST running today and
+          // both genuinely filter, but the table-name spelling logs a
+          // deprecation saying it "will stop working in a future release".
+          // When it does it would not fail loudly: the filter would simply be
+          // dropped and every profile would quietly print all-time numbers
+          // again. That is the same silent-success failure this whole fix
+          // exists to remove, so use the spelling with a future.
+          .eq('match.season_id', activeSeason.id)
           .limit(SEASON_TALLY_CAP)
       : Promise.resolve({ data: null }),
   ]);

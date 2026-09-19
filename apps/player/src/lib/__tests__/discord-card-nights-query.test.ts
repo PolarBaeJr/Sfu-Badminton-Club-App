@@ -87,7 +87,7 @@ function nightsRead(
     })
     .eq('player_id', PLAYER)
     .in('status', [...PRESENT_STATUSES]);
-  return activeSeasonId ? base.eq('sessions.season_id', activeSeasonId) : base;
+  return activeSeasonId ? base.eq('session.season_id', activeSeasonId) : base;
 }
 
 describe('the Discord card nights count', () => {
@@ -102,9 +102,19 @@ describe('the Discord card nights count', () => {
     // decoration.
     expect(q.get('select')).toBe('id,session:sessions!inner(season_id)');
 
-    // The filter is on the EMBEDDED table's column, spelled with the table
-    // name and not the alias. `session.season_id` would be a 400.
-    expect(q.get('sessions.season_id')).toBe(`eq.${SEASON}`);
+    // The filter is on the EMBEDDED table's column, spelled with the ALIAS.
+    //
+    // An earlier version of this line pinned `sessions.season_id` and claimed
+    // the alias form was a 400. It is not. Measured against the local
+    // PostgREST with three attendance rows split two Fall and one Summer, both
+    // spellings return 200 and both return the same 2 and 1. What separates
+    // them is that PostgREST logs a deprecation for the table-name form and
+    // says it will stop working later. When it does, the filter is dropped
+    // rather than rejected, and NIGHTS silently goes back to counting every
+    // night the member ever attended: the exact bug the comment above
+    // describes, returning with the test still green.
+    expect(q.get('session.season_id')).toBe(`eq.${SEASON}`);
+    expect(q.get('sessions.season_id')).toBeNull();
 
     expect(q.get('player_id')).toBe(`eq.${PLAYER}`);
   });
@@ -137,7 +147,7 @@ describe('the Discord card nights count', () => {
     // No season running is a fact about the CLUB. Filtering on a null id would
     // make every member read NIGHTS 0, which is a claim about the member.
     expect(q.get('select')).toBe('id');
-    expect(q.has('sessions.season_id')).toBe(false);
+    expect(q.has('session.season_id')).toBe(false);
     expect(q.get('player_id')).toBe(`eq.${PLAYER}`);
   });
 });

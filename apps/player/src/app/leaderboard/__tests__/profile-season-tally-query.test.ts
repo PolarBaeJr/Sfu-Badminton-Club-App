@@ -85,7 +85,7 @@ function seasonTallyRead(
     .from('match_participants')
     .select('win_flag, points_scored, points_allowed, match:matches!inner(match_type, result_status, played_at)')
     .eq('player_id', PLAYER)
-    .eq('matches.season_id', activeSeasonId)
+    .eq('match.season_id', activeSeasonId)
     .limit(SEASON_TALLY_CAP);
 }
 
@@ -102,9 +102,23 @@ describe('the public profile season tally', () => {
       'win_flag,points_scored,points_allowed,match:matches!inner(match_type,result_status,played_at)',
     );
 
-    // The filter is on the EMBEDDED table's column, spelled with the table name
-    // and not the alias. `match.season_id` would be a 400.
-    expect(q.get('matches.season_id')).toBe(`eq.${SEASON}`);
+    // The filter is on the EMBEDDED table's column, spelled with the ALIAS.
+    //
+    // An earlier version of this test pinned the table-name spelling,
+    // `matches.season_id`, with a comment claiming the alias form was a 400.
+    // That was wrong. Both forms return 200 and both genuinely filter,
+    // confirmed against the local PostgREST: the same member reads 3 rows in
+    // the season they played and 0 rows in the other one under EITHER
+    // spelling. What separates them is the future. PostgREST logs, for the
+    // table-name form only, "Update filters, orders or limits that use
+    // 'matches' to 'match'", and says it will stop working in a later release.
+    //
+    // Pinning the deprecated spelling would be worse than not pinning at all.
+    // The day it is removed the filter is dropped rather than rejected, every
+    // profile silently reverts to all-time numbers, and this test stays green
+    // while doing it. So the alias is what is pinned.
+    expect(q.get('match.season_id')).toBe(`eq.${SEASON}`);
+    expect(q.get('matches.season_id')).toBeNull();
 
     expect(q.get('player_id')).toBe(`eq.${PLAYER}`);
   });

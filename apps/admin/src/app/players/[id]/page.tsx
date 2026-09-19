@@ -173,7 +173,7 @@ export default async function PlayerDetailPage({
       ? supabase.from('match_participants')
           .select('*, match:matches!inner(*, match_games(*))')
           .eq('player_id', id)
-          .eq('matches.season_id', seasonId ?? '')
+          .eq('match.season_id', seasonId ?? '')
           .order('created_at', { ascending: false, referencedTable: 'matches' })
           .limit(10)
       : Promise.resolve({ data: null }),
@@ -192,7 +192,7 @@ export default async function PlayerDetailPage({
       ? supabase.from('match_participants')
           .select('win_flag, points_scored, points_allowed, match:matches!inner(match_type, result_status, played_at)')
           .eq('player_id', id)
-          .eq('matches.season_id', seasonId ?? '')
+          .eq('match.season_id', seasonId ?? '')
           .limit(SEASON_TALLY_CAP)
       : Promise.resolve({ data: null }),
     // The coaching log follows the NOTE capability as well as the read. It is
@@ -221,7 +221,7 @@ export default async function PlayerDetailPage({
       ? supabase.from('tournament_participants')
           .select('id, status, event:tournament_events!inner(event_type, tournament:tournaments!inner(name, season_id))')
           .eq('player_id', id)
-          .eq('tournament_events.tournaments.season_id', seasonId ?? '')
+          .eq('event.tournament.season_id', seasonId ?? '')
           .eq('status', 'no_show')
       : Promise.resolve({ data: null }),
     // The club's own baselines, for the permission editor's "Starts from"

@@ -414,10 +414,14 @@ async function loadForm(
   // NIGHTS 214 under a rail that frames the card as this season. `sessions`
   // carries `season_id`; it was simply never joined.
   //
-  // One level of embedded filter, deliberately: the two-level alias path
-  // (sessions.seasons.active_flag) is unverified against this deployment's
-  // PostgREST, and a refused read arrives as a count of 0 rather than an
-  // error, which would look exactly like a member who never turns up.
+  // One level of embedded filter, deliberately. A two-level path does work
+  // here (`event.tournament.season_id` on the admin member page was measured
+  // against a live PostgREST), so that is no longer the reason. The reason is
+  // that the caller already holds the active season's id, so joining through
+  // to `seasons` to re-read `active_flag` would buy a second hop and a second
+  // way to be wrong for nothing. It matters because a refused read arrives as
+  // a count of 0 rather than an error, which looks exactly like a member who
+  // never turns up.
   const nightsBase = supabase
     .from('session_attendance')
     // Nights the member was actually there -- not nights on their record.
@@ -435,7 +439,7 @@ async function loadForm(
   const [matchesRes, h2hRes, nightsRes] = await Promise.all([
     matchesQuery,
     h2hQuery,
-    activeSeason ? nightsBase.eq('sessions.season_id', activeSeason.id) : nightsBase,
+    activeSeason ? nightsBase.eq('session.season_id', activeSeason.id) : nightsBase,
   ]);
 
   type MatchRow = {
