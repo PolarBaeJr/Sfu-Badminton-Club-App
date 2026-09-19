@@ -97,12 +97,18 @@ function readRawBody(req: IncomingMessage): Promise<string> {
 // the scheduler firing again while the last one is still going is the ordinary
 // way that happens.
 //
-// PER PROCESS, and that is the whole of what it guards. This service omits
-// proxy.unscalable on purpose, so at two replicas the proxy hands the second
-// call to the other process and this flag never sees it. That is acceptable
-// because the sweep is convergent — two of them reach the same end state — but
-// it is not a lock, and it must not be described as one. A real one belongs in
-// Postgres (an advisory lock in the job that drives this) if it ever matters.
+// PER PROCESS, and that is the whole of what it guards. It is not a lock and
+// must not be described as one. A real one belongs in Postgres, an advisory
+// lock in the job that drives this, if it ever matters.
+//
+// The gap is narrower than it used to be but it has not closed. This service
+// SETS proxy.unscalable (docker-compose.yml:223), reversing what an earlier
+// version of this comment claimed, so the proxy normally has one process to
+// route to and this flag does see every call. What it still cannot cover is a
+// rolling replace, where two containers are up at once and each has its own
+// copy of this variable set to false. Two concurrent sweeps remain possible
+// there, which stays acceptable for the original reason: the sweep is
+// convergent, so two of them reach the same end state.
 let sweepInFlight = false;
 
 async function runSweep(res: ServerResponse, trigger: 'scheduled' | 'manual') {
@@ -221,9 +227,10 @@ const server = createServer(async (req, res) => {
   }
 
   // The reconciliation sweep, driven from outside rather than by a timer in
-  // here: the compose service omits proxy.unscalable, so a setInterval would
-  // become one sweep PER REPLICA, all writing the same roles. One HTTP request
-  // reaches exactly one replica no matter how many are running.
+  // here: a setInterval would become one sweep PER PROCESS, all writing the
+  // same roles. One HTTP request reaches exactly one process no matter how
+  // many are running, which is why this shape is right even though
+  // proxy.unscalable is set and there is usually only one. See reconcile.ts.
   if (req.method === 'POST' && req.url === '/sync') {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });

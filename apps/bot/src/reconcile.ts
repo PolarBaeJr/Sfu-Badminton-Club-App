@@ -8,12 +8,23 @@
 //
 // ---- WHY THIS IS NOT A setInterval ----
 //
-// The bot's compose service deliberately omits proxy.unscalable, so it can run
-// more than one replica. A timer inside the process would therefore become N
-// concurrent sweeps at N replicas, each fighting the others' role writes and
-// multiplying the rate-limit pressure by N. Instead the sweep is DRIVEN FROM
-// OUTSIDE over HTTP: one request goes through the proxy to exactly one replica,
-// however many are running. See POST /sync in index.ts.
+// A timer inside the process becomes N concurrent sweeps at N replicas, each
+// fighting the others' role writes and multiplying rate-limit pressure by N.
+// Instead the sweep is DRIVEN FROM OUTSIDE over HTTP: one request goes through
+// the proxy to exactly one replica, however many are running. See POST /sync
+// in index.ts.
+//
+// This comment used to justify itself by saying the compose service omits
+// proxy.unscalable. It does not, and has not since the /bug screenshot flow
+// landed: the label is SET, at docker-compose.yml:223 and
+// docker-compose.staging.yml:207, because that flow bridges two interactions
+// through an in-memory Map. So the bot normally runs as a single replica.
+//
+// The design still stands, for two reasons. The label is a decision that has
+// already been reversed once and can be reversed again the moment that Map
+// becomes a table, and a rolling replace briefly runs two containers whatever
+// the label says. Being driven from outside is correct at any replica count,
+// so it does not depend on the answer.
 
 import type { DiscordApi } from './discord-api.js';
 import { desiredRoles, type GuildRegistry, type MemberState } from './roles.js';
