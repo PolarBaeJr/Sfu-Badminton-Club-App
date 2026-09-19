@@ -14,8 +14,10 @@ import { DiscordApi } from './discord-api.js';
 // tick, which somebody notices and mentions. A missed ping is invisible.
 //
 // Driven by pg_cron over HTTP rather than a timer in here, for the same reason
-// the reconciliation sweep is: the compose service omits proxy.unscalable, so a
-// setInterval would become one cron PER REPLICA, all pinging the same channel.
+// the reconciliation sweep is: a setInterval would become one cron PER PROCESS,
+// all pinging the same channel. proxy.unscalable is SET on this service
+// (docker-compose.yml:223), so that is normally one process, but the label
+// governs inbound HTTP only and a rolling replace runs two. See reconcile.ts.
 
 export interface PingRunResult {
   posted: number;

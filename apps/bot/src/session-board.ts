@@ -36,9 +36,10 @@ import { DiscordApi } from './discord-api.js';
 // when the schedule shrinks below eleven rows the board must LOSE its pager, and
 // an embeds-only edit would leave live controls on a one-page board.
 //
-// Driven by pg_cron over HTTP, like the other two jobs on that tick, because the
-// compose service omits proxy.unscalable and a setInterval here would be one
-// scheduler per replica.
+// Driven by pg_cron over HTTP, like the other two jobs on that tick, because a
+// setInterval here would be one scheduler per process, and a rolling replace
+// runs two whatever proxy.unscalable says (it is set, and it governs inbound
+// HTTP only). See reconcile.ts.
 
 export interface SessionBoardRunResult {
   posted: number;

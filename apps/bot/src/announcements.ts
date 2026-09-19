@@ -24,9 +24,10 @@ import { DiscordApi } from './discord-api.js';
 // A feature that could ping the whole server on every publish is one bad
 // afternoon away from people muting the channel that carries club notices.
 //
-// Driven by pg_cron over HTTP rather than a timer, because the compose service
-// omits proxy.unscalable — a setInterval here would be one scheduler PER
-// REPLICA, all racing to post the same announcement.
+// Driven by pg_cron over HTTP rather than a timer, because a setInterval here
+// would be one scheduler PER PROCESS, all racing to post the same
+// announcement. proxy.unscalable is set (docker-compose.yml:223) but governs
+// inbound HTTP only, and a rolling replace runs two. See reconcile.ts.
 
 export interface AnnouncementRunResult {
   posted: number;
