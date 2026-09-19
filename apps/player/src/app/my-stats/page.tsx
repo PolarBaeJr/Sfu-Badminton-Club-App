@@ -171,7 +171,7 @@ async function CurrentSeasonStats() {
     // oldest term a member played — these are five short columns.
     supabase
       .from('seasons')
-      .select('id, name, start_date, end_date, active_flag')
+      .select('id, name, start_date, end_date, active_flag, hidden_flag')
       .order('start_date', { ascending: false })
       .limit(40),
     supabase
@@ -447,7 +447,11 @@ async function CurrentSeasonStats() {
         // behind them would otherwise get an empty flex box in their header.
         actions={
           seasonOptions.length > 1 ? (
-            <SeasonPick options={seasonOptions} selectedId={activeSeason?.id ?? null} />
+            <SeasonPick
+              options={seasonOptions}
+              selectedId={activeSeason?.id ?? null}
+              basePath="/my-stats"
+            />
           ) : undefined
         }
       />

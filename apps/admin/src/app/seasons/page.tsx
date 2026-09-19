@@ -114,7 +114,7 @@ export default async function SeasonsPage() {
     .from('seasons')
     // Explicit, so the RSC payload carries the eight columns this screen draws
     // and not whatever the table gains next.
-    .select('id, name, start_date, end_date, active_flag, competitive_fee_cents, recreational_fee_cents')
+    .select('id, name, start_date, end_date, active_flag, hidden_flag, competitive_fee_cents, recreational_fee_cents')
     .order('start_date', { ascending: false });
 
   const rows = (seasons ?? []) as {
@@ -123,6 +123,10 @@ export default async function SeasonsPage() {
     start_date: string | null;
     end_date: string | null;
     active_flag: boolean;
+    // Optional in the TYPE although NOT NULL in the database, because this cast
+    // describes what PostgREST hands back and a database that has not applied
+    // 00234 yet returns a row without the key at all.
+    hidden_flag?: boolean;
     competitive_fee_cents: number | null;
     recreational_fee_cents: number | null;
   }[];
@@ -193,6 +197,11 @@ export default async function SeasonsPage() {
       status={seasonStatus(s, now).key}
       competitiveFeeCents={s.competitive_fee_cents ?? 0}
       recreationalFeeCents={s.recreational_fee_cents ?? 0}
+      // `?? false` rather than a bare read: the column is NOT NULL in the
+      // database, but this row comes back from PostgREST as plain JSON and a
+      // season created before 00234 applied would arrive undefined, which would
+      // render the toggle as though the season were published.
+      hidden={s.hidden_flag ?? false}
       can={rowCapabilities}
     />
   );

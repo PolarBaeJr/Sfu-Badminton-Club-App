@@ -167,6 +167,42 @@ describe('memberSeasonHistory', () => {
     expect(out.map((s) => s.id)).toEqual(['fall-2027', 'spring-2027']);
   });
 
+  // 00234. The club can unpublish a season, and the picker is one of the two
+  // places that has to honour it. Summer 2026 is the real case: a retired test
+  // season whose season_final_ratings archive was never cleaned.
+  it('never offers a hidden season, even to a member who has an archived rating in it', () => {
+    const withHidden = [
+      ...seasons,
+      season({ id: 'test-season', start_date: '2026-05-01', end_date: '2026-08-31', hidden_flag: true }),
+    ];
+    const out = memberSeasonHistory(withHidden, new Set(['spring-2027', 'test-season']), null);
+    expect(out.map((s) => s.id)).toEqual(['spring-2027']);
+  });
+
+  // The escape hatch that exists so a directly linked season still names itself
+  // in the control must NOT re-admit a hidden one: that would republish the one
+  // thing the flag was set to unpublish.
+  it('keeps a hidden season out even when it is the selected one', () => {
+    const withHidden = [
+      ...seasons,
+      season({ id: 'test-season', start_date: '2026-05-01', end_date: '2026-08-31', hidden_flag: true }),
+    ];
+    const out = memberSeasonHistory(withHidden, new Set(['spring-2027']), 'test-season');
+    expect(out.map((s) => s.id)).toEqual(['spring-2027']);
+  });
+
+  // A row that never carried the key at all, which is what a database without
+  // 00234 applied hands back. It must stay published: the safe default is to
+  // show club history, not to blank it on a bad select.
+  it('treats a missing hidden_flag as published rather than hidden', () => {
+    // The helper sets no hidden_flag unless asked, so this row genuinely has no
+    // such key rather than carrying an explicit false.
+    const legacy = season({ id: 'legacy', start_date: '2025-01-01', end_date: '2025-04-30' });
+    expect('hidden_flag' in legacy).toBe(false);
+    const out = memberSeasonHistory([legacy], new Set(['legacy']), null);
+    expect(out.map((s) => s.id)).toEqual(['legacy']);
+  });
+
   it('orders newest first by start date', () => {
     const out = memberSeasonHistory(
       seasons,

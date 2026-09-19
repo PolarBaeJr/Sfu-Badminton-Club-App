@@ -171,3 +171,54 @@ export async function endSeason(seasonId: string, reason: string) {
 
   revalidatePath('/seasons');
 }
+
+// Keeps a season out of the PLAYER-facing history: the leaderboard's
+// past-season standings and the /my-stats season picker. 00234 has the full
+// reasoning; the short version is that the archive in season_final_ratings was
+// never written to be published, and Summer 2026 is a retired test season whose
+// live ratings were reset while its archive was not.
+//
+// A PUBLICATION DECISION, NOT AN ACCOUNTING ONE. This never touches
+// active_flag, end_date or a fee, and nothing that reports on money filters on
+// it. Hiding a season the club actually played does not unspend what was spent
+// in it, so the finance surfaces deliberately keep showing it.
+//
+// seasons.end.write rather than a fourth capability string. The population that
+// closes a season off is the population that should decide whether it is
+// published, and the permission vocabulary is CHECK-enumerated in the database
+// (00232), so a new key would be a migration for a toggle used once a year.
+//
+// REVERSIBLE, and the console is the only thing that can reverse it: the admin
+// season list shows hidden seasons and their state, precisely so that hiding
+// one is not a one-way door.
+export async function setSeasonHidden(seasonId: string, hidden: boolean, reason: string) {
+  const why = requireReason(reason, hidden ? 'Hiding a season' : 'Unhiding a season');
+  const admin = await requireCapability('seasons.end.write');
+  const adminClient = createAdminClient();
+
+  // Coerced rather than trusted. `hidden` is an exported Server Action
+  // parameter, which makes it a client-controlled POST field: a caller can send
+  // anything, and a string like "false" is truthy.
+  const nextHidden = hidden === true;
+
+  const { error } = await adminClient
+    .from('seasons')
+    .update({ hidden_flag: nextHidden })
+    .eq('id', seasonId);
+
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: nextHidden ? 'season_hidden' : 'season_unhidden',
+    target_type: 'season',
+    target_id: seasonId,
+    reason: why,
+  }, { seasonId, hidden: nextHidden });
+
+  // Both paths: /seasons renders the toggle, and the player-facing history is
+  // a different app entirely, so nothing here can revalidate it. It reads the
+  // flag on each request through the service role, so the next page load is
+  // already correct.
+  revalidatePath('/seasons');
+}

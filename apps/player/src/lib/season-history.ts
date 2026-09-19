@@ -20,7 +20,15 @@
 //     nothing else, while the ladder ranks only ESTABLISHED members and hides
 //     pending, suspended, deactivated and hidden ones. Ranking the archive ranks
 //     a different population than the member ever saw. So there is no rank on
-//     that screen, in any season.
+//     /my-stats, in any season.
+//
+//     THE LEADERBOARD'S PAST-SEASON VIEW DOES RANK THE ARCHIVE, and the
+//     distinction is what it says about the number rather than how it is
+//     computed: it is a club-wide standings table, it sorts the archive under
+//     TODAY's visibility rules, and its own legend states that the places are not
+//     the places members saw at the time. A single "you finished #14" on a
+//     member's own page carries none of that and would simply read as a fact. See
+//     lib/past-leaderboard.ts.
 //
 // Everything here is pure and takes the club's day key as an argument rather
 // than reading the clock, so "when did they join" can be tested rather than
@@ -35,6 +43,20 @@ export interface HistorySeason {
   /** DATE column, and genuinely nullable — a season may be open-ended. */
   end_date: string | null;
   active_flag: boolean;
+  /**
+   * 00234. True keeps the season out of every MEMBER-facing history: the
+   * leaderboard's past-season standings and the /my-stats picker. It is a
+   * publication decision and nothing more, so nothing that reports on sessions
+   * or money may filter on it.
+   *
+   * Optional because the column is NOT NULL in the database but this interface
+   * describes a PostgREST payload, and a caller that has not added it to its
+   * select list, or a database without 00234 applied, hands back a row with no
+   * such key. Every read must therefore treat `undefined` as "not hidden",
+   * which is the safe default: it publishes a season that should have been
+   * published rather than silently blanking club history on a bad select.
+   */
+  hidden_flag?: boolean;
 }
 
 /**
@@ -184,7 +206,19 @@ export function memberSeasonHistory(
   selectedId: string | null
 ): HistorySeason[] {
   return seasons
-    .filter((s) => !s.active_flag && (archivedSeasonIds.has(s.id) || s.id === selectedId))
+    .filter(
+      (s) =>
+        !s.active_flag &&
+        // 00234, and it beats the `selectedId` clause below deliberately. That
+        // clause exists so a season reached by direct link still names itself in
+        // the control; a HIDDEN season reached by direct link must not, because
+        // putting it in the picker would re-publish the one thing the flag was
+        // set to unpublish. Both callers redirect a hidden id before rendering,
+        // so this is the second of two independent guards rather than the only
+        // one. `=== true` keeps a row that arrived without the key visible.
+        s.hidden_flag !== true &&
+        (archivedSeasonIds.has(s.id) || s.id === selectedId)
+    )
     .slice()
     .sort((a, b) => b.start_date.localeCompare(a.start_date));
 }

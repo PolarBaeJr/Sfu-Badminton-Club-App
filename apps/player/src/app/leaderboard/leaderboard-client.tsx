@@ -10,6 +10,9 @@ import { AvatarChip, PageHeader, normalizeSearchQuery, useLiveChannel } from '@b
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
 import { useStanding } from '@/components/standing-provider';
 import { StandingNote } from '@/components/standing-notice';
+import { SeasonPick } from '@/components/my-stats/season-pick';
+import type { HistorySeason } from '@/lib/season-history';
+import type { PastSeasonView } from '@/lib/past-leaderboard';
 import {
   topPercentile,
   gapToNext,
@@ -24,15 +27,21 @@ import {
   LADDER_WINDOW_LOOKAHEAD_PX,
 } from '@/lib/ladder';
 
+// THE TWO ELOS ARE THE ONLY REQUIRED FIELDS, and everything after them is
+// optional because a finished season genuinely has nothing to put there.
+// `season_final_ratings` holds a player id and two ratings and no fourth column,
+// so the past-season ladder builds entries with exactly those (see
+// lib/past-leaderboard.ts). Nothing here was deleted: get_leaderboard() still
+// returns all of it and the live ladder still renders all of it.
 type Ratings = {
   singles_elo: number;
   doubles_elo: number;
-  singles_wins: number;
-  singles_losses: number;
-  doubles_wins: number;
-  doubles_losses: number;
-  singles_provisional: boolean;
-  doubles_provisional: boolean;
+  singles_wins?: number;
+  singles_losses?: number;
+  doubles_wins?: number;
+  doubles_losses?: number;
+  singles_provisional?: boolean;
+  doubles_provisional?: boolean;
   current_singles_streak?: number;
   current_doubles_streak?: number;
 };
@@ -70,6 +79,16 @@ const tabs: { id: CategoryId; label: string; short: string }[] = [
   { id: 'tournament_points', label: 'Tournament Pts',   short: 'TPts' },
 ];
 
+// A FINISHED SEASON HAS TWO TABS. `comp_*` filters on the member's status
+// TODAY, which is a column and not a history, so a competitive-only ladder for a
+// term two years ago is today's competitive members ranked by an old rating.
+// Tournament points are all-time with no season predicate at all. And once the
+// Comp tabs are gone, "Open" contrasts with nothing, so these say what they are.
+const pastTabs: { id: CategoryId; label: string; short: string }[] = [
+  { id: 'open_singles', label: 'Singles', short: 'Singles' },
+  { id: 'open_doubles', label: 'Doubles', short: 'Doubles' },
+];
+
 const sortOptions: { id: SortId; label: string }[] = [
   { id: 'elo',      label: 'ELO' },
   { id: 'win_rate', label: 'Win %' },
@@ -95,8 +114,8 @@ function metricOf(p: LeaderboardEntry, isDoubles: boolean, isTpts: boolean): num
 function recordOf(p: LeaderboardEntry, isDoubles: boolean): { wins: number; losses: number } {
   const r = p.ratings;
   return {
-    wins: r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0,
-    losses: r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0,
+    wins: (r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0) ?? 0,
+    losses: (r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0) ?? 0,
   };
 }
 
@@ -117,6 +136,7 @@ export function LadderRow({
   isMe,
   isDoubles,
   isTpts,
+  showRecord,
   canChallenge,
   onChallenge,
   domId,
@@ -127,6 +147,13 @@ export function LadderRow({
   isMe: boolean;
   isDoubles: boolean;
   isTpts: boolean;
+  /**
+   * Whether the record, win rate, streak and provisional flag may be drawn.
+   * REQUIRED, with no default: the two callers that must switch it off are a
+   * points tab and a finished season, and a prop that defaults to true is a prop
+   * a third caller forgets. See where the parent computes it.
+   */
+  showRecord: boolean;
   canChallenge: boolean;
   onChallenge: (id: string) => void;
   /** Set only on the viewer's own row, so "jump to me" has something to find. */
@@ -145,8 +172,11 @@ export function LadderRow({
   // points figure, labelling it with another number's confidence. Worse, isTpts
   // implies isDoubles is false, so it was specifically the SINGLES elo flag
   // sitting beside a points total earned partly in doubles events.
+  //
+  // `showRecord` now carries that guard, plus the finished season's: the flag is
+  // the state of a LIVE rating, and an archived one is settled by definition.
   const provisional =
-    !isTpts && player.ratings
+    showRecord && player.ratings
       ? (isDoubles ? player.ratings.doubles_provisional : player.ratings.singles_provisional)
       : false;
 
@@ -171,7 +201,7 @@ export function LadderRow({
         </span>
         <span className="lr-metrics">
           <span className="lr-value">{value}</span>
-          {!isTpts && (
+          {showRecord && (
             <span className="lr-record">
               {wins}–{losses}
               {share !== null && <> · {getWinRate(wins, losses)}</>}
@@ -185,7 +215,7 @@ export function LadderRow({
               )}
             </span>
           )}
-          {!isTpts && share !== null && (
+          {showRecord && share !== null && (
             <span className="lr-share" aria-hidden>
               <i style={{ width: `${share * 100}%` }} />
             </span>
@@ -210,10 +240,21 @@ export function LadderRow({
 export default function LeaderboardClient({
   initialPlayers,
   meId,
+  pastSeason,
+  seasonOptions,
 }: {
   initialPlayers: LeaderboardEntry[];
   meId: string | null;
+  /** The finished season being shown, or null for the live ladder. */
+  pastSeason: PastSeasonView | null;
+  /** Every season the picker offers: the active one first, then finished ones. */
+  seasonOptions: HistorySeason[];
 }) {
+  // ONE FLAG FOR THE WHOLE SCREEN. A past season is not the live ladder with a
+  // filter on it: the only figure that exists per season is the archived Elo, so
+  // the record, the win-rate sort, the streaks, the points tab, the challenge
+  // controls and the realtime subscription all have nothing to act on.
+  const isPast = pastSeason !== null;
   const [activeTab, setActiveTab] = useState<CategoryId>('open_singles');
   const [sortBy, setSortBy] = useState<SortId>('elo');
   const [searchQuery, setSearchQuery] = useState('');
@@ -226,8 +267,8 @@ export default function LeaderboardClient({
 
   useEffect(() => {
     const ph = getPostHogClient();
-    if (ph) ph.capture('leaderboard_viewed');
-  }, []);
+    if (ph) ph.capture('leaderboard_viewed', { season: isPast ? 'past' : 'current' });
+  }, [isPast]);
 
   // Live-refresh: when any rating changes (a match confirms), re-run the server
   // component to pull fresh standings. Debounced so a burst of updates triggers
@@ -241,6 +282,12 @@ export default function LeaderboardClient({
   // who to challenge. See use-live-channel.ts.
   const subscribe = useLiveChannel(() => router.refresh());
   useEffect(() => {
+    // NOTHING TO LISTEN FOR ON A FINISHED SEASON. `season_final_ratings` is
+    // written once at the rollover and the screen reads no `ratings` row at all,
+    // so a subscription here would be a socket per reader that refreshes a page
+    // whose figures cannot move. The return is the first statement INSIDE the
+    // effect and not a guard around useLiveChannel above, which is a hook.
+    if (isPast) return;
     const supabase = createClient();
     let t: ReturnType<typeof setTimeout> | undefined;
     const channel = supabase
@@ -258,10 +305,17 @@ export default function LeaderboardClient({
       stopWatching();
       supabase.removeChannel(channel);
     };
-  }, [router, subscribe]);
+  }, [router, subscribe, isPast]);
 
   const isDoubles = activeTab.includes('doubles');
   const isTpts = activeTab === 'tournament_points';
+  // What the row metrics beside the Elo are allowed to say. Record, win rate,
+  // streak and the provisional flag are ALL-TIME columns on `ratings`: there is
+  // no per-season version of any of them anywhere in the database, so a finished
+  // season cannot show them, and a points total is not a rating for them to
+  // describe.
+  const showRecord = !isTpts && !isPast;
+  const shownTabs = isPast ? pastTabs : tabs;
 
   // Which players belong to the active tab: competitive-only tabs filter by
   // status; the tournament tab keeps players with points; open tabs keep all.
@@ -285,8 +339,8 @@ export default function LeaderboardClient({
     if (sortBy === 'win_rate') {
       const record = (p: LeaderboardEntry) => {
         const r = p.ratings;
-        const wins = r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0;
-        const losses = r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0;
+        const wins = (r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0) ?? 0;
+        const losses = (r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0) ?? 0;
         const rate = getWinRateNumeric(wins, losses);
         // Tiers: established (≥5 games) first, small samples next, unplayed (null rate) last.
         const tier = rate === null ? 2 : wins + losses < MIN_GAMES_FOR_WIN_RATE_RANK ? 1 : 0;
@@ -445,13 +499,52 @@ export default function LeaderboardClient({
 
   // The players to beat are the players to beat, not the top 3 of your search.
   const top3 = ranked.slice(0, 3);
-  const activeLabel = tabs.find((t) => t.id === activeTab)?.label ?? '';
+  const activeLabel = shownTabs.find((t) => t.id === activeTab)?.label ?? '';
 
   const goChallenge = (id: string) => router.push(`/challenges/new?opponent=${id}`);
 
+  // The picker, in both modes. On the live ladder it is how a member reaches a
+  // finished season at all, which is the whole feature; on a finished one it is
+  // how they get back. The selected option is the past season when there is one
+  // and the ACTIVE season otherwise: seasonPickerOptions puts that one first,
+  // so it is read off the list rather than passed as a second prop.
+  //
+  // `undefined` rather than a control that renders null: SeasonPick returns null
+  // below two options, and PageHeader wraps whatever it is given in a flex row,
+  // so a club with no finished season would get an empty box in its header.
+  const picker =
+    seasonOptions.length > 1 ? (
+      <SeasonPick
+        options={seasonOptions}
+        selectedId={pastSeason?.id ?? seasonOptions.find((s) => s.active_flag)?.id ?? null}
+        basePath="/leaderboard"
+      />
+    ) : undefined;
+
   return (
     <div data-screen-label="Leaderboard">
-      <PageHeader eyebrow="LADDER" title="Ranks" sub="Where you sit against everyone." />
+      <PageHeader
+        eyebrow="LADDER"
+        title="Ranks"
+        sub={
+          pastSeason
+            ? `${pastSeason.name} · final standings`
+            : 'Where you sit against everyone.'
+        }
+        actions={picker}
+      />
+
+      {/* The provenance of the whole screen, and it has no other home: the
+          header's sub-line names the season, and these two say which rows the
+          ladder under it is. archived_at is a TIMESTAMPTZ and the range is built
+          from DATE columns, so the caller has already put each through the
+          club's clock. See page.tsx. */}
+      {pastSeason && (
+        <div className="mono muted" style={{ fontSize: 11, letterSpacing: '.08em', marginBottom: 20 }}>
+          {pastSeason.range}
+          {pastSeason.archivedAt ? ` · ARCHIVED ${pastSeason.archivedAt}` : ''}
+        </div>
+      )}
 
       {/* THE FORMAT RAIL STAYS HERE, ABOVE BOTH COLUMNS, and the search and
           sort no longer do.
@@ -469,7 +562,7 @@ export default function LeaderboardClient({
             in place, there is no tabpanel for a tab to control, and claiming
             the tab pattern without one is worse for a screen reader than not. */}
         <div className="ranks-rail" role="group" aria-label="Leaderboard format">
-          {tabs.map((t) => (
+          {shownTabs.map((t) => (
             <button
               key={t.id}
               className={'filter-chip' + (activeTab === t.id ? ' active' : '')}
@@ -503,7 +596,13 @@ export default function LeaderboardClient({
                     {myElo ?? '—'}
                   </div>
                   <div className="mono muted" style={{ fontSize: 11, marginTop: 4 }}>
-                    {isDoubles ? 'DOUBLES ELO' : 'SINGLES ELO'}
+                    {isPast
+                      ? isDoubles
+                        ? 'FINAL DOUBLES ELO'
+                        : 'FINAL SINGLES ELO'
+                      : isDoubles
+                        ? 'DOUBLES ELO'
+                        : 'SINGLES ELO'}
                   </div>
                 </div>
               </div>
@@ -562,8 +661,9 @@ export default function LeaderboardClient({
               )}
 
               {/* The one primary action on the screen, at the bottom of the card
-                  where a thumb reaches it. Same gate as the per-row control. */}
-              {standing.ok && aboveMe && (
+                  where a thumb reaches it. Same gate as the per-row control,
+                  plus: there is nobody to challenge in a term that is over. */}
+              {!isPast && standing.ok && aboveMe && (
                 <button
                   className="btn btn-primary"
                   type="button"
@@ -626,7 +726,7 @@ export default function LeaderboardClient({
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
                       <div className="mono" style={{ fontWeight: 700, fontSize: 18 }}>{value}</div>
-                      {!isTpts && (
+                      {showRecord && (
                         <div className="mono muted" style={{ fontSize: 11 }}>
                           {wins}–{losses}{wins + losses > 0 ? ` · ${getWinRate(wins, losses)}` : ''}
                         </div>
@@ -667,8 +767,12 @@ export default function LeaderboardClient({
                   {visible.length} of {ranked.length}
                 </div>
                 {/* One line, so a ladder with no Challenge control reads as an
-                    account state rather than a broken page. */}
-                <StandingNote standing={standing} activity="Challenges" style={{ marginTop: 6 }} />
+                    account state rather than a broken page. Not on a finished
+                    season, where the control is absent because the term is over
+                    and not because of anything about the reader's account. */}
+                {!isPast && (
+                  <StandingNote standing={standing} activity="Challenges" style={{ marginTop: 6 }} />
+                )}
 
                 {/* SEARCH AND SORT, the controls for THIS list, sitting on it.
                     They filter and order the ladder below and nothing else, and
@@ -683,7 +787,14 @@ export default function LeaderboardClient({
                       aria-label="Search leaderboard"
                     />
                   </div>
-                  {!isTpts && (
+                  {/* NOT OFFERED ON A FINISHED SEASON, and that is what forces
+                      the order to stay Elo: the alternative ranks by a win rate
+                      built from a record this screen deliberately does not load,
+                      so getWinRateNumeric is null for every row, every row lands
+                      in the same tier, and the ladder comes out in whatever order
+                      the archive arrived in while the chip still reads "Win %".
+                      The remount on the season key guarantees the initial 'elo'. */}
+                  {showRecord && (
                     <div className="ranks-rail" role="group" aria-label="Sort ladder by">
                       {sortOptions.map((s) => (
                         <button
@@ -728,7 +839,9 @@ export default function LeaderboardClient({
                 <div className="ladder-key" style={{ marginTop: 10 }}>
                   <span>#</span>
                   <span>Player</span>
-                  <span className="right">{isTpts ? 'Points' : 'ELO · W–L · Win % · Streak'}</span>
+                  <span className="right">
+                    {isTpts ? 'Points' : isPast ? 'Final ELO' : 'ELO · W–L · Win % · Streak'}
+                  </span>
                 </div>
                 {/* THE TWO HALVES OF A ROW ARE ON DIFFERENT CLOCKS, and until
                     now nothing on screen said so.
@@ -749,21 +862,48 @@ export default function LeaderboardClient({
                     legend above is a right-aligned cell in a three-column key
                     and wraps at 400px if it is lengthened — the same trap
                     past-rating-card.tsx:130-137 records. */}
+                {/* A FINISHED SEASON SAYS SOMETHING ELSE HERE, and its last
+                    sentence is the one a reader could not work out for
+                    themselves. season_final_ratings holds a player id and two
+                    Elos and no rank, so this ladder is the archive sorted HERE,
+                    under the visibility rules that apply TODAY: a member who has
+                    since left the club or switched the flag off is absent from
+                    it, and everybody who was below them has moved up a place. So
+                    these places are not the places that were on screen at the
+                    time. Privacy over fidelity, deliberately, and stated rather
+                    than implied. Same own-line treatment for the same 400px
+                    wrapping reason. */}
                 <div className="mono muted" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
-                  {isTpts
-                    ? 'Tournament points are all-time, across every season.'
-                    : 'Elo is rebased each season. Record, win rate and streak are all-time.'}
+                  {isPast
+                    ? "These are the Elo ratings the club archived when it closed the season off. Record, win rate, streak and tournament points are all-time figures, so none of them is shown for a finished season. The order is the archive ranked under today's visibility rules, not a reproduction of the ranks members saw at the time."
+                    : isTpts
+                      ? 'Tournament points are all-time, across every season.'
+                      : 'Elo is rebased each season. Record, win rate and streak are all-time.'}
                 </div>
               </div>
             </div>
             {visible.length === 0 ? (
+              // THE SEARCH CASE IS TESTED FIRST, because this branch is also
+              // reached with a full ladder and a query that matches nobody. With
+              // the season checked first, a past-season search for a misspelt
+              // name would answer "no archived ladder for Fall 2026" and tell the
+              // reader the club lost a term. No query means `visible` IS `ranked`,
+              // so the two branches below are the genuinely empty ladder.
               <div className="empty">
                 <div className="empty-icon"><Trophy size={20} /></div>
                 <div className="empty-title">
-                  {searchQuery ? `No players match "${searchQuery}"` : 'No ranked players yet'}
+                  {searchQuery
+                    ? `No players match "${searchQuery}"`
+                    : pastSeason
+                      ? `No archived ladder for ${pastSeason.name}`
+                      : 'No ranked players yet'}
                 </div>
                 <div className="empty-hint">
-                  {searchQuery ? 'Try a different name.' : 'Play a ranked match to appear here'}
+                  {searchQuery
+                    ? 'Try a different name.'
+                    : pastSeason
+                      ? 'The club never closed this season off, so there is no final standing to show'
+                      : 'Play a ranked match to appear here'}
                 </div>
               </div>
             ) : (
@@ -782,9 +922,11 @@ export default function LeaderboardClient({
                       domId={p.id === meId ? MY_ROW_ID : undefined}
                       isDoubles={isDoubles}
                       isTpts={isTpts}
-                      // Same gate as before. Your own row is excluded because
-                      // there is no such thing as challenging yourself.
-                      canChallenge={standing.ok && p.id !== meId}
+                      showRecord={showRecord}
+                      // Same gate as before, plus the season: a term that is over
+                      // cannot be played. Your own row is excluded because there
+                      // is no such thing as challenging yourself.
+                      canChallenge={!isPast && standing.ok && p.id !== meId}
                       onChallenge={goChallenge}
                     />
                   ))}

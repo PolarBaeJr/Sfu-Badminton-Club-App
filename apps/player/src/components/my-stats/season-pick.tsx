@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import type { HistorySeason } from '@/lib/season-history';
 
 /**
- * Which term /my-stats is showing.
+ * Which term a season-scoped screen is showing.
  *
  * A native `<select>`. The admin console has a searchable combobox for the same
  * job and this is deliberately not that: a member has one or two past terms
@@ -22,15 +22,24 @@ import type { HistorySeason } from '@/lib/season-history';
  *
  * Renders nothing when there is only the current term to look at, so a club in
  * its first season never sees a control with one option in it.
+ *
+ * `basePath` is required rather than defaulted to /my-stats. Two screens are
+ * season-scoped now (/my-stats and /leaderboard) and each is the canonical
+ * address for its own "now", so a control that guessed wrong would silently move
+ * a reader to the other page, and a default is exactly how the third one would
+ * inherit the wrong guess.
  */
 export function SeasonPick({
   options,
   selectedId,
+  basePath,
 }: {
   /** Active season first, then the member's past terms, newest first. */
   options: HistorySeason[];
   /** The season being shown — the active one on the bare path. */
   selectedId: string | null;
+  /** The screen this control belongs to, e.g. `/my-stats`. No trailing slash. */
+  basePath: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -44,7 +53,7 @@ export function SeasonPick({
     if (chosen.active_flag) next.delete('season');
     else next.set('season', chosen.id);
     const qs = next.toString();
-    router.push(qs ? `/my-stats?${qs}` : '/my-stats');
+    router.push(qs ? `${basePath}?${qs}` : basePath);
   }
 
   return (
