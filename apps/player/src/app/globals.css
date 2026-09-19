@@ -1840,6 +1840,18 @@ html, body { overflow-x: clip; }
 }
 .lr-action:hover { background: var(--surface-2); color: var(--ink); }
 .lr-action:active { transform: scale(0.94); }
+
+/* The marker on your own row, occupying the slot a Challenge button cannot.
+   It borrows .lr-action only for geometry, so the column stays aligned; every
+   affordance is taken back off, because pressing it does nothing and it should
+   not invite the attempt. Dashed and dimmed to read as a label. */
+.lr-action-self {
+  cursor: default;
+  border-style: dashed;
+  color: var(--dim);
+}
+.lr-action-self:hover { background: transparent; color: var(--dim); }
+.lr-action-self:active { transform: none; }
 /* Icon-only on the phone, where 90 rows of the word "Challenge" is noise and
    the label lives in aria-label; spelled out once there is room for it. */
 .lr-action span { display: none; }
@@ -1856,6 +1868,11 @@ html, body { overflow-x: clip; }
   }
   .lr-action span { display: inline; }
 }
+
+/* After the media query on purpose: that block uppercases .lr-action, and this
+   one is a sentence rather than a column label, so it has to win at both
+   widths. Same specificity, later wins. */
+.lr-action-self { text-transform: lowercase; }
 
 /* A column key, since a row list has no <th> to say what 18–6 · 75% means. */
 .ladder-key {
