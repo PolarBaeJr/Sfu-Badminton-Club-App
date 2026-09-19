@@ -418,7 +418,8 @@ export async function sendWeeklyDigestEmail(
     matchesPlayed: number;
     wins: number;
     losses: number;
-    eloChange: number;
+    /** NULL across a season rollover, where no Elo figure is safe to state. */
+    eloChange: number | null;
     /** NULL where the member did not play that discipline this week. */
     singlesRating: number | null;
     doublesRating: number | null;

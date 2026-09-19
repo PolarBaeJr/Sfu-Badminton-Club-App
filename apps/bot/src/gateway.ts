@@ -16,9 +16,18 @@
 // That emptiness is what keeps this safe to run at any replica count. Every
 // replica opens its own session and each publishes the same "online", which is
 // idempotent. The moment someone handles an actual gateway EVENT here, that
-// stops being true: N replicas each receive every event and would act on it N
-// times. Anything event-driven needs a replica-count answer first (a single
-// designated shard, or a Postgres advisory lock), not just a handler.
+// stops being true: every process holding a socket receives every event and
+// would act on it once each. Anything event-driven needs a duplicate answer
+// first (a single designated shard, or a Postgres advisory lock, or an
+// idempotent write), not just a handler.
+//
+// And do NOT reach for proxy.unscalable as that answer. An earlier version of
+// this comment said the service omits the label; it sets it
+// (docker-compose.yml:223), but that changes nothing here, because the label
+// governs INBOUND HTTP routing only. A gateway socket is outbound. The proxy
+// cannot see it, cannot route it, and cannot stop a second process opening
+// one. Every rolling replace runs two containers at once by design, so two
+// live sockets is a normal state of this service, not an edge case.
 //
 // No dependency. Node 22+ exposes a WHATWG WebSocket as a global; the image
 // runs Node 24. discord.js would drag in a tree of packages to hold one socket.

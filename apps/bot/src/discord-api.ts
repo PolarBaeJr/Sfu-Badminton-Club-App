@@ -224,12 +224,32 @@ export class DiscordApi {
    * governs roleCall: the audit log is a RECORD of work, never a gate on it. A
    * missing channel, a revoked permission or a 429 must not turn a completed
    * unlink into a failed one, so the caller gets a value it is free to ignore.
+   *
+   * It logs on the way out, though, which is not the same thing. A value the
+   * caller may ignore still has to be a value an operator can SEE: for a while
+   * this returned response.ok and `false` from a bare catch without a word
+   * either way, so a session ping that Discord refused with 403 and one that
+   * was never attempted looked identical from outside, and the only way to tell
+   * them apart was to guess. Discord puts the actual reason in the body as a
+   * numeric code (50001 missing access, 50013 missing permissions, 10003
+   * unknown channel), so that is what gets read and printed. Reading the body
+   * cannot fail the send, hence the inner catch falling back to an empty
+   * string: the status line is worth printing even when the body turns out to
+   * be empty, or HTML from an edge rather than JSON from Discord, which is what
+   * a Cloudflare 429 in front of the API looks like.
    */
   async createMessage(channelId: string, payload: unknown): Promise<boolean> {
     try {
       const response = await this.request('POST', `/channels/${channelId}/messages`, payload);
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        console.error(
+          `[bot] create message in ${channelId} -> ${response.status} ${detail.slice(0, 200)}`,
+        );
+      }
       return response.ok;
-    } catch {
+    } catch (error) {
+      console.error(`[bot] create message in ${channelId} threw:`, error);
       return false;
     }
   }

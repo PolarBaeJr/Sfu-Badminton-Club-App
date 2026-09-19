@@ -7,18 +7,26 @@ const config: Config = {
     '../../packages/ui/src/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
-    // Reference design is sharp-cornered: zero the whole radius scale so every
-    // rounded-* class flattens app-wide. `full` stays for avatars/pill dots;
-    // dialogs opt back in with literal rounded-[16px]/[8px] (bypasses the scale).
+    // Kept identical to apps/admin/tailwind.config.ts on purpose: the two apps
+    // share packages/ui, so a component rendered in both would round by
+    // different amounts depending on which app compiled it if these drifted.
+    //
+    // The scale was zeroed app-wide for a sharp-cornered reference design. The
+    // owner asked for rounded boxes on 2026-09-17, so it carries real values
+    // again and the rounded-* classes already written throughout the app start
+    // taking effect at once. Values match the literals people wrote to get a
+    // corner while the scale was zero: md === rounded-[8px], xl === the
+    // rounded-[16px] on Dialog. rounded-none is now the only way to keep a
+    // corner square, so the sites using it stay sharp on purpose.
     borderRadius: {
       none: '0',
-      sm: '0',
-      DEFAULT: '0',
-      md: '0',
-      lg: '0',
-      xl: '0',
-      '2xl': '0',
-      '3xl': '0',
+      sm: '4px',
+      DEFAULT: '6px',
+      md: '8px',
+      lg: '12px',
+      xl: '16px',
+      '2xl': '20px',
+      '3xl': '24px',
       full: '9999px',
     },
     extend: {

@@ -14,7 +14,7 @@
 // SOURCE DATABASE: production — container "supabase-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 69 tables, 2 views and 26 enums.
+// Covers 69 tables, 3 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -2412,6 +2412,7 @@ export type Database = {
           competitive_fee_cents: number
           created_at: string
           end_date: string | null
+          hidden_flag: boolean
           id: string
           name: string
           recreational_fee_cents: number
@@ -2425,6 +2426,7 @@ export type Database = {
           competitive_fee_cents?: number
           created_at?: string
           end_date?: string | null
+          hidden_flag?: boolean
           id?: string
           name: string
           recreational_fee_cents?: number
@@ -2438,6 +2440,7 @@ export type Database = {
           competitive_fee_cents?: number
           created_at?: string
           end_date?: string | null
+          hidden_flag?: boolean
           id?: string
           name?: string
           recreational_fee_cents?: number
@@ -3821,6 +3824,24 @@ export type Database = {
           id?: string | null
           inactive_since?: string | null
           purge_after_days?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      purgeable_unfinished_signups: {
+        Row: {
+          created_at: string | null
+          id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string | null
           user_id?: string | null
         }
         Relationships: []

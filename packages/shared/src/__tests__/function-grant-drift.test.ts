@@ -195,6 +195,54 @@ function triggerFunctions(sql: string): Set<string> {
   return names;
 }
 
+/**
+ * A function the migration CREATES and then DROPS again before it finishes.
+ *
+ * Not part of this rule, for a stronger reason than the trigger-function case
+ * above: a trigger function exists but cannot be called, whereas this one does
+ * not exist. There is no row in pg_proc when the migration commits, so there is
+ * no ACL, nothing for Supabase's default grant to attach to, and nothing for a
+ * REVOKE to name. Demanding one would mean revoking a privilege on an object
+ * that is about to be deleted in the same transaction.
+ *
+ * The pattern is a private helper for a one-off backfill: 00092 introduced it
+ * for derive_handle_base and 00235 reuses it, both creating the helper, running
+ * a DO block against it, and dropping it on the way out specifically so nobody
+ * builds on a function whose only contract is "what that backfill needed".
+ * Verified 2026-09-19 on BOTH live databases: public.derive_handle_base is
+ * ABSENT from prod and from staging after 00235 applied.
+ *
+ * MATCHED BY LAST OCCURRENCE, not by presence, and that is the whole safety of
+ * it. `createdFunctions` keys on the bare name because a migration rarely
+ * overloads, but a file that drops an old `foo(text)` and creates a new
+ * `foo(uuid)` leaves a REAL function behind under a name this scan has also
+ * seen dropped. Exempting on "the name appears in a DROP" would silently stop
+ * checking that survivor. So a name is only ephemeral when its last DROP comes
+ * AFTER its last CREATE, which is exactly the create-use-drop shape and never
+ * the drop-then-replace one.
+ */
+function ephemeralFunctions(sql: string): Set<string> {
+  const lastSeen = (re: RegExp): Map<string, number> => {
+    const at = new Map<string, number>();
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sql)) !== null) at.set(m[1]!.toLowerCase(), m.index);
+    return at;
+  };
+  const created = lastSeen(
+    /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z0-9_]+)\s*\(/gi,
+  );
+  const dropped = lastSeen(
+    /DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?(?:public\.)?([a-z0-9_]+)\s*\(/gi,
+  );
+
+  const names = new Set<string>();
+  for (const [name, dropAt] of dropped) {
+    const createAt = created.get(name);
+    if (createAt !== undefined && dropAt > createAt) names.add(name);
+  }
+  return names;
+}
+
 /** Roles revoked from `fn` anywhere in this migration's REVOKE statements. */
 function revokedRoles(sql: string, fn: string): Set<string> {
   const roles = new Set<string>();
@@ -237,13 +285,35 @@ describe('function grant drift — anon must be revoked explicitly', () => {
     }
   });
 
+  it('the ephemeral exemption only covers create-then-drop, never drop-then-create', () => {
+    // Create, use, drop: nothing survives, so nothing to revoke.
+    expect([
+      ...ephemeralFunctions(
+        `CREATE FUNCTION public.helper(TEXT) RETURNS TEXT AS $$ SELECT '' $$;
+         DO $$ BEGIN PERFORM public.helper('x'); END $$;
+         DROP FUNCTION IF EXISTS public.helper(TEXT);`,
+      ),
+    ]).toEqual(['helper']);
+
+    // Drop an old signature, then create a replacement. The replacement is a
+    // REAL function and MUST stay in the check — this is the case that would
+    // make the exemption dangerous if it keyed on mere presence of a DROP.
+    expect([
+      ...ephemeralFunctions(
+        `DROP FUNCTION IF EXISTS public.helper(TEXT);
+         CREATE FUNCTION public.helper(UUID) RETURNS TEXT AS $$ SELECT '' $$;`,
+      ),
+    ]).toEqual([]);
+  });
+
   for (const file of files) {
     const version = versionOf(file);
     if (EXEMPT[version]) continue;
 
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     const triggers = triggerFunctions(sql);
-    const fns = createdFunctions(sql).filter((f) => !triggers.has(f));
+    const ephemeral = ephemeralFunctions(sql);
+    const fns = createdFunctions(sql).filter((f) => !triggers.has(f) && !ephemeral.has(f));
     if (fns.length === 0) continue;
 
     it(`${file} revokes anon and authenticated from every function it creates`, () => {

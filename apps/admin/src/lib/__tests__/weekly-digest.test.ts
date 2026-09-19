@@ -40,6 +40,14 @@ let deliveryReadError: string | null;
 let deliveryClaimError: string | null;
 const dkey = (w: string, p: string) => `${w}|${p}`;
 
+// season_final_ratings: one row per player per season, written by
+// activate_season and re-stamped by a correction to a finished season. The
+// route head-counts the rows archived inside the digest window to decide
+// whether to withhold the Elo figures.
+let archivedAt: string[];
+let rolloverReadError: string | null;
+let rolloverReadNulled: boolean;
+
 vi.mock('@/lib/supabase-server', () => ({
   createAdminClient: () => ({
     from(table: string) {
@@ -83,6 +91,30 @@ vi.mock('@/lib/supabase-server', () => ({
             }),
           }),
         };
+      }
+      if (table === 'season_final_ratings') {
+        // Its own branch, and awaitable rather than resolving on .range(): the
+        // route awaits this builder directly. Making the generic fallback below
+        // awaitable instead would change the match_participants read that
+        // shares it. The date comparison is the real one, string-wise on ISO
+        // timestamps, so the boundary test actually exercises gte/lt.
+        let lo = '';
+        let hi = '';
+        const q = {
+          select: () => q,
+          gte: (_c: string, v: string) => { lo = v; return q; },
+          lt: (_c: string, v: string) => { hi = v; return q; },
+          then: (resolve: (r: { count: number | null; error: unknown }) => unknown) =>
+            Promise.resolve(
+              rolloverReadError
+                ? { count: null, error: { message: rolloverReadError } }
+                : rolloverReadNulled
+                  // How a head count really fails: no body, so no error either.
+                  ? { count: null, error: null }
+                  : { count: archivedAt.filter((a) => a >= lo && a < hi).length, error: null },
+            ).then(resolve),
+        };
+        return q;
       }
       if (table === 'cron_config') {
         return {
@@ -143,6 +175,9 @@ beforeEach(() => {
   deliveryReadError = null;
   deliveryClaimError = null;
   matchRows = [];
+  archivedAt = [];
+  rolloverReadError = null;
+  rolloverReadNulled = false;
   filters.gte = [];
   filters.lt = [];
   process.env.CRON_SECRET = SECRET;
@@ -451,5 +486,110 @@ describe('weekly-digest — a finished week still reports what it stranded', () 
     expect(body.already_complete).toBe(true);
     expect(body.stranded_claims).toBe(1);
     expect(Sentry.captureMessage).toHaveBeenCalled();
+  });
+});
+
+// THE WEEK A SEASON ROLLS OVER, which is the one week these numbers can be
+// wrong without anything failing. activate_season snapshots into
+// season_final_ratings and, on a soft or full Elo policy, rewrites every live
+// rating. A rewrite emits no rating_delta, so the net-Elo sum spans a rebase;
+// and the post_rating stored against a match played before the rollover is a
+// number the member no longer holds. The recap would state both, confidently.
+//
+// The window here is the Monday-to-Monday one every other test in this file
+// runs in: 2026-08-10T00:00Z inclusive to 2026-08-17T00:00Z exclusive.
+describe('weekly-digest: a season that rolled over mid-week', () => {
+  const data = () =>
+    (sendWeeklyDigestEmail.mock.calls[0] as unknown[])[2] as Record<string, unknown>;
+
+  it('withholds both Elo figures, and only those', async () => {
+    matchRows = [
+      row('p-00', { matchType: 'singles', postRating: 1100, playedAt: '2026-08-11T00:00:00.000Z' }),
+      row('p-00', { matchType: 'doubles', postRating: 900, playedAt: '2026-08-14T00:00:00.000Z' }),
+    ];
+    archivedAt = ['2026-08-13T08:00:00.000Z'];
+
+    await run();
+
+    expect(data().eloChange).toBeNull();
+    expect(data().singlesRating).toBeNull();
+    expect(data().doublesRating).toBeNull();
+    // THE ASSERTION THAT MAKES THIS A SUPPRESSION AND NOT A MUTILATION. A
+    // rebase does not un-play a match, so the count and the record survive it
+    // intact and are still the member's. Clamping the digest window to
+    // archived_at would have cut these three down to protect the two above.
+    expect(data().matchesPlayed).toBe(2);
+    expect(data().wins).toBe(2);
+    expect(data().losses).toBe(0);
+  });
+
+  it('leaves an ordinary week alone', async () => {
+    matchRows = [row('p-00', { postRating: 1100 })];
+    archivedAt = [];
+
+    await run();
+
+    expect(data().eloChange).toBe(5);
+    expect(data().singlesRating).toBe(1100);
+  });
+
+  it('does not suppress for an activation outside the window', async () => {
+    matchRows = [row('p-00', { postRating: 1100 })];
+    // One the day before the window opens, one exactly at the instant it
+    // closes. `archived_at >= periodEnd` belongs to NEXT week's digest, and it
+    // is the one a `.lte` would wrongly swallow into this one.
+    archivedAt = ['2026-08-09T23:59:59.000Z', '2026-08-17T00:00:00.000Z'];
+
+    await run();
+
+    expect(data().eloChange).toBe(5);
+    expect(data().singlesRating).toBe(1100);
+  });
+
+  it('withholds when it cannot tell, and still sends the recap', async () => {
+    // supabase-js resolves a PostgREST 400/403 rather than throwing, so
+    // `count ?? 0` would read a broken grant as "no season rolled over" and
+    // mail the numbers anyway. A read that did not answer is not evidence.
+    matchRows = [row('p-00', { postRating: 1100 })];
+    rolloverReadError = 'permission denied for table season_final_ratings';
+
+    const body = await (await run()).json();
+
+    expect(data().eloChange).toBeNull();
+    expect(data().singlesRating).toBeNull();
+    // And the whole club's digest is not cancelled over a stat line.
+    expect(body.sent).toBe(1);
+    expect(data().matchesPlayed).toBe(1);
+  });
+
+  it('withholds for the way a head count ACTUALLY fails', async () => {
+    // THE TEST ABOVE DOES NOT COVER THIS, and the original guard here only
+    // checked `error`. A HEAD request has no body, so PostgREST's error
+    // document never arrives and supabase-js resolves the failure as
+    // { count: null, error: null, status: 204 }. Measured against this stack:
+    // a head count on a missing table returns exactly that, while the same
+    // read as a GET returns PGRST205.
+    //
+    // Through `count ?? 0` that becomes `0 > 0`, which is false, which mails
+    // the numbers. This is the failure this detection is most likely to meet
+    // and it is the one that defeats it silently.
+    matchRows = [row('p-00', { postRating: 1100 })];
+    rolloverReadNulled = true;
+
+    const body = await (await run()).json();
+
+    expect(data().eloChange).toBeNull();
+    expect(data().singlesRating).toBeNull();
+    expect(body.across_rollover).toBe(true);
+    expect(body.sent).toBe(1);
+  });
+
+  it('reports the decision in the run summary', async () => {
+    matchRows = [row('p-00')];
+    archivedAt = ['2026-08-13T08:00:00.000Z'];
+
+    const body = await (await run()).json();
+
+    expect(body.across_rollover).toBe(true);
   });
 });

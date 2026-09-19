@@ -410,12 +410,12 @@ async function acceptEventWaiverImpl(tournamentId: string, opts: { accepted: boo
     service.from('tournament_participants')
       .select('id, event:tournament_events!inner(tournament_id)')
       .eq('player_id', player.id)
-      .eq('tournament_events.tournament_id', tournamentId)
+      .eq('event.tournament_id', tournamentId)
       .limit(1),
     service.from('tournament_pairs')
       .select('id, event:tournament_events!inner(tournament_id)')
       .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
-      .eq('tournament_events.tournament_id', tournamentId)
+      .eq('event.tournament_id', tournamentId)
       .limit(1),
   ]);
   if ((singles.data?.length ?? 0) === 0 && (pairs.data?.length ?? 0) === 0) {

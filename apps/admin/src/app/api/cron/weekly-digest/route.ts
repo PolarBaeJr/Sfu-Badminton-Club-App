@@ -194,6 +194,61 @@ export async function POST(request: Request) {
       });
     }
 
+    // DID A SEASON ROLL OVER INSIDE THIS WEEK?
+    //
+    // activate_season snapshots every rating into season_final_ratings and then,
+    // on a 'soft' or 'full' Elo policy, rewrites the live ladder. A rewrite
+    // emits no rating_delta, so the sum below would be a week's movement
+    // measured across a rebase, and the stored post_rating on a match played
+    // before the rollover is a number the member no longer holds. Both figures
+    // would be wrong, in a mail nobody can un-send.
+    //
+    // THIS OVER-TRIGGERS, KNOWINGLY, ON TWO PATHS.
+    //
+    // The default policy is the first. 'carry' rewrites nothing, so its digest
+    // would have been fine, but nowhere records which policy ran: `seasons` has
+    // no column for it, season_final_ratings has no column for it, and
+    // activate_season writes no audit row naming it.
+    //
+    // A correction to a FINISHED season is the second. Both
+    // apply_tournament_match_rating and reverse_tournament_match_rating (00084)
+    // adjust that season's archived ladder and stamp archived_at = NOW() on the
+    // rows they touch. That is not an activation and it never moves the live
+    // ratings, so this read is evidence that something rewrote the archive
+    // rather than proof that the live ladder was rebased.
+    //
+    // Both are accepted: the alternative is mailing invented numbers on the
+    // week that really did rebase. If the policy is ever recorded, narrow this
+    // to the rewriting activations.
+    //
+    // Counts of matches, wins and losses are NOT affected by a rebase, so the
+    // window is left alone and the recap still goes out. Clamping the window to
+    // archived_at would have shrunk those three correct figures to protect the
+    // two broken ones.
+    const rollover = await admin
+      .from('season_final_ratings')
+      .select('season_id', { count: 'exact', head: true })
+      .gte('archived_at', periodStart.toISOString())
+      .lt('archived_at', periodEnd.toISOString());
+    // FAIL CLOSED, BY WITHHOLDING RATHER THAN BY THROWING. readProgress and the
+    // settled read above fail closed with a throw because their failure mode is
+    // mailing somebody twice. This one's failure mode is asserting a number we
+    // cannot stand behind, so the lever is different: a read that did not
+    // answer is not evidence that no season rolled over. Throwing instead would
+    // cancel the whole club's digest over a stat line.
+    //
+    // *** AND A HEAD COUNT CANNOT REPORT ITS OWN FAILURE THROUGH `error`. ***
+    //
+    // A HEAD request carries no body by definition, so PostgREST's error
+    // document never arrives and supabase-js resolves the failure as
+    // `{ count: null, error: null, status: 204 }`. Measured against this club's
+    // own stack: a head count on a missing table returns exactly that, while
+    // the same read issued as a GET returns PGRST205. Checking `error` alone
+    // was this line's original guard, and it would have let a broken read fall
+    // through `count ?? 0` to `0 > 0`, which is false, which mails the numbers.
+    // A null count is the failure, so it has to be read as one.
+    const acrossRollover = rollover.error || rollover.count === null ? true : rollover.count > 0;
+
     // Only players who actually played. A digest saying "0 matches, no change"
     // is the kind of mail that earns a spam complaint, and a complaint is the
     // most expensive signal there is on a sending reputation.
@@ -319,9 +374,12 @@ export async function POST(request: Request) {
         matchesPlayed: agg.matchesPlayed,
         wins: agg.wins,
         losses: agg.losses,
-        eloChange: agg.eloChange,
-        singlesRating: agg.singles?.rating ?? null,
-        doublesRating: agg.doubles?.rating ?? null,
+        // All three withheld together across a rollover, and all three from the
+        // same decision: they are the figures a rebase invalidates. See the
+        // acrossRollover comment above.
+        eloChange: acrossRollover ? null : agg.eloChange,
+        singlesRating: acrossRollover ? null : (agg.singles?.rating ?? null),
+        doublesRating: acrossRollover ? null : (agg.doubles?.rating ?? null),
       }).catch((err) => {
         // One bad address must not stop the rest of the run.
         Sentry.captureException(err, { extra: { job: 'weekly-digest' } });
@@ -400,6 +458,9 @@ export async function POST(request: Request) {
       skipped,
       claimed_elsewhere: claimedElsewhere,
       stranded_claims: stranded.length,
+      // Reported so a week of Elo-less recaps is explainable from the job log
+      // rather than from a member asking why their rating vanished.
+      across_rollover: acrossRollover,
       remaining,
       complete: remaining === 0,
     });

@@ -1319,15 +1319,27 @@ export function Card({
                 accent={shown === 'singles'}
               />
             ) : null}
+            {/* ALL-TIME, and now it says so on the panel. The points come from
+                get_leaderboard()'s SUM over tournament_participants, which
+                joins nothing to `tournaments` and so has no season predicate at
+                all. Scoping it is a migration; saying which clock it is on is
+                not, and the rail has no room left for a third clause. */}
             <StatPanel
               label="TOURNAMENT"
               value={String(profile.tournamentPoints ?? 0)}
               sub="points"
+              sub2="all-time"
             />
             {/* Nights used to sit in a bare meta line with the rival, where a
                 single digit beside a name read as an afterthought. It is a
                 season-long figure like the three beside it and belongs in the
-                same row. */}
+                same row.
+
+                IT IS ONE NOW. This comment was false until the query behind it
+                was joined to `sessions.season_id`: it counted every night the
+                member had ever attended, so a long-standing member read NIGHTS
+                214 on a card whose rail frames it as the season. See
+                discord-profile.ts. */}
             <StatPanel
               label="NIGHTS"
               value={String(profile.nights ?? 0)}

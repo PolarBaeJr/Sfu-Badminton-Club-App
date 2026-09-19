@@ -18,9 +18,10 @@ import { DiscordApi } from './discord-api.js';
 // deleting the mapping before Discord would strand a live event with no row
 // pointing at it, and nothing would ever clean it up.
 //
-// Driven by pg_cron over HTTP rather than a timer, because the compose service
-// omits proxy.unscalable — a setInterval in here would become one scheduler PER
-// REPLICA, all racing to create the same event.
+// Driven by pg_cron over HTTP rather than a timer, because a setInterval in
+// here would become one scheduler PER PROCESS, all racing to create the same
+// event. proxy.unscalable is set (docker-compose.yml:223) but governs inbound
+// HTTP only, and a rolling replace runs two. See reconcile.ts.
 
 export interface TournamentRunResult {
   created: number;

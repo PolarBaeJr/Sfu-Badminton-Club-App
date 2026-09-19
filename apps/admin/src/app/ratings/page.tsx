@@ -7,7 +7,6 @@ import { FIELD_META, type PlatformSetting } from '@/lib/platform-setting-fields'
 import { RatingsForm } from './ratings-form';
 import {
   RatingsAside,
-  type LadderShape,
   type LastActivation,
   type LastChange,
 } from './ratings-aside';
@@ -20,6 +19,10 @@ import {
 } from '@badminton/shared/src/utils/constants';
 import { getKFactor, type RatingSettings } from '@badminton/shared/src/elo/engine';
 import type { KFactors } from './k-factor-panel';
+// Lives in its own module so a test can drive the real function rather than a
+// copy of its queries. What it must not do is restate the club's visibility
+// rules, and only the real one can be held to that.
+import { loadLadder } from './ladder-count';
 
 // Split out of /settings, which is trainer-level so everyone can enrol their own
 // passkeys. Platform configuration had no business living behind that gate.
@@ -130,7 +133,7 @@ type Db = ReturnType<typeof createAdminClient>;
  * `matchesPlayed` is left undefined on purpose: this asks what the provisional
  * and established K-factors ARE, not which one a particular member is on. The
  * head counts beside them answer that, and they are counted with the same
- * threshold-or-flag rule the engine branches on (see loadLadder).
+ * threshold-or-flag rule the engine branches on (see ladder-count.ts).
  *
  * No fetch. `settings` is the rating section of the platform_settings read the
  * form above already made, under `platform.page`.
@@ -199,43 +202,6 @@ function thresholdOf(settings: PlatformSetting[]): number {
   const raw = settings.find((s) => s.key === 'rating_defaults')?.value?.provisional_threshold;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : PROVISIONAL_THRESHOLD;
-}
-
-/**
- * How many members these settings apply to, and how many of them still move on
- * the provisional K-factors. Three head counts — no rows leave the database.
- *
- * The condition is the STORED FLAG OR the match count, because that is what
- * decides the K-factor on both sides of the engine:
- * apply_match_result (00041) branches on
- * `singles_provisional OR singles_matches_played < v_threshold`, and
- * getKFactor() in the TS engine says the same thing. Counting the flag alone
- * would print a figure that does not move when the field above it does — the
- * threshold clears the flag only on the match that crosses it, so raising the
- * threshold makes established players provisional again through the second
- * clause and through nothing else.
- */
-async function loadLadder(db: Db, allowed: boolean, threshold: number): Promise<LadderShape> {
-  if (!allowed) return { state: 'withheld' };
-
-  const provisional = (discipline: 'singles' | 'doubles') =>
-    db
-      .from('ratings')
-      .select('id', { count: 'exact', head: true })
-      .or(`${discipline}_provisional.eq.true,${discipline}_matches_played.lt.${threshold}`);
-
-  const [total, singles, doubles] = await Promise.all([
-    db.from('ratings').select('id', { count: 'exact', head: true }),
-    provisional('singles'),
-    provisional('doubles'),
-  ]);
-
-  return {
-    state: 'ok',
-    total: total.count ?? 0,
-    singlesProvisional: singles.count ?? 0,
-    doublesProvisional: doubles.count ?? 0,
-  };
 }
 
 /**

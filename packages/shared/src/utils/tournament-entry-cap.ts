@@ -166,11 +166,11 @@ export async function loadTournamentEntryCounts(
     supabase
       .from('tournament_participants')
       .select('player_id, status, event:tournament_events!inner(tournament_id)')
-      .eq('tournament_events.tournament_id', tournamentId),
+      .eq('event.tournament_id', tournamentId),
     supabase
       .from('tournament_pairs')
       .select('player1_id, player2_id, status, event:tournament_events!inner(tournament_id)')
-      .eq('tournament_events.tournament_id', tournamentId),
+      .eq('event.tournament_id', tournamentId),
   ]);
 
   if (participantsRes.error) throw participantsRes.error;

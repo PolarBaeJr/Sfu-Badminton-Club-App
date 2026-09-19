@@ -1,7 +1,7 @@
 {
   "name": "badminton-platform",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.3",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -13,7 +13,8 @@
     "build": "npx turbo run build",
     "lint": "npx turbo run lint",
     "type-check": "npx turbo run type-check",
-    "gen:types": "node scripts/gen-db-types.mjs",
+    "//gen:types": "The flags are spelled out because the committed database.gen.ts is generated from PRODUCTION, and the script's own defaults are staging. The generated header tells you to regenerate with `npm run gen:types` and then prints the production command as if that were the same thing. It was not: running the bare script rewrote the header to staging and dropped the source of truth to whichever database happened to be behind. Now the two agree. To read a different database, pass the flags explicitly rather than editing this line.",
+    "gen:types": "node scripts/gen-db-types.mjs --ssh-host pi --container supabase-db --database postgres --label production",
     "test": "npx turbo run test"
   },
   "packageManager": "npm@11.17.0",

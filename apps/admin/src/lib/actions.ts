@@ -86,6 +86,7 @@ export {
   updateSeasonFees,
   setActiveSeason,
   endSeason,
+  setSeasonHidden,
 } from './actions/seasons';
 export type { SeasonEloPolicy } from './actions/seasons';
 

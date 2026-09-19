@@ -31,8 +31,15 @@ const rel = (f: string) => f.slice(SRC.length + 1).replace(/\\/g, '/');
 
 // Every file allowed to name an absolute Elo column, and why it is safe.
 const ALLOWED = new Map<string, string>([
-  // Reads get_leaderboard(), which does the filtering in the database.
-  ['app/leaderboard/page.tsx', 'get_leaderboard() already excludes opted-out members'],
+  // Two reads, and only the first of them has the database behind it.
+  // get_leaderboard() filters the live ladder in the database; the past-season
+  // branch reads season_final_ratings under the SERVICE ROLE, because anon has no
+  // grant on that table, and restates the same three predicates itself. Asserted
+  // below rather than taken on trust.
+  [
+    'app/leaderboard/page.tsx',
+    'get_leaderboard() for the live ladder; the past-season query names the three predicates itself',
+  ],
   ['app/leaderboard/leaderboard-client.tsx', 'renders only what page.tsx passed it'],
   ['app/page.tsx', 'top-N strip, also off get_leaderboard()'],
   // The Discord bot's ladder. Same source as the web leaderboard: it calls
@@ -63,6 +70,11 @@ const ALLOWED = new Map<string, string>([
   ['app/feed/page.tsx', "own-record card; every other row's figures are already withheld"],
   ['app/my-stats/page.tsx', 'own ratings row; the ladder it counts against is get_leaderboard()'],
   ['app/my-stats/past-season.tsx', "season_final_ratings .eq('player_id', player.id)"],
+  // The finished season's ladder. Driven FROM season_final_ratings rather than
+  // from a player list, and it re-applies get_leaderboard()'s three predicates in
+  // the app layer because its caller reads under the service role, which has no
+  // database backstop behind it.
+  ['lib/past-leaderboard.ts', 'drops any archived row whose member may not appear on a ladder today'],
   ['lib/actions/profile.ts', 'a comment, no read'],
   ['lib/actions/_shared.ts', 'getPlayerProps, built from the acting member'],
   ['lib/posthog.ts', 'the analytics property type for that same self-identify'],
@@ -110,5 +122,33 @@ describe('another member\'s rating has a closed set of exits', () => {
     // cards alone would leave the control looking closed and arithmetically
     // open.
     expect(page).toMatch(/typeof delta === 'number' && !hidesRatings/);
+  });
+
+  it('the past-season ladder names every predicate the database would have applied', () => {
+    const page = readFileSync(join(SRC, 'app/leaderboard/page.tsx'), 'utf8');
+    const rule =
+      'the past-season ladder reads season_final_ratings under the SERVICE ROLE, which bypasses RLS ' +
+      'and is not get_leaderboard(). Its query is the only thing standing between an opted-out ' +
+      'member and a public standings table, so all three predicates have to be in it.';
+
+    // The three predicates of get_leaderboard() (00092:749-751), restated.
+    expect(page, rule).toMatch(/active_flag/);
+    expect(page, rule).toMatch(/hide_from_leaderboard/);
+    expect(page, rule).toMatch(/pending_approval/);
+    expect(page, rule).toMatch(/suspended/);
+
+    // AND THE DRIVE DIRECTION. The archive is the parent and `players` is the
+    // embed: inverting it into a read of `players` with the snapshot embedded is
+    // a left join from today's roster, which lists every present-day member in
+    // the final standings of a season they were never in. `!inner` is what makes
+    // the alias-path filters above drop a row rather than null the embed.
+    const direction =
+      'the past-season standings must be driven FROM season_final_ratings with players!inner. ' +
+      'A left join from the current roster backfills members who were not in the season.';
+    expect(page, direction).toMatch(/from\(['"]season_final_ratings['"]\)/);
+    expect(page, direction).toMatch(/players!inner/);
+    // Not `ratings`, in either branch: that table is cumulative and was rebased
+    // at the rollover, so it is nobody's closing figure for a finished term.
+    expect(page, direction).not.toMatch(/from\(['"]ratings['"]\)/);
   });
 });

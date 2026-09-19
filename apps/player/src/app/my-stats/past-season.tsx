@@ -97,7 +97,7 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
   const [seasonsRes, archivedRes, matchRowsRes, attendanceRes] = await Promise.all([
     supabase
       .from('seasons')
-      .select('id, name, start_date, end_date, active_flag')
+      .select('id, name, start_date, end_date, active_flag, hidden_flag')
       .order('start_date', { ascending: false })
       .limit(40),
     // Every season this member has an archived closing ladder for. One row per
@@ -135,7 +135,14 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
 
   // Not a season, or the one being played right now. The live screen is the
   // canonical address for "now" and there is no second version of it.
-  if (!season || season.active_flag) redirect('/my-stats');
+  //
+  // AND A HIDDEN SEASON (00234). The flag is club-wide, so it has to hold on a
+  // member's own history too: a season the club has unpublished must not stay
+  // readable just because the reader happens to have an archived row in it,
+  // which is exactly the population that could still link straight to it.
+  if (!season || season.active_flag || season.hidden_flag === true) {
+    redirect('/my-stats');
+  }
 
   const archivedRows = (archivedRes.data ?? []) as {
     season_id: string;
@@ -257,7 +264,11 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
   });
 
   const picker = (
-    <SeasonPick options={seasonPickerOptions(seasons, archivedIds, seasonId)} selectedId={seasonId} />
+    <SeasonPick
+      options={seasonPickerOptions(seasons, archivedIds, seasonId)}
+      selectedId={seasonId}
+      basePath="/my-stats"
+    />
   );
 
   return (

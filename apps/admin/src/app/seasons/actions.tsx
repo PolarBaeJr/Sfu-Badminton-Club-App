@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, DatePicker, Textarea } from '@badminton/ui';
-import { createSeason, setActiveSeason, endSeason, updateSeasonFees, type SeasonEloPolicy } from '@/lib/actions';
+import { createSeason, setActiveSeason, endSeason, setSeasonHidden, updateSeasonFees, type SeasonEloPolicy } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { PanelLabel } from './panel';
@@ -304,13 +304,30 @@ const ELO_POLICY_OPTIONS: { value: SeasonEloPolicy; label: string }[] = [
 const POLICY_WARNING: Record<SeasonEloPolicy, string | null> = {
   carry: null,
   soft: 'Every player’s ELO is compressed toward the ladder floor, and nobody drops below the tier they earned. The floor, the compression factor and the tier size are all set in Settings → Rating Defaults and Season Settings. Match history and win–loss records are preserved.',
-  full: 'Every player’s ELO will be reset to 400 and made provisional again. Match history and win–loss records are preserved, but the current ladder standings are wiped.',
+  full: 'Every player’s ELO will be reset to 400 and made provisional again, and every season counter on their profile goes back to zero: wins, losses, points, games and streaks. Match history is untouched, so last season still reads correctly on past-season pages, but the current ladder standings and the current season’s record both start over.',
 };
+
+// THE `full` WARNING CHANGED WITH 00236, AND THE OLD ONE WAS HALF TRUE.
+//
+// It used to promise that "win–loss records are preserved". They were, in the
+// sense that no `matches` row was deleted. They were not, in the sense the
+// person clicking the button cares about: `activate_season` zeroed
+// matches_played and left the other sixteen counters on `ratings` standing, so
+// a member came out of the rollover reading a career record beside "0 matches
+// played". 00236 zeros all twenty, which is coherent, and makes this sentence
+// a promise the function keeps.
+//
+// `soft` is deliberately unchanged, both here and in the function: it really
+// does leave the counters running.
 
 export interface SeasonRowCapabilities {
   /** seasons.fees.write */
   fees: boolean;
-  /** seasons.end.write */
+  /**
+   * seasons.end.write. Gates BOTH "Close season" and the history toggle: the
+   * hide action re-checks this same string, deliberately rather than adding a
+   * fourth one. See setSeasonHidden in lib/actions/seasons.ts.
+   */
   end: boolean;
   /** seasons.activate.write */
   activate: boolean;
@@ -337,6 +354,7 @@ export function SeasonRowActions({
   status,
   competitiveFeeCents,
   recreationalFeeCents,
+  hidden,
   can,
 }: {
   seasonId: string;
@@ -344,6 +362,8 @@ export function SeasonRowActions({
   status: SeasonStatusKey;
   competitiveFeeCents: number;
   recreationalFeeCents: number;
+  /** seasons.hidden_flag. The console shows hidden seasons: see the toggle below. */
+  hidden: boolean;
   can: SeasonRowCapabilities;
 }) {
   const [loading, setLoading] = useState(false);
@@ -353,6 +373,8 @@ export function SeasonRowActions({
   const [policy, setPolicy] = useState<SeasonEloPolicy>('carry');
   const [activateReason, setActivateReason] = useState('');
   const [endReason, setEndReason] = useState('');
+  const [hideOpen, setHideOpen] = useState(false);
+  const [hideReason, setHideReason] = useState('');
   const { toast } = useToast();
   const router = useRouter();
   const feeForm = useFeeForm(seasonId, competitiveFeeCents, recreationalFeeCents);
@@ -389,8 +411,31 @@ export function SeasonRowActions({
     setLoading(false);
   }
 
+  async function handleHide() {
+    setLoading(true);
+    try {
+      await setSeasonHidden(seasonId, !hidden, hideReason);
+      toast(hidden ? 'Season shown to members' : 'Season hidden from members', 'success');
+      setHideOpen(false);
+      setHideReason('');
+      router.refresh();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setLoading(false);
+  }
+
   const warning = POLICY_WARNING[policy];
-  const nothingOffered = !can.fees && !(isLive ? can.end : can.activate);
+
+  // OFFERED ON FINISHED SEASONS ONLY. The flag hides a season from the member
+  // history surfaces, and the ACTIVE season is not history: it is reached
+  // through active_flag, not through a picker, so hiding it would change
+  // nothing a member sees while reading as though it had. Close the season
+  // first, then decide whether to publish it.
+  const canToggleHidden = !isLive && can.end;
+
+  const nothingOffered =
+    !can.fees && !(isLive ? can.end : can.activate) && !canToggleHidden;
 
   if (nothingOffered) {
     // Not a blank cell: this row has controls, they are just not this viewer's.
@@ -473,6 +518,76 @@ export function SeasonRowActions({
                   className="flex-1"
                 >
                   Close {seasonName}
+                </Button>
+              </div>
+            </form>
+          </Dialog>
+        </>
+      )}
+
+      {canToggleHidden && (
+        <>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={TOUCH}
+            onClick={() => { setHideReason(''); setHideOpen(true); }}
+          >
+            {hidden ? 'Show to members' : 'Hide from members'}
+          </Button>
+          <Dialog
+            open={hideOpen}
+            onClose={() => setHideOpen(false)}
+            title={hidden ? `Show ${seasonName} to members?` : `Hide ${seasonName} from members?`}
+          >
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleHide();
+              }}
+            >
+              {/* Says what moves and what does not. The flag is only ever a
+                  publication decision, and an exec reading this dialog is the
+                  person most likely to assume it is more than that. */}
+              <p className="text-sm text-[var(--text-secondary)]">
+                {hidden ? (
+                  <>
+                    {seasonName} goes back into the member-facing history: its final
+                    standings become readable on the leaderboard and it reappears in
+                    the season picker on My Stats.
+                  </>
+                ) : (
+                  <>
+                    {seasonName} is removed from the member-facing history. Its final
+                    standings stop being readable on the leaderboard and it disappears
+                    from the season picker on My Stats.
+                  </>
+                )}
+              </p>
+              <p className="text-sm text-[var(--text-secondary)]">
+                Nothing is deleted, and nothing else changes: the season keeps its
+                dates, its fees, its sessions and its archived ratings, and every
+                financial report still counts it. This console keeps listing it
+                either way, which is the only way back.
+              </p>
+              <Textarea
+                label="Reason (required)"
+                placeholder={hidden ? 'Republishing a season is logged. Say why.' : 'Hiding a season is logged. Say why.'}
+                value={hideReason}
+                onChange={(e) => setHideReason(e.target.value)}
+                required
+              />
+              <div className="flex gap-2">
+                <Button variant="ghost" type="button" onClick={() => setHideOpen(false)}>Cancel</Button>
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  loading={loading}
+                  disabled={!enoughReason(hideReason)}
+                  className="flex-1"
+                >
+                  {hidden ? `Show ${seasonName}` : `Hide ${seasonName}`}
                 </Button>
               </div>
             </form>

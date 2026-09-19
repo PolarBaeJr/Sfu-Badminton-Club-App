@@ -6,7 +6,8 @@ import { accessLevelFor, effectiveCapabilities, permissionsOf, permits } from '@
 import { PermissionEditor } from '@/app/permissions/permission-editor';
 import { customBaselinesFrom, personRowFrom } from '@/lib/person-row';
 import { Badge, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode, summarizeSeason } from '@badminton/shared';
+import type { SeasonMatchRow } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
 import { ReliabilityEditor } from './reliability-editor';
@@ -21,6 +22,15 @@ import { SeasonPicker } from './season-picker';
 import { RecentMatches } from './recent-matches';
 import { matchSearchKeys } from '@/lib/match-search';
 import { WALKOVER_NOTES, canReadPrivateNotes, fetchPrivateNotes } from '@/lib/private-notes';
+
+/**
+ * The most matches one member can play in one season before the tally
+ * under-counts. A guard against a runaway read, not a page size: the busiest
+ * member on the club's books has never been within an order of magnitude of
+ * this, and a number that could plausibly be hit would be a silent wrong
+ * answer rather than a cap.
+ */
+const SEASON_TALLY_CAP = 2000;
 
 /** Local date only. The hour a match was played is noise in a history list. */
 const day = (iso: string | null | undefined) =>
@@ -137,6 +147,7 @@ export default async function PlayerDetailPage({
     { data: rating },
     { data: reliability },
     { data: recentMatches },
+    { data: seasonTallyRows },
     { data: varsityNotes },
     { data: walkoverEvents },
     { data: tournamentNoShows },
@@ -162,9 +173,27 @@ export default async function PlayerDetailPage({
       ? supabase.from('match_participants')
           .select('*, match:matches!inner(*, match_games(*))')
           .eq('player_id', id)
-          .eq('matches.season_id', seasonId ?? '')
+          .eq('match.season_id', seasonId ?? '')
           .order('created_at', { ascending: false, referencedTable: 'matches' })
           .limit(10)
+      : Promise.resolve({ data: null }),
+    // The SEASON'S RECORD, counted from that season's own match rows.
+    //
+    // Deliberately a second read rather than a bigger `recentMatches`: that one
+    // draws a table and pulls `matches(*)` plus every `match_games` row, and
+    // widening it from 10 to the whole season to get six integers would drag
+    // the game-by-game scores of an entire term into the RSC payload. This
+    // selects only the six columns `summarizeSeason` reads.
+    //
+    // SEASON_TALLY_CAP is a guard, not a page size. A member playing more than
+    // this in one term would under-count, which is why it is far above any
+    // plausible season rather than a round number.
+    canRead
+      ? supabase.from('match_participants')
+          .select('win_flag, points_scored, points_allowed, match:matches!inner(match_type, result_status, played_at)')
+          .eq('player_id', id)
+          .eq('match.season_id', seasonId ?? '')
+          .limit(SEASON_TALLY_CAP)
       : Promise.resolve({ data: null }),
     // The coaching log follows the NOTE capability as well as the read. It is
     // not roster data — it is the thing a varsity trainer comes here to write —
@@ -192,7 +221,7 @@ export default async function PlayerDetailPage({
       ? supabase.from('tournament_participants')
           .select('id, status, event:tournament_events!inner(event_type, tournament:tournaments!inner(name, season_id))')
           .eq('player_id', id)
-          .eq('tournament_events.tournaments.season_id', seasonId ?? '')
+          .eq('event.tournament.season_id', seasonId ?? '')
           .eq('status', 'no_show')
       : Promise.resolve({ data: null }),
     // The club's own baselines, for the permission editor's "Starts from"
@@ -241,8 +270,56 @@ export default async function PlayerDetailPage({
     // No snapshot means the player did not finish that season — null rather
     // than falling back to the live rating, which would silently misattribute
     // their current standing to a season they were not in.
+    //
+    // THE SPREAD IS ELO AND NOTHING ELSE, AND THAT USED TO BE THE BUG. This was
+    // `{...rating, ...archived}`, and because `season_final_ratings` holds only
+    // `singles_elo` and `doubles_elo`, every other column fell through from the
+    // LIVE row: a 2024 Elo was drawn beside today's cumulative W-L, today's
+    // streak and today's point differential, under a heading that calls them
+    // the season's headline numbers. The two elo values are still taken from
+    // the archive here, because a closing Elo is the one figure that cannot be
+    // recomputed. Everything else now comes from `seasonRecord` below.
     r = archived ? ({ ...rating, ...archived } as typeof rating) : null;
   }
+
+  // Counted from the season's own match rows, never read off `ratings`.
+  //
+  // `ratings` is cumulative across every season and is REBASED at a rollover,
+  // so its win column has never been an answer to "how did they do in Fall
+  // 2026". `matches.season_id` makes the real answer derivable, and
+  // summarizeSeason is the same tally /my-stats?season= has always used — the
+  // two screens can no longer disagree about a member's term.
+  //
+  // Computed for the ACTIVE season too, not just past ones. A live term's
+  // record is just as derivable, and taking it from the same source in both
+  // branches is what stops this page drifting back apart.
+  // The `match` embed is typed as an ARRAY by the generated types even though a
+  // to-one relation returns an object, so it is unwrapped rather than trusted —
+  // the same defence past-season.tsx and the opponent map already use. Reading
+  // `.match_type` straight off it would be `undefined` at runtime with no type
+  // error, and summarizeSeason would count every row as unsettled and report a
+  // clean 0-0 for a season the member actually played.
+  const seasonRecord = summarizeSeason(
+    ((seasonTallyRows ?? []) as unknown as Array<{
+      win_flag: boolean | null;
+      points_scored: number | null;
+      points_allowed: number | null;
+      match:
+        | { match_type: string | null; result_status: string | null; played_at: string | null }
+        | { match_type: string | null; result_status: string | null; played_at: string | null }[]
+        | null;
+    }>).map((row): SeasonMatchRow => {
+      const m = Array.isArray(row.match) ? (row.match[0] ?? null) : row.match;
+      return {
+        win_flag: row.win_flag,
+        points_scored: row.points_scored,
+        points_allowed: row.points_allowed,
+        match_type: m?.match_type ?? null,
+        result_status: m?.result_status ?? null,
+        played_at: m?.played_at ?? null,
+      };
+    })
+  );
 
   // Empty for a member with neither, which is every member until they pick a
   // handle and a pending signup who has not been given a code yet.
@@ -395,28 +472,45 @@ export default async function PlayerDetailPage({
         <div className="stat-strip">
           <div>
             <p className="stat-label">Singles Elo</p>
+            {/* The one figure that is NOT derived. For a past season this is the
+                archived close; for the live one it is today's rating. */}
             <p className="stat-value">{r.singles_elo}</p>
             <p className="mt-1.5 font-mono text-[11px] text-[var(--text-muted)]">
-              {r.singles_provisional ? 'Provisional' : 'Established'} · {r.singles_wins}W-{r.singles_losses}L ({getWinRate(r.singles_wins, r.singles_losses)})
+              {/* Provisional is a state of the LIVE ladder, so it is only said
+                  about the season that is actually running. Printing today's
+                  flag under a finished term was part of the same mistake as the
+                  W-L beside it. */}
+              {isActiveSeason ? `${r.singles_provisional ? 'Provisional' : 'Established'} · ` : ''}
+              {seasonRecord.singles.wins}W-{seasonRecord.singles.losses}L ({getWinRate(seasonRecord.singles.wins, seasonRecord.singles.losses)})
             </p>
           </div>
           <div>
             <p className="stat-label">Doubles Elo</p>
             <p className="stat-value">{r.doubles_elo}</p>
             <p className="mt-1.5 font-mono text-[11px] text-[var(--text-muted)]">
-              {r.doubles_provisional ? 'Provisional' : 'Established'} · {r.doubles_wins}W-{r.doubles_losses}L ({getWinRate(r.doubles_wins, r.doubles_losses)})
+              {isActiveSeason ? `${r.doubles_provisional ? 'Provisional' : 'Established'} · ` : ''}
+              {seasonRecord.doubles.wins}W-{seasonRecord.doubles.losses}L ({getWinRate(seasonRecord.doubles.wins, seasonRecord.doubles.losses)})
             </p>
           </div>
           <div>
-            <p className="stat-label">Singles streak</p>
-            <p className="stat-value">{getStreakDisplay(r.current_singles_streak)}</p>
-            <p className="mt-1.5 font-mono text-[11px] text-[var(--text-muted)]">Best {r.best_singles_streak}</p>
+            {/* Best run in the term, not `current_*_streak`. A current streak is
+                a fact about now and cannot be stated about a finished season;
+                `best_*_streak` on `ratings` is worse still, because 00082 never
+                maintains it. Both disciplines, because the streak is counted
+                over the member's season in the order it was played. */}
+            <p className="stat-label">Best win streak</p>
+            <p className="stat-value">{getStreakDisplay(seasonRecord.bestWinStreak)}</p>
+            <p className="mt-1.5 font-mono text-[11px] text-[var(--text-muted)]">
+              {seasonRecord.played} match{seasonRecord.played === 1 ? '' : 'es'} this season
+            </p>
           </div>
           <div>
             <p className="stat-label">Point diff</p>
-            <p className="stat-value">{getPointDifferential(r.singles_points_scored, r.singles_points_allowed)}</p>
+            {/* summarizeSeason already subtracted; the helper is used only for
+                its sign formatting, hence the 0. */}
+            <p className="stat-value">{getPointDifferential(seasonRecord.pointDiff, 0)}</p>
             <p className="mt-1.5 font-mono text-[11px] text-[var(--text-muted)]">
-              Doubles {getPointDifferential(r.doubles_points_scored, r.doubles_points_allowed)}
+              {seasonRecord.wins}W-{seasonRecord.losses}L overall
             </p>
           </div>
         </div>
