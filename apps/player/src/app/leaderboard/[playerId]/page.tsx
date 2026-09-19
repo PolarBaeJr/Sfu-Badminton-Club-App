@@ -26,19 +26,12 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const { player: viewer } = await getViewer();
   const standing = getAccountStanding(viewer);
 
-  // Read before the fan-out below, because the season tally's filter needs the
-  // id. One RPC, and `get_active_season` is the same call the landing hero and
-  // the Discord card already make on every request.
-  const activeSeason = await getActiveSeason().catch(() => null);
-
-  const [
-    player,
-    { data: rating },
-    ratingSettings,
-    { data: recentMatchesRaw },
-    { data: h2hStats },
-    { data: seasonTallyRows },
-  ] = await Promise.all([
+  // Read before the fan-out below, because the season tally is gated on BOTH of
+  // these: it needs the season id for its filter, and it must not run at all
+  // for a member who has opted out. Two round trips instead of one, in exchange
+  // for never fetching a hidden member's match rows in the first place.
+  const [activeSeason, player] = await Promise.all([
+    getActiveSeason().catch(() => null),
     // FIX-LIST #11: this page no longer queries the members table with the
     // viewer's own key. That key may read the status column, and the raw column
     // says `suspended`. This helper reads it server-side and hands back only
@@ -46,6 +39,35 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     // re-applies players_select's row rule, because the service-role key skips
     // RLS as well as the column grants.
     getPublicProfile(playerId, viewer),
+  ]);
+
+  if (!player) notFound();
+
+  // FIX-LIST #14. `get_leaderboard()` honours this flag; this page did not, and
+  // the feed links every match row straight to it — so the control the settings
+  // screen offers ("Show on leaderboard · Your rank will be visible to others")
+  // was undone by one tap on somebody's name.
+  //
+  // WHAT IT HIDES IS THE RATING, NOT THE PERSON. The promise on that switch is
+  // about the member's rank, so the profile still renders: name, photo, bio,
+  // track, the Challenge link and the results themselves. Blanket-404ing the
+  // page would take away a surface the member never asked to lose and would
+  // break every match row in the feed that points at it. What goes is the pair
+  // of Elo cards and the per-match rating delta: the figures, and the numbers
+  // they can be reconstructed from.
+  //
+  // NOT APPLIED TO THE MEMBER'S OWN PROFILE. The flag governs what everyone
+  // else sees; hiding someone's rating from themselves would be a bug, not a
+  // privacy feature.
+  const hidesRatings = player.hide_from_leaderboard === true && player.id !== viewer?.id;
+
+  const [
+    { data: rating },
+    ratingSettings,
+    { data: recentMatchesRaw },
+    { data: h2hStats },
+    { data: seasonTallyRows },
+  ] = await Promise.all([
     supabase.from('ratings').select('*').eq('player_id', playerId).single(),
     // The K chip below used to render ratings.singles_k_factor /
     // doubles_k_factor. Those columns hold the PROVISIONAL constants (80 and
@@ -78,7 +100,13 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     // SEASON_TALLY_CAP is a guard against an unbounded read, not a page size.
     // It sits far above any plausible season so that hitting it means something
     // is wrong, not that somebody had a busy term.
-    activeSeason
+    //
+    // GATED ON hidesRatings AS WELL AS ON THE SEASON. The block above says what
+    // the opt-out takes away is the figures AND the numbers they can be
+    // reconstructed from. A W-L, a point differential and a streak are exactly
+    // that, so for an opted-out member this read does not happen: not fetched,
+    // not held in the RSC payload, not one row of their season on the wire.
+    activeSeason && !hidesRatings
       ? supabase
           .from('match_participants')
           .select('win_flag, points_scored, points_allowed, match:matches!inner(match_type, result_status, played_at)')
@@ -88,25 +116,6 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
       : Promise.resolve({ data: null }),
   ]);
 
-  if (!player) notFound();
-
-  // FIX-LIST #14. `get_leaderboard()` honours this flag; this page did not, and
-  // the feed links every match row straight to it — so the control the settings
-  // screen offers ("Show on leaderboard · Your rank will be visible to others")
-  // was undone by one tap on somebody's name.
-  //
-  // WHAT IT HIDES IS THE RATING, NOT THE PERSON. The promise on that switch is
-  // about the member's rank, so the profile still renders: name, photo, bio,
-  // track, the Challenge link and the results themselves. Blanket-404ing the
-  // page would take away a surface the member never asked to lose and would
-  // break every match row in the feed that points at it. What goes is the pair
-  // of Elo cards and the per-match rating delta — the figures, and the numbers
-  // they can be reconstructed from.
-  //
-  // NOT APPLIED TO THE MEMBER'S OWN PROFILE. The flag governs what everyone
-  // else sees; hiding someone's rating from themselves would be a bug, not a
-  // privacy feature.
-  const hidesRatings = player.hide_from_leaderboard === true && player.id !== viewer?.id;
   const r = hidesRatings ? null : rating;
 
   // THE TWO NUMBERS ON THESE CARDS WERE ON DIFFERENT CLOCKS.
@@ -119,9 +128,11 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   // disagreed with it. The Discord ladder embed already carried a footer
   // admitting to exactly this; this page did not.
   //
-  // Counted from the season's own match rows instead, by the same helper
-  // /my-stats?season= and the admin member page use, so the three screens can
-  // no longer give three answers.
+  // Counted from the season's own match rows instead, by the same helper the
+  // admin member page uses, so those two agree. /my-stats is NOT yet on this
+  // footing: its current-season panels still read the `ratings` counters
+  // directly, so it can still disagree with this page. That is a known open
+  // item, not a regression introduced here.
   //
   // The `match` embed is typed as an ARRAY by the generated types even though a
   // to-one relation returns an object. It is unwrapped rather than trusted:
