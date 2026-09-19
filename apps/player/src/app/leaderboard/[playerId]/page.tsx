@@ -1,13 +1,17 @@
-import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getViewer, getActiveSeason } from '@/lib/supabase-server';
 import { getPublicProfile } from '@/lib/public-profile';
 import { getRatingSettings } from '@/lib/rating-settings';
-import { getKFactor, PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, clubDate, buildChallengeQrUrl, getAccountStanding } from '@badminton/shared';
+import { getKFactor, PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, clubDate, buildChallengeQrUrl, getAccountStanding, summarizeSeason } from '@badminton/shared';
+import type { SeasonMatchRow } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Crosshair, QrCode, Trophy } from 'lucide-react';
 import Link from 'next/link';
 import { AvatarChip } from '@badminton/ui';
 import { StandingNote } from '@/components/standing-notice';
 import QRCode from 'qrcode';
+
+/** See the season tally read below: a guard against an unbounded read. */
+const SEASON_TALLY_CAP = 2000;
 
 export default async function PlayerProfilePage({ params }: { params: Promise<{ playerId: string }> }) {
   const { playerId } = await params;
@@ -22,12 +26,18 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const { player: viewer } = await getViewer();
   const standing = getAccountStanding(viewer);
 
+  // Read before the fan-out below, because the season tally's filter needs the
+  // id. One RPC, and `get_active_season` is the same call the landing hero and
+  // the Discord card already make on every request.
+  const activeSeason = await getActiveSeason().catch(() => null);
+
   const [
     player,
     { data: rating },
     ratingSettings,
     { data: recentMatchesRaw },
     { data: h2hStats },
+    { data: seasonTallyRows },
   ] = await Promise.all([
     // FIX-LIST #11: this page no longer queries the members table with the
     // viewer's own key. That key may read the status column, and the raw column
@@ -56,6 +66,26 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
       .or(`player_a_id.eq.${playerId},player_b_id.eq.${playerId}`)
       .order('total_matches', { ascending: false })
       .limit(5),
+    // The active season's own match rows, which is where this page's W-L now
+    // comes from. Separate from the Recent matches read above rather than
+    // derived from it: that one is capped at 60 for a list and is not scoped to
+    // a season, so reusing it would silently under-count a busy term and
+    // over-count across a rollover.
+    //
+    // !inner, so a match outside the season is EXCLUDED rather than arriving
+    // with a null embed. Six columns only: this is arithmetic, not a table.
+    //
+    // SEASON_TALLY_CAP is a guard against an unbounded read, not a page size.
+    // It sits far above any plausible season so that hitting it means something
+    // is wrong, not that somebody had a busy term.
+    activeSeason
+      ? supabase
+          .from('match_participants')
+          .select('win_flag, points_scored, points_allowed, match:matches!inner(match_type, result_status, played_at)')
+          .eq('player_id', playerId)
+          .eq('matches.season_id', activeSeason.id)
+          .limit(SEASON_TALLY_CAP)
+      : Promise.resolve({ data: null }),
   ]);
 
   if (!player) notFound();
@@ -78,6 +108,52 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   // privacy feature.
   const hidesRatings = player.hide_from_leaderboard === true && player.id !== viewer?.id;
   const r = hidesRatings ? null : rating;
+
+  // THE TWO NUMBERS ON THESE CARDS WERE ON DIFFERENT CLOCKS.
+  //
+  // The Elo is rebased at every rollover, compressed toward the mean or reset
+  // outright under the 'full' policy. The W-L, win rate and point differential
+  // printed beside it came off `ratings`, which no rollover has ever reset. So
+  // this page put a since-the-rollover figure and an all-time figure on one
+  // line with nothing to tell them apart, and the same member's /my-stats
+  // disagreed with it. The Discord ladder embed already carried a footer
+  // admitting to exactly this; this page did not.
+  //
+  // Counted from the season's own match rows instead, by the same helper
+  // /my-stats?season= and the admin member page use, so the three screens can
+  // no longer give three answers.
+  //
+  // The `match` embed is typed as an ARRAY by the generated types even though a
+  // to-one relation returns an object. It is unwrapped rather than trusted:
+  // reading `.match_type` straight off it would be `undefined` at runtime with
+  // NO type error, and every row would then count as unsettled and report a
+  // clean 0-0 for a season the member actually played.
+  const tallyRows: SeasonMatchRow[] = ((seasonTallyRows ?? []) as unknown as Array<{
+    win_flag: boolean | null;
+    points_scored: number | null;
+    points_allowed: number | null;
+    match:
+      | { match_type: string | null; result_status: string | null; played_at: string | null }
+      | { match_type: string | null; result_status: string | null; played_at: string | null }[]
+      | null;
+  }>).map((row) => {
+    const m = Array.isArray(row.match) ? row.match[0] ?? null : row.match;
+    return {
+      match_type: m?.match_type ?? null,
+      result_status: m?.result_status ?? null,
+      played_at: m?.played_at ?? null,
+      win_flag: row.win_flag,
+      points_scored: row.points_scored,
+      points_allowed: row.points_allowed,
+    };
+  });
+
+  // Once per discipline rather than once overall, because each Elo card states
+  // its own record and each streak card its own point differential. Partitioned
+  // on the same predicate summarizeSeason files rows under, so the two halves
+  // cannot add up to something other than the whole.
+  const singlesRecord = summarizeSeason(tallyRows.filter((row) => row.match_type === 'singles'));
+  const doublesRecord = summarizeSeason(tallyRows.filter((row) => row.match_type !== 'singles'));
 
   // QR encoding the absolute form of the Challenge link beside it, so another
   // member can point a phone camera at this profile and land on a prefilled
@@ -192,36 +268,55 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
 
       {r && (
         <>
+          {/* NAMING THE SEASON IS PART OF THE FIX, NOT DECORATION. The records
+              below are that season's, and an unlabelled record is exactly the
+              ambiguity this page had before.
+
+              With no season running, the tally has nothing to count and every
+              record would read 0-0. That is a claim about the member, and it
+              would be false, so the strip says whose fault the zero is. */}
+          <div className="mono muted" style={{ fontSize: 11, marginBottom: 8, letterSpacing: '0.04em' }}>
+            {activeSeason
+              ? `ELO IS LIVE · RECORDS BELOW ARE ${activeSeason.name.toUpperCase()} ONLY`
+              : 'NO SEASON IS RUNNING, SO THERE IS NO RECORD TO COUNT YET'}
+          </div>
           <div className="grid grid-2" style={{ marginBottom: 16 }}>
             <div className="card-base">
               <div className="stat-label">SINGLES ELO</div>
               <div className="stat-value">{r.singles_elo}</div>
               <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-                {r.singles_provisional ? 'Provisional' : `K=${getKFactor('singles', false, r.singles_matches_played, ratingSettings)}`} · {r.singles_wins}W–{r.singles_losses}L · {getWinRate(r.singles_wins, r.singles_losses)}
+                {r.singles_provisional ? 'Provisional' : `K=${getKFactor('singles', false, r.singles_matches_played, ratingSettings)}`} · {singlesRecord.wins}W–{singlesRecord.losses}L · {getWinRate(singlesRecord.wins, singlesRecord.losses)}
               </div>
             </div>
             <div className="card-base">
               <div className="stat-label">DOUBLES ELO</div>
               <div className="stat-value">{r.doubles_elo}</div>
               <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-                {r.doubles_provisional ? 'Provisional' : `K=${getKFactor('doubles', false, r.doubles_matches_played, ratingSettings)}`} · {r.doubles_wins}W–{r.doubles_losses}L · {getWinRate(r.doubles_wins, r.doubles_losses)}
+                {r.doubles_provisional ? 'Provisional' : `K=${getKFactor('doubles', false, r.doubles_matches_played, ratingSettings)}`} · {doublesRecord.wins}W–{doublesRecord.losses}L · {getWinRate(doublesRecord.wins, doublesRecord.losses)}
               </div>
             </div>
           </div>
 
           <div className="grid grid-2" style={{ marginBottom: 16 }}>
             <div className="card-base">
-              <div className="stat-label">SINGLES STREAK</div>
-              <div className="stat-value">{getStreakDisplay(r.current_singles_streak)}</div>
+              {/* Best run in the season, not `current_singles_streak`. A
+                  current streak is a fact about now and survives a rollover, so
+                  under a card whose Elo was just rebased it states a run from a
+                  term that is over. `best_singles_streak` on `ratings` would be
+                  worse: nothing in the database has ever written to it. */}
+              <div className="stat-label">SINGLES BEST STREAK</div>
+              <div className="stat-value">{getStreakDisplay(singlesRecord.bestWinStreak)}</div>
               <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-                Pt diff {getPointDifferential(r.singles_points_scored, r.singles_points_allowed)}
+                {/* summarizeSeason already subtracted; the helper is here for
+                    its sign formatting, hence the 0. */}
+                Pt diff {getPointDifferential(singlesRecord.pointDiff, 0)}
               </div>
             </div>
             <div className="card-base">
-              <div className="stat-label">DOUBLES STREAK</div>
-              <div className="stat-value">{getStreakDisplay(r.current_doubles_streak)}</div>
+              <div className="stat-label">DOUBLES BEST STREAK</div>
+              <div className="stat-value">{getStreakDisplay(doublesRecord.bestWinStreak)}</div>
               <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-                Pt diff {getPointDifferential(r.doubles_points_scored, r.doubles_points_allowed)}
+                Pt diff {getPointDifferential(doublesRecord.pointDiff, 0)}
               </div>
             </div>
           </div>
