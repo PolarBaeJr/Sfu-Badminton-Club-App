@@ -6,6 +6,9 @@ import { SearchableTable } from '@/components/searchable-table';
 import { ChallengeActions } from './actions';
 import { CreateChallengeForm } from './create-challenge';
 import { Swords, Plus, Clock, CheckCircle2, XCircle, Users, Trophy } from 'lucide-react';
+// Lives in its own module so a test can drive the real function rather than a
+// copy of its queries, and so the three live statuses are named once.
+import { loadChallengeCounts, ACTIVE_STATUSES } from './challenge-counts';
 
 export default async function ChallengesPage() {
   // The same capability middleware already resolves for '/challenges', re-asked
@@ -14,11 +17,16 @@ export default async function ChallengesPage() {
   await requireCapability('challenges.page');
   const supabase = createAdminClient();
 
+  // THE NEWEST 50, WHICH IS A WINDOW AND IS NOW LABELLED AS ONE. The tiles
+  // below no longer measure themselves off this slice; see challenge-counts.ts.
+  const LOADED_LIMIT = 50;
   const { data: challenges } = await supabase
     .from('challenges')
     .select('*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(full_name))')
     .order('created_at', { ascending: false })
-    .limit(50);
+    .limit(LOADED_LIMIT);
+
+  const counts = await loadChallengeCounts(supabase);
 
   // Get all active players for the create challenge form
   const { data: allPlayers } = await supabase
@@ -60,9 +68,15 @@ export default async function ChallengesPage() {
     }
   };
 
-  const activeCount = challenges?.filter(c =>
-    ['proposed', 'partially_confirmed', 'accepted'].includes(c.status)
-  ).length ?? 0;
+  // Narrowed once, here, so the tiles below read a number or nothing at all.
+  // A count that could not be read says so rather than saying zero.
+  const ok = counts.state === 'ok' ? counts : null;
+  const tile = (n: number | undefined) => (n === undefined ? '--' : String(n));
+  const loaded = challenges?.length ?? 0;
+  // "50" beside a tile reading 400 is two numbers disagreeing with nothing to
+  // explain them. The pill counts what the table actually holds, and says so
+  // whenever that is less than everything.
+  const shownLabel = ok && ok.total > loaded ? `${loaded} of ${ok.total}` : String(loaded);
 
   // Both renderings of a row are built here, from one set of names, so the
   // desktop <tr> and the phone <TableCard> cannot come to disagree about who is
@@ -72,7 +86,7 @@ export default async function ChallengesPage() {
     const participantNames: string[] = (c.challenge_participants ?? [])
       .map((p: Record<string, unknown>) => (p.player as Record<string, unknown>)?.full_name as string)
       .filter(Boolean);
-    const actions = ['proposed', 'partially_confirmed', 'accepted'].includes(c.status)
+    const actions = (ACTIVE_STATUSES as readonly string[]).includes(c.status)
       ? <ChallengeActions challengeId={c.id} />
       : undefined;
 
@@ -189,7 +203,7 @@ export default async function ChallengesPage() {
             </span>
           </div>
           <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-            {challenges?.length ?? 0}
+            {tile(ok?.total)}
           </span>
         </div>
         <div style={{
@@ -206,7 +220,7 @@ export default async function ChallengesPage() {
             </span>
           </div>
           <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-            {activeCount}
+            {tile(ok?.active)}
           </span>
         </div>
         <div style={{
@@ -266,7 +280,7 @@ export default async function ChallengesPage() {
           borderRadius: '9999px',
           fontWeight: 500,
         }}>
-          {challenges?.length ?? 0}
+          {shownLabel}
         </span>
       </div>
 
