@@ -7,8 +7,13 @@
 // is deciding what may honestly be shown and what has no source at all:
 //
 //   - `matches.season_id` is stamped with whichever season was active when the
-//     result was entered, and the app refuses to write NULL, so every match
-//     belongs to exactly one season. A season's match list is therefore real.
+//     result was entered. THIS COMMENT USED TO SAY THE APP REFUSES TO WRITE
+//     NULL. It does not: `submit_match_result` does an unguarded
+//     `SELECT id INTO v_season FROM seasons WHERE active_flag LIMIT 1`, so a
+//     result entered while no season is active is stamped NULL and drops out
+//     of every season-scoped view here, silently and permanently. Verified
+//     against the live function on prod 2026-09-19; no such rows exist yet.
+//     A season's match list is real only for as long as that stays true.
 //   - `season_final_ratings` holds the whole ladder's Elo at the moment the club
 //     activated the NEXT season, and 00084 keeps it correct when an old match is
 //     corrected. It is the only record of where somebody finished a term.
@@ -59,151 +64,16 @@ export interface HistorySeason {
   hidden_flag?: boolean;
 }
 
-/**
- * A result the club considers settled.
- *
- * `confirmed` is the ordinary path. `walkover` is the unrated forfeit: 00003
- * stamps `win_flag` on it just as a played match does, and somebody really was
- * awarded that match, so leaving it out would drop a win the member was given.
- *
- * `disputed` and `voided` are the two that must not count. Voiding sets
- * `result_status` and does NOT clear `win_flag`, so a filter written on
- * `win_flag` alone counts matches the club has struck off — which is why the
- * status is checked and not just the flag.
- *
- * `pending_submission`, `pending_confirmation` and `incomplete` never have a
- * `win_flag` at all, so they fall out of the tally either way; they are excluded
- * here as well so that the list and the tally are decided by ONE predicate.
- */
-export const SETTLED_RESULT_STATUSES = ['confirmed', 'walkover'] as const;
-
-/** One of the member's matches in a season, reduced to what the tallies read. */
-export interface SeasonMatchRow {
-  match_type: string | null;
-  result_status: string | null;
-  win_flag: boolean | null;
-  points_scored: number | null;
-  points_allowed: number | null;
-  played_at: string | null;
-}
-
-/**
- * Did this match end in a win or a loss for the member?
- *
- * `true` / `false` / `null`, where null means "no result to count" — pending,
- * disputed, voided, or a row whose winner was never stamped. The match table on
- * the page renders WIN / LOSS / an em dash off this same function, so the record
- * beside it can never disagree with the rows it is a summary of.
- */
-export function settledOutcome(row: SeasonMatchRow): boolean | null {
-  const status = row.result_status;
-  if (status === null) return null;
-  if (!(SETTLED_RESULT_STATUSES as readonly string[]).includes(status)) return null;
-  return row.win_flag === true ? true : row.win_flag === false ? false : null;
-}
-
-export interface DisciplineRecord {
-  wins: number;
-  losses: number;
-  /** Points won minus points conceded in this discipline, settled matches only. */
-  pointDiff: number;
-  /**
-   * Signed exactly the way `getStreakDisplay` reads it: positive is a run of
-   * wins, negative a run of losses, zero nothing yet. Counted within the
-   * discipline, so a singles win does not extend a doubles streak.
-   */
-  currentStreak: number;
-  /** Longest run of wins in this discipline, oldest to newest. */
-  bestWinStreak: number;
-}
-
-export interface SeasonRecord {
-  singles: DisciplineRecord;
-  doubles: DisciplineRecord;
-  /** Both disciplines together — what "how did my term go" actually asks. */
-  wins: number;
-  losses: number;
-  /** Settled matches. Not the number of rows: unsettled ones are not a record. */
-  played: number;
-  /** Points won minus points conceded, over settled matches only. */
-  pointDiff: number;
-  /** Longest run of wins anywhere in the season, oldest to newest. */
-  bestWinStreak: number;
-}
-
-/**
- * The member's record for one season, counted from that season's own match rows.
- *
- * Counted, never read off `ratings`. That table is cumulative across every
- * season a member has played and is REBASED at a rollover — compressed toward
- * the mean, or under the 'full' policy reset outright with every counter zeroed
- * (00068). Its win column has therefore never been an answer to "how did I do in
- * Fall 2026", and for a club that has ever run a full reset it is not even an
- * answer to "how have I done overall".
- *
- * `rows` may arrive in any order; the streak sorts by `played_at` itself. A row
- * with no date cannot be placed in that order, so it counts toward the record
- * and is skipped by the streak rather than being dropped from both.
- */
-export function summarizeSeason(rows: readonly SeasonMatchRow[]): SeasonRecord {
-  const record: SeasonRecord = {
-    singles: { wins: 0, losses: 0, pointDiff: 0, currentStreak: 0, bestWinStreak: 0 },
-    doubles: { wins: 0, losses: 0, pointDiff: 0, currentStreak: 0, bestWinStreak: 0 },
-    wins: 0,
-    losses: 0,
-    played: 0,
-    pointDiff: 0,
-    bestWinStreak: 0,
-  };
-
-  for (const row of rows) {
-    const won = settledOutcome(row);
-    if (won === null) continue;
-
-    record.played += 1;
-    if (won) record.wins += 1;
-    else record.losses += 1;
-    record.pointDiff += (row.points_scored ?? 0) - (row.points_allowed ?? 0);
-
-    // Anything that is not singles is counted as doubles rather than being
-    // silently dropped: `match_type` is an enum of exactly those two, and a
-    // discipline split whose halves do not add up to the total is a worse
-    // failure than one that mis-files a value the database cannot hold.
-    const bucket = row.match_type === 'singles' ? record.singles : record.doubles;
-    if (won) bucket.wins += 1;
-    else bucket.losses += 1;
-    bucket.pointDiff += (row.points_scored ?? 0) - (row.points_allowed ?? 0);
-  }
-
-  let run = 0;
-  const dated = rows
-    .filter((r): r is SeasonMatchRow & { played_at: string } => r.played_at !== null)
-    // ISO 8601 sorts lexicographically, so this is a string compare and not a
-    // Date construction per element.
-    .sort((a, b) => a.played_at.localeCompare(b.played_at));
-  for (const row of dated) {
-    const won = settledOutcome(row);
-    if (won === null) continue;
-    run = won ? run + 1 : 0;
-    if (run > record.bestWinStreak) record.bestWinStreak = run;
-
-    // PER DISCIPLINE, counted in the same pass and in the same order. A singles
-    // win must not extend a doubles streak: they are separate ladders, and the
-    // screen prints them as two separate tiles. `currentStreak` is signed the
-    // way getStreakDisplay reads it, so it is overwritten on every settled row
-    // rather than accumulated: the last row in date order is, by definition,
-    // the run the member is on now.
-    const bucket = row.match_type === 'singles' ? record.singles : record.doubles;
-    bucket.currentStreak = won
-      ? Math.max(bucket.currentStreak, 0) + 1
-      : Math.min(bucket.currentStreak, 0) - 1;
-    if (bucket.currentStreak > bucket.bestWinStreak) {
-      bucket.bestWinStreak = bucket.currentStreak;
-    }
-  }
-
-  return record;
-}
+// The season tally moved to @badminton/shared so the ADMIN console could use
+// the same arithmetic: its member page was drawing a past season's archived
+// Elo over today's live counters. Re-exported here so every existing import of
+// this module keeps working and there is still one obvious place to look.
+export {
+  SETTLED_RESULT_STATUSES,
+  settledOutcome,
+  summarizeSeason,
+} from '@badminton/shared';
+export type { SeasonMatchRow, DisciplineRecord, SeasonRecord } from '@badminton/shared';
 
 /**
  * The seasons a member may look back on, newest first.
@@ -263,6 +133,29 @@ export function seasonPickerOptions(
 ): HistorySeason[] {
   const active = seasons.filter((s) => s.active_flag);
   return [...active, ...memberSeasonHistory(seasons, archivedSeasonIds, selectedId)];
+}
+
+/**
+ * Every finished season, for a picker on a CLUB-WIDE screen.
+ *
+ * The counterpart to the `archivedSeasonIds` /my-stats passes, which offers only
+ * the terms the reader has an archived row of their own in. The leaderboard's
+ * ladder and the tournament calendar are the club's and not anybody's history,
+ * so every season that is not the active one is offered, including one that was
+ * created and never rolled over. That season's page is empty, and its own empty
+ * state says which of those two things happened.
+ *
+ * Lives here rather than in either page so the two cannot drift: a season this
+ * offers is a season both of those screens must be willing to serve.
+ */
+export function finishedSeasonIds(seasons: readonly HistorySeason[]): Set<string> {
+  // `hidden_flag === true` rather than a truthy test, so a row that arrived
+  // without the key (see HistorySeason) stays offered rather than vanishing.
+  // Each caller's direct-URL guard repeats this: dropping a season from the
+  // picker hides the door, not the room, and the two have to agree.
+  return new Set(
+    seasons.filter((s) => !s.active_flag && s.hidden_flag !== true).map((s) => s.id)
+  );
 }
 
 /**

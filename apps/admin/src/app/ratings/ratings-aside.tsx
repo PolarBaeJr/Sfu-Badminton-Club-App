@@ -25,6 +25,8 @@ export type Withheld = { state: 'withheld' };
 
 export type LadderShape =
   | Withheld
+  /** A read failed. Distinct from 'ok' with zeroes, which is a claim. */
+  | { state: 'unavailable' }
   | {
       state: 'ok';
       total: number;
@@ -127,6 +129,10 @@ export function RatingsAside({
       <CardShell heading="What these settings touch">
         {ladder.state === 'withheld' ? (
           <NotShown what="The size of the ladder is not shown to you." />
+        ) : ladder.state === 'unavailable' ? (
+          /* Saying nothing beats saying zero. A failed count is indistinguishable
+             from an empty club once it has been rendered as a number. */
+          <NotShown what="The size of the ladder could not be read." />
         ) : (
           <>
             <div className="flex items-baseline gap-3 px-4 pb-4">

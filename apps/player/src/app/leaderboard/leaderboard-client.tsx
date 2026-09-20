@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getPostHogClient } from '@/lib/posthog';
 import { createClient } from '@/lib/supabase-browser';
-import { Search, Crosshair, Trophy, ArrowDownToLine } from 'lucide-react';
+import { Search, Crosshair, Trophy, ArrowDownToLine, User } from 'lucide-react';
 import { AvatarChip, PageHeader, normalizeSearchQuery, useLiveChannel } from '@badminton/ui';
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
 import { useStanding } from '@/components/standing-provider';
@@ -233,6 +233,22 @@ export function LadderRow({
           <span>Challenge</span>
         </button>
       )}
+      {/* Your own row can never carry a Challenge button, which left a hole in
+          the action column exactly where you look first. This fills it. It is a
+          span, not a disabled button: there is no action being withheld here, so
+          nothing should read as pressable or land in the tab order. `isMe` and
+          `canChallenge` are mutually exclusive at every call site (the parent
+          computes canChallenge with `p.id !== meId`), so the two never both
+          render. */}
+      {isMe && (
+        // The label sits on the wrapper, not only on the inner span: below 981px
+        // that span is display:none, which takes it out of the accessibility
+        // tree too, and a lone icon would be all a screen reader got.
+        <span className="lr-action lr-action-self" role="note" aria-label="this is you">
+          <User size={16} aria-hidden />
+          <span aria-hidden>this is you</span>
+        </span>
+      )}
     </div>
   );
 }
@@ -360,6 +376,38 @@ export default function LeaderboardClient({
         : (b.ratings?.singles_elo ?? 0) - (a.ratings?.singles_elo ?? 0)
     );
   }, [tabFiltered, sortBy, isDoubles, isTpts]);
+
+  // THE COLUMN KEY PROMISED FOUR COLUMNS AND THE ROWS DREW TWO.
+  //
+  // Win % and Streak are not unconditional: a row renders the win rate only
+  // when `winShare` is non-null (it needs at least one played game) and the
+  // streak only when `formatStreak` is non-null (it needs a non-zero streak).
+  // Straight after a season rollover every counter on `ratings` is zero, so the
+  // whole ladder reads "400 / 0–0" under a key advertising "ELO · W–L · Win % ·
+  // Streak" — the key describing a shape of row that does not exist yet, which
+  // reads as two broken columns rather than as two empty ones.
+  //
+  // So build the key from the same predicates the rows use. Derived from
+  // `ranked`, the full tab-filtered ladder, NOT from `visible`: `visible` is
+  // search-filtered, and a key that changed while you typed would be worse than
+  // one that over-promised.
+  const ladderKey = useMemo(() => {
+    if (isTpts) return 'Points';
+    if (isPast) return 'Final ELO';
+    const parts = ['ELO', 'W–L'];
+    const anyWinRate = ranked.some((p) => {
+      const { wins, losses } = recordOf(p, isDoubles);
+      return winShare(wins, losses) !== null;
+    });
+    if (anyWinRate) parts.push('Win %');
+    const anyStreak = ranked.some((p) => {
+      const r = p.ratings;
+      if (!r) return false;
+      return formatStreak(isDoubles ? r.current_doubles_streak : r.current_singles_streak) !== null;
+    });
+    if (anyStreak) parts.push('Streak');
+    return parts.join(' · ');
+  }, [ranked, isDoubles, isTpts, isPast]);
 
   // Name OR handle, and the `@` is optional — a member is searchable by the
   // thing the club calls them. NOT filterPlayerOptions, which re-ranks by match
@@ -839,9 +887,7 @@ export default function LeaderboardClient({
                 <div className="ladder-key" style={{ marginTop: 10 }}>
                   <span>#</span>
                   <span>Player</span>
-                  <span className="right">
-                    {isTpts ? 'Points' : isPast ? 'Final ELO' : 'ELO · W–L · Win % · Streak'}
-                  </span>
+                  <span className="right">{ladderKey}</span>
                 </div>
                 {/* THE TWO HALVES OF A ROW ARE ON DIFFERENT CLOCKS, and until
                     now nothing on screen said so.

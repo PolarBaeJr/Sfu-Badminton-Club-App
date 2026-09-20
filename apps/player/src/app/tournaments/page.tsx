@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import {
   CLUB_TIMEZONE,
@@ -11,6 +12,8 @@ import {
 } from '@badminton/shared';
 import { AvatarChip, Badge } from '@badminton/ui';
 import { clubDayKey, dayLabel } from '@/lib/feed-activity';
+import { SeasonPick } from '@/components/my-stats/season-pick';
+import { finishedSeasonIds, seasonPickerOptions, type HistorySeason } from '@/lib/season-history';
 import {
   countEnteredPlayers,
   describeDisciplines,
@@ -67,6 +70,12 @@ const ENTRY_FETCH_CAP = 80;
 // past this the column is taller than the screen and nobody reads the bottom.
 const PAST_RESULTS_SHOWN = 8;
 
+// A season id arriving from the URL is checked against this before it is used in
+// a filter. Postgres rejects a malformed uuid with an ERROR rather than an empty
+// result, and there is no reason to send it one. Same constant, same reason, as
+// the UUID in leaderboard/page.tsx and in my-stats/past-season.tsx.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Supabase returns a to-one embed as object-or-array depending on how it infers
 // the relationship. Every read below goes through this rather than trusting one
 // shape — the same defensive unwrap tournament-actions.ts uses.
@@ -74,29 +83,84 @@ function one<T>(embed: unknown): T | null {
   return ((Array.isArray(embed) ? embed[0] : embed) ?? null) as T | null;
 }
 
-export default async function TournamentsPage() {
+export default async function TournamentsPage({
+  searchParams,
+}: {
+  // Next 15 hands search params over as a promise.
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = (await searchParams) ?? {};
+  const rawSeason = params.season;
+  const seasonParam = (typeof rawSeason === 'string' ? rawSeason : '').trim();
+  if (seasonParam && !UUID.test(seasonParam)) redirect('/tournaments');
+
   const supabase = await createServerSupabaseClient();
   const { player } = await getViewer();
   const todayKey = clubDayKey(new Date().toISOString(), CLUB_TIMEZONE);
 
   // Members see the season they are playing in. Same rule as the sessions list.
-  const { data: activeSeason } = await supabase
-    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+  //
+  // The whole list rather than the active row alone, because the picker needs
+  // the club's terms and the active season is simply the one in it with the
+  // flag set: one round trip, not two. Read as the MEMBER and not through the
+  // service role, unlike the leaderboard's copy of this read: that page is
+  // public and 00128 left the anon key no grant on `seasons`, where
+  // /tournaments is behind the middleware's auth gate and `seasons_select`
+  // grants `authenticated` the row.
+  const { data: seasonRows } = await supabase
+    .from('seasons')
+    .select('id, name, start_date, end_date, active_flag, hidden_flag')
+    .order('start_date', { ascending: false })
+    .limit(40);
+  const seasons = (seasonRows ?? []) as HistorySeason[];
+  const activeSeason = seasons.find((s) => s.active_flag) ?? null;
+
+  const picked = seasonParam ? seasons.find((s) => s.id === seasonParam) ?? null : null;
+  // Three ways an id can be well-formed and still not be an address this page
+  // serves, all of them the bare path instead of an empty screen.
+  //
+  // Not a season at all, so there is nothing to show. HIDDEN (00234), because
+  // taking a term out of the picker only removes the link to it while the
+  // address stays guessable and sits in the history of anyone who opened it
+  // before it was hidden; `=== true` for the same reason finishedSeasonIds uses
+  // it. And the ACTIVE season, which has one canonical address: the two
+  // branches below filter differently, so serving `?season=<active>` as well
+  // would give one term two URLs that list different tournaments.
+  if (seasonParam && (!picked || picked.active_flag || picked.hidden_flag === true)) {
+    redirect('/tournaments');
+  }
+  const selectedSeason = picked ?? activeSeason;
+
+  // WHAT IS ON THE CALENDAR NOW, AND WHAT A MEMBER ASKED FOR, ARE DIFFERENT
+  // QUESTIONS AND THEY GET DIFFERENT FILTERS. Do not collapse these two.
+  //
+  // The bare path keeps scopeToActiveSeason exactly as it was, and it is loose
+  // on purpose: it also admits rows whose season_id IS NULL, and with no active
+  // season it drops the filter entirely (active-season.ts). Both are right for
+  // "what is happening now", where an unassigned tournament still belongs on
+  // the calendar rather than on no page at all.
+  //
+  // An explicit ?season= is a question with one answer. A member who asks for a
+  // finished term must get that term's tournaments and nothing else: no
+  // unassigned rows, and never the whole table if something goes sideways. So
+  // it is a strict .eq, on the id of a season already found in the list above
+  // rather than on the string from the URL.
+  const calendar = supabase
+    .from('tournaments')
+    .select(
+      'id, name, start_date, status, suspended_at, ' +
+      'tournament_events(id, event_type, status, max_participants), ' +
+      'tournament_fee_tiers(id, name, amount_cents, is_default, sort_order, applies_to)',
+    );
+  const scopedCalendar = picked
+    ? calendar.eq('season_id', picked.id)
+    : scopeToActiveSeason(calendar, activeSeason?.id);
 
   // The club's tournaments, and — separately — everything the member is in.
   // The member's own history is deliberately NOT season-scoped: it is their
   // record, and a new season would otherwise wipe the results panel on day one.
   const [tournamentsRes, myEntriesRes, myPairsRes] = await Promise.all([
-    scopeToActiveSeason(
-      supabase
-        .from('tournaments')
-        .select(
-          'id, name, start_date, status, suspended_at, ' +
-          'tournament_events(id, event_type, status, max_participants), ' +
-          'tournament_fee_tiers(id, name, amount_cents, is_default, sort_order, applies_to)',
-        ),
-      activeSeason?.id,
-    ).order('start_date', { ascending: true }),
+    scopedCalendar.order('start_date', { ascending: true }),
     player
       ? supabase
           .from('tournament_participants')
@@ -272,10 +336,28 @@ export default async function TournamentsPage() {
     <div data-screen-label="Tournaments" className="wide-page">
       <header className="wide-head ptourn-head">
         <Link href="/feed" className="ptourn-back">← Feed</Link>
-        <h1 className="ptourn-title">
-          Tournaments<span className="ptourn-stop">.</span>
-        </h1>
-        <p className="ptourn-sub">Club events and the entries you are in.</p>
+        {/* Not PageHeader, which every other season-scoped screen uses: this
+            title is 46px display type with the house full stop after it, and
+            that component offers neither. .ptourn-head-row restates its
+            title-and-actions composition for this markup. */}
+        <div className="ptourn-head-row">
+          <div>
+            <h1 className="ptourn-title">
+              Tournaments<span className="ptourn-stop">.</span>
+            </h1>
+            <p className="ptourn-sub">Club events and the entries you are in.</p>
+          </div>
+          {/* THE PICKER MOVES THE CALENDAR AND NOTHING ELSE. "You are in" and
+              "Past results" below read the member's own entries unscoped, on
+              purpose (see the note above the fan-out), so a season change does
+              not touch either panel. The asymmetry is known and is the owner's
+              to settle: do not close it by scoping those two reads here. */}
+          <SeasonPick
+            options={seasonPickerOptions(seasons, finishedSeasonIds(seasons), picked?.id ?? null)}
+            selectedId={selectedSeason?.id ?? null}
+            basePath="/tournaments"
+          />
+        </div>
       </header>
 
       {/* The river carries what is happening and what the member is in; the rail
@@ -448,7 +530,12 @@ export default async function TournamentsPage() {
                 ENTIRELY when no season is active (active-season.ts:39). The
                 season claim was therefore false in two real states, and naming
                 the active season here would only have made a false claim more
-                specific. The claim is dropped rather than sharpened. */}
+                specific. The claim is dropped rather than sharpened.
+
+                On an explicit ?season= the list IS exactly that season, since
+                that branch filters strictly. The heading still says calendar,
+                because it has to be true on both paths and the season is named
+                in the picker above rather than twice. */}
             <div className="wide-cap">Also on the calendar</div>
             {otherUpcoming.length === 0 && otherDone.length === 0 ? (
               <p className="wide-note">

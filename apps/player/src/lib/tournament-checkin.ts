@@ -292,7 +292,7 @@ async function loadMyEntries(
     .from('tournament_participants')
     .select(`id, status, ${EVENT_EMBED}`)
     .eq('player_id', playerId)
-    .eq('tournament_events.tournament_id', tournamentId);
+    .eq('event.tournament_id', tournamentId);
   if (singlesError) throw new Error(singlesError.message);
 
   const pairSelect =
@@ -305,7 +305,7 @@ async function loadMyEntries(
         .from('tournament_pairs')
         .select(pairSelect)
         .eq(column, playerId)
-        .eq('tournament_events.tournament_id', tournamentId),
+        .eq('event.tournament_id', tournamentId),
     ),
   );
 

@@ -234,7 +234,13 @@ export function weeklyDigestEmail(
     matchesPlayed: number;
     wins: number;
     losses: number;
-    eloChange: number;
+    // NULL where a season was activated inside this week, which makes both Elo
+    // figures unsafe to state: a rollover on a soft or full policy rewrites
+    // every rating without emitting a rating_delta, so the caller's sum would
+    // be a week's movement measured across a rebase, and the stored post_rating
+    // would be a number the member no longer holds. Counts of matches, wins
+    // and losses are untouched by a rebase, so they are still reported.
+    eloChange: number | null;
     // NULL where the member did not play that discipline this week. The caller
     // used to report ONE figure as both, so somebody who played only doubles
     // was told their singles rating had moved to a number they never held; and
@@ -245,24 +251,34 @@ export function weeklyDigestEmail(
   },
   url: string
 ): { subject: string; html: string } {
-  const eloStr = data.eloChange >= 0 ? `+${data.eloChange}` : `${data.eloChange}`;
+  const eloStr =
+    data.eloChange === null ? null : data.eloChange >= 0 ? `+${data.eloChange}` : `${data.eloChange}`;
   // Only the disciplines actually played. If neither was rated the line is
   // dropped entirely rather than printed empty — the rest of the recap (matches,
-  // record, net Elo) still stands on its own.
+  // record, and net Elo where it is stated) still stands on its own.
   const ratingParts = [
     data.singlesRating !== null ? `Singles: <strong>${data.singlesRating}</strong>` : null,
     data.doublesRating !== null ? `Doubles: <strong>${data.doublesRating}</strong>` : null,
   ].filter(Boolean);
+  // WHY THE RATINGS ARE MISSING, BEFORE THE READER NOTICES THEY ARE MISSING.
+  // The subject line loses its number on these weeks too, and a recap that
+  // quietly drops three figures reads as a broken send unless something in it
+  // says otherwise. First line of the block, not appended after the record.
+  const rolloverNote =
+    eloStr === null
+      ? `<p style="margin: 6px 0 12px; color: #9CA3AF;">A new season started this week, so every rating was re-set. Your rating movement across that change would not mean anything, so it is left out of this recap. The matches below are still yours.</p>`
+      : '';
   return {
-    subject: `Your weekly recap — ${eloStr} Elo`,
+    subject: eloStr === null ? 'Your weekly recap' : `Your weekly recap — ${eloStr} Elo`,
     html: wrap(`
       <h2 style="color: #E94560;">Weekly Recap</h2>
       <p>Hey ${escapeHtml(name)}, here's your week in review:</p>
       ${DIVIDER}
       <div style="background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px;">
+        ${rolloverNote}
         <p style="margin: 6px 0;">Matches Played: <strong>${data.matchesPlayed}</strong></p>
         <p style="margin: 6px 0;">Record: <strong>${data.wins}W - ${data.losses}L</strong></p>
-        <p style="margin: 6px 0;">Net Elo: <strong style="color: ${data.eloChange >= 0 ? '#10B981' : '#EF4444'};">${eloStr}</strong></p>
+        ${eloStr === null ? '' : `<p style="margin: 6px 0;">Net Elo: <strong style="color: ${(data.eloChange ?? 0) >= 0 ? '#10B981' : '#EF4444'};">${eloStr}</strong></p>`}
         ${ratingParts.length > 0 ? `<p style="margin: 6px 0;">${ratingParts.join(' | ')}</p>` : ''}
         ${data.rank ? `<p style="margin: 6px 0;">Current Rank: <strong>#${data.rank}</strong></p>` : ''}
       </div>
