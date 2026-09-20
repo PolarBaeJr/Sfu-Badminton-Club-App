@@ -98,7 +98,8 @@ export function DiscordLinkPanel({
             <span className="text-[var(--text-primary)]">
               {preview.conflictPlayerName ?? 'another member'}
             </span>
-            . Unlink it there first: one Discord account belongs to one member.
+            . Disconnect it first with <span className="text-[var(--text-primary)]">/forceunlink</span>{' '}
+            in Discord: one Discord account belongs to one member.
           </span>
         </div>
       )}
