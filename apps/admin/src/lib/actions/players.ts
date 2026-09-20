@@ -835,7 +835,7 @@ export async function forceLinkDiscordAccount(
     if (facts.conflictPlayerId) {
       throw new ExpectedError(
         facts.conflictPlayerName
-          ? `That Discord account is already linked to ${facts.conflictPlayerName}. Unlink it there first.`
+          ? `That Discord account is already linked to ${facts.conflictPlayerName}. Disconnect it first with /forceunlink in Discord.`
           : DISCORD_ALREADY_LINKED,
       );
     }
