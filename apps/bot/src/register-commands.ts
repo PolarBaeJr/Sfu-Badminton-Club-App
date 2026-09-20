@@ -152,8 +152,8 @@ export async function fetchRegisteredCommands(
 //     matches".
 //
 // The top level is keyed by NAME rather than compared positionally: command
-// names are unique per application, all 17 definitions are CHAT_INPUT (none
-// sets a command-level `type`, commands.ts:132-677), and Discord does not
+// names are unique per application, all 19 definitions are CHAT_INPUT (none
+// sets a command-level `type`, commands.ts:135-777), and Discord does not
 // promise the order of the list. Keying by name cannot hide a difference - a
 // command added, removed or renamed is still a difference - and it is what
 // lets an unchanged set be recognised as one at all.

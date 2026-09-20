@@ -33,6 +33,9 @@ the answer.
 | `/profile [@member] [handle]` | A member's profile card, rendered as a PNG (see §2) | No |
 | `/feedback` | Submit feedback to the exec team | No |
 | `/discord` | The club invite link plus its QR code. **Exec only, and the reply is ephemeral** so the bot never posts the invite into a channel on an exec's behalf | No |
+| `/forcelink` | Connect a Discord account to a club member who cannot run `/link` (see §4) | The **officer** must be linked |
+| `/forceunlink` | Disconnect another member's Discord account and strip its club roles (see §4) | The **officer** must be linked |
+| `/forceupdate` | Re-apply one member's club roles in Discord now (see §4) | The **officer** must be linked |
 
 **There is no separate waitlist command, because the RSVP list *is* the waitlist.**
 Sessions carry no capacity column; RSVP is uncapped by design and court space is
@@ -237,6 +240,66 @@ Two implementation notes specific to this codebase:
   migration.
 - `/unlink` must clear the Discord roles as part of unlinking. An unlinked user holding
   `@Exec` is a stale grant of channel access.
+
+### The other two Discord doors: `/forceunlink` and `/forceupdate`
+
+Both are officer commands, and both carry **exactly the gates `/forcelink` carries**:
+`default_member_permissions: EXEC_ONLY` plus `dm_permission: false` to hide them, and the
+same `players.discordlink.write` check on the caller's LINKED member, through the same
+resolver, in their own service-authenticated POST routes. Neither introduced a new
+capability. For unlinking that is the same table, the same row and the inverse write; for
+resyncing it is the act the capability already performs, applied to a member who has one.
+
+**`/forceunlink` is the only officer-facing unlink there is.** The console's Discord panel
+links and does **not** unlink, so before this command the only way to detach somebody
+else's account was to force-link it onto a different member. Nothing above about the
+console's admin-initiated path should be read as implying otherwise: that path attaches,
+and that is all it does.
+
+The order of the two halves is the safety argument. **The link row is deleted first and
+the Discord roles come off second.** Reversed, a strip that landed before a delete that
+failed would leave a member with no roles and a live link, and the next sweep would put the
+roles straight back. In the specified order a crash after the delete leaves 00165's
+tombstone behind and the sweep finishes the job, which is also why a failed strip is never
+reported to the officer as a failed unlink. A member who has **left the server** is a clean
+outcome for the same reason: the link row, which is what was asked for, is gone.
+
+**`/forceupdate` is the one-member form of the manual sweep, not a second sweep.** The
+everyone path already exists and is strictly better: `POST /sync` with `{"trigger":
+"manual"}` holds the in-flight guard, reloads the config, and files the entry the audit
+channel titles "Role sync (manually triggered)". A slash command cannot reach that guard,
+and a few hundred members synced sequentially per guild would outlive the interaction
+token. It takes **no reason** where `/forceunlink` requires one, because it writes nothing
+to the club's records and is convergent: it makes Discord agree with what the app already
+says, so there is no by-hand edit to justify.
+
+It does still refuse an account that is connected to nobody, and that refusal is
+load-bearing rather than tidy. The resync reads an id that is absent from the linked-member
+roster as "strip everything", deliberately, because that is how a revocation tombstone gets
+cleared for free. Running it against an unlinked account would therefore be a **silent full
+strip** rather than the refresh the officer asked for.
+
+**The target is chosen from a picker fed by the link rows, not by the guild's member
+list.** That is the one design decision worth stating: Discord's USER option is populated
+from the members of the server, so it can never offer somebody who left Discord with their
+link row intact, which is the single most likely reason an officer reaches for
+`/forceunlink`. The option is a STRING with autocomplete whose choice value is the Discord
+snowflake, so a raw id pasted by hand works too, which matters because Discord refuses an
+autocomplete response carrying more than 25 choices. **The picker route carries the same
+capability check the two commands do**, because an ungated list of every connected member
+would name the hidden and suspended ones to anybody holding the service secret, and the
+bot answers a refusal with an empty list rather than an error, because an error would
+itself confirm that rows exist.
+
+**Neither command arrives by deploying**, on `/forcelink`'s terms above: a manual
+`npm run register -w bot`, then a server admin granting the commands to a role, then
+`players.discordlink.write` granted per person in the console. That last one now gates the
+**picker** as well, so an officer without it sees an empty autocomplete rather than an
+error.
+
+`/forceunlink` files a `discord_link_force_removed` audit row naming the officer as the
+actor and the member as the target. `audit_logs.action_type` is plain text with no CHECK
+and no enum, so that name needed no migration.
 
 ---
 
