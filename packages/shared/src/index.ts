@@ -9,6 +9,7 @@ export * from './utils/session-window';
 export * from './utils/session-track';
 export * from './utils/active-season';
 export * from './utils/season-record';
+export * from './utils/active-challenges';
 export * from './utils/ics';
 export * from './utils/tags';
 export * from './utils/notifications';

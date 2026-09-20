@@ -3,6 +3,7 @@ import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-s
 import { accessLevelFor, atLeast, canAccess, permissionsOf, permits, sectionLabelFor } from '@/lib/permissions';
 import { AvatarChip, Badge, Card, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import {
+  ACTIVE_CHALLENGE_STATUSES,
   CLUB_TIMEZONE,
   EVENT_TYPE_LABELS,
   formatRelativeTime,
@@ -402,7 +403,7 @@ export default async function DashboardPage({
           : supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active'))
       : noCount,
     showChallenges
-      ? supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted'])
+      ? supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', [...ACTIVE_CHALLENGE_STATUSES])
       : noCount,
 
     // ---- the pending-signup rows -----------------------------------------

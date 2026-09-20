@@ -135,17 +135,15 @@ export function expiryState(
 
 /**
  * The statuses validate_challenge_creation counts against
- * challenge_rules.max_active_challenges. Copied from the SQL rather than
- * reasoned out, and EXPORTED so the query that counts them and the meter that
- * draws them cannot come to disagree — a meter reading "2 of 3" on the screen
- * that just refused you is worse than no meter at all.
+ * challenge_rules.max_active_challenges. It now lives in packages/shared,
+ * because the admin console counts the same three and the two apps cannot
+ * import across the app boundary; the reasoning is written up there.
  *
- * Note this is a status list and not a clock: the sweep that retires a lapsed
- * challenge runs hourly, so one still sitting at 'proposed' past its deadline
- * genuinely does hold a slot until the job catches it. The screen says so
- * because the database means it.
+ * Re-exported under its original name so that the page and the tests which
+ * already read it from this module keep working, and so the list stays
+ * alongside the quota arithmetic that is the only reason the screen asks for it.
  */
-export const ACTIVE_CHALLENGE_STATUSES = ['proposed', 'partially_confirmed', 'accepted'] as const;
+export { ACTIVE_CHALLENGE_STATUSES } from '@badminton/shared';
 
 export interface ChallengeQuota {
   used: number;
