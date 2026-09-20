@@ -655,6 +655,165 @@ export async function forceLinkDiscordAccount(input: {
   return (await response.json()) as ForceLinkResult;
 }
 
+// ---- FORCE UNLINK ----------------------------------------------------------
+
+/** Why the app declined to disconnect an account. Closed set; see the route. */
+export type ForceUnlinkRefusal =
+  | 'not_linked'
+  | 'not_permitted'
+  | 'no_reason'
+  | 'target_not_linked';
+
+export type ForceUnlinkResult =
+  | { ok: true; memberName: string | null }
+  | { ok: false; refusal: ForceUnlinkRefusal };
+
+/**
+ * Disconnect ANOTHER member's Discord account, for /forceunlink.
+ *
+ * TWO DISCORD IDS, AND THEY ARE NOT INTERCHANGEABLE. `discordUserId` is the
+ * CALLER, the officer who typed the command, and it is what the app resolves to
+ * a club account to check `players.discordlink.write` against.
+ * `targetDiscordUserId` is the account being disconnected. Swapping the two
+ * would ask the app whether the member being unlinked may unlink themselves,
+ * which is the whole gate inverted.
+ *
+ * A BESPOKE FETCH RATHER THAN send(), for /forcelink's two reasons: send()'s
+ * 2.5s timeout is sized for a command racing Discord's three-second deadline
+ * and this command defers first, and send() maps 409 to SweepManagedRoleError
+ * and 429 to RateLimitedError, neither of which this route ever answers. Every
+ * refusal it has arrives as a 200 carrying a code.
+ *
+ * 10 seconds, because the route makes four round trips: the caller read, the
+ * target read, the delete and the audit insert. Failing early would abandon a
+ * delete that was about to succeed and leave a link row with no audit row.
+ *
+ * The `refusal` is matched against the union above at the call site rather than
+ * printed. Nothing the app puts in a response body is ever interpolated into a
+ * Discord message.
+ */
+export async function forceUnlinkDiscordAccount(input: {
+  discordUserId: string;
+  targetDiscordUserId: string;
+  reason: string;
+}): Promise<ForceUnlinkResult> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/force-unlink', base), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!response.ok) {
+    throw new AppApiError(`POST /api/discord/force-unlink -> ${response.status}`);
+  }
+
+  return (await response.json()) as ForceUnlinkResult;
+}
+
+// ---- FORCE SYNC ------------------------------------------------------------
+
+/** Why the app declined to re-apply a member's roles. Closed set; see the route. */
+export type ForceSyncRefusal = 'not_linked' | 'not_permitted' | 'target_not_linked';
+
+export type ForceSyncResult =
+  | { ok: true; memberName: string | null }
+  | { ok: false; refusal: ForceSyncRefusal };
+
+/**
+ * May this officer re-apply one member's roles, and is that account linked at
+ * all, for /forceupdate.
+ *
+ * THIS CALL WRITES NOTHING. It is the permission check plus the one fact the
+ * bot cannot learn on its own: whether the target has a link row. That second
+ * half is not a formality. syncMembersNow() reads an id absent from the roster
+ * as "strip everything", so running the resync against an unlinked account
+ * would be a silent full strip nobody asked for.
+ *
+ * 5 seconds, between force-unlink's 10 and the picker's 2: two reads and no
+ * write, and the command has deferred, so it is not racing the three-second
+ * deadline.
+ */
+export async function forceSyncMember(input: {
+  discordUserId: string;
+  targetDiscordUserId: string;
+}): Promise<ForceSyncResult> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/force-sync', base), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(5_000),
+  });
+
+  if (!response.ok) {
+    throw new AppApiError(`POST /api/discord/force-sync -> ${response.status}`);
+  }
+
+  return (await response.json()) as ForceSyncResult;
+}
+
+// ---- LINKED ACCOUNTS -------------------------------------------------------
+
+/** One row of the officer picker: a readable label over a raw snowflake. */
+export interface LinkedAccountChoice {
+  name: string;
+  value: string;
+}
+
+export type LinkedAccountsResult =
+  | { ok: true; choices: LinkedAccountChoice[] }
+  | { ok: false; refusal: 'not_linked' | 'not_permitted' };
+
+/**
+ * Connected accounts matching what the officer has typed so far, for the
+ * /forceunlink and /forceupdate pickers.
+ *
+ * TWO SECONDS, AND IT IS NOT WHAT KEEPS THE INTERACTION ALIVE. Discord gives an
+ * autocomplete about three seconds in total and DISCARDS a late answer, but the
+ * deadline is already held in index.ts, which races this call against
+ * AUTOCOMPLETE_BUDGET_MS and answers with an empty list at one second whatever
+ * this is set to. What this timeout does is stop the abandoned request
+ * outliving the interaction it was for. It is tighter than get()'s shared 2.5s
+ * anyway, which is the opposite trade to the two commands above: they have
+ * deferred and would rather wait than abandon a write.
+ *
+ * The caller's id still goes with it: this route carries the SAME capability
+ * check the acts do, because an ungated list of every linked member is an
+ * oracle for the members the ladder deliberately hides.
+ */
+export async function fetchLinkedAccounts(input: {
+  discordUserId: string;
+  query: string;
+}): Promise<LinkedAccountsResult> {
+  const base = process.env.APP_API_URL;
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!base) throw new AppApiError('APP_API_URL is not set');
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+
+  const response = await fetch(new URL('/api/discord/linked-accounts', base), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(2_000),
+  });
+
+  if (!response.ok) {
+    throw new AppApiError(`POST /api/discord/linked-accounts -> ${response.status}`);
+  }
+
+  return (await response.json()) as LinkedAccountsResult;
+}
+
 /**
  * Write a guild's role map, for /setup.
  *

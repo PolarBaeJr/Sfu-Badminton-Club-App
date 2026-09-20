@@ -4,7 +4,9 @@ import { postAuditEntry } from './audit.js';
 import { loadConfig } from './config.js';
 import {
   DEFERRED_COMMANDS,
+  LINKED_ACCOUNT_PICKERS,
   dispatch,
+  handleLinkedAccountAutocomplete,
   handleProfileAutocomplete,
   handleAnnounceModal,
   handleReportModal,
@@ -843,18 +845,21 @@ const server = createServer(async (req, res) => {
     return send(res, 200, { type: 6 });
   }
 
-  // APPLICATION_COMMAND_AUTOCOMPLETE — the /profile handle picker, refiring on
-  // every keystroke.
+  // APPLICATION_COMMAND_AUTOCOMPLETE: a picker refiring on every keystroke.
   //
-  // TWO COMMANDS ARRIVE HERE NOW, and this branch needed no change for the
-  // second. /forcelink's `member` option is a handle picker too, and
-  // handleProfileAutocomplete reads the FOCUSED option rather than one named
-  // 'handle' (commands.ts:1024-1041), so it answers the new slot for free. That
-  // is the property its own comment predicted, now load-bearing rather than
-  // hypothetical: matching by name would have answered the wrong slot the moment
-  // a second autocompleting option existed. The name is left alone deliberately
-  // -- renaming it is a rename of an exported function across the test suite,
-  // and it buys nothing this comment does not.
+  // FOUR COMMANDS ARRIVE HERE NOW, AND THEY NO LONGER WANT THE SAME ANSWER.
+  // /profile and /forcelink both want club HANDLES, and handleProfileAutocomplete
+  // serves both because it reads the FOCUSED option rather than one named
+  // 'handle': that property, predicted by its own comment, is what let the second
+  // command arrive here for free. /forceunlink and /forceupdate want something
+  // the ladder cannot express, a CONNECTED ACCOUNT including the members the
+  // ladder deliberately hides, so they get their own provider.
+  //
+  // ROUTED ON A SET commands.ts OWNS, on DEFERRED_COMMANDS' pattern, rather than
+  // a condition written out here: the file that defines the commands is the one
+  // that knows which picker each wants, and keeping the answer there is what
+  // stops the two drifting. Adding a command to LINKED_ACCOUNT_PICKERS is the
+  // whole change; this branch needs none.
   //
   // CANNOT BE DEFERRED. Type 8 within about three seconds is the only valid
   // answer there is, and the fall-through below would reply type 1, which the
@@ -865,9 +870,18 @@ const server = createServer(async (req, res) => {
   // an error the member sees.
   if (interaction.type === 4 && interaction.data) {
     const options = interaction.data.options;
+    // The OFFICER, for the linked-account picker: its route carries the same
+    // capability check the commands behind it do, so it has to be told who is
+    // asking. Read from the same two places a command reads its caller from.
+    const context = {
+      discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+      guildId: interaction.guild_id ?? null,
+    };
     try {
       const answered = await Promise.race([
-        handleProfileAutocomplete(options),
+        LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
+          ? handleLinkedAccountAutocomplete(options, context)
+          : handleProfileAutocomplete(options),
         new Promise<{ type: number; data: { choices: [] } }>((resolve) =>
           setTimeout(() => resolve({ type: 8, data: { choices: [] } }), AUTOCOMPLETE_BUDGET_MS)
         ),
