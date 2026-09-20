@@ -55,6 +55,7 @@ import {
   PERMISSION_ROLES,
   PERMISSION_ROLE_LABELS,
   ROLE_DEFAULTS,
+  UNRESTRICTED,
   type AccessLevel,
   type Area,
   type Capability,
@@ -205,17 +206,6 @@ const SEGMENTS: readonly { value: Segment; label: string; activeClass: string }[
   { value: 'off', label: 'Off', activeClass: 'bg-[var(--surface-3)] text-[var(--ink)]' },
   { value: 'on', label: 'On', activeClass: 'bg-[var(--win)] text-[var(--bg)]' },
 ];
-
-// UNDER A HAND-PICKED SET THERE IS NOTHING TO INHERIT. `custom`'s base is empty
-// by construction, so a row with no delta is not "whatever the job gives them" —
-// it is off, and Inherit is a segment that could never light. Left live it would
-// be the one control on this screen that does not do what it says: press it and
-// Off would fill instead. This is not a corner either — asCustom() seeds
-// `custom` on the first press for anybody sitting on their level default, which
-// is everybody on day one.
-const HAND_PICKED_SEGMENTS = SEGMENTS.map((segment) =>
-  segment.value === 'inherit' ? { ...segment, disabled: true } : segment,
-);
 
 // page has no badge. The design called for purple and the console has no purple
 // token — and adding one is the single thing ds-bundle/guidelines/admin-console
@@ -637,7 +627,28 @@ export function PermissionEditor({
     setExpanded([]);
   }
 
-  const base: readonly Capability[] = role === null ? [] : ROLE_DEFAULTS[role];
+  // WHAT SITS UNDER THE TICKS. Not `ROLE_DEFAULTS[role]`: a named job's defaults
+  // are what the job ADDS, and underneath them every officer stands on their
+  // level's floor. `custom`'s defaults are empty, so reading the base off the
+  // role alone answered "no" for every capability a hand-picked officer holds by
+  // being an exec — which drew those rows Off while the summary two inches away
+  // listed them as held, and left the Off segment unable to store the revoke
+  // that would actually close the section.
+  //
+  // `UNRESTRICTED` is the floor by definition: it is the permissions value of
+  // somebody with nothing stored, so resolving it gives exactly what the level
+  // hands out before any role, grant or revoke. Reading it through
+  // effectiveCapabilities rather than off a list of our own is the same rule the
+  // rest of this component follows — one resolver, so the screen cannot drift
+  // from the gates.
+  const inheritedBase: ReadonlySet<Capability> = useMemo(
+    () =>
+      new Set<Capability>([
+        ...(selectedLevel === null ? [] : effectiveCapabilities(selectedLevel, UNRESTRICTED)),
+        ...(role === null ? [] : ROLE_DEFAULTS[role]),
+      ]),
+    [selectedLevel, role],
+  );
 
   // The panel that answers the question the stored row no longer answers by
   // itself. Computed by the SAME effectiveCapabilities the gates call, on the
@@ -654,23 +665,20 @@ export function PermissionEditor({
     if (role === null) return effective.has(capability) ? 'level' : 'off';
     if (grants.includes(capability)) return 'granted';
     if (revokes.includes(capability)) return 'revoked';
-    return base.includes(capability) ? 'role' : 'off';
+    return inheritedBase.has(capability) ? 'role' : 'off';
   }
 
-  // WHICH SEGMENT IS FILLED. `off` is the one cell state that reads differently
-  // depending on what is behind the row: under a level default or a named job it
-  // means "nothing stored, and the base does not give it", which is Inherit;
-  // under a hand-picked set there is no base at all, so it means Off. See
-  // HAND_PICKED_SEGMENTS.
-  const segmentOf = (state: CellState): Segment =>
-    state === 'off' && role === 'custom' ? 'off' : SEGMENT_OF[state];
+  // WHICH SEGMENT IS FILLED. `off` means the same thing on every row now:
+  // nothing stored, and nothing underneath gives it. A hand-picked set used to
+  // be special-cased to fill Off instead of Inherit, on the premise that there
+  // was no base under it to inherit FROM. The level floor is that base, so the
+  // premise is gone and so is the branch.
+  const segmentOf = (state: CellState): Segment => SEGMENT_OF[state];
 
   // WHAT INHERITING WOULD GIVE THEM — the answer the `Inherit` segment stands
-  // for, said out loud beside it. Off a level default that is the level's own
-  // baseline (nothing is stored, so `effective` IS the baseline); under a role
-  // it is what the role gives.
-  const inherits = (capability: Capability) =>
-    role === null ? effective.has(capability) : base.includes(capability);
+  // for, said out loud beside it. The level floor plus whatever the job adds,
+  // which off a level default is just the floor.
+  const inherits = (capability: Capability) => inheritedBase.has(capability);
 
   // DIFFERS FROM SAVED, measured in what the person can DO rather than in what
   // the row stores. Switching somebody from their level default to a hand-picked
@@ -725,7 +733,12 @@ export function PermissionEditor({
   // with nothing on screen saying that picking one was the way in.
   function setCell(capability: Capability, target: Segment) {
     const next = asCustom();
-    const inBase = (ROLE_DEFAULTS[next.role] as readonly Capability[]).includes(capability);
+    // The floor counts as base here for the same reason it counts in stateOf:
+    // pressing Off on a section an exec holds by level has to STORE the revoke,
+    // or the control does nothing. The resolver applies revokes after the floor
+    // and cascades the area shut, so this is the delta it already expects — the
+    // editor was simply never able to express it.
+    const inBase = inheritedBase.has(capability);
     const nextGrants = next.grants.filter((c) => c !== capability);
     const nextRevokes = next.revokes.filter((c) => c !== capability);
     if (target === 'on' && !inBase) nextGrants.push(capability);
@@ -834,7 +847,11 @@ export function PermissionEditor({
   // screen.
   const losing = [...before].filter((capability) => !effective.has(capability));
 
-  const orphanRevokes = revokes.filter((capability) => !base.includes(capability));
+  // A revoke is orphaned when nothing underneath it is giving the capability
+  // away — so it is measured against the floor as well as the job. Revoking a
+  // section an exec holds by level is the whole point of the Off segment and
+  // must not be reported as a leftover.
+  const orphanRevokes = revokes.filter((capability) => !inheritedBase.has(capability));
 
   const query = capabilitySearch.trim().toLowerCase();
   // A search or a mode OPENS everything it matched. Making somebody expand three
@@ -1154,7 +1171,7 @@ export function PermissionEditor({
     <Segmented
       label={leaf.label}
       value={segmentOf(state)}
-      options={role === 'custom' ? HAND_PICKED_SEGMENTS : SEGMENTS}
+      options={SEGMENTS}
       disabled={!composable || !held.has(leaf.capability)}
       onChange={(target) => onCellClick(leaf.capability, target)}
     />
