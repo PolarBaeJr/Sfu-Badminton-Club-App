@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getViewer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, clubDate, formatRelativeTime, clubToday, formatMemberCode, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { getWinRate, getStreakDisplay, getPointDifferential, clubDate, formatRelativeTime, clubToday, formatMemberCode, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
 import { buildRatingSeries, buildOverallFormFlags, deriveAttendance, deriveSessionCadence, type RatingSourceRow, type FormSourceRow } from '@/lib/stats-charts';
@@ -7,7 +7,7 @@ import { RatingCard } from '@/components/my-stats/rating-card';
 import { FormCard } from '@/components/my-stats/form-card';
 import { AttendanceGrid } from '@/components/my-stats/attendance-grid';
 import { SeasonPick } from '@/components/my-stats/season-pick';
-import { seasonPickerOptions, type HistorySeason } from '@/lib/season-history';
+import { seasonPickerOptions, summarizeSeason, type HistorySeason } from '@/lib/season-history';
 import { PastSeasonStats } from './past-season';
 import { LiveRating } from '@/components/live-rating';
 import { LiveMyStats } from '@/components/live-matches';
@@ -63,6 +63,23 @@ type LadderRow = { id: string; singles_elo: number | null };
  * nothing for the feature: it runs exactly the query set it always has, in one
  * round trip, with the season control added to its header.
  */
+/**
+ * A win rate needs games behind it.
+ *
+ * `getWinRate` answers '0%' for an empty record, which is the right answer
+ * arithmetically and the wrong one on this page. Everywhere else that figure is
+ * printed beside the W-L it came from, so '0-0 (0%)' reads as "nothing yet".
+ * The two rating readouts below print the percentage ALONE, and a member who
+ * has never played a rated match opened their own stats to be told they win 0%
+ * of the time. That is a verdict, not a record.
+ *
+ * Local to this page on purpose: the shared helper keeps its arithmetic, and
+ * the call sites that do show a W-L keep reading '0%' correctly.
+ */
+function winRateLine(wins: number, losses: number): string {
+  return wins + losses > 0 ? getWinRate(wins, losses) : 'No games yet';
+}
+
 export default async function MyStatsPage({
   searchParams,
 }: {
@@ -110,7 +127,11 @@ async function CurrentSeasonStats() {
     // that, and `player_id` is in the select so it does not have to.
     supabase
       .from('matches')
-      .select('id, played_at, match_type, format, rated_flag, completed_flag, result_status, score_summary, participants:match_participants!inner(id, player_id, win_flag, rating_delta, post_rating, team_side)')
+      // `season_id` and the two point columns came along for the season record
+      // below. The window still spans seasons on purpose, because the chart
+      // needs the prior season's points to place its divider; the record is
+      // filtered out of these same rows rather than fetched again.
+      .select('id, season_id, played_at, match_type, format, rated_flag, completed_flag, result_status, score_summary, participants:match_participants!inner(id, player_id, win_flag, rating_delta, post_rating, team_side, points_scored, points_allowed)')
       .eq('participants.player_id', player.id)
       .not('played_at', 'is', null)
       .order('played_at', { ascending: false })
@@ -264,6 +285,8 @@ async function CurrentSeasonStats() {
       rating_delta: number | null;
       post_rating: number | null;
       team_side: string | null;
+      points_scored: number | null;
+      points_allowed: number | null;
     }[];
     return rows.find((p) => p.player_id === player.id) ?? null;
   };
@@ -287,6 +310,36 @@ async function CurrentSeasonStats() {
   });
   const ratingRows: RatingSourceRow[] = chartRows;
   const formRows: FormSourceRow[] = chartRows;
+
+  // THE SEASON'S OWN RECORD, COUNTED, NEVER READ OFF `ratings`.
+  //
+  // This is the same correction past-season.tsx already made, arriving late on
+  // the live screen. Every counter on `ratings` except the elo, the provisional
+  // flags and `*_matches_played` survives a rollover untouched: activate_season
+  // rebases the ratings and zeroes matches played, and does not go near wins,
+  // losses, points, games or streaks. So `r.singles_wins` is a LIFETIME figure,
+  // and printing it under a heading that names the current season told a
+  // returning member that this term is going exactly as well as every term they
+  // have ever played put together.
+  //
+  // Counted from the rows already in hand, filtered by season_id, so this costs
+  // no extra round trip. The one thing it cannot answer is games won and lost,
+  // which live in match_games and are not in this query; see the strip below.
+  const seasonRecord = summarizeSeason(
+    matchRows
+      .filter((m) => activeSeason !== null && m.season_id === activeSeason.id)
+      .map((m) => {
+        const p = ownParticipant(m as { participants: unknown });
+        return {
+          match_type: m.match_type as string | null,
+          result_status: m.result_status as string | null,
+          win_flag: p?.win_flag ?? null,
+          points_scored: p?.points_scored ?? null,
+          points_allowed: p?.points_allowed ?? null,
+          played_at: m.played_at as string | null,
+        };
+      })
+  );
 
   const activeSeasonRow = activeSeason ? seasons.find((s) => s.id === activeSeason.id) ?? null : null;
   // The season before the active one, by start date. `seasons` came back newest
@@ -334,14 +387,12 @@ async function CurrentSeasonStats() {
     walkoverEvents.length > 0 ||
     tournamentNoShows.length > 0;
 
-  const singlesPlayed = (r?.singles_wins ?? 0) + (r?.singles_losses ?? 0);
-  const doublesPlayed = (r?.doubles_wins ?? 0) + (r?.doubles_losses ?? 0);
-  const { played: totalPlayed } = getOverallRecord({
-    singles_wins: r?.singles_wins ?? 0,
-    singles_losses: r?.singles_losses ?? 0,
-    doubles_wins: r?.doubles_wins ?? 0,
-    doubles_losses: r?.doubles_losses ?? 0,
-  });
+  // The discipline split, off the season record for the same reason as
+  // everything else on this screen: read from `ratings` it answered "how have
+  // you split your badminton, ever", under a heading naming this term.
+  const singlesPlayed = seasonRecord.singles.wins + seasonRecord.singles.losses;
+  const doublesPlayed = seasonRecord.doubles.wins + seasonRecord.doubles.losses;
+  const totalPlayed = seasonRecord.played;
   const singlesPct = totalPlayed > 0 ? Math.round((singlesPlayed / totalPlayed) * 100) : 0;
   const doublesPct = totalPlayed > 0 ? 100 - singlesPct : 0;
 
@@ -502,8 +553,8 @@ async function CurrentSeasonStats() {
                     zero ever leaked, which is why this survived review: a losing
                     streak is negative, negative is truthy, and -3 > 0 is false,
                     which React renders as nothing at all. */}
-                {(r?.current_singles_streak ?? 0) > 0 && (
-                  <span className="pill pill-out">W{r.current_singles_streak} singles</span>
+                {seasonRecord.singles.currentStreak > 0 && (
+                  <span className="pill pill-out">W{seasonRecord.singles.currentStreak} singles</span>
                 )}
               </div>
             </div>
@@ -533,14 +584,14 @@ async function CurrentSeasonStats() {
               <div className="stat-label">SINGLES</div>
               <div className="stat-value">{r ? r.singles_elo : '—'}</div>
               <div className="mono muted" style={{ fontSize: 11 }}>
-                {r ? `${r.singles_provisional ? 'Provisional · ' : ''}${getWinRate(r.singles_wins, r.singles_losses)}` : 'Unrated'}
+                {r ? `${r.singles_provisional ? 'Provisional · ' : ''}${winRateLine(seasonRecord.singles.wins, seasonRecord.singles.losses)}` : 'Unrated'}
               </div>
             </div>
             <div className="stat">
               <div className="stat-label">DOUBLES</div>
               <div className="stat-value">{r ? r.doubles_elo : '—'}</div>
               <div className="mono muted" style={{ fontSize: 11 }}>
-                {r ? `${r.doubles_provisional ? 'Provisional · ' : ''}${getWinRate(r.doubles_wins, r.doubles_losses)}` : 'Unrated'}
+                {r ? `${r.doubles_provisional ? 'Provisional · ' : ''}${winRateLine(seasonRecord.doubles.wins, seasonRecord.doubles.losses)}` : 'Unrated'}
               </div>
             </div>
           </div>
@@ -549,19 +600,18 @@ async function CurrentSeasonStats() {
 
       {r && (
         <div className="stat-strip reveal reveal-2" style={{ marginBottom: 24 }}>
+          {/* THE "Best W0" LINE IS GONE, both of them. It read as a grade
+              rather than as a record: a member who has never played saw
+              "Best W0" under a streak of zero, which says the same nothing
+              twice and says it as though it were a verdict. The streak value
+              above is the whole of what this tile knows. */}
           <div>
             <div className="stat-label">SINGLES STREAK</div>
-            <div className="stat-value">{getStreakDisplay(r.current_singles_streak)}</div>
-            <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-              Best W{r.best_singles_streak ?? 0}
-            </div>
+            <div className="stat-value">{getStreakDisplay(seasonRecord.singles.currentStreak)}</div>
           </div>
           <div>
             <div className="stat-label">DOUBLES STREAK</div>
-            <div className="stat-value">{getStreakDisplay(r.current_doubles_streak)}</div>
-            <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-              Best W{r.best_doubles_streak ?? 0}
-            </div>
+            <div className="stat-value">{getStreakDisplay(seasonRecord.doubles.currentStreak)}</div>
           </div>
           <div>
             <div className="stat-label">RELIABILITY</div>
@@ -570,29 +620,32 @@ async function CurrentSeasonStats() {
               No-shows · {reliability?.late_cancellations ?? 0} late w/d
             </div>
           </div>
+          {/* THE "Games W-L" SUB-LINES ARE GONE from both point-diff tiles.
+              Game counts live only on `ratings`, which never resets them, and
+              there is no per-game data in this page's query to count the season
+              from: match_games is keyed by match and would be a second round
+              trip. A lifetime figure sitting under a season heading is the
+              defect this whole block was rewritten to remove, so the line is
+              withheld rather than quietly left wrong. It can come back as a
+              season figure the day this page reads match_games. */}
           <div>
             <div className="stat-label">SINGLES POINT DIFF</div>
             <div className="stat-value">
-              {getPointDifferential(r.singles_points_scored, r.singles_points_allowed)}
-            </div>
-            <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-              Games {r.singles_games_won}–{r.singles_games_lost}
+              {getPointDifferential(seasonRecord.singles.pointDiff, 0)}
             </div>
           </div>
           <div>
             <div className="stat-label">DOUBLES POINT DIFF</div>
             <div className="stat-value">
-              {getPointDifferential(r.doubles_points_scored, r.doubles_points_allowed)}
-            </div>
-            <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-              Games {r.doubles_games_won}–{r.doubles_games_lost}
+              {getPointDifferential(seasonRecord.doubles.pointDiff, 0)}
             </div>
           </div>
           <div>
             <div className="stat-label">TOTAL MATCHES</div>
-            <div className="stat-value">{totalPlayed}</div>
+            <div className="stat-value">{seasonRecord.played}</div>
             <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-              {(r.singles_matches_played ?? 0)} singles · {(r.doubles_matches_played ?? 0)} doubles
+              {seasonRecord.singles.wins + seasonRecord.singles.losses} singles ·{' '}
+              {seasonRecord.doubles.wins + seasonRecord.doubles.losses} doubles
             </div>
           </div>
         </div>
@@ -611,16 +664,20 @@ async function CurrentSeasonStats() {
                 singles={{
                   elo: r.singles_elo,
                   provisional: r.singles_provisional === true,
-                  wins: r.singles_wins ?? 0,
-                  losses: r.singles_losses ?? 0,
+                  // Season-counted, matching the readouts in the header. The
+                  // elo beside them is genuinely cumulative and stays as it is:
+                  // a rating carries across a rollover by design, a record does
+                  // not.
+                  wins: seasonRecord.singles.wins,
+                  losses: seasonRecord.singles.losses,
                   points: buildRatingSeries(ratingRows, 'singles'),
                   priorRating: priorRatings?.singles_elo ?? null,
                 }}
                 doubles={{
                   elo: r.doubles_elo,
                   provisional: r.doubles_provisional === true,
-                  wins: r.doubles_wins ?? 0,
-                  losses: r.doubles_losses ?? 0,
+                  wins: seasonRecord.doubles.wins,
+                  losses: seasonRecord.doubles.losses,
                   points: buildRatingSeries(ratingRows, 'doubles'),
                   priorRating: priorRatings?.doubles_elo ?? null,
                 }}
@@ -818,8 +875,14 @@ async function CurrentSeasonStats() {
               <h3 className="card-title" style={{ marginBottom: 4 }}>Division mix</h3>
               <div className="card-sub" style={{ marginBottom: 18 }}>How you split your time</div>
               {[
-                { label: 'Singles', pct: singlesPct, w: r?.singles_wins ?? 0, l: r?.singles_losses ?? 0, color: 'var(--red)' },
-                { label: 'Doubles', pct: doublesPct, w: r?.doubles_wins ?? 0, l: r?.doubles_losses ?? 0, color: 'var(--ink)' },
+                // THE RECORD AND THE PERCENTAGE HAVE TO COME FROM THE SAME
+                // PLACE. These two read `r.singles_wins` while `pct` was
+                // already derived from the season, which rendered "0W-0L .
+                // 100%" on a member with a 1-1 season: a bar at full width
+                // beside a record saying nothing was played. Both halves are
+                // the season now, which is what the card's own heading claims.
+                { label: 'Singles', pct: singlesPct, w: seasonRecord.singles.wins, l: seasonRecord.singles.losses, color: 'var(--red)' },
+                { label: 'Doubles', pct: doublesPct, w: seasonRecord.doubles.wins, l: seasonRecord.doubles.losses, color: 'var(--ink)' },
               ].map((d) => (
                 <div key={d.label} style={{ marginBottom: 14 }}>
                   <div className="row" style={{ justifyContent: 'space-between', marginBottom: 5 }}>

@@ -631,6 +631,28 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     label: 'Open Accounts', area: 'accounts', group: null, mode: 'page',
     gate: 'app/accounts/page.tsx AccountsPage',
   },
+  // THE DATA API'S KEYS. No group on any of the three: `group` is for an area
+  // too large to render flat, and `accounts` is four entries against
+  // tournaments' forty-four.
+  //
+  // THE READ IS A FETCH GATE, not a second page. The key list sits inside
+  // /accounts, which `accounts.page` already opens, and what it withholds is
+  // the rows, so it skips the query the way the officer and settings halves of
+  // that page already do, rather than drawing a card over nothing.
+  'accounts.apikey.read': {
+    label: 'Data API keys', area: 'accounts', group: null, mode: 'read',
+    gate: 'app/accounts/page.tsx data API key fetch',
+  },
+  'accounts.apikey.mint.write': {
+    label: 'Mint a data API key', area: 'accounts', group: null, mode: 'write',
+    gate: 'actions/data-api-keys.ts mintDataApiKey',
+  },
+  // REVOKE, NOT DELETE, in the gate as in the key: the action sets `revoked_at`
+  // and leaves the row, so who minted what survives the key being turned off.
+  'accounts.apikey.revoke.write': {
+    label: 'Revoke a data API key', area: 'accounts', group: null, mode: 'write',
+    gate: 'actions/data-api-keys.ts revokeDataApiKey',
+  },
 
   // ---- platform ----------------------------------------------------------
   // THE ONE PAGE CAPABILITY WITH NO ROUTE. Platform settings have no section of

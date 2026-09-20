@@ -105,6 +105,16 @@ export function settledOutcome(row: SeasonMatchRow): boolean | null {
 export interface DisciplineRecord {
   wins: number;
   losses: number;
+  /** Points won minus points conceded in this discipline, settled matches only. */
+  pointDiff: number;
+  /**
+   * Signed exactly the way `getStreakDisplay` reads it: positive is a run of
+   * wins, negative a run of losses, zero nothing yet. Counted within the
+   * discipline, so a singles win does not extend a doubles streak.
+   */
+  currentStreak: number;
+  /** Longest run of wins in this discipline, oldest to newest. */
+  bestWinStreak: number;
 }
 
 export interface SeasonRecord {
@@ -137,8 +147,8 @@ export interface SeasonRecord {
  */
 export function summarizeSeason(rows: readonly SeasonMatchRow[]): SeasonRecord {
   const record: SeasonRecord = {
-    singles: { wins: 0, losses: 0 },
-    doubles: { wins: 0, losses: 0 },
+    singles: { wins: 0, losses: 0, pointDiff: 0, currentStreak: 0, bestWinStreak: 0 },
+    doubles: { wins: 0, losses: 0, pointDiff: 0, currentStreak: 0, bestWinStreak: 0 },
     wins: 0,
     losses: 0,
     played: 0,
@@ -162,6 +172,7 @@ export function summarizeSeason(rows: readonly SeasonMatchRow[]): SeasonRecord {
     const bucket = row.match_type === 'singles' ? record.singles : record.doubles;
     if (won) bucket.wins += 1;
     else bucket.losses += 1;
+    bucket.pointDiff += (row.points_scored ?? 0) - (row.points_allowed ?? 0);
   }
 
   let run = 0;
@@ -175,6 +186,20 @@ export function summarizeSeason(rows: readonly SeasonMatchRow[]): SeasonRecord {
     if (won === null) continue;
     run = won ? run + 1 : 0;
     if (run > record.bestWinStreak) record.bestWinStreak = run;
+
+    // PER DISCIPLINE, counted in the same pass and in the same order. A singles
+    // win must not extend a doubles streak: they are separate ladders, and the
+    // screen prints them as two separate tiles. `currentStreak` is signed the
+    // way getStreakDisplay reads it, so it is overwritten on every settled row
+    // rather than accumulated: the last row in date order is, by definition,
+    // the run the member is on now.
+    const bucket = row.match_type === 'singles' ? record.singles : record.doubles;
+    bucket.currentStreak = won
+      ? Math.max(bucket.currentStreak, 0) + 1
+      : Math.min(bucket.currentStreak, 0) - 1;
+    if (bucket.currentStreak > bucket.bestWinStreak) {
+      bucket.bestWinStreak = bucket.currentStreak;
+    }
   }
 
   return record;

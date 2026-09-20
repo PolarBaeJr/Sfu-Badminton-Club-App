@@ -113,19 +113,36 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
   // `EXEC_BASELINE.length === 12` HERE would have pinned the floor while
   // claiming to guard the transcription, which is the substitution the next
   // assertion exists to catch — so both are pinned, separately.
-  it('leaves the assignable set at the transcription plus the one named addition', () => {
+  //
+  // ...AND STILL 74 AFTER THE DATA API, which added four `accounts.*` strings
+  // to CAPABILITIES and none of them here. A minted key reads the club's data
+  // from outside every gate in the file and keeps doing so after the minter's
+  // console is taken away, so minting is an admin act rather than an
+  // assignable one. The floor does not move for any of that, which remains the
+  // thing the owner's rule was about. It moved once, separately and on
+  // purpose, for the expense write; see the assertion below.
+  it('leaves the assignable set at the transcription plus the named addition', () => {
     expect(EXEC_ASSIGNABLE.length).toBe(74);
     // Named, so growing this list is a diff somebody reads rather than a number
     // somebody bumps.
     expect(EXEC_ASSIGNABLE).toContain('announcements.discord.write');
+    // And the counterpart: a string that is a real capability, is held by
+    // admins, and must never become assignable without somebody deciding so.
+    expect(EXEC_ASSIGNABLE).not.toContain('accounts.apikey.mint.write');
   });
 
   // AND THE FLOOR, WHICH IS THE THING THAT DID MOVE, pinned next to it so the
   // two are read together. Nobody should be able to change one and have the
   // other's assertion cover for them.
-  it('leaves the exec baseline a read-only floor of twelve', () => {
-    expect(EXEC_BASELINE.length).toBe(12);
-    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([]);
+  it('leaves the exec baseline a floor of thirteen holding one named write', () => {
+    expect(EXEC_BASELINE.length).toBe(13);
+    // Read-only until 2026-09-19. The owner asked for the expense write to
+    // reach every officer rather than only the ones somebody remembered to
+    // assign a baseline to, so the floor now carries exactly one write. Naming
+    // it keeps this as strict as the empty array was.
+    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([
+      'fees.expenses.add.write',
+    ]);
   });
 
   it('contains the whole assignable set, so nothing composable was withdrawn', () => {
@@ -227,6 +244,10 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
       'audit.page',
       'ratings.page',
       'accounts.page',
+      // The data API's keys, withheld with the page they are minted from.
+      'accounts.apikey.read',
+      'accounts.apikey.mint.write',
+      'accounts.apikey.revoke.write',
       'platform.page',
       'platform.settings.write',
       'legal.documents.write',

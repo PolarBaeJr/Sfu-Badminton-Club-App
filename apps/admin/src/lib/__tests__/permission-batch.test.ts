@@ -49,6 +49,7 @@ const draft = (over: Partial<Draft> = {}): Draft => ({
 /** Every capability an unrestricted exec holds — what a level default resolves to. */
 const BASELINE = [...EXEC_BASELINE];
 const FINANCE = [...ROLE_DEFAULTS.finance];
+const TOURNAMENTS = [...ROLE_DEFAULTS.tournaments];
 
 // THE ACTOR'S OWN SET, AND IT IS NOW `CAPABILITIES` RATHER THAN THE EXEC
 // BASELINE. The fixture is called `admin` and closure measures an edit against
@@ -104,9 +105,13 @@ describe('the counts across everybody', () => {
     exec({ id: 'chen', name: 'Chen' }),
   ];
   const pending: PendingEdits = {
-    // A level default narrowed to Finance: everything the baseline gave, gone
-    // but for the three Finance keeps.
-    alice: draft({ role: 'finance' }),
+    // A level default turned into a VP job. THE ROLE HAD TO CHANGE FROM
+    // `finance` TO `tournaments`: Finance is three fees capabilities and all
+    // three are in the floor now, so assigning it changes nothing about the
+    // person and this row would have been queued with zero changes, which is a
+    // test of the counting that counted nothing. Tournaments still brings
+    // writes. The Finance no-op is pinned on its own below.
+    alice: draft({ role: 'tournaments' }),
     // One capability added on top of a role. THE GRANT HAD TO CHANGE FROM
     // `announcements.page` TO A WRITE: every section page is in the floor now,
     // so granting one adds nothing and this row would be queued with zero
@@ -117,33 +122,54 @@ describe('the counts across everybody', () => {
     chen: draft({ role: 'custom', grants: BASELINE as Capability[] }),
   };
 
-  // ALICE LOSES NOTHING AT ALL NOW, and the arithmetic has inverted twice in two
-  // changes for two different reasons — which is worth spelling out, because a
-  // number moving twice is what a stale fixture also looks like.
+  // ALICE LOSES NOTHING AT ALL NOW, and the arithmetic has inverted three times
+  // in three changes for three different reasons — which is worth spelling out,
+  // because a number moving repeatedly is what a stale fixture also looks like.
   //
   //   Originally: the baseline was the historic 73 and a role REPLACED it, so
   //   narrowing Alice to Finance took 70 capabilities away and gave nothing.
   //   Then: the baseline narrowed to twelve reads, so the same edit took ten and
   //   GAVE her `fees.expenses.add.write` — the first time this test saw a gain.
-  //   Now: the club owner ruled the baseline is a FLOOR under every role, so the
-  //   twelve stay and the edit is the one write, gained, and nothing lost.
+  //   Then: the club owner ruled the baseline is a FLOOR under every role, so the
+  //   twelve stayed and the edit was the one write, gained, nothing lost.
+  //   Now: that write is IN the floor, so Finance gains nothing either and the
+  //   fixture moved to Tournaments to keep measuring a real edit.
   //
   // Which is the whole ruling in one assertion: assigning somebody a job adds
   // the job. It does not quietly take their reads away.
   it('adds up what each edit does to the person', () => {
     const inBaseline = new Set<Capability>(BASELINE);
-    const gained = FINANCE.filter((c) => !inBaseline.has(c));
-    expect(gained).toEqual(['fees.expenses.add.write']);
+    const gained = TOURNAMENTS.filter((c) => !inBaseline.has(c));
+    expect(gained.length).toBeGreaterThan(0);
+    expect(gained.every((c) => c.endsWith('.write'))).toBe(true);
 
     const entries = pendingEntries(people, pending);
     const [alice, ben] = entries;
     expect(entries).toHaveLength(3);
     expect(alice?.gaining).toEqual(gained);
     expect(alice?.losing).toEqual([]);
+    // BEN'S ROLE IS THE NO-OP AND HIS GRANT IS NOT, which is why he still counts
+    // one change: Finance adds nothing on top of the floor, so the only thing
+    // this row does to the person is the capability picked by hand.
     expect(ben).toMatchObject({
       gaining: ['announcements.create.write'], losing: [], changes: 1,
     });
     expect(totalChanges(entries)).toBe(gained.length + 1);
+  });
+
+  // THE FINANCE ROLE NO LONGER DOES ANYTHING, and that is a consequence of the
+  // owner's 2026-09-19 request rather than a bug: "also give everyone permission
+  // to write expense into the fee table" put `fees.expenses.add.write` into the
+  // floor, and the floor already held `fees.page` and `fees.expenses.read`, so
+  // all three of Finance's capabilities are now things every officer has.
+  //
+  // Pinned rather than left implicit because the CONSOLE still offers Finance as
+  // a role, and an admin who assigns it gets a save that reports zero changes.
+  // The day somebody widens the role, or narrows the floor, this fails and the
+  // decision gets made on purpose.
+  it('leaves the Finance role adding nothing on top of the floor', () => {
+    const inBaseline = new Set<Capability>(BASELINE);
+    expect(FINANCE.filter((c) => !inBaseline.has(c))).toEqual([]);
   });
 
   // A person can be queued and change nothing about themselves. The bar has to

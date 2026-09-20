@@ -317,6 +317,15 @@ const TODAY: Row[] = [
   { capability: 'audit.page',                         admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/audit'] = 'admin'" },
   { capability: 'ratings.page',                       admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — ratings/page.tsx:17' },
   { capability: 'accounts.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — accounts/page.tsx:12' },
+  // THE DATA API'S KEYS, minted from a panel on that page. No prior gate, and
+  // `exec: F` on all three is a decision rather than an inherited answer: a
+  // minted key reads the club's data from outside every gate in access-level.ts
+  // and keeps answering after the minter's console is taken away, so handing one
+  // out is admin work in a way no capability below it is. 00238 admits the
+  // strings to the stored vocabulary without making them assignable.
+  { capability: 'accounts.apikey.read',               admin: T, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
+  { capability: 'accounts.apikey.mint.write',         admin: T, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
+  { capability: 'accounts.apikey.revoke.write',       admin: T, exec: F, trainer: F, was: 'no prior gate: the read-only data API and its key panel are new' },
 
   // ---- platform --------------------------------------------------------
   // The other capability with no predecessor. `platform` has no route, so its
@@ -413,16 +422,24 @@ describe('capability equivalence — nobody gained anything', () => {
   //
   // TWO PROPERTIES, AND THE CLUB OWNER ASKED FOR BOTH. Every capability an
   // unrestricted officer still holds is one an exec held before ("nothing
-  // widened"), and not one of them is a write ("they can see everything and
-  // change nothing").
-  it('leaves an unrestricted exec a strict, WRITE-FREE subset of what execs had', () => {
+  // widened"), and the writes among them are named one by one rather than
+  // counted, so the floor cannot grow a write without somebody writing it here.
+  //
+  // IT WAS "NOT ONE OF THEM IS A WRITE" UNTIL 2026-09-19, when the owner asked
+  // that every officer be able to file an expense: "also give everyone
+  // permission to write expense into the fee table". `fees.expenses.add.write`
+  // is that request, and it went into the FLOOR rather than into the eight
+  // baselines because "everyone" is what the floor means. The narrowing claim
+  // this file exists to make is unaffected: the write was exec work before
+  // composition shipped, so it is still a subset of what execs had.
+  it('leaves an unrestricted exec a strict subset of what execs had, with one named write', () => {
     const historic = new Set(TODAY.filter((r) => r.exec).map((r) => r.capability));
     const today = CAPABILITIES.filter((c) => permits('exec', UNRESTRICTED, c));
 
     for (const capability of today) {
       expect(historic.has(capability), `${capability} was never exec work`).toBe(true);
     }
-    expect(today.filter((c) => c.endsWith('.write'))).toEqual([]);
+    expect(today.filter((c) => c.endsWith('.write'))).toEqual(['fees.expenses.add.write']);
     expect(today.length).toBeLessThan(historic.size);
     // Belt: the same answer the constant gives, so a divergence between the
     // resolver and the list it is built from fails here too.

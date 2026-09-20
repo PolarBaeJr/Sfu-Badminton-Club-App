@@ -135,6 +135,30 @@ function reasonFor(reason: string, what: string): string {
   }
 }
 
+/**
+ * THE CEILING THIS CHANGE SHIPS WITH. Grant closure bounds what one person may
+ * hand another; it cannot bound an ADMIN, who holds everything by level. So the
+ * set an admin may compose is capped at the exec baseline — the capabilities
+ * execs already had — which is what keeps this change provably inside the
+ * envelope that shipped before it. Handing out the admin-only half is its own
+ * small, reviewable change; it is not this one.
+ *
+ * ONE FUNCTION RATHER THAN TWO TRANSCRIPTIONS, for the reason stated above
+ * assertLevelClosure: setConsoleAccess asks the identical question now that a
+ * baseline can be handed over in the same act as a level, and it has to ask it
+ * BEFORE the level write. A second copy of this sentence is the shape that let a
+ * search-and-replace in this file edit the wrong one.
+ */
+function assertWithinCeiling(capabilities: readonly Capability[]) {
+  const offerable = new Set<Capability>(EDITOR_OFFERABLE);
+  const notYetOfferable = capabilities.filter((capability) => !offerable.has(capability));
+  if (notYetOfferable.length > 0) {
+    throw new ExpectedError(
+      `${listOf(notYetOfferable)} cannot be handed out yet — ${notYetOfferable.length === 1 ? 'it is' : 'they are'} admin-only.`,
+    );
+  }
+}
+
 async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPayload) {
   // requireCapability returns the row it just authenticated, so there is not
   // even a second lookup that could disagree with the one that let them in.
@@ -400,19 +424,11 @@ async function applyPlayerPermissions(
     );
   }
 
-  // 5. AND THE CEILING THIS CHANGE SHIPS WITH. Grant closure bounds what one
-  //    person may hand another; it cannot bound an ADMIN, who holds everything
-  //    by level. So the set an admin may compose is capped at the exec baseline
-  //    — the capabilities execs already had — which is what keeps this change
-  //    provably inside the envelope that shipped before it. Handing out the
-  //    admin-only half is its own small, reviewable change; it is not this one.
-  const offerable = new Set<Capability>(EDITOR_OFFERABLE);
-  const notYetOfferable = storedGrants.filter((capability) => !offerable.has(capability));
-  if (notYetOfferable.length > 0) {
-    throw new ExpectedError(
-      `${listOf(notYetOfferable)} cannot be handed out yet — ${notYetOfferable.length === 1 ? 'it is' : 'they are'} admin-only.`,
-    );
-  }
+  // 5. AND THE CEILING THIS CHANGE SHIPS WITH, which is the one check of the
+  //    five that is not about this actor at all. See assertWithinCeiling, whose
+  //    other caller is setConsoleAccess pre-flighting a baseline handed over in
+  //    the same act as a level.
+  assertWithinCeiling(storedGrants);
 
   // Snapshotted BEFORE the write, not read back from `target` afterwards. The
   // audit row is the only trace this change leaves, and "what it was" has to be
@@ -547,13 +563,30 @@ async function applyPlayerPermissions(
  * twelve reads and no writes, so the closure test measures what is actually
  * being handed over. The writes follow separately, through setPlayerPermissions,
  * where each is closure-checked on its own.
+ *
+ * AND THE BASELINE IS PART OF THE SAME ACT NOW, which is the whole of the fourth
+ * parameter. Giving somebody the console and giving them the job they were
+ * elected to were two saves on two controls, with a read-only executive in
+ * between them for as long as it took to notice the second one, and a reason
+ * typed twice. Passing a baseline here makes it one prompted step and one
+ * all-or-nothing act: every refusal below, closure and ceiling alike, is checked
+ * against the post-baseline state BEFORE the level is written, so a refusal
+ * leaves the row exactly as it was.
+ *
+ * `baselineId` IS A CLIENT-CONTROLLED POST FIELD, like every other parameter of
+ * every exported function in a 'use server' module: this file's own doors are the
+ * endpoints, the picker on /permissions is not. That is why nothing below trusts
+ * the capabilities the client thinks the baseline holds: they are read from the
+ * row. It is also why the refusals are here rather than in the editor, which only
+ * decides what is DRAWN.
  */
 export async function setConsoleAccess(
   playerId: string,
   access: ExecRole,
   reason: string,
+  baselineId: string | null = null,
 ): Promise<ActionResult<void>> {
-  return runAction(() => setConsoleAccessImpl(playerId, access, reason));
+  return runAction(() => setConsoleAccessImpl(playerId, access, reason, baselineId));
 }
 
 /**
@@ -628,7 +661,12 @@ async function writeConsoleLevel(
   revalidatePath(`/players/${playerId}`);
 }
 
-async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReason: string) {
+async function setConsoleAccessImpl(
+  playerId: string,
+  access: ExecRole,
+  rawReason: string,
+  baselineId: string | null,
+) {
   // THE CAPABILITY THAT REPLACED isAdminActor(). An admin passes it by level,
   // holding every capability there is; anybody else holds it because somebody
   // granted it to them by name.
@@ -747,6 +785,46 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   const clearFirst = clears && hasComposition && !live(was);
   const clearAfter = clears && hasComposition && live(was);
 
+  // THE BASELINE HALF, READ AND REFUSED HERE AND APPLIED AT THE VERY END.
+  //
+  // NOTHING HAS BEEN WRITTEN YET at this point, which is the only reason this
+  // block belongs here: a baseline that cannot be handed over must take the level
+  // change down with it rather than leave a half-applied member behind.
+  //
+  // A BASELINE ONLY MEANS SOMETHING AT THE TWO LIVE LEVELS. On `none` or `admin`
+  // no stored set is ever consulted, so writing one would be the dormant-delta
+  // hazard described just above: a composition on a row with nowhere to apply,
+  // invisible, ready to wake up the day somebody is promoted again.
+  //
+  // THE CAPABILITIES COME FROM THE ROW, NEVER FROM THE CALLER, which is the same
+  // rule applyPlayerPermissions states where it copies a baseline. It is also what
+  // makes a client-controlled `baselineId` safe to accept: the worst a hand-crafted
+  // POST can name is a baseline that already exists, bounded by the two checks
+  // below exactly as the picker's own choice would have been.
+  let baselineCapabilities: Capability[] | null = null;
+  if (baselineId !== null) {
+    if (!live(access)) {
+      throw new ExpectedError(
+        'A baseline only means something at executive or varsity trainer level, because no other level consults a stored set. Change the level without one.',
+      );
+    }
+    const { data: baselineRow } = await adminClient
+      .from('permission_baselines')
+      .select('id, name, capabilities')
+      .eq('id', baselineId)
+      .maybeSingle();
+    if (!baselineRow) throw new ExpectedError('That baseline no longer exists.');
+    baselineCapabilities = [
+      ...new Set((baselineRow.capabilities as string[]).filter(isCapability)),
+    ].sort();
+    // The ceiling, ahead of the level write rather than inside the apply that
+    // follows it. Closure is folded into `after` below and therefore covered by
+    // assertLevelClosure; this one is not about the actor's set at all, so it has
+    // to be asked separately or an admin handing over an out-of-ceiling baseline
+    // would get the level change and then the refusal.
+    assertWithinCeiling(baselineCapabilities);
+  }
+
   // ------------------------------------------------------------------
   // GRANT CLOSURE, ON A LEVEL
   // ------------------------------------------------------------------
@@ -772,9 +850,21 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // trainer one. Resolving the surviving composition at the old level would have
   // computed `after` with eight section pages the person is about to stop
   // holding, and check 2 below would then demand the actor hold them.
+  //
+  // A BASELINE IN THE SAME ACT IS PART OF THE POST-CHANGE STATE, and folding it in
+  // here is what makes the combined act all-or-nothing rather than two writes with
+  // a window between them. The apply at the bottom stores `role: 'custom'` with
+  // the baseline as its grants, so that is what is resolved: assertLevelClosure
+  // then refuses a closure violation BEFORE writeConsoleLevel, reusing the check
+  // that was already there rather than adding a second one that could disagree
+  // with the one the apply itself will make.
   const after = effectiveCapabilities(
     nextLevel,
-    clears ? UNRESTRICTED : permissionsOf(nextLevel, target),
+    baselineCapabilities !== null
+      ? resolvePermissions(nextLevel, 'custom', baselineCapabilities, [])
+      : clears
+        ? UNRESTRICTED
+        : permissionsOf(nextLevel, target),
   );
 
   // BOTH CHECKS, IN ONE CALL, AND THE FUNCTION LIVES IN console-access.ts.
@@ -794,7 +884,12 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // there forever with no way to reach it from the console. On that retry
   // clearFirst is true — the level is 'none' now, so the composition is already
   // inert — and the work finishes.
-  if (!levelChanged && !clearFirst && !clearAfter) return;
+  //
+  // A BASELINE IS A FOURTH REASON THERE IS SOMETHING TO DO, and the same argument
+  // applies to it: somebody already at the level they were asked for still needs
+  // the job applied, and the retry after a failed apply is exactly the case where
+  // `was` has caught up with `access` while the baseline has not.
+  if (!levelChanged && !clearFirst && !clearAfter && baselineId === null) return;
 
   async function clearComposition(levelAlreadyChanged: boolean) {
     // THE CALLER'S OWN REASON, forwarded. This clear is not a separate decision
@@ -869,6 +964,68 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   }
 
   if (clearAfter) await clearComposition(true);
+
+  // THE BASELINE, APPLIED LAST, AND THE ORDER IS THE WHOLE OF IT.
+  //
+  // AFTER THE LEVEL WRITE, NEVER BEFORE. applyPlayerPermissions resolves the
+  // target's level from its OWN fresh read, so its checks 3 and 4 would measure
+  // the level the person is about to stop having, and a baseline written first
+  // would put `permission_role = 'custom'` on a row with no level at all, which is
+  // the dormant-delta hazard documented above `clears`. Reversing these two lines
+  // is the one edit to this function that would be quietly wrong.
+  //
+  // CLEARING AND APPLYING CAN NEVER BOTH HAPPEN, so the two lines need no guard
+  // between them: `clearAfter` requires live(was), while a baseline requires
+  // live(access), and `clears` is false whenever both are live. A baseline
+  // therefore only ever arrives on a move whose `clearAfter` is false by
+  // construction.
+  //
+  // THREE AUDIT ROWS IN ONE CASE, AND IT IS CORRECT. A member with no level but a
+  // stale composition takes clearFirst, so the act logs
+  // player_permissions_changed, player_updated, player_permissions_changed, all
+  // carrying the same typed reason. Read as a bug it looks like a double write; it
+  // is the clear, the level and the job, which is what the admin asked for.
+  //
+  // THROUGH THE GATED ACTION, NOT applyPlayerPermissions, and that is deliberate.
+  // The licence for reaching the ungated helper is stated on clearComposition
+  // above: the clear IS INERT WHENEVER IT RUNS. A baseline is the opposite kind of
+  // act, because it WIDENS somebody. So it goes through the door that asks for
+  // `permissions.write`, and setPlayerPermissions' five checks run again against
+  // this actor's own set.
+  //
+  // THE WINDOW BETWEEN THE TWO WRITES IS NARROW, AND WHAT IS LEFT OF IT IS
+  // RECOVERABLE. Folding the baseline into `after` removes every closure and
+  // ceiling cause of a failure on this line, so what remains is a baseline deleted
+  // between the pre-flight and here, a database error, and the hand-crafted POST
+  // named below. All three arrive as the message below, on the screen the admin is
+  // still looking at, with the level already where they put it: picking the
+  // baseline again finishes the job and there is nothing to undo.
+  //
+  // WITH NO SECOND PRE-FLIGHT OF THAT CAPABILITY HERE, which has a consequence
+  // worth stating rather than hiding: a non-admin holder of
+  // players.consoleaccess.write who hand-crafts a POST carrying a baselineId gets
+  // the level change plus this message, because nobody below admin can hold
+  // `permissions.write`. Accepted, not prevented: a refusal here would be a
+  // second enforcement point, which means a CAPABILITY_GATES entry and the
+  // enforcement-point count that goes with it, and this is better than the silent
+  // two-step it replaces either way. The picker is never drawn for them.
+  if (baselineCapabilities !== null) {
+    // AN `!result.ok` CHECK AND NOT A try/catch: setPlayerPermissions returns an
+    // ActionResult and does not throw, unlike the applyPlayerPermissions call
+    // inside clearComposition above.
+    const result = await setPlayerPermissions(playerId, {
+      role: 'custom',
+      grants: baselineCapabilities,
+      revokes: [],
+      baselineId,
+      reason,
+    });
+    if (!result.ok) {
+      throw new ExpectedError(
+        `Console access changed, but the baseline could not be applied: ${result.error}`,
+      );
+    }
+  }
 
   // writeConsoleLevel revalidates /players and the member's own page; neither is
   // this one, and an executive moved to trainer never reaches

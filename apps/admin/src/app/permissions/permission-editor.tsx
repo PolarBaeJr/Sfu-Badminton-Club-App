@@ -307,14 +307,24 @@ function roleOptions(
         : PERMISSION_ROLE_LABELS[role],
     })),
     // THE CLUB'S OWN BASELINES AND THE FOUR BUILT-INS, in the order the manager
-    // lists them. A built-in is not prefixed "Baseline —": to the person picking
-    // it, Finance is still Finance, and the fact that it is now a row rather than
-    // a constant is not something the picker should make them think about.
+    // lists them.
     ...baselines.map((baseline) => ({
       value: `${BASELINE_PREFIX}${baseline.id}`,
-      label: baseline.builtinRole !== null ? baseline.name : `Baseline — ${baseline.name}`,
+      label: baselineLabel(baseline),
     })),
   ];
+}
+
+// A built-in is not prefixed "Baseline —": to the person picking it, Finance is
+// still Finance, and the fact that it is now a row rather than a constant is not
+// something the picker should make them think about.
+//
+// ITS OWN FUNCTION because the console-access control offers the same list under
+// a different VALUE: a bare id going to setConsoleAccess, rather than a prefixed
+// one going to changeRole. Two lists of the same baselines labelled two ways on
+// the same screen is a difference nobody chose.
+function baselineLabel(baseline: CustomBaseline): string {
+  return baseline.builtinRole !== null ? baseline.name : `Baseline — ${baseline.name}`;
 }
 
 const CONFIRM_PHRASE = 'HAND OUT PERMISSIONS';
@@ -464,6 +474,18 @@ export function PermissionEditor({
   );
   const [accessReason, setAccessReason] = useState('');
   /**
+   * THE JOB TO APPLY IN THE SAME ACT AS THE LEVEL, as a raw baseline id, with ''
+   * for "no baseline for now". Not prefixed like the "Starts from" select's
+   * values: this one is a parameter of setConsoleAccess rather than something
+   * changeRole has to tell apart from a role name.
+   *
+   * DELIBERATELY NOT IN THE PENDING QUEUE. The queue is capability edits, saved
+   * together under one reason; a console level is saved on its own the moment
+   * Apply is pressed, and the baseline is now part of that one act rather than a
+   * fifth thing to remember on the way to the Save bar.
+   */
+  const [accessBaseline, setAccessBaseline] = useState<string>('');
+  /**
    * ONE REASON FOR THE WHOLE QUEUE, and it belongs beside the Save button
    * rather than on each person. A batch is one decision an officer made — "the
    * new socials team starts this week" — and asking for it five times would get
@@ -500,6 +522,23 @@ export function PermissionEditor({
   const baselineNames = useMemo(
     () => new Map(baselines.map((baseline) => [baseline.id, baseline.name])),
     [baselines],
+  );
+  // WHICH BASELINES THIS VIEWER COULD HAND OVER: closure, shown as a shorter list
+  // rather than as a failed Apply, the same way the baseline manager shows it as a
+  // missing Edit button.
+  //
+  // THIS IS THE FOURTH TRANSCRIPTION OF THAT RULE (baseline-manager.tsx,
+  // lib/permission-batch.ts and lib/console-access-offer.ts are the others) and it
+  // is deliberate: the client is never the boundary, so these are four places that
+  // refuse EARLY and none of them is the refusal. The real check is checks 1 to 5
+  // of setPlayerPermissions in lib/actions/permissions.ts, against the actor's set
+  // resolved from their own row, which is the only copy that can be relied on.
+  const offerableBaselines = useMemo(
+    () =>
+      baselines.filter((baseline) =>
+        baseline.capabilities.every((capability) => held.has(capability)),
+      ),
+    [baselines, held],
   );
   const everyone = useMemo(() => [...holders, ...others], [holders, others]);
   const selected = everyone.find((p) => p.id === selectedId) ?? null;
@@ -592,6 +631,7 @@ export function PermissionEditor({
     setPickedId(person.id);
     setAccess(accessForLevel(person.level));
     setAccessReason('');
+    setAccessBaseline('');
     setCapabilitySearch('');
     setMode('all');
     setExpanded([]);
@@ -1076,12 +1116,21 @@ export function PermissionEditor({
     if (!selected) return;
     startSavingAccess(async () => {
       try {
-        const res = await setConsoleAccess(selected.id, access, accessReason);
+        // A STALE ID IS SENT AS NOTHING. The picker is only drawn at the two live
+        // levels, but choosing a baseline and then switching the level back to
+        // `none` leaves the id in state, and that pair is refused server-side with
+        // a sentence about a control this admin can no longer see.
+        const sendBaseline =
+          accessBaseline !== '' && (access === 'executive' || access === 'trainer')
+            ? accessBaseline
+            : null;
+        const res = await setConsoleAccess(selected.id, access, accessReason, sendBaseline);
         if (!res.ok) { toast(res.error, 'error'); return; }
+        const appliedBaseline = sendBaseline === null ? null : baselineNames.get(sendBaseline);
         toast(
           access === 'none'
             ? `${selected.name} no longer has console access`
-            : `${selected.name} — ${EXEC_ROLE_OPTIONS.find((o) => o.value === access)?.label}`,
+            : `${selected.name} — ${EXEC_ROLE_OPTIONS.find((o) => o.value === access)?.label}${appliedBaseline ? ` · ${appliedBaseline}` : ''}`,
           'success',
         );
         setPending((prev) => dropPending(prev, [selected.id]));
@@ -1091,6 +1140,9 @@ export function PermissionEditor({
         // in solo the panel stays put, so without this the box would still hold
         // the text typed for the change that just landed.
         setAccessReason('');
+        // The same argument, and with more force: the job has been applied, so a
+        // picker still naming it would invite applying it twice.
+        setAccessBaseline('');
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to change console access', 'error');
@@ -1576,6 +1628,59 @@ export function PermissionEditor({
                                     ? 'Admins hold every capability by level, so anything set below stops being consulted and is cleared.'
                                     : 'Their level changes. Anything set below still applies — the resolver does not look at levels.'}
                             </p>
+                            {/* THE JOB, IN THE SAME ACT AS THE LEVEL. Giving
+                                somebody the console and giving them the job they
+                                were elected to were two saves with a read-only
+                                executive in between them, and setConsoleAccess now
+                                takes both: one prompted step, one reason, and one
+                                all-or-nothing act, refused whole if the baseline
+                                cannot be handed over.
+
+                                DRAWN ONLY WHERE IT WOULD MEAN SOMETHING. The
+                                viewer must hold `permissions.write`, or the write
+                                behind this select is one the server will refuse;
+                                the level must be one of the two that consult a
+                                stored set; and the person must have nothing stored
+                                already, because a baseline REPLACES a composition
+                                and this control is too small to be the place
+                                somebody's hand-picked set is discarded. Editing an
+                                existing one stays in the tree below. */}
+                            {canCompose
+                              && (access === 'executive' || access === 'trainer')
+                              && selected.role === null
+                              && selected.grants.length === 0
+                              && selected.revokes.length === 0 && (
+                              <>
+                                <Select
+                                  label="Baseline (optional)"
+                                  options={[
+                                    { value: '', label: 'No baseline for now' },
+                                    ...offerableBaselines.map((baseline) => ({
+                                      value: baseline.id,
+                                      label: baselineLabel(baseline),
+                                    })),
+                                  ]}
+                                  value={accessBaseline}
+                                  onChange={(e) => setAccessBaseline(e.target.value)}
+                                  className="max-w-sm"
+                                />
+                                <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
+                                  Optional, and worth reading as a default rather than as an extra: a
+                                  new executive with no baseline holds their level&rsquo;s read-only
+                                  floor and has nothing to do inside it until somebody comes back and
+                                  gives them a job.
+                                </p>
+                                {offerableBaselines.length < baselines.length && (
+                                  <p className="text-[11px] text-[var(--mute)]">
+                                    {baselines.length - offerableBaselines.length}{' '}
+                                    {baselines.length - offerableBaselines.length === 1
+                                      ? 'baseline holds'
+                                      : 'baselines hold'}{' '}
+                                    more than you do and cannot be handed out by you.
+                                  </p>
+                                )}
+                              </>
+                            )}
                             <Textarea
                               label="Reason (required)"
                               value={accessReason}

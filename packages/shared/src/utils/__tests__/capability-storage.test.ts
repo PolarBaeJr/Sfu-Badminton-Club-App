@@ -53,9 +53,14 @@ describe('the migrations and the vocabulary', () => {
   // `tournaments.draw.entrycounts.read`, reaching 118, 00105 adds
   // `players.consoleaccess.write`, reaching 119, 00223 adds
   // `announcements.discord.write`, reaching 120, and 00232 adds
-  // `players.discordlink.write`, reaching 121. THE LIVE LIST IS THE LAST ONE,
-  // and only the last one.
-  const vocabularySql = migration('00232_');
+  // `players.discordlink.write`, reaching 121, and 00238 adds the data API's
+  // three `accounts.apikey.*` keys, reaching 124. THE LIVE LIST IS THE LAST
+  // ONE, and only the last one.
+  const vocabularySql = migration('00238_');
+  // 00232, under a content name because the comment two links down promised the
+  // relative names would stop growing and this is the first addition since. It
+  // was `vocabularySql` until 00238 landed.
+  const discordLinkVocabularySql = migration('00232_');
   // THE LINK THAT USED TO BE LIVE, pinned under a name taken from what it
   // CONTAINS rather than from how far back it sits. The `prev`/`prior` names
   // below say only how many hops from the front a file is, so every addition
@@ -142,7 +147,7 @@ describe('the migrations and the vocabulary', () => {
 
   // ...nor in 00105, which adds `players.consoleaccess.write`. Every hop from
   // the last RENAME (00088) to the live list is asserted individually: 00088 ->
-  // 00089 -> 00097 -> 00098 -> 00105 -> 00223 -> 00232. Adding a migration means
+  // 00089 -> 00097 -> 00098 -> 00105 -> 00223 -> 00232 -> 00238. Adding one means
   // adding a hop here, which is the price of the chain staying a chain.
   it('removes nothing in 00223 either, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(prevVocabularySql, 'players_permission_vocabulary_check');
@@ -150,26 +155,50 @@ describe('the migrations and the vocabulary', () => {
     expect(before.filter((capability) => !after.has(capability))).toEqual([]);
   });
 
-  // ...nor in 00232, the newest link and the live list. This is the hop the
-  // pointer move would otherwise have swallowed: `vocabularySql` now means
-  // 00232, so without a name of its own 00223 would have stopped being compared
-  // to anything, and the test above would have compared 00105 straight to 00232
-  // while its name still said 00223.
+  // ...nor in 00232. This is the hop the pointer move would otherwise have
+  // swallowed: `vocabularySql` used to mean 00232, so without a name of its own
+  // 00223 would have stopped being compared to anything, and the test above
+  // would have compared 00105 straight past it while its name still said 00223.
   it('removes nothing in 00232 either, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(discordSayVocabularySql, 'players_permission_vocabulary_check');
+    const after = new Set(arrayLiteralAfter(discordLinkVocabularySql, 'players_permission_vocabulary_check'));
+    expect(before.filter((capability) => !after.has(capability))).toEqual([]);
+  });
+
+  // ...nor in 00238, the newest link and the live list.
+  it('removes nothing in 00238 either, which is why it needs no rewrite', () => {
+    const before = arrayLiteralAfter(discordLinkVocabularySql, 'players_permission_vocabulary_check');
     const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
     expect(before.filter((capability) => !after.has(capability))).toEqual([]);
   });
 
-  // THE ONE STRING THIS MIGRATION IS FOR, named rather than left to the
-  // set-equality above. A vocabulary CHECK that does not admit it means the
-  // database refuses every row granting it, which is a capability the editor
-  // offers and the save rejects. This one is not in EDITOR_OFFERABLE, so the
-  // refusal would land on an explicit per-person grant rather than on a tick
-  // box, which makes it quieter rather than less real.
-  it('admits players.discordlink.write, which is what 00232 is for', () => {
-    const before = new Set(arrayLiteralAfter(discordSayVocabularySql, 'players_permission_vocabulary_check'));
+  // THE THREE STRINGS THIS MIGRATION IS FOR, named rather than left to the
+  // set-equality above. A vocabulary CHECK that does not admit them means the
+  // database refuses every row naming one.
+  //
+  // ALL THREE ARE ADMIN-ONLY, in no baseline and in EDITOR_OFFERABLE nowhere,
+  // so no save the console can produce would ever have hit that refusal. They
+  // are admitted anyway to keep this list the code's list exactly, which is
+  // what the set-equality above pins and what stops a second, weaker copy of
+  // the assignability rule existing in SQL. `permissions.write` has stood here
+  // on the same footing since 00087.
+  it('admits the data API key capabilities, which is what 00238 is for', () => {
+    const before = new Set(arrayLiteralAfter(discordLinkVocabularySql, 'players_permission_vocabulary_check'));
     const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
+    for (const capability of [
+      'accounts.apikey.read',
+      'accounts.apikey.mint.write',
+      'accounts.apikey.revoke.write',
+    ]) {
+      expect(before.has(capability), `${capability} was already in 00232`).toBe(false);
+      expect(after.has(capability), `${capability} is missing from 00238`).toBe(true);
+    }
+  });
+
+  // The hop this one replaced, kept rather than overwritten.
+  it('admits players.discordlink.write, which is what 00232 was for', () => {
+    const before = new Set(arrayLiteralAfter(discordSayVocabularySql, 'players_permission_vocabulary_check'));
+    const after = new Set(arrayLiteralAfter(discordLinkVocabularySql, 'players_permission_vocabulary_check'));
     expect(before.has('players.discordlink.write')).toBe(false);
     expect(after.has('players.discordlink.write')).toBe(true);
   });
@@ -241,10 +270,10 @@ describe('the migrations and the vocabulary', () => {
     // missing function rather than on a real disagreement, and following the
     // vocabulary assertion back to 00093 would check a list that is no longer
     // the live one. The vocabulary pointer moves with every migration that
-    // re-adds the CHECK (00097, 00098, 00105, 00223, now 00232) while the guard
-    // pointer stays where the function is defined.
+    // re-adds the CHECK (00097, 00098, 00105, 00223, 00232, now 00238) while the
+    // guard pointer stays where the function is defined.
     const baselineGuardSql = migration('00093_');
-    const baselineSql = migration('00232_');
+    const baselineSql = migration('00238_');
 
     it('pins the same vocabulary the players columns pin', () => {
       const stored = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');

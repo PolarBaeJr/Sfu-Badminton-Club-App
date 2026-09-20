@@ -521,9 +521,19 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
     // reading it. Asserted against the constant rather than the literal 12, so
     // the next narrowing does not need a fixture edit to stay honest.
     expect((before.effective as string[]).length).toBe(EXEC_BASELINE.length);
-    // ...and this edit GAINS them a write, which is the shape almost every
-    // permissions edit has now: the baseline is reads, the role brings the work.
-    expect((before.effective as string[])).not.toContain('fees.expenses.add.write');
+    // ...AND THE EXPENSE WRITE IS ALREADY IN IT, which inverted on 2026-09-19.
+    // This line asserted the opposite: the baseline was reads and the Finance
+    // role brought the one write, so the edit below was a gain. Then the owner
+    // asked that every officer be able to file an expense ("also give everyone
+    // permission to write expense into the fee table") and the write went into
+    // the FLOOR, which is what "everyone" means. Finance's other two
+    // capabilities were already there, so the role now adds nothing to anybody
+    // and this edit changes the ROW without changing the PERSON.
+    //
+    // Kept, pointing the other way, rather than deleted: it is the assertion
+    // that the audit row's resolved set reflects the floor as it actually
+    // stands, and it is what fails if the write is ever quietly taken back out.
+    expect((before.effective as string[])).toContain('fees.expenses.add.write');
     expect(after.permission_role).toBe('finance');
     expect(after.permission_grants).toEqual(['players.page']);
     // THE FLOOR IS IN THE AUDIT ROW, and it should be: the log records what

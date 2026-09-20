@@ -465,6 +465,123 @@ describe('closure decides which levels a holder may hand out', () => {
 });
 
 // ---------------------------------------------------------------------------
+// THE LEVEL AND THE JOB, IN ONE ACT
+// ---------------------------------------------------------------------------
+// setConsoleAccess takes a baseline now, because giving somebody the console and
+// giving them the job they were elected to were two saves with a read-only
+// executive in between them. What is pinned here is that it is ONE act: every
+// refusal is measured against the post-baseline state and leaves the row and the
+// log untouched, which is what makes the combined version safe to offer.
+
+describe('a baseline handed over in the same act as the level', () => {
+  const SOCIALS = '5eed0060-0000-4000-8000-000000000201';
+  const NO_SUCH_BASELINE = '5eed0060-0000-4000-8000-0000000002ff';
+  /** Inside EDITOR_OFFERABLE, and carrying its own area page so it resolves. */
+  const SOCIALS_CAPS: Cap[] = ['announcements.create.write', 'announcements.page'];
+
+  beforeEach(() => {
+    store.db.permission_baselines = [
+      { id: SOCIALS, name: 'Socials', capabilities: [...SOCIALS_CAPS], builtin_role: null },
+    ];
+  });
+
+  // THE ADMIN IS THE ACTOR AND IT IS NOT A WEAKER TEST THAN IT LOOKS. The apply
+  // half goes through setPlayerPermissions, which asks for `permissions.write`:
+  // outside EDITOR_OFFERABLE, so nobody below admin can hold it. FULL_HOLDER is
+  // the widest legitimate holder and still cannot finish this act; the case below
+  // pins that, because it is the accepted consequence rather than a defect.
+  it('writes the level and the job, with one audit row each', async () => {
+    const res = await setConsoleAccess(MEMBER, 'executive', WHY, SOCIALS);
+    expect(res.ok, errorOf(res)).toBe(true);
+
+    const row = rowFor(MEMBER);
+    expect(row.is_exec).toBe(true);
+    expect(row.permission_role).toBe('custom');
+    expect(row.permission_grants).toEqual(SOCIALS_CAPS);
+    expect(row.permission_baseline_id).toBe(SOCIALS);
+
+    // TWO ROWS AND NO NEW ACTION TYPE. One act, audited as the level change it is
+    // and the permissions change it is, both carrying the one reason typed for it.
+    expect(levelAudits()).toHaveLength(1);
+    expect(permissionAudits()).toHaveLength(1);
+    expect(levelAudits()[0]!.reason).toBe(WHY);
+    expect(permissionAudits()[0]!.reason).toBe(WHY);
+  });
+
+  // ALL OR NOTHING, AND THIS IS THE ASSERTION THAT BUYS IT. The baseline is folded
+  // into `after` before assertLevelClosure runs, so a baseline the actor could not
+  // have granted takes the LEVEL down with it, rather than landing the promotion
+  // and then refusing the job, which is the half-applied member the old two-step
+  // could produce.
+  //
+  // THE LEVEL ASKED FOR IS `trainer` ON PURPOSE: this holder is already refused
+  // `executive` by the exec floor, so an executive-plus-baseline case would pass
+  // for the wrong reason and stay green with the `after` change reverted.
+  it('refuses a holder a baseline they do not hold, and writes nothing at all', async () => {
+    store.actor = rowFor(SMALL_HOLDER);
+    const res = await setConsoleAccess(MEMBER, 'trainer', WHY, SOCIALS);
+
+    expect(res.ok).toBe(false);
+    expect(errorOf(res)).toMatch(/^That would give them /);
+    expect(rowFor(MEMBER).is_trainer).toBe(false);
+    expect(rowFor(MEMBER).role).toBe('player');
+    expect(rowFor(MEMBER).permission_role).toBe(null);
+    expect(audits()).toHaveLength(0);
+  });
+
+  // THE ACCEPTED HALF-APPLY, STATED AS A TEST. A non-admin holder of the console
+  // capability cannot reach the apply, because `permissions.write` is not
+  // offerable to anybody, so the level lands and the job does not, and they are
+  // told so. That is strictly better than the silent two-step it replaces, and the
+  // picker is never drawn for them; it is pinned here so a later reader does not
+  // discover it from a support conversation.
+  it('tells the widest non-admin holder the baseline could not be applied', async () => {
+    store.actor = rowFor(FULL_HOLDER);
+    const res = await setConsoleAccess(MEMBER, 'executive', WHY, SOCIALS);
+
+    expect(res.ok).toBe(false);
+    expect(errorOf(res)).toMatch(/^Console access changed, but the baseline could not be applied/);
+    expect(rowFor(MEMBER).is_exec).toBe(true);
+    expect(rowFor(MEMBER).permission_role).toBe(null);
+    expect(levelAudits()).toHaveLength(1);
+    expect(permissionAudits()).toHaveLength(0);
+  });
+
+  it('refuses a baseline that no longer exists, before the level write', async () => {
+    const res = await setConsoleAccess(MEMBER, 'executive', WHY, NO_SUCH_BASELINE);
+    expect(res.ok).toBe(false);
+    expect(errorOf(res)).toBe('That baseline no longer exists.');
+    expect(rowFor(MEMBER).is_exec).toBe(false);
+    expect(audits()).toHaveLength(0);
+  });
+
+  // A BASELINE ON A LEVEL THAT CONSULTS NO STORED SET is the dormant-delta hazard
+  // one level up: a composition nobody can see, on a row where it grants nothing,
+  // waiting for the day the person is promoted again.
+  it('refuses a baseline on a level that would never consult it', async () => {
+    const res = await setConsoleAccess(TARGET_EXEC, 'none', WHY, SOCIALS);
+    expect(res.ok).toBe(false);
+    expect(errorOf(res)).toMatch(/only means something at executive or varsity trainer/);
+    expect(rowFor(TARGET_EXEC).is_exec).toBe(true);
+    expect(audits()).toHaveLength(0);
+  });
+
+  // THE OTHER TWENTY-TWO CALL SITES. The parameter is defaulted, and a three-
+  // argument call has to go on doing exactly what it did, including the roster
+  // dialog on /players, which does not query permission_baselines at all.
+  it('leaves a three-argument call exactly as it was', async () => {
+    const res = await setConsoleAccess(MEMBER, 'executive', WHY);
+    expect(res.ok, errorOf(res)).toBe(true);
+    expect(rowFor(MEMBER).is_exec).toBe(true);
+    expect(rowFor(MEMBER).permission_role).toBe(null);
+    expect(rowFor(MEMBER).permission_grants).toEqual([]);
+    expect(rowFor(MEMBER).permission_baseline_id).toBe(null);
+    expect(levelAudits()).toHaveLength(1);
+    expect(permissionAudits()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // THE AUDIT ROW THE SECOND WRITER LEAVES
 // ---------------------------------------------------------------------------
 // The non-admin path does not go through updatePlayer — the hard floor stops it
