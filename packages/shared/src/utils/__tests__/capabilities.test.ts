@@ -617,6 +617,77 @@ describe('ROLE_DEFAULTS', () => {
     }
   });
 
+  // THE INVARIANT AS A PROPERTY OF THE RESOLVER, not of the three lists.
+  //
+  // The two tests above check the baselines and the roles, which are sets
+  // somebody wrote down. This checks the thing that is ASSEMBLED: for every
+  // level, every role and every single capability granted on top, the resolver's
+  // output satisfies the page rule. It holds by construction, because pruning is
+  // the last step of resolvePermissions and it runs over the merged set.
+  //
+  // WHY IT IS WORTH A TEST WHEN IT CANNOT CURRENTLY FAIL. Because it is the
+  // assertion that a save-time reachability REFUSAL would be dead code. The
+  // resolver's output is the only thing setPlayerPermissions checks the actor
+  // against, so "reject a composition whose sub-capability has no page" can
+  // never fire there: by the time that set exists, the violating member has
+  // already been pruned out of it. Anyone who later adds such a check should
+  // find this test explaining why it will never throw. Anyone who moves the
+  // pruning step, or drops it, breaks this instead of shipping a silent hole.
+  //
+  // ONE CAPABILITY AT A TIME RATHER THAN EVERY SUBSET. A grant cannot mask
+  // another grant's missing page: pruning tests each member against the final
+  // set independently, so the single-grant case is the whole of the behaviour
+  // and 2^124 subsets would prove nothing further.
+  it('prunes to a page-complete set for every level, role and grant', () => {
+    for (const level of ['exec', 'trainer'] as const) {
+      for (const role of PERMISSION_ROLES) {
+        for (const grant of CAPABILITIES) {
+          const resolved = effectiveCapabilities(
+            level,
+            resolvePermissions(level, role, [grant], []),
+          );
+          for (const capability of resolved) {
+            const page = pageOf(capability);
+            if (capability === page) continue;
+            expect(
+              resolved.has(page),
+              `${level}/${role} +${grant} resolved to ${capability} without ${page}`,
+            ).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  // THE FLOOR IS WHAT MAKES A WRITE-ONLY GRANT LEGAL, and this is the case that
+  // a naive reachability check gets wrong. Two live members hold matches writes
+  // with no `matches.page` anywhere in their grants array: the page comes from
+  // the exec floor. Checking the ARRAY would refuse to save them; checking the
+  // RESOLVED SET is the only reading under which they are the ordinary case
+  // they are.
+  it('keeps a write granted without its page when the floor supplies the page', () => {
+    const grants: Capability[] = [
+      'matches.convert.write',
+      'matches.create.write',
+      'matches.void.write',
+    ];
+    const resolved = effectiveCapabilities(
+      'exec',
+      resolvePermissions('exec', 'custom', grants, []),
+    );
+    for (const grant of grants) expect(resolved.has(grant), grant).toBe(true);
+    // The premise: the page is the FLOOR's, named in no grant.
+    expect(new Set<Capability>(EXEC_BASELINE).has('matches.page')).toBe(true);
+    expect(grants).not.toContain('matches.page');
+
+    // And the cascade still bites: revoking the floor's page takes the writes.
+    const closed = effectiveCapabilities(
+      'exec',
+      resolvePermissions('exec', 'custom', grants, ['matches.page']),
+    );
+    for (const grant of grants) expect(closed.has(grant), grant).toBe(false);
+  });
+
   // THE DERIVATION, WRITTEN DOWN. The four roles are the old SECTION_PORTFOLIO
   // map — finance owned /fees, tournaments owned /tournaments /matches
   // /sessions, internal owned /players /seasons, external owned /legal
