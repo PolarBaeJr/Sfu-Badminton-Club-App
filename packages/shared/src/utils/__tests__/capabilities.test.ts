@@ -20,7 +20,7 @@ import {
 } from '../access-level';
 import { CAPABILITY_GATES, ENFORCEMENT_POINTS } from '../capability-gates';
 
-// 121 capabilities is 121 promises that something is enforced. This suite is
+// 124 capabilities is 124 promises that something is enforced. This suite is
 // what keeps the vocabulary closed: it pins the list literally, refuses the
 // shapes that would let one capability quietly imply another, and asserts that
 // every one of them names a place in the app that reads it.
@@ -49,9 +49,27 @@ describe('the capability vocabulary', () => {
   // Not a new area either, for the reason the entry above is not: a `discord`
   // area would need a `discord.page`, and this panel lives on the member page
   // behind that page's key.
-  it('is exactly 121 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(121);
-    expect(new Set(CAPABILITIES).size).toBe(121);
+  //
+  // 121 BECAME 124 with the read-only external data API's keys, which are
+  // minted and revoked from a panel on /accounts: `accounts.apikey.read`,
+  // `accounts.apikey.mint.write` and `accounts.apikey.revoke.write`. Three
+  // rather than one because seeing which keys exist, handing one out and taking
+  // one back are three different questions, and the club wants somebody who may
+  // do the first and not the second.
+  //
+  // THE NAMES ARE LONGER THAN THE ONES ASKED FOR because of the test two blocks
+  // below: every capability ends in `page`, `read` or `write`, so the requested
+  // `accounts.apikey.mint` and `accounts.apikey.delete` are not strings this
+  // vocabulary can hold. The verb moved one segment left, which is what
+  // `fees.expenses.add.write` and `fees.expenses.remove.write` already do, and
+  // `revoke` is the act rather than a synonym for delete: the row is kept with
+  // `revoked_at` set so the audit trail survives the key.
+  //
+  // Not a new area, for the reason the two entries above are not: the panel
+  // lives on /accounts and sits behind that page's key.
+  it('is exactly 124 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(124);
+    expect(new Set(CAPABILITIES).size).toBe(124);
   });
 
   it('has 16 areas, every one of them used', () => {
@@ -211,16 +229,23 @@ describe('CAPABILITY_GATES', () => {
   // by that alone on which Discord account a member holds. The reason they
   // merged is argued in that entry's `merged` prose, which this file's next
   // test requires.
-  it('names 142 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 142 BECAME 145 with the data API's three key capabilities, and this is the
+  // dullest movement in the list: three new capabilities, one site each, no
+  // `also` and nothing merged. The read is the key-list fetch on /accounts and
+  // the two writes are the mint and the revoke, each a function of its own.
+  // Handing a key out and taking one back are opposite acts and the club may
+  // well want one person doing each, so there was never a merge to argue.
+  it('names 145 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(142);
-    expect(new Set(sites).size).toBe(142);
-    expect(ENFORCEMENT_POINTS).toBe(142);
+    expect(sites.length).toBe(145);
+    expect(new Set(sites).size).toBe(145);
+    expect(ENFORCEMENT_POINTS).toBe(145);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -274,11 +299,12 @@ describe('baselines', () => {
   // diff somebody has to read. Eight pages and four reads; the only two reads
   // that are not an area's page are the expense ledger and the two tournament
   // reads that were never anything but reads.
-  it('gives an exec exactly 12 capabilities, all of them reads, pinned one by one', () => {
+  it('gives an exec exactly 13 capabilities, one of them a write, pinned one by one', () => {
     expect([...EXEC_BASELINE]).toEqual([
       'announcements.page',
       'fees.page',
       'fees.expenses.read',
+      'fees.expenses.add.write',
       'legal.page',
       'matches.page',
       'players.page',
@@ -289,10 +315,16 @@ describe('baselines', () => {
       'tournaments.draw.entrycounts.read',
       'tournaments.draw.waivers.read',
     ]);
-    expect(EXEC_BASELINE.length).toBe(12);
+    expect(EXEC_BASELINE.length).toBe(13);
     // The property the list exists to have, asserted as a property rather than
-    // read off the list above: NOT ONE WRITE.
-    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([]);
+    // read off the list above. It said NOT ONE WRITE until 2026-09-19, when the
+    // owner asked for the expense write to reach every officer. Naming the
+    // single exception keeps the assertion as strong as the old one: a second
+    // write appearing in the floor is still a failing test, not a silent
+    // widening that reaches the whole club by level.
+    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([
+      'fees.expenses.add.write',
+    ]);
   });
 
   // THE TRANSCRIPTION, UNMOVED. This literal list is the one that used to be
@@ -311,6 +343,12 @@ describe('baselines', () => {
   // WHAT THE ANTI-WIDENING CLAIM STILL SAYS: nobody gained anything by being an
   // exec. EXEC_BASELINE — the read-only floor, which is what the owner's "exec
   // baseline shouldn't really be too much" was about — is untouched at twelve.
+  //
+  // 74 STAYED 74 WHEN THE DATA API LANDED. The four `accounts.*` strings exist
+  // in CAPABILITIES so the key panel can gate on them, and an admin holds them
+  // by level, but they are not in this list: a minted key is a bearer
+  // credential that outlives the grant, so minting stays admin-only. The
+  // reasoning is in access-level.ts beside the omission.
   it('leaves exactly 74 capabilities assignable, pinned one by one', () => {
     expect([...EXEC_ASSIGNABLE]).toEqual([
       'players.page',
@@ -579,6 +617,77 @@ describe('ROLE_DEFAULTS', () => {
     }
   });
 
+  // THE INVARIANT AS A PROPERTY OF THE RESOLVER, not of the three lists.
+  //
+  // The two tests above check the baselines and the roles, which are sets
+  // somebody wrote down. This checks the thing that is ASSEMBLED: for every
+  // level, every role and every single capability granted on top, the resolver's
+  // output satisfies the page rule. It holds by construction, because pruning is
+  // the last step of resolvePermissions and it runs over the merged set.
+  //
+  // WHY IT IS WORTH A TEST WHEN IT CANNOT CURRENTLY FAIL. Because it is the
+  // assertion that a save-time reachability REFUSAL would be dead code. The
+  // resolver's output is the only thing setPlayerPermissions checks the actor
+  // against, so "reject a composition whose sub-capability has no page" can
+  // never fire there: by the time that set exists, the violating member has
+  // already been pruned out of it. Anyone who later adds such a check should
+  // find this test explaining why it will never throw. Anyone who moves the
+  // pruning step, or drops it, breaks this instead of shipping a silent hole.
+  //
+  // ONE CAPABILITY AT A TIME RATHER THAN EVERY SUBSET. A grant cannot mask
+  // another grant's missing page: pruning tests each member against the final
+  // set independently, so the single-grant case is the whole of the behaviour
+  // and 2^124 subsets would prove nothing further.
+  it('prunes to a page-complete set for every level, role and grant', () => {
+    for (const level of ['exec', 'trainer'] as const) {
+      for (const role of PERMISSION_ROLES) {
+        for (const grant of CAPABILITIES) {
+          const resolved = effectiveCapabilities(
+            level,
+            resolvePermissions(level, role, [grant], []),
+          );
+          for (const capability of resolved) {
+            const page = pageOf(capability);
+            if (capability === page) continue;
+            expect(
+              resolved.has(page),
+              `${level}/${role} +${grant} resolved to ${capability} without ${page}`,
+            ).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  // THE FLOOR IS WHAT MAKES A WRITE-ONLY GRANT LEGAL, and this is the case that
+  // a naive reachability check gets wrong. Two live members hold matches writes
+  // with no `matches.page` anywhere in their grants array: the page comes from
+  // the exec floor. Checking the ARRAY would refuse to save them; checking the
+  // RESOLVED SET is the only reading under which they are the ordinary case
+  // they are.
+  it('keeps a write granted without its page when the floor supplies the page', () => {
+    const grants: Capability[] = [
+      'matches.convert.write',
+      'matches.create.write',
+      'matches.void.write',
+    ];
+    const resolved = effectiveCapabilities(
+      'exec',
+      resolvePermissions('exec', 'custom', grants, []),
+    );
+    for (const grant of grants) expect(resolved.has(grant), grant).toBe(true);
+    // The premise: the page is the FLOOR's, named in no grant.
+    expect(new Set<Capability>(EXEC_BASELINE).has('matches.page')).toBe(true);
+    expect(grants).not.toContain('matches.page');
+
+    // And the cascade still bites: revoking the floor's page takes the writes.
+    const closed = effectiveCapabilities(
+      'exec',
+      resolvePermissions('exec', 'custom', grants, ['matches.page']),
+    );
+    for (const grant of grants) expect(closed.has(grant), grant).toBe(false);
+  });
+
   // THE DERIVATION, WRITTEN DOWN. The four roles are the old SECTION_PORTFOLIO
   // map — finance owned /fees, tournaments owned /tournaments /matches
   // /sessions, internal owned /players /seasons, external owned /legal
@@ -639,7 +748,13 @@ describe('ROLE_DEFAULTS', () => {
     // 61 writes an exec actually lost, plus `announcements.discord.write`,
     // which no exec ever had — it is outside the floor for the same arithmetic
     // reason without ever having been taken away from anyone.
-    expect(lost.length).toBe(62);
+    // 62 BECAME 61 on 2026-09-19: `fees.expenses.add.write` went back INTO the
+    // floor at the owner's request, so it is no longer a write anybody lost.
+    // It is still in ROLE_DEFAULTS.finance, so the loop below is unaffected;
+    // the count is the only thing that moves. The data API's four `accounts.*`
+    // strings never entered this arithmetic at all: they are not assignable,
+    // so they are not in EXEC_ASSIGNABLE and cannot be something an exec lost.
+    expect(lost.length).toBe(61);
     const fromRoles = new Set(PERMISSION_ROLES.flatMap((role) => [...ROLE_DEFAULTS[role]]));
     for (const capability of lost) {
       expect(fromRoles.has(capability), `${capability} is in no VP job`).toBe(true);
@@ -747,6 +862,7 @@ describe('EDITOR_OFFERABLE', () => {
   // THE EXEC TRANSCRIPTION IS UNCHANGED. The whole risk of splitting the
   // constants is that a widening lands in the wrong one and reaches every exec
   // in the club without anybody choosing it.
+  //
   it('leaves the assignable set exactly as it was', () => {
     expect(EXEC_ASSIGNABLE.length).toBe(74);
     const offerableOnly = [...EDITOR_OFFERABLE].filter(
@@ -763,8 +879,11 @@ describe('EDITOR_OFFERABLE', () => {
   // AND THE SECOND CONSTANT, GUARDED FROM THE OTHER DIRECTION. Now that there is
   // a floor as well as a ceiling, the mistake to catch is a widening landing in
   // the FLOOR — where it would reach every officer in the club by level, with
-  // nobody choosing it. The floor holds no write at all, so the cheapest way to
-  // say that is to say it again here, at the constant that bounds handing out.
+  // nobody choosing it. The floor holds exactly one write, chosen deliberately
+  // on 2026-09-19 and named below, so the cheapest way to say that is to say it
+  // again here, at the constant that bounds handing out. A widening that lands
+  // in the floor still fails this: the loop refuses anything NOT already
+  // assignable, and the pin refuses a second write however it got there.
   it('never lets the widening reach the exec baseline', () => {
     const floor = new Set<Capability>(EXEC_BASELINE);
     const assignable = new Set<Capability>(EXEC_ASSIGNABLE);
@@ -772,7 +891,9 @@ describe('EDITOR_OFFERABLE', () => {
       if (assignable.has(capability)) continue;
       expect(floor.has(capability), `${capability} reached the exec baseline`).toBe(false);
     }
-    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([]);
+    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([
+      'fees.expenses.add.write',
+    ]);
   });
 
   // Named one by one so that opening any of them is a diff somebody has to
@@ -799,6 +920,14 @@ describe('EDITOR_OFFERABLE', () => {
       'audit.page',
       'ratings.page',
       'accounts.page',
+      // THE DATA API'S KEYS ARE WITHHELD HERE TOO, and they are the reason the
+      // page above stayed withheld. Minting is not console work: the key it
+      // produces reads the club's data from outside every gate in this file,
+      // with no session, no audit row per read, and no expiry short of a
+      // revoke. Handing that out is an admin act.
+      'accounts.apikey.read',
+      'accounts.apikey.mint.write',
+      'accounts.apikey.revoke.write',
       'platform.page',
       'platform.settings.write',
       'fees.clubfees.markpaid.write',
@@ -829,11 +958,16 @@ describe('EDITOR_OFFERABLE', () => {
 // ---------------------------------------------------------------------------
 
 describe('permits', () => {
-  it('makes an admin a superuser BY LEVEL, holding all 121', () => {
+  // 121 BECAME 124 with the data API's three key capabilities. This number
+  // tracks CAPABILITIES.length by construction (admin is a superuser BY LEVEL,
+  // so every capability added is automatically theirs), and it is written as a
+  // literal anyway, because a count derived from the list it is checking would
+  // pass for an empty list.
+  it('makes an admin a superuser BY LEVEL, holding all 124', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(121);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(124);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {
@@ -1070,7 +1204,13 @@ describe('resolvePermissions', () => {
     // NOT empty any more: closing /fees closes /fees, and leaves the seven other
     // sections the floor opens exactly as they were.
     expect(RESTRICTED(resolved).filter((c) => c.startsWith('fees.'))).toEqual([]);
-    expect(RESTRICTED(resolved)).toEqual(less(['fees.page', 'fees.expenses.read']));
+    // Three now, not two: the floor's own `fees.expenses.add.write` goes with
+    // the page as well, which is the whole claim of this test. Closing /fees
+    // has to close the write the FLOOR gave, not only the reads, or a revoked
+    // section would still accept a filing.
+    expect(RESTRICTED(resolved)).toEqual(
+      less(['fees.page', 'fees.expenses.read', 'fees.expenses.add.write']),
+    );
   });
 
   it('is pure — the same inputs give the same answer and nothing is mutated', () => {

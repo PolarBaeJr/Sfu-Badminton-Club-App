@@ -61,12 +61,27 @@ describe('settledOutcome', () => {
 describe('summarizeSeason', () => {
   it('splits the record by discipline and adds up to the total', () => {
     const r = summarizeSeason([
-      match({ win_flag: true, match_type: 'singles' }),
-      match({ win_flag: false, match_type: 'singles' }),
-      match({ win_flag: true, match_type: 'doubles' }),
+      match({ played_at: '2026-09-10T02:00:00Z', win_flag: true, match_type: 'singles' }),
+      match({ played_at: '2026-09-11T02:00:00Z', win_flag: false, match_type: 'singles' }),
+      match({ played_at: '2026-09-12T02:00:00Z', win_flag: true, match_type: 'doubles' }),
     ]);
-    expect(r.singles).toEqual({ wins: 1, losses: 1 });
-    expect(r.doubles).toEqual({ wins: 1, losses: 0 });
+    // Every match here is 21-17, so each discipline's pointDiff is +4 a match.
+    // Singles ends on the loss, hence the negative currentStreak next to a
+    // bestWinStreak of one: the two answer different questions.
+    expect(r.singles).toEqual({
+      wins: 1,
+      losses: 1,
+      pointDiff: 8,
+      currentStreak: -1,
+      bestWinStreak: 1,
+    });
+    expect(r.doubles).toEqual({
+      wins: 1,
+      losses: 0,
+      pointDiff: 4,
+      currentStreak: 1,
+      bestWinStreak: 1,
+    });
     expect(r.wins).toBe(2);
     expect(r.losses).toBe(1);
     expect(r.singles.wins + r.doubles.wins).toBe(r.wins);
@@ -123,11 +138,39 @@ describe('summarizeSeason', () => {
     expect(r.bestWinStreak).toBe(0);
   });
 
+  it('keeps each discipline its own streak, so a doubles loss never breaks a singles run', () => {
+    const r = summarizeSeason([
+      match({ played_at: '2026-09-01T02:00:00Z', match_type: 'singles', win_flag: true }),
+      match({ played_at: '2026-09-08T02:00:00Z', match_type: 'doubles', win_flag: false }),
+      match({ played_at: '2026-09-15T02:00:00Z', match_type: 'singles', win_flag: true }),
+    ]);
+    // Interleaved in time, so the overall streak is W L W and tops out at one.
+    // The singles run is still two, because a doubles result is not a singles
+    // result, and the two tiles on /my-stats claim to be about one discipline
+    // each.
+    expect(r.bestWinStreak).toBe(1);
+    expect(r.singles.bestWinStreak).toBe(2);
+    expect(r.singles.currentStreak).toBe(2);
+    expect(r.doubles.currentStreak).toBe(-1);
+    expect(r.doubles.bestWinStreak).toBe(0);
+  });
+
+  it('starts a discipline streak over rather than counting from zero after a loss', () => {
+    const r = summarizeSeason([
+      match({ played_at: '2026-09-01T02:00:00Z', match_type: 'singles', win_flag: false }),
+      match({ played_at: '2026-09-08T02:00:00Z', match_type: 'singles', win_flag: true }),
+    ]);
+    // The win has to reset the sign, not add one to -1 and report zero, which
+    // getStreakDisplay would render as no streak at all.
+    expect(r.singles.currentStreak).toBe(1);
+  });
+
   it('returns an empty record rather than throwing on no rows', () => {
     const r = summarizeSeason([]);
+    const empty = { wins: 0, losses: 0, pointDiff: 0, currentStreak: 0, bestWinStreak: 0 };
     expect(r).toEqual({
-      singles: { wins: 0, losses: 0 },
-      doubles: { wins: 0, losses: 0 },
+      singles: empty,
+      doubles: empty,
       wins: 0,
       losses: 0,
       played: 0,

@@ -3,6 +3,7 @@ import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-s
 import { accessLevelFor, atLeast, canAccess, permissionsOf, permits, sectionLabelFor } from '@/lib/permissions';
 import { AvatarChip, Badge, Card, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import {
+  ACTIVE_CHALLENGE_STATUSES,
   CLUB_TIMEZONE,
   EVENT_TYPE_LABELS,
   formatRelativeTime,
@@ -214,12 +215,14 @@ export default async function DashboardPage({
   //
   // EVERYTHING IN THE NARROWED LANDING RENDERS ONLY WHEN THIS IS FALSE,
   // deliberately. An unrestricted exec holds fees.expenses.read — it is one of
-  // the twelve reads still in EXEC_BASELINE — so a tile gated on the capability
-  // alone would appear for every exec and admin in the club. There is no
-  // capability that separates the Finance role from an ordinary exec inside the
-  // fees area (ROLE_DEFAULTS.finance is those two reads plus the one write the
-  // baseline gave up), so the second condition can only be "no panel of the
-  // ordinary dashboard is yours". It is a pure function of
+  // the thirteen capabilities in EXEC_BASELINE — so a tile gated on the
+  // capability alone would appear for every exec and admin in the club. There
+  // is no capability that separates the Finance role from an ordinary exec
+  // inside the fees area, and since 2026-09-19 there is LESS than none:
+  // ROLE_DEFAULTS.finance is now exactly the floor's three fees capabilities,
+  // the add write included, so the Finance role adds nothing an exec did not
+  // already have. That makes the second condition the only one available: "no
+  // panel of the ordinary dashboard is yours". It is a pure function of
   // level and permissions, decided before the first query, and no unrestricted
   // level can reach it.
   //
@@ -400,7 +403,7 @@ export default async function DashboardPage({
           : supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active'))
       : noCount,
     showChallenges
-      ? supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted'])
+      ? supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', [...ACTIVE_CHALLENGE_STATUSES])
       : noCount,
 
     // ---- the pending-signup rows -----------------------------------------

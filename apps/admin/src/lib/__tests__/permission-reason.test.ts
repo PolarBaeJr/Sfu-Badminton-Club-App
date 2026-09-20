@@ -296,4 +296,32 @@ describe('setConsoleAccess carries its reason into the composition it clears', (
     expect(rowFor(EXEC_A).permission_role).toBe('finance');
     expect(audits()).toHaveLength(0);
   });
+
+  // THE OTHER HALF OF THE SAME ACT, and the same claim. A baseline handed over
+  // with the level is applied through setPlayerPermissions too, so the row it
+  // writes must explain itself with the words the admin typed once for the whole
+  // act rather than with a permissions row explaining nothing beside a level row
+  // explaining everything.
+  it('carries the same words onto the permissions row a BASELINE writes', async () => {
+    store.db.permission_baselines = [
+      {
+        id: '5eed0060-0000-4000-8000-000000000201',
+        name: 'Socials',
+        capabilities: ['announcements.create.write', 'announcements.page'],
+        builtin_role: null,
+      },
+    ];
+
+    const res = await setConsoleAccess(
+      EXEC_A,
+      'trainer',
+      'Moving to varsity and running socials',
+      '5eed0060-0000-4000-8000-000000000201',
+    );
+
+    expect(res.ok).toBe(true);
+    expect(rowFor(EXEC_A).permission_baseline_id).toBe('5eed0060-0000-4000-8000-000000000201');
+    expect(permissionAudits()).toHaveLength(1);
+    expect(permissionAudits()[0]!.reason).toBe('Moving to varsity and running socials');
+  });
 });

@@ -55,6 +55,7 @@ import {
   PERMISSION_ROLES,
   PERMISSION_ROLE_LABELS,
   ROLE_DEFAULTS,
+  UNRESTRICTED,
   type AccessLevel,
   type Area,
   type Capability,
@@ -206,17 +207,6 @@ const SEGMENTS: readonly { value: Segment; label: string; activeClass: string }[
   { value: 'on', label: 'On', activeClass: 'bg-[var(--win)] text-[var(--bg)]' },
 ];
 
-// UNDER A HAND-PICKED SET THERE IS NOTHING TO INHERIT. `custom`'s base is empty
-// by construction, so a row with no delta is not "whatever the job gives them" —
-// it is off, and Inherit is a segment that could never light. Left live it would
-// be the one control on this screen that does not do what it says: press it and
-// Off would fill instead. This is not a corner either — asCustom() seeds
-// `custom` on the first press for anybody sitting on their level default, which
-// is everybody on day one.
-const HAND_PICKED_SEGMENTS = SEGMENTS.map((segment) =>
-  segment.value === 'inherit' ? { ...segment, disabled: true } : segment,
-);
-
 // page has no badge. The design called for purple and the console has no purple
 // token — and adding one is the single thing ds-bundle/guidelines/admin-console
 // forbids outright ("No new colour values", "Badge — success/warning/danger/
@@ -307,14 +297,24 @@ function roleOptions(
         : PERMISSION_ROLE_LABELS[role],
     })),
     // THE CLUB'S OWN BASELINES AND THE FOUR BUILT-INS, in the order the manager
-    // lists them. A built-in is not prefixed "Baseline —": to the person picking
-    // it, Finance is still Finance, and the fact that it is now a row rather than
-    // a constant is not something the picker should make them think about.
+    // lists them.
     ...baselines.map((baseline) => ({
       value: `${BASELINE_PREFIX}${baseline.id}`,
-      label: baseline.builtinRole !== null ? baseline.name : `Baseline — ${baseline.name}`,
+      label: baselineLabel(baseline),
     })),
   ];
+}
+
+// A built-in is not prefixed "Baseline —": to the person picking it, Finance is
+// still Finance, and the fact that it is now a row rather than a constant is not
+// something the picker should make them think about.
+//
+// ITS OWN FUNCTION because the console-access control offers the same list under
+// a different VALUE: a bare id going to setConsoleAccess, rather than a prefixed
+// one going to changeRole. Two lists of the same baselines labelled two ways on
+// the same screen is a difference nobody chose.
+function baselineLabel(baseline: CustomBaseline): string {
+  return baseline.builtinRole !== null ? baseline.name : `Baseline — ${baseline.name}`;
 }
 
 const CONFIRM_PHRASE = 'HAND OUT PERMISSIONS';
@@ -464,6 +464,18 @@ export function PermissionEditor({
   );
   const [accessReason, setAccessReason] = useState('');
   /**
+   * THE JOB TO APPLY IN THE SAME ACT AS THE LEVEL, as a raw baseline id, with ''
+   * for "no baseline for now". Not prefixed like the "Starts from" select's
+   * values: this one is a parameter of setConsoleAccess rather than something
+   * changeRole has to tell apart from a role name.
+   *
+   * DELIBERATELY NOT IN THE PENDING QUEUE. The queue is capability edits, saved
+   * together under one reason; a console level is saved on its own the moment
+   * Apply is pressed, and the baseline is now part of that one act rather than a
+   * fifth thing to remember on the way to the Save bar.
+   */
+  const [accessBaseline, setAccessBaseline] = useState<string>('');
+  /**
    * ONE REASON FOR THE WHOLE QUEUE, and it belongs beside the Save button
    * rather than on each person. A batch is one decision an officer made — "the
    * new socials team starts this week" — and asking for it five times would get
@@ -500,6 +512,23 @@ export function PermissionEditor({
   const baselineNames = useMemo(
     () => new Map(baselines.map((baseline) => [baseline.id, baseline.name])),
     [baselines],
+  );
+  // WHICH BASELINES THIS VIEWER COULD HAND OVER: closure, shown as a shorter list
+  // rather than as a failed Apply, the same way the baseline manager shows it as a
+  // missing Edit button.
+  //
+  // THIS IS THE FOURTH TRANSCRIPTION OF THAT RULE (baseline-manager.tsx,
+  // lib/permission-batch.ts and lib/console-access-offer.ts are the others) and it
+  // is deliberate: the client is never the boundary, so these are four places that
+  // refuse EARLY and none of them is the refusal. The real check is checks 1 to 5
+  // of setPlayerPermissions in lib/actions/permissions.ts, against the actor's set
+  // resolved from their own row, which is the only copy that can be relied on.
+  const offerableBaselines = useMemo(
+    () =>
+      baselines.filter((baseline) =>
+        baseline.capabilities.every((capability) => held.has(capability)),
+      ),
+    [baselines, held],
   );
   const everyone = useMemo(() => [...holders, ...others], [holders, others]);
   const selected = everyone.find((p) => p.id === selectedId) ?? null;
@@ -592,12 +621,34 @@ export function PermissionEditor({
     setPickedId(person.id);
     setAccess(accessForLevel(person.level));
     setAccessReason('');
+    setAccessBaseline('');
     setCapabilitySearch('');
     setMode('all');
     setExpanded([]);
   }
 
-  const base: readonly Capability[] = role === null ? [] : ROLE_DEFAULTS[role];
+  // WHAT SITS UNDER THE TICKS. Not `ROLE_DEFAULTS[role]`: a named job's defaults
+  // are what the job ADDS, and underneath them every officer stands on their
+  // level's floor. `custom`'s defaults are empty, so reading the base off the
+  // role alone answered "no" for every capability a hand-picked officer holds by
+  // being an exec — which drew those rows Off while the summary two inches away
+  // listed them as held, and left the Off segment unable to store the revoke
+  // that would actually close the section.
+  //
+  // `UNRESTRICTED` is the floor by definition: it is the permissions value of
+  // somebody with nothing stored, so resolving it gives exactly what the level
+  // hands out before any role, grant or revoke. Reading it through
+  // effectiveCapabilities rather than off a list of our own is the same rule the
+  // rest of this component follows — one resolver, so the screen cannot drift
+  // from the gates.
+  const inheritedBase: ReadonlySet<Capability> = useMemo(
+    () =>
+      new Set<Capability>([
+        ...(selectedLevel === null ? [] : effectiveCapabilities(selectedLevel, UNRESTRICTED)),
+        ...(role === null ? [] : ROLE_DEFAULTS[role]),
+      ]),
+    [selectedLevel, role],
+  );
 
   // The panel that answers the question the stored row no longer answers by
   // itself. Computed by the SAME effectiveCapabilities the gates call, on the
@@ -614,23 +665,20 @@ export function PermissionEditor({
     if (role === null) return effective.has(capability) ? 'level' : 'off';
     if (grants.includes(capability)) return 'granted';
     if (revokes.includes(capability)) return 'revoked';
-    return base.includes(capability) ? 'role' : 'off';
+    return inheritedBase.has(capability) ? 'role' : 'off';
   }
 
-  // WHICH SEGMENT IS FILLED. `off` is the one cell state that reads differently
-  // depending on what is behind the row: under a level default or a named job it
-  // means "nothing stored, and the base does not give it", which is Inherit;
-  // under a hand-picked set there is no base at all, so it means Off. See
-  // HAND_PICKED_SEGMENTS.
-  const segmentOf = (state: CellState): Segment =>
-    state === 'off' && role === 'custom' ? 'off' : SEGMENT_OF[state];
+  // WHICH SEGMENT IS FILLED. `off` means the same thing on every row now:
+  // nothing stored, and nothing underneath gives it. A hand-picked set used to
+  // be special-cased to fill Off instead of Inherit, on the premise that there
+  // was no base under it to inherit FROM. The level floor is that base, so the
+  // premise is gone and so is the branch.
+  const segmentOf = (state: CellState): Segment => SEGMENT_OF[state];
 
   // WHAT INHERITING WOULD GIVE THEM — the answer the `Inherit` segment stands
-  // for, said out loud beside it. Off a level default that is the level's own
-  // baseline (nothing is stored, so `effective` IS the baseline); under a role
-  // it is what the role gives.
-  const inherits = (capability: Capability) =>
-    role === null ? effective.has(capability) : base.includes(capability);
+  // for, said out loud beside it. The level floor plus whatever the job adds,
+  // which off a level default is just the floor.
+  const inherits = (capability: Capability) => inheritedBase.has(capability);
 
   // DIFFERS FROM SAVED, measured in what the person can DO rather than in what
   // the row stores. Switching somebody from their level default to a hand-picked
@@ -685,7 +733,12 @@ export function PermissionEditor({
   // with nothing on screen saying that picking one was the way in.
   function setCell(capability: Capability, target: Segment) {
     const next = asCustom();
-    const inBase = (ROLE_DEFAULTS[next.role] as readonly Capability[]).includes(capability);
+    // The floor counts as base here for the same reason it counts in stateOf:
+    // pressing Off on a section an exec holds by level has to STORE the revoke,
+    // or the control does nothing. The resolver applies revokes after the floor
+    // and cascades the area shut, so this is the delta it already expects — the
+    // editor was simply never able to express it.
+    const inBase = inheritedBase.has(capability);
     const nextGrants = next.grants.filter((c) => c !== capability);
     const nextRevokes = next.revokes.filter((c) => c !== capability);
     if (target === 'on' && !inBase) nextGrants.push(capability);
@@ -794,7 +847,11 @@ export function PermissionEditor({
   // screen.
   const losing = [...before].filter((capability) => !effective.has(capability));
 
-  const orphanRevokes = revokes.filter((capability) => !base.includes(capability));
+  // A revoke is orphaned when nothing underneath it is giving the capability
+  // away — so it is measured against the floor as well as the job. Revoking a
+  // section an exec holds by level is the whole point of the Off segment and
+  // must not be reported as a leftover.
+  const orphanRevokes = revokes.filter((capability) => !inheritedBase.has(capability));
 
   const query = capabilitySearch.trim().toLowerCase();
   // A search or a mode OPENS everything it matched. Making somebody expand three
@@ -1076,12 +1133,21 @@ export function PermissionEditor({
     if (!selected) return;
     startSavingAccess(async () => {
       try {
-        const res = await setConsoleAccess(selected.id, access, accessReason);
+        // A STALE ID IS SENT AS NOTHING. The picker is only drawn at the two live
+        // levels, but choosing a baseline and then switching the level back to
+        // `none` leaves the id in state, and that pair is refused server-side with
+        // a sentence about a control this admin can no longer see.
+        const sendBaseline =
+          accessBaseline !== '' && (access === 'executive' || access === 'trainer')
+            ? accessBaseline
+            : null;
+        const res = await setConsoleAccess(selected.id, access, accessReason, sendBaseline);
         if (!res.ok) { toast(res.error, 'error'); return; }
+        const appliedBaseline = sendBaseline === null ? null : baselineNames.get(sendBaseline);
         toast(
           access === 'none'
             ? `${selected.name} no longer has console access`
-            : `${selected.name} — ${EXEC_ROLE_OPTIONS.find((o) => o.value === access)?.label}`,
+            : `${selected.name} — ${EXEC_ROLE_OPTIONS.find((o) => o.value === access)?.label}${appliedBaseline ? ` · ${appliedBaseline}` : ''}`,
           'success',
         );
         setPending((prev) => dropPending(prev, [selected.id]));
@@ -1091,6 +1157,9 @@ export function PermissionEditor({
         // in solo the panel stays put, so without this the box would still hold
         // the text typed for the change that just landed.
         setAccessReason('');
+        // The same argument, and with more force: the job has been applied, so a
+        // picker still naming it would invite applying it twice.
+        setAccessBaseline('');
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to change console access', 'error');
@@ -1102,7 +1171,7 @@ export function PermissionEditor({
     <Segmented
       label={leaf.label}
       value={segmentOf(state)}
-      options={role === 'custom' ? HAND_PICKED_SEGMENTS : SEGMENTS}
+      options={SEGMENTS}
       disabled={!composable || !held.has(leaf.capability)}
       onChange={(target) => onCellClick(leaf.capability, target)}
     />
@@ -1576,6 +1645,59 @@ export function PermissionEditor({
                                     ? 'Admins hold every capability by level, so anything set below stops being consulted and is cleared.'
                                     : 'Their level changes. Anything set below still applies — the resolver does not look at levels.'}
                             </p>
+                            {/* THE JOB, IN THE SAME ACT AS THE LEVEL. Giving
+                                somebody the console and giving them the job they
+                                were elected to were two saves with a read-only
+                                executive in between them, and setConsoleAccess now
+                                takes both: one prompted step, one reason, and one
+                                all-or-nothing act, refused whole if the baseline
+                                cannot be handed over.
+
+                                DRAWN ONLY WHERE IT WOULD MEAN SOMETHING. The
+                                viewer must hold `permissions.write`, or the write
+                                behind this select is one the server will refuse;
+                                the level must be one of the two that consult a
+                                stored set; and the person must have nothing stored
+                                already, because a baseline REPLACES a composition
+                                and this control is too small to be the place
+                                somebody's hand-picked set is discarded. Editing an
+                                existing one stays in the tree below. */}
+                            {canCompose
+                              && (access === 'executive' || access === 'trainer')
+                              && selected.role === null
+                              && selected.grants.length === 0
+                              && selected.revokes.length === 0 && (
+                              <>
+                                <Select
+                                  label="Baseline (optional)"
+                                  options={[
+                                    { value: '', label: 'No baseline for now' },
+                                    ...offerableBaselines.map((baseline) => ({
+                                      value: baseline.id,
+                                      label: baselineLabel(baseline),
+                                    })),
+                                  ]}
+                                  value={accessBaseline}
+                                  onChange={(e) => setAccessBaseline(e.target.value)}
+                                  className="max-w-sm"
+                                />
+                                <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
+                                  Optional, and worth reading as a default rather than as an extra: a
+                                  new executive with no baseline holds their level&rsquo;s read-only
+                                  floor and has nothing to do inside it until somebody comes back and
+                                  gives them a job.
+                                </p>
+                                {offerableBaselines.length < baselines.length && (
+                                  <p className="text-[11px] text-[var(--mute)]">
+                                    {baselines.length - offerableBaselines.length}{' '}
+                                    {baselines.length - offerableBaselines.length === 1
+                                      ? 'baseline holds'
+                                      : 'baselines hold'}{' '}
+                                    more than you do and cannot be handed out by you.
+                                  </p>
+                                )}
+                              </>
+                            )}
                             <Textarea
                               label="Reason (required)"
                               value={accessReason}

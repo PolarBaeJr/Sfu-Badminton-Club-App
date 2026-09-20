@@ -420,11 +420,34 @@ export const CAPABILITIES = [
   'permissions.write',
 
   // ---- audit / ratings / accounts ----------------------------------------
-  // Sections whose whole content is their page. Each is its own area so that
-  // opening one to somebody does not open the others.
+  // Sections whose whole content is their page, which was true of all three
+  // until /accounts grew the data API's key panel below. Each is its own area
+  // so that opening one to somebody does not open the others.
   'audit.page',
   'ratings.page',
   'accounts.page',
+
+  // THE READ-ONLY EXTERNAL DATA API'S KEYS, minted and revoked from a panel on
+  // /accounts. Three capabilities and not one: seeing which keys exist, minting
+  // a new one and taking an existing one back are three different questions,
+  // and the club's case is somebody who may see the list and hand nothing out.
+  //
+  // THE NAMES ARE NOT THE ONES THAT WERE ASKED FOR, and the reason is the
+  // grammar rather than a preference. The request was `accounts.apikey.mint`
+  // and `accounts.apikey.delete`; every capability in this list ends in `page`,
+  // `read` or `write`, pinned by a test, so a bare `.mint` is not a string this
+  // vocabulary can hold at all. The verb moves one segment left and the mode
+  // goes on the end. Depth 4 is allowed, and `fees.expenses.add.write` /
+  // `fees.expenses.remove.write` is the precedent for splitting creating a
+  // thing from taking it away.
+  //
+  // REVOKE RATHER THAN DELETE, and that is the act rather than a softer word
+  // for it. Revoking a key sets `revoked_at` and KEEPS THE ROW, so the audit
+  // trail of who minted what, and when it stopped working, outlives the key.
+  // A capability called `delete` would name something this panel does not do.
+  'accounts.apikey.read',
+  'accounts.apikey.mint.write',
+  'accounts.apikey.revoke.write',
 
   // ---- platform ----------------------------------------------------------
   // THE ONE AREA WITH NO ROUTE OF ITS OWN. Platform settings are a form drawn
@@ -512,8 +535,13 @@ export const TRAINER_BASELINE: readonly Capability[] = [
 ];
 
 export const EXEC_BASELINE: readonly Capability[] = [
-  // READ EVERYTHING, WRITE NOTHING — the club owner's instruction, and a
+  // READ EVERYTHING, WRITE ONE THING — the club owner's instruction, and a
   // deliberate reversal of what this list used to be.
+  //
+  // It read WRITE NOTHING until 2026-09-19, when the owner asked for the
+  // expense write to reach every officer. One write, named and argued for at
+  // the line itself. The rule this list still encodes is that authority is
+  // GIVEN rather than inherited; filing a receipt is the single exception.
   //
   // It was a TRANSCRIPTION: 73 capabilities copied from what `is_exec` could do
   // the day before the permission system shipped, so that deploying it took
@@ -538,6 +566,25 @@ export const EXEC_BASELINE: readonly Capability[] = [
   'announcements.page',
   'fees.page',
   'fees.expenses.read',
+  // THE ONE WRITE, AND THE READ-EVERYTHING-WRITE-NOTHING PROPERTY IS NOW GONE.
+  // Owner's instruction, 2026-09-19: "also give everyone permission to write
+  // expense into the fee table". It is a deliberate reversal of the line above
+  // this list, so it is written down rather than absorbed: the floor is no
+  // longer a pure read set, and the test that asserted NOT ONE WRITE now
+  // asserts EXACTLY THIS ONE.
+  //
+  // Why the floor and not the eight club baselines. A baseline only reaches
+  // somebody an admin remembered to assign one to; "everyone" means every
+  // officer, assigned or not, the day they are handed console access. The floor
+  // is the only list with that reach.
+  //
+  // Why this write and no other. Filing an expense is the one money act that
+  // costs the club nothing to get wrong: an officer buys shuttles and records
+  // what they spent. Editing, settling and deleting an expense stay assigned
+  // (fees.expenses.update/reimburse/remove.write are in EXEC_ASSIGNABLE, not
+  // here), so the floor can add to the ledger and still cannot rewrite it.
+  // The read above it is what makes this reachable at all: page, ledger, form.
+  'fees.expenses.add.write',
   'legal.page',
   'matches.page',
   'players.page',
@@ -792,8 +839,14 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
 //     by capability-equivalence.test.ts deriving it from the call sites), and the
 //     club owner has said it must not grow: "exec baseline shouldn't really be
 //     too much". Growing it would hand every exec in the club something no exec
-//     ever had, with nobody choosing it. It does not move, in this change or any
-//     other, and nothing below touches it.
+//     ever had, with nobody choosing it. Nothing below touches it.
+//
+//     IT HAS MOVED TWICE SINCE THAT WAS WRITTEN, both times by a named request
+//     and never by this list: `announcements.discord.write` for VP External
+//     (00224), and `accounts.page` plus the data API's three key capabilities
+//     for the execs who are to run them. Each carries its own note at the entry
+//     itself, which is the form "it does not move" has taken: a growth is a
+//     diff with a reason beside it rather than a line nobody may add.
 //
 //     (It was called EXEC_BASELINE when this was written, and the rename is the
 //     whole of the second split: the baseline became a read-only FLOOR of twelve
@@ -897,8 +950,32 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
 //     — setting or moving money.
 //   * `challenges.*`, `walkovers.*`, `disputes.*`, `legal.documents.write`,
 //     `legal.waivertemplate.write`, `audit.page`, `ratings.page`,
-//     `accounts.page`, `platform.*` — admin work today, unasked for, and each
-//     its own small reviewable diff when it is wanted.
+//     `accounts.*`, `platform.*` — admin work today, unasked for, and each its
+//     own small reviewable diff when it is wanted.
+//
+//     `accounts.*` IS ON THAT LINE DELIBERATELY, INCLUDING THE DATA API'S KEYS,
+//     and the reason is not the page. Opening the page alone really would hand
+//     over nothing else: /accounts asks three capabilities INDEPENDENTLY, where
+//     `accounts.page` opens the route, `permissions.page` buys the officer data
+//     (names, emails, last sign-ins, the access audit trail) and
+//     `platform.page` buys the settings form, and the two withheld halves SKIP
+//     THEIR FETCHES rather than hiding rendered output. The page is safe.
+//
+//     THE KEY IS NOT. A minted data API key is a bearer credential that reads
+//     the club's player and rating data from outside every gate in this file:
+//     no session, no `permission_grants`, no audit row per read, and it keeps
+//     working until somebody revokes it. Every other capability an exec may be
+//     assigned acts INSIDE the console, where the actor is known and the act is
+//     logged. Minting is the one that manufactures access which outlives the
+//     grant: revoke the exec's console tomorrow and the key they minted still
+//     answers. That asymmetry, not the sensitivity of the data, is why the
+//     three key capabilities stay admin-only. The strings live in CAPABILITIES
+//     so the panel can gate on them and an admin still holds them by level;
+//     they are simply not assignable to anybody else.
+//
+//     IF THE CLUB WANTS AN EXEC RUNNING THE KEYS, that is a one-line change
+//     here plus the ceiling below, and it should be made as its own reviewable
+//     diff with the owner saying so, exactly the way this line promises.
 
 // WHAT AN EXEC MAY BE COMPOSED UP TO — the 73 capabilities EXEC_BASELINE used
 // to hold before it became read-only.
@@ -994,6 +1071,14 @@ export const EXEC_ASSIGNABLE: readonly Capability[] = [
   'fees.expenses.add.write',
   'legal.page',
   'legal.reacceptance.write',
+  // NO `accounts.*` HERE, AND THE OMISSION IS THE DECISION. The data API's
+  // three key capabilities exist in CAPABILITIES and an admin holds them by
+  // level, but they are not assignable, so no VP role, no custom baseline and
+  // no per-person grant can reach them. A key outlives the grant that minted
+  // it; the long version of that argument is with the withheld list above.
+  //
+  // Leaving them out is also what keeps the four VP roles partitioning this
+  // list exactly, which is the arithmetic the partition test asserts.
 ];
 
 export const EDITOR_OFFERABLE: readonly Capability[] = [

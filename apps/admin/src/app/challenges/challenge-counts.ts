@@ -1,4 +1,5 @@
 import type { createAdminClient } from '@/lib/supabase-server';
+import { ACTIVE_CHALLENGE_STATUSES } from '@badminton/shared';
 
 /** The page's client. Service role, untyped by design. */
 type Db = ReturnType<typeof createAdminClient>;
@@ -7,14 +8,15 @@ type Db = ReturnType<typeof createAdminClient>;
  * The statuses a challenge is still LIVE in: somebody is expected to do
  * something about it.
  *
- * ONE LIST, because this page had two copies of it and the dashboard has a
- * third. `apps/player/src/lib/challenge-rules.ts` exports the same three under
- * `ACTIVE_CHALLENGE_STATUSES` with a test pinning them, and that is the
- * canonical list; it cannot be imported across the app boundary, so this is a
- * deliberate second home for it rather than a fourth copy. Moving it into
- * `packages/shared` would leave exactly one, and is the right follow-up.
+ * ONE LIST, and it is now `packages/shared`'s. This page, the dashboard tile
+ * and the player's quota meter each used to carry their own copy; the shared
+ * module explains why they must not.
+ *
+ * Kept under the local name `ACTIVE_STATUSES` because `page.tsx` and this
+ * module's test already import it that way, and renaming call sites is not part
+ * of removing a duplicate.
  */
-export const ACTIVE_STATUSES = ['proposed', 'partially_confirmed', 'accepted'] as const;
+export const ACTIVE_STATUSES = ACTIVE_CHALLENGE_STATUSES;
 
 export type ChallengeCounts =
   /** A read failed. Distinct from zero, which is a claim about the club. */

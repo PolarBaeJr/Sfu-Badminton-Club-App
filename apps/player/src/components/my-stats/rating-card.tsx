@@ -87,8 +87,14 @@ export function RatingCard({ singles, doubles, priorSeasonName, seasonStart }: R
           {active.elo}
         </div>
         <div className="mono muted" style={{ fontSize: 12 }}>
-          {label.toUpperCase()} ELO · {getWinRate(active.wins, active.losses)} of{' '}
-          {active.wins + active.losses}
+          {/* "0% OF 0" IS NOT A RECORD, it is a rate with nothing under it, and
+              it read as a thrashing to anybody who had simply not played yet.
+              The clause is withheld until there is one match to compute it
+              from; the ELO and PROVISIONAL either side of it still say
+              everything the card knows about an unplayed season. */}
+          {label.toUpperCase()} ELO
+          {active.wins + active.losses > 0 &&
+            ` · ${getWinRate(active.wins, active.losses)} of ${active.wins + active.losses}`}
           {active.provisional && ' · PROVISIONAL'}
         </div>
       </div>
