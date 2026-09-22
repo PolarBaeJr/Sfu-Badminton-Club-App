@@ -17,8 +17,15 @@
 #                                             skip the cloud upload)
 #
 # Cron (daily 03:30):
-#   30 3 * * * ~/ssd/Deploy/badminton/backup/backup-db.sh \
-#       >> ~/ssd/db-backups/backup.log 2>&1
+#   30 3 * * * ~/ssd/backup/backup-db.sh >> ~/ssd/db-backups/backup.log 2>&1
+#
+# DEPLOYED AS A STANDALONE COPY, NOT RUN OUT OF A CHECKOUT. It used to run from
+# ~/ssd/Deploy/badminton/backup/, a stale checkout parked on the owner's list to
+# delete, which made "tidy up that old clone" and "stop backing up the database"
+# the same command with no warning in between. Nothing here reads a sibling file
+# (no sourcing, no dirname, every default is $HOME-based), so it runs anywhere.
+# Update the Pi with:
+#   scp backup/backup-db.sh pi:~/ssd/backup/backup-db.sh
 set -euo pipefail
 
 DB_CONTAINER="${DB_CONTAINER:-supabase-db}"
@@ -93,7 +100,16 @@ if [ -n "$RCLONE_REMOTE" ]; then
       # Unscoped it reaped ANY object older than the window — including one-off
       # archival snapshots parked in the same remote by hand (pre-rework-*.dump
       # is exactly that: a point-in-time copy worth keeping indefinitely).
+      # --drive-use-trash=false IS THE RETENTION. Without it this line was not a
+      # delete at all: rclone's Drive backend trashes by default, so every dump
+      # "expired" here sat in Google's trash for ~30 further days, and the
+      # privacy policy's promise that encrypted backups are kept 14 days and
+      # then deleted was false by about a month. Measured before the fix: 30
+      # dumps in the trash against 15 live. A member's deletion request is only
+      # honoured once the backups holding them age out, so the window in the
+      # policy has to be the real one.
       rclone delete "$RCLONE_REMOTE" --min-age "${RETAIN_DAYS}d" \
+        --drive-use-trash=false \
         --include 'badminton-*.dump' --retries 5 2>/dev/null || true
       date -u +%FT%TZ > "$UPLOAD_STATE"
     fi

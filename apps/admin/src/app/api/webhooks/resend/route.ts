@@ -8,13 +8,17 @@ import { createAdminClient } from '@/lib/supabase-server';
 //
 // WHY THIS EXISTS AT ALL. email_suppressions has been empty on production since
 // it was created. Its only writers were the one-click unsubscribe link — which
-// could not appear in any email, because EMAIL_UNSUBSCRIBE_SECRET was never set
-// — and the SES webhook beside this one, which fails closed because
-// SES_SNS_TOPIC_ARN is unset and SES was abandoned. So the club has been
-// sending to hard-bounced addresses and to people who pressed "report spam",
-// with nothing anywhere recording either. That is the exact behaviour that
-// destroys a sending domain's reputation, and the first symptom is usually that
-// legitimate mail stops arriving for everybody.
+// could not appear in any email, because EMAIL_UNSUBSCRIBE_SECRET was unset at
+// the time this was written; it is set on production now — and the SES webhook
+// beside this one, which fails closed because SES_SNS_TOPIC_ARN is unset and
+// SES was abandoned. So the club has been sending to hard-bounced addresses and
+// to people who pressed "report spam", with nothing anywhere recording either.
+// That is the exact behaviour that destroys a sending domain's reputation, and
+// the first symptom is usually that legitimate mail stops arriving for
+// everybody. On this club's setup that means sign-in codes.
+//
+// AND THIS ENDPOINT WAS ITSELF INERT ON PRODUCTION until 2026-09-22, for the
+// same class of reason: see the RESEND_WEBHOOK_SECRET branch in POST below.
 //
 // The SES route is deliberately left in place rather than replaced: it is inert
 // without its topic ARN, and deleting a working verifier for a provider that
@@ -98,12 +102,34 @@ function extractSuppressions(event: unknown): Suppression[] {
   return [];
 }
 
+// Once per process, not once per request: Svix retries a 503, so an endpoint
+// left unconfigured would otherwise file a burst of identical events for one
+// missing variable. Same idiom as the SES route's `arnFaultReported`.
+let secretFaultReported = false;
+
 export async function POST(request: Request) {
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   // 503, not 200. An unconfigured verifier cannot tell a real bounce from a
   // forged one, and answering OK would make Resend drop the event permanently —
   // the suppression would be lost rather than retried after the secret is set.
+  //
+  // But 503 alone is not enough, and this endpoint proved it on production:
+  // RESEND_WEBHOOK_SECRET was never set, every event got a 503, and after eight
+  // days of that Resend DISABLED the endpoint (2026-09-17). Failing closed
+  // quietly is not safe here, because the provider eventually stops retrying and
+  // then nothing arrives at all — strictly worse than the dropped event this
+  // 503 exists to prevent. The retry budget is finite, so the fault has to be
+  // visible while there is still time to spend it.
   if (!secret) {
+    if (!secretFaultReported) {
+      secretFaultReported = true;
+      Sentry.captureException(
+        new Error(
+          'RESEND_WEBHOOK_SECRET is not set — rejecting every Resend webhook, ' +
+            'and Resend will disable the endpoint if this persists',
+        ),
+      );
+    }
     return NextResponse.json({ error: 'Webhook not configured' }, { status: 503 });
   }
 
@@ -151,6 +177,7 @@ export async function POST(request: Request) {
     .filter((part) => part.startsWith('v1,'))
     .some((part) => signatureMatches(expected, part.slice(3)));
   if (!ok) {
+    console.warn('[resend-webhook] rejected: bad signature');
     return new NextResponse('Bad signature', { status: 401 });
   }
 
@@ -163,7 +190,12 @@ export async function POST(request: Request) {
     return new NextResponse('Bad JSON', { status: 400 });
   }
 
+  // One line per verified event, so a working endpoint is visible in the logs
+  // rather than indistinguishable from one nobody calls. The event type and a
+  // count only: never the addresses, which are member PII.
+  const eventType = String((event as { type?: unknown } | null)?.type ?? 'unknown');
   const suppressions = extractSuppressions(event);
+  console.log(`[resend-webhook] ${eventType} verified, ${suppressions.length} to suppress`);
   if (suppressions.length === 0) return new NextResponse('OK', { status: 200 });
 
   const db = createAdminClient();

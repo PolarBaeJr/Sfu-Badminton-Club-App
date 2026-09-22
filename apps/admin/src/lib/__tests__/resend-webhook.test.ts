@@ -77,6 +77,42 @@ describe('signature verification', () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 
+  it('reports an unset secret to Sentry, once, however many times Resend retries', async () => {
+    // THE 503 ABOVE IS NOT SUFFICIENT ON ITS OWN, and production proved it:
+    // the secret was never set, every event got a 503, and on 2026-09-17 Resend
+    // disabled the endpoint after eight days of failures. A provider's retry
+    // budget is finite, so failing closed silently converts "this event is
+    // safely queued" into "nothing will ever arrive again" without anyone
+    // seeing it. The fault has to reach Sentry while the budget still exists.
+    //
+    // Once, not once per request: Svix retries a 503, so reporting per request
+    // turns one missing variable into an alert storm. The route holds a
+    // module-level flag, which is why this test needs a fresh module registry
+    // rather than reusing the POST imported at the top of the file.
+    vi.resetModules();
+    vi.stubEnv('RESEND_WEBHOOK_SECRET', '');
+    const Sentry = await import('@sentry/nextjs');
+    const { POST: freshPost } = await import('@/app/api/webhooks/resend/route');
+    // The mock survives resetModules, and the unset-secret test above now trips
+    // this same report, so without clearing here we would be counting that
+    // test's capture as well as this one's.
+    vi.mocked(Sentry.captureException).mockClear();
+
+    // The handler returns before it reads the body or any header, so an
+    // unsigned request exercises this path exactly as a real retry would.
+    const req = () =>
+      new Request('https://console.example/admin/api/webhooks/resend', {
+        method: 'POST',
+        body: '{}',
+      });
+
+    expect((await freshPost(req())).status).toBe(503);
+    expect((await freshPost(req())).status).toBe(503);
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const [reported] = vi.mocked(Sentry.captureException).mock.calls[0] ?? [];
+    expect(String(reported)).toContain('RESEND_WEBHOOK_SECRET');
+  });
+
   it('rejects a request with no signature headers', async () => {
     const res = await POST(
       new Request('https://console.example/admin/api/webhooks/resend', {

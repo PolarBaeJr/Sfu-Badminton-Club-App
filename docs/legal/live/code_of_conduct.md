@@ -1,17 +1,6 @@
-# Code of Conduct
-
-> **The live text is in the database, not in this file.** Members read and
-> accept `legal_documents.content`, edited in Admin → Settings → Legal
-> documents. This file is the source it was drafted from, kept for history.
-> Where the two differ, the database is what members agreed to.
-
-**Applies to:** all members of SFU Badminton Club, at all club activities (sessions, tournaments, socials) and in the club app.
-
----
-
 ## Our commitment
 
-SFU Badminton Club is a welcoming, inclusive community for players of all skill levels. Everyone deserves to play and participate free from harassment and discrimination.
+SFU Badminton Club is a welcoming, inclusive community for players of all skill levels. Everyone deserves to play and participate free from harassment and discrimination. This Code of Conduct applies to all members, at all club activities (sessions, tournaments, socials) and in the club app.
 
 ## Expected behaviour
 
@@ -43,16 +32,12 @@ Violations of ladder integrity may result in rating corrections, match voids, or
 
 ## Reporting
 
-If you experience or witness a violation, contact `conduct@sfubadminton.com`. Reports will be handled discreetly and taken seriously. `[Describe the club's process and, where relevant, escalation to SFU.]`
+If you experience or witness a violation, contact a club executive. Reports will be handled discreetly and taken seriously.
 
 ## Consequences
 
-Depending on severity, consequences may include a warning, temporary suspension from activities or the ladder, or removal from the club. Serious matters may be escalated to `[SFU body / authorities]`.
+Depending on severity, consequences may include a warning, temporary suspension from activities or the ladder, or removal from the club. Serious matters may be escalated to SFU or the appropriate authorities.
 
 ## Acknowledgement
 
 By participating in club activities and using the app, members agree to follow this Code of Conduct.
-
----
-
-*Template drafted for the Club's own use. Review and adapt before adopting.*

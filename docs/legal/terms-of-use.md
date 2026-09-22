@@ -1,8 +1,17 @@
 # Terms of Use
 
-> 🚧 **DRAFT — REVIEW REQUIRED.** Template, not legal advice. Review with the club exec before publishing. Fill in `[PLACEHOLDER]`s.
+> **The live text is in the database, not in this file.** Members read and
+> accept `legal_documents.content`, edited in Admin → Settings → Legal
+> documents. This file is the source it was drafted from, kept for history.
+> Where the two differ, the database is what members agreed to.
 
-**Effective date:** `[DATE]`
+**Effective date:** 2026-07-19
+**Version:** `2026-07-19`, which is the value in `legal_documents.version` for
+`terms_of_use` and the version every current member has on record as having
+accepted. These two are the same string on purpose: the app gates access on the
+database's version, so a date written here that disagreed with it would be terms
+nobody had agreed to. Change one and you must change the other, and changing the
+version is what forces re-acceptance.
 **Applies to:** use of the SFU Badminton Club app and website (https://sfubadminton.com).
 
 ---
