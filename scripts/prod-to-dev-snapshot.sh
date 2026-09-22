@@ -191,7 +191,37 @@ ACL_SQL="$OUT_DIR/acls-$TS.sql"
 DISCORD_SQL="$(mktemp)"
 DISCORD_RAW="$(mktemp)"
 chmod 600 "$DISCORD_SQL" "$DISCORD_RAW"
-trap 'rm -f "$DISCORD_SQL" "$DISCORD_RAW"' EXIT
+# THE MEMBERS ARE EXPOSED BETWEEN THE RESTORE AND THE SCRUB, and that window is
+# roughly 130 lines of ordinary failure surface: a replay, a privilege mirror, a
+# Discord round trip. Every one of them fails OPEN. On 2026-09-22 the migration
+# replay died on a check constraint and staging served prod's real names, emails
+# and phone numbers on a public host for six hours, with the reason sitting in a
+# cron log nobody reads.
+#
+# So the window is now fail-CLOSED. If the script exits non-zero while
+# MEMBERS_EXPOSED=1, the identifiers go, even though that leaves staging
+# unusable until the next run. An unusable staging is a morning of annoyance; an
+# exposed one is a privacy incident, and the whole point of this script is that
+# the second is never the cheaper outcome. The wipe is deliberately blunt rather
+# than a second copy of the scrub: a fallback that duplicates the logic it is
+# protecting can fail the same way the thing it replaces just did.
+MEMBERS_EXPOSED=0
+on_exit() {
+  local rc=$?
+  rm -f "$DISCORD_SQL" "$DISCORD_RAW"
+  if [ "$rc" -ne 0 ] && [ "$MEMBERS_EXPOSED" = "1" ]; then
+    echo "" >&2
+    echo "FATAL: the run failed with real member data already restored to" >&2
+    echo "       staging and NOT yet scrubbed. Wiping the member tables now." >&2
+    echo "       Staging will be empty until the next successful snapshot." >&2
+    docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -c \
+      "TRUNCATE public.players CASCADE; TRUNCATE auth.identities CASCADE; TRUNCATE auth.users CASCADE;" \
+      && echo "       wiped." >&2 \
+      || echo "       WIPE FAILED. Treat staging as holding real member data." >&2
+  fi
+  exit "$rc"
+}
+trap on_exit EXIT
 PUB_SQL="$OUT_DIR/publications-$TS.sql"
 
 # Verify both containers are up
@@ -460,6 +490,11 @@ docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 
 TRUNCATE auth.identities CASCADE;
 TRUNCATE auth.users CASCADE;
 SQL
+
+# Armed BEFORE the restore, not after: if the restore itself dies partway it has
+# already written real rows, so "it failed" and "nothing landed" are not the
+# same statement. Disarmed only once the scrub's floor checks have passed.
+MEMBERS_EXPOSED=1
 
 echo "[$(date -u +%FT%TZ)] restoring auth users into dev..."
 gunzip -c "$AUTH_DUMP" | docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q
@@ -1065,6 +1100,9 @@ SQL
   echo "$leak" | sed 's/^/  remaining /'
   if echo "$leak" | awk '{ if ($NF + 0 > 0) exit 1 }'; then
     echo "  scrub verified: no real member identifiers remain outside the keep-list."
+    # Disarmed HERE and nowhere earlier. Not when the scrub returns, which only
+    # says it ran: these floor checks are what say it worked.
+    MEMBERS_EXPOSED=0
   else
     echo "FATAL: the scrub did not remove everything it claims to." >&2
     echo "       Staging is holding real member data right now. Treat it as" >&2
