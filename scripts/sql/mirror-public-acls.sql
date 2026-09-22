@@ -32,13 +32,43 @@
 --
 -- WHAT IT EMITS, and the one assumption behind it.
 --
--- It names FOUR grantees and no others: PUBLIC, anon, authenticated,
--- service_role. Every Supabase database has those three roles, so the output
--- cannot fail on a role the target lacks — which is why this is a hand-written
--- catalogue query rather than simply dropping `--no-acl` from the dump. A dump
--- carrying prod's full ACLs would also carry grants to whatever else prod
--- names (dashboard_user, supabase_read_only_user, …), and one missing role
--- aborts the whole restore under ON_ERROR_STOP=1, at 4am, on a cron job.
+-- The grantee list is `mirrored_grantees` below, and it is an ALLOWLIST on
+-- purpose. Three of its entries are the roles every Supabase database has:
+-- anon, authenticated, service_role (plus PUBLIC, which is not a role). A dump
+-- carrying prod's full ACLs would instead carry grants to whatever else prod
+-- happens to name (dashboard_user, supabase_read_only_user, …), and one
+-- missing role aborts the whole restore under ON_ERROR_STOP=1, at 4am, on a
+-- cron job. That is why this is a hand-written catalogue query rather than
+-- simply dropping `--no-acl` from the dump.
+--
+-- THE FOURTH ROLE, `data_api_reader`, DOES NOT HAVE THAT PROPERTY, and adding
+-- it is the reason this paragraph exists. It is created by migration 00241, so
+-- a database that has not applied 00241 does not have it. It is here anyway
+-- because leaving it out is worse: 00241 grants the data API's read role
+-- column-level SELECT on two tables and EXECUTE on three functions, the
+-- snapshot drops and recreates the schema nightly, and a mirror that ignores
+-- the role would restore those tables every morning with the role holding
+-- nothing. The symptom of that is not an error. It is a data API that returns
+-- an empty member list, on the database we use to rehearse, which is the one
+-- place the feed most needs to be honest.
+--
+-- Two things keep it from aborting the cron:
+--
+--   * Nothing is emitted for it unless the SOURCE actually grants to it. On a
+--     source without 00241 the CTEs match zero rows and the output is byte
+--     identical to what this file produced before the role existed.
+--   * When the source DOES grant to it, the script opens with a guarded
+--     CREATE ROLE so the GRANTs that follow land on a target that may not have
+--     applied 00241 yet. That is a cluster-global side effect and it is
+--     deliberate: a grantee is part of the privilege picture this file exists
+--     to reproduce, and the alternative is wrapping every GRANT in its own
+--     existence check.
+--
+-- The REVOKE lines deliberately still name only PUBLIC and the three universal
+-- roles. They are belt-and-braces: the caller drops and recreates the schema
+-- first, so every restored object starts at a NULL ACL with nothing to revoke.
+-- Naming `data_api_reader` there would reintroduce exactly the missing-role
+-- abort this design avoids, and would buy nothing.
 --
 -- It SKIPS any object whose ACL is NULL on the source. NULL is not "no
 -- privileges" — it is "the built-in default for this object type", which for a
@@ -51,7 +81,12 @@
 -- ------------------------------------------------------------
 
 WITH
--- The four grantees, and nothing else. See the header.
+-- THE ALLOWLIST. Adding a name here is the whole extension mechanism; read the
+-- header first, because a name that is not present on every target has to earn
+-- its place the way data_api_reader does below.
+mirrored_grantees(rolname) AS (
+  VALUES ('anon'), ('authenticated'), ('service_role'), ('data_api_reader')
+),
 sch AS (
   SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC'
               ELSE quote_ident(pg_get_userbyid(a.grantee)) END AS grantee,
@@ -59,7 +94,7 @@ sch AS (
     FROM pg_namespace n, aclexplode(n.nspacl) a
    WHERE n.nspname = 'public'
      AND (a.grantee = 0 OR pg_get_userbyid(a.grantee)
-          IN ('anon','authenticated','service_role'))
+          IN (SELECT rolname FROM mirrored_grantees))
 ),
 rel AS (
   SELECT CASE c.relkind WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END AS kind,
@@ -74,7 +109,37 @@ rel AS (
      AND c.relkind IN ('r','p','v','m','S','f')   -- table, partitioned, view, matview, sequence, foreign
      AND c.relacl IS NOT NULL
      AND (a.grantee = 0 OR pg_get_userbyid(a.grantee)
-          IN ('anon','authenticated','service_role'))
+          IN (SELECT rolname FROM mirrored_grantees))
+),
+-- COLUMN-LEVEL GRANTS, which live in pg_attribute.attacl and are invisible to
+-- the `rel` CTE above: relacl carries only whole-table privileges. This file
+-- did not read them until 00241 needed them, and the omission was silent in
+-- both directions: a column grant on the source simply never arrived, and
+-- nothing anywhere said so.
+--
+-- 00241 is the case that forced it. It grants `data_api_reader` SELECT on the
+-- named columns of `data_api_consumers` and pointedly NOT on
+-- `player_ref_salt`, which is the secret that turns a member's id into their
+-- pseudonym. A mirror that drops column grants would restore that table with
+-- the role holding no SELECT at all, so the failure here is a feed that
+-- silently returns nothing rather than a leak. Worth being precise about: the
+-- direction of this bug is safe, and it is still a bug.
+col AS (
+  SELECT format('%I.%I', n.nspname, c.relname) AS obj,
+         quote_ident(att.attname) AS col,
+         CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+              ELSE quote_ident(pg_get_userbyid(a.grantee)) END AS grantee,
+         a.privilege_type, a.is_grantable
+    FROM pg_attribute att
+    JOIN pg_class c ON c.oid = att.attrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace,
+         aclexplode(att.attacl) a
+   WHERE n.nspname = 'public'
+     AND att.attnum > 0
+     AND NOT att.attisdropped
+     AND att.attacl IS NOT NULL
+     AND (a.grantee = 0 OR pg_get_userbyid(a.grantee)
+          IN (SELECT rolname FROM mirrored_grantees))
 ),
 rou AS (
   SELECT CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS kind,
@@ -89,7 +154,7 @@ rou AS (
    WHERE n.nspname = 'public'
      AND p.proacl IS NOT NULL
      AND (a.grantee = 0 OR pg_get_userbyid(a.grantee)
-          IN ('anon','authenticated','service_role'))
+          IN (SELECT rolname FROM mirrored_grantees))
 ),
 dfl AS (
   SELECT quote_ident(pg_get_userbyid(d.defaclrole)) AS owner_role,
@@ -106,12 +171,42 @@ dfl AS (
          aclexplode(d.defaclacl) a
    WHERE n.nspname = 'public'
      AND (a.grantee = 0 OR pg_get_userbyid(a.grantee)
-          IN ('anon','authenticated','service_role'))
+          IN (SELECT rolname FROM mirrored_grantees))
 ),
 stmts AS (
   -- 0. a marker, so the applied script is identifiable in a psql log
   SELECT 0 AS ord, '' AS obj, 0 AS sub,
          '-- privileges mirrored from the snapshot source' AS stmt
+
+  -- 0b. THE GRANTEES THE TARGET MIGHT NOT HAVE.
+  --
+  --     Roles are cluster globals, so they are not in a `--schema=public` dump
+  --     and they do not die with the schema drop. That cuts both ways: a target
+  --     that has applied 00241 already has data_api_reader and this block is a
+  --     no-op, and a target that has not would otherwise abort here on the
+  --     first GRANT naming a role it lacks, under ON_ERROR_STOP=1, at 4am.
+  --
+  --     Emitted ONLY when the source actually grants to the role, so a source
+  --     without 00241 produces the same script this file produced before the
+  --     role existed. The attributes match 00241's own CREATE ROLE: NOLOGIN
+  --     because nothing connects as it directly, NOINHERIT so membership alone
+  --     confers nothing. It is created with no privileges; every privilege it
+  --     ends up with is granted by the statements below, mirrored from source.
+  UNION ALL
+  SELECT 5, g.rolname, 0,
+         format($fmt$DO $mirror$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = %L) THEN CREATE ROLE %I NOLOGIN NOINHERIT; END IF; END $mirror$;$fmt$,
+                g.rolname, g.rolname)
+    FROM mirrored_grantees g
+   WHERE g.rolname NOT IN ('anon','authenticated','service_role')
+     AND EXISTS (SELECT 1 FROM rel  WHERE rel.grantee = quote_ident(g.rolname)
+                 UNION ALL
+                 SELECT 1 FROM col  WHERE col.grantee = quote_ident(g.rolname)
+                 UNION ALL
+                 SELECT 1 FROM rou  WHERE rou.grantee = quote_ident(g.rolname)
+                 UNION ALL
+                 SELECT 1 FROM sch  WHERE sch.grantee = quote_ident(g.rolname)
+                 UNION ALL
+                 SELECT 1 FROM dfl  WHERE dfl.grantee = quote_ident(g.rolname))
 
   -- 1. the schema itself
   UNION ALL
@@ -138,6 +233,32 @@ stmts AS (
     FROM (SELECT kind, obj, grantee, is_grantable,
                  string_agg(privilege_type, ', ' ORDER BY privilege_type) AS privs
             FROM rel GROUP BY kind, obj, grantee, is_grantable) r
+
+  -- 2b. column-level grants. No REVOKE partner: the caller drops and recreates
+  --     the schema, so every restored column starts at a NULL attacl and there
+  --     is nothing to clear. One statement per (table, grantee, privilege), with
+  --     the columns gathered into the parenthesised list PostgreSQL expects.
+  --     Ordering the columns by name keeps the emitted script stable between
+  --     runs, so a diff of two nights' output shows real drift and not the
+  --     catalogue's scan order. Name rather than attnum because the name is
+  --     what is projected, and because a column added by a later migration
+  --     then sorts into place instead of landing at the end.
+  --
+  --     ord 25 MUST stay above ord 20. A table-level REVOKE also clears that
+  --     role's column-level privileges on the table, verified: GRANT SELECT (a)
+  --     then REVOKE ALL ON TABLE ... FROM anon leaves has_column_privilege
+  --     false. Today nothing is hurt by the order, because the REVOKE at ord 20
+  --     names only PUBLIC, anon, authenticated and service_role and no column
+  --     grant here targets them. The moment one does, reordering these two
+  --     sections would silently drop it back out.
+  UNION ALL
+  SELECT 25, obj, 1,
+         format('GRANT %s (%s) ON TABLE %s TO %s%s;',
+                privilege_type, cols, obj, grantee,
+                CASE WHEN is_grantable THEN ' WITH GRANT OPTION' ELSE '' END)
+    FROM (SELECT obj, grantee, privilege_type, is_grantable,
+                 string_agg(col, ', ' ORDER BY col) AS cols
+            FROM col GROUP BY obj, grantee, privilege_type, is_grantable) cg
 
   -- 3. functions and procedures
   UNION ALL

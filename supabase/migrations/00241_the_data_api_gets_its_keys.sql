@@ -61,6 +61,28 @@
 -- CREATE ROLE aborts the whole migration on the second environment it meets.
 --
 -- ------------------------------------------------------------
+-- THE NIGHTLY SCRUB WOULD HAVE UNDONE HALF OF THIS, SILENTLY.
+-- ------------------------------------------------------------
+-- prod-to-dev-snapshot.sh drops and recreates `public` on staging every night
+-- and then replays production's privileges through scripts/sql/
+-- mirror-public-acls.sql. That file mirrored grants for exactly four grantees
+-- (PUBLIC, anon, authenticated, service_role) and read only table-level ACLs.
+-- Neither covers this migration: the reader role is not on that list, and the
+-- grant that matters most here is COLUMN level, on `data_api_consumers`.
+--
+-- So the pre-existing behaviour was: staging comes back each morning with
+-- these tables restored and `data_api_reader` holding nothing on them. The
+-- data API answers with an empty member list. Not an error, not a log line, on
+-- the one database the club uses to rehearse migrations before production sees
+-- them. The same class of bug as the one 00157 exists to clean up.
+--
+-- Fixed in the mirror rather than worked around here, because a note in this
+-- header telling somebody to re-grant by hand every morning is not a fix. That
+-- file now reads `pg_attribute.attacl` as well as `pg_class.relacl`, and names
+-- this role in an allowlist CTE. It emits nothing for the role when the source
+-- database has not applied 00241, so it stays safe to run everywhere.
+--
+-- ------------------------------------------------------------
 -- NO PGCRYPTO. THIS WAS PROBED, NOT ASSUMED.
 -- ------------------------------------------------------------
 -- The obvious way to write the hash below is `hmac()` with `gen_random_bytes()`
@@ -588,10 +610,55 @@ BEGIN
     v_bad := v_bad || 'data_api_reader can execute data_api_player_ref(uuid,uuid), which turns a player id into a pseudonym; ';
   END IF;
 
+  -- 7. THE PROMISE THE CONTRACT IS BUILT ON, which until now nothing checked.
+  --
+  --    API.md tells a consumer that a player_ref is stable: they may store it,
+  --    join their own records against it, and come back a year later expecting
+  --    it to mean the same member. Every other assertion here is about who can
+  --    reach what. This one is about whether the thing they reach is worth
+  --    anything, and it is the assertion a future edit is most likely to break,
+  --    because the salt concatenation above looks like an implementation detail
+  --    and reads like one.
+  --
+  --    Breaking it is silent in the worst way. A changed construction does not
+  --    error: it returns a different valid-looking digest, the consumer's joins
+  --    start missing, and the members they thought they were tracking simply
+  --    become strangers. No log line anywhere says why.
+  --
+  --    Two properties, on a row that exists only inside this transaction and is
+  --    deleted three lines later. Same consumer twice must agree, and two
+  --    consumers must disagree: the second is what makes the ref a per-consumer
+  --    pseudonym rather than a global identifier that correlates across every
+  --    recipient the club ever issues a key to.
+  INSERT INTO data_api_consumers (id, name)
+  --    The two names differ because `name` is UNIQUE. That is not a detail
+  --    worth a comment except that the first draft of this block used the same
+  --    name twice, and the constraint turned a stability check into a failed
+  --    migration. Which is the system behaving correctly, and is why this block
+  --    is run before it is trusted.
+  VALUES ('00000000-0000-0000-0000-000000000241', '00241 self-check A'),
+         ('00000000-0000-0000-0000-000000000242', '00241 self-check B');
+
+  IF data_api_player_ref('00000000-0000-0000-0000-000000000241', '00000000-0000-0000-0000-0000000000aa')
+     IS DISTINCT FROM
+     data_api_player_ref('00000000-0000-0000-0000-000000000241', '00000000-0000-0000-0000-0000000000aa') THEN
+    v_bad := v_bad || 'player_ref is not stable for one consumer, so every ref the API has ever issued is unjoinable; ';
+  END IF;
+
+  IF data_api_player_ref('00000000-0000-0000-0000-000000000241', '00000000-0000-0000-0000-0000000000aa')
+     IS NOT DISTINCT FROM
+     data_api_player_ref('00000000-0000-0000-0000-000000000242', '00000000-0000-0000-0000-0000000000aa') THEN
+    v_bad := v_bad || 'two consumers produce the same player_ref, so the pseudonym correlates across recipients; ';
+  END IF;
+
+  DELETE FROM data_api_consumers
+   WHERE id IN ('00000000-0000-0000-0000-000000000241',
+                '00000000-0000-0000-0000-000000000242');
+
   IF v_bad <> '' THEN
     RAISE EXCEPTION '00241 verification failed: %', v_bad;
   END IF;
-  RAISE NOTICE '00241 verified: data_api_reader reaches three functions and nothing else, and the salt is unreadable above the database.';
+  RAISE NOTICE '00241 verified: data_api_reader reaches three functions and nothing else, the salt is unreadable above the database, and player_ref is stable per consumer and distinct across consumers.';
 END
 $verify$;
 
@@ -605,6 +672,32 @@ NOTIFY pgrst, 'reload schema';
 
 -- ============================================================================
 -- VERIFYING IT
+--
+-- WHAT THE DO $verify$ BLOCK ABOVE ALREADY DOES, so an abort is read correctly.
+-- It is not a caveat attached to this migration; it is the migration refusing
+-- to leave the database in a state whose privileges do not match what this
+-- header claims. If it raises, NOTHING was applied: it runs inside the same
+-- transaction, so the failure and the rollback are the same event. Read an
+-- abort as the check earning its place, not as a fault in the apply.
+--
+-- Those seven assertions were executed before this file shipped, against a
+-- throwaway PostgreSQL cluster carrying the two prerequisite tables and, in
+-- the run that counts, Supabase's own
+--   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES/FUNCTIONS
+--   TO anon, authenticated, service_role;
+-- which is the thing the REVOKEs here exist to defeat. The block compiled, all
+-- seven passed, the two self-check rows left no residue, and four independent
+-- catalogue checks agreed: service_role cannot read the salt, anon cannot read
+-- the key store, and data_api_reader can neither read the salt nor execute
+-- data_api_player_ref. Assertion 7 was then mutation-tested by removing the
+-- salt from the digest, and it correctly refused the migration.
+--
+-- Two honest limits on that. The rehearsal cluster was PostgreSQL 16, this one
+-- is 17.6; and `players` and `ratings` were minimal stubs carrying the view's
+-- columns and nothing else, so the assertions were exercised, not the data.
+-- Neither touches what the block asserts, both are worth knowing.
+--
+-- WHAT STILL HAS TO BE DONE BY HAND, below.
 --
 -- Run as data_api_reader, NOT as postgres. Superuser bypasses grants and RLS,
 -- so a psql check as postgres proves nothing about the isolation this file
