@@ -5,8 +5,9 @@ hardware, not Supabase Cloud. This directory holds the schema history, the Deno
 edge functions, and a small set of transactional SQL tests.
 
 ```
-migrations/   210 numbered .sql files — the whole schema, RLS, functions,
-              triggers, and every change since.
+migrations/   Numbered .sql files — the whole schema, RLS, functions,
+              triggers, and every change since. Count them rather than
+              trusting a number here; it drifts every migration.
 functions/    Deno edge functions. Present, but NOT what runs the live jobs.
 tests/        SQL that runs inside BEGIN … ROLLBACK. Not migrations.
 ```
@@ -109,4 +110,8 @@ again the next morning). The refresh also strips **column-level** grants —
 `relacl` looks correct while `pg_attribute.attacl` is empty — and it resets the
 owner's staging admin role.
 
-More in [`docs/STAGING.md`](../docs/STAGING.md).
+That refresh copies `auth.users` and `auth.identities` along with the whole
+`public` schema, with **no scrub**. **Staging therefore holds a live copy of the
+real membership**, names, emails and phone numbers included, refreshed nightly.
+Treat the staging database as production data with a different hostname. More in
+[`docs/STAGING.md`](../docs/STAGING.md).

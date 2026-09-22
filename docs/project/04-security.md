@@ -49,10 +49,11 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 - The automated jobs (reminders, expiries, snapshots) require a **secret token** to run, checked in a way that's resistant to timing attacks. If the token is missing or wrong, the job **refuses to run** rather than running unprotected.
   - *Protects against:* outsiders triggering privileged automated actions.
 
-## 7. Security review on every change
+## 7. Automated checks on every change
 
-- **Every code change to the main branch must pass an automated security review before it can be merged.** The review flags real issues and blocks the merge on a fail.
-  - *Protects against:* new vulnerabilities slipping in as the app grows — security is checked continuously, not just once.
+- **Every code change must pass the automated test suite before it can be merged.** A pull request against the deployable branch runs type checking, linting and the full test suite, and a failure blocks the merge.
+  - *Protects against:* regressions and broken builds reaching members.
+  - *Does **not** protect against:* a new vulnerability that the tests do not happen to cover. There is **no automated security scanner** in CI. Security here comes from review and from the specific controls listed elsewhere on this page, not from a tool that inspects each change.
 
 ## 8. Input validation
 
@@ -61,8 +62,17 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 
 ## 9. Backups (data safety)
 
-- The database is **backed up nightly**, kept for a rolling window, and copied **off-site** to encrypted cloud storage plus a second off-site machine. Backups are **encrypted** before they leave the premises.
+- The database is **backed up nightly**, kept for a rolling 14-day window, and copied **off-site** two ways: to cloud storage, and to a second machine.
   - *Protects against:* hardware failure, ransomware, or accidental deletion — the club can recover its data.
+  - **The cloud copy is encrypted before it leaves; the copy on the second machine is not.** Those plaintext dumps hold every member's name, email, phone and waiver, so anyone with access to that machine has the member database without needing a key. This is a known open gap, tracked in `backup/README.md` under "Still open". Do not describe the backups as encrypted without that qualification.
+
+## 10. Staging holds real member data
+
+- The staging site (`badminton.polardev.org`) is refreshed from production every night at 04:00, and the copy is **unscrubbed** — real names, emails, phone numbers, officer notes, fee records.
+  - *Protects against:* nothing. This is a listed **risk**, not a control, and it is here so it is not discovered during an incident.
+  - *What it means:* there are two full copies of the membership database on the public internet, not one, behind the same login and nothing more. Any statement made about production's data has to be made about staging as well, and any breach is scoped to both.
+  - *The one real isolation:* staging's outbound mail goes to a local mailpit and never leaves the Pi, so a real address in the staging database cannot be emailed by accident. That covers the mail path and nothing else.
+  - *The fix:* either stop copying member rows into staging (the original synthetic roster of 14 accounts covered every screen the console has), or add a scrub pass to `scripts/prod-to-dev-snapshot.sh` that rewrites names, emails and phones after the load. See `docs/STAGING.md`.
 
 ---
 
@@ -79,8 +89,13 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 | Unique private keys (self-host fix) | Full-database breach via known keys |
 | Server-only master key | Key theft from devices |
 | Fail-closed automated jobs | Outsiders triggering privileged actions |
-| Security review on every change | New vulnerabilities over time |
+| Tests and type checks on every change | Regressions reaching members (not: new vulnerabilities — there is no security scanner) |
 | Input validation | Malicious/malformed data |
-| Encrypted off-site backups | Data loss, ransomware |
+| Nightly off-site backups, cloud copy encrypted | Data loss, ransomware (the second-machine copy is plaintext — see 9) |
+
+| Known risk | Why it is listed |
+|---------|------------------|
+| Staging carries an unscrubbed nightly copy of production | Two full copies of the membership on the public internet, not one (see 10) |
+| The second-machine backup copy is unencrypted | Plaintext member database on that machine, no key needed (see 9) |
 
 ➡️ Continue to **[05-tech-and-ops.md](05-tech-and-ops.md)** for hosting, deployment, and cost.

@@ -1,7 +1,10 @@
 # Discord Bot — Command & Permission Spec
 
-Status: **specified, not built.** No Discord code exists in this repo yet.
-This document is the v1 target, not a description of something running.
+Status: **built and live.** This document is kept as the design record of what
+was intended; it is not a description of the current implementation. For what
+actually runs, see `apps/bot/README.md` and `docs/ops/discord-bot-bringup.md`.
+The bot is live with 9 roles, and `apps/player/src/app/api/discord/` is the
+service API it calls.
 
 ## Core rule
 

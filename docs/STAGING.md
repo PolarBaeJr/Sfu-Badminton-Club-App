@@ -12,7 +12,8 @@ database. Production is never touched by anything done here.
 | images | `ghcr.io/polarbaejr/badminton-*:latest` | `ghcr.io/polarbaejr/badminton-*-staging:latest` |
 | built from | `deploy/docker-prod` | `deploy/docker-staging` **and** `deploy/docker-prod` |
 | outbound email | Resend (real) | **mailpit — never leaves the Pi** |
-| Sentry / PostHog | on | off |
+| Sentry | on | off |
+| PostHog | **off** (ships, but no key is set in prod, so it collects nothing) | off |
 | auto-update | on | on |
 
 ## Why staging needs its own image, not just its own config
@@ -53,12 +54,42 @@ Schema is a `pg_dump --schema-only` of production's `public` schema — a read;
 production is never written to. Verified at parity: 46 tables, 104 RLS policies,
 53 functions, 27 triggers.
 
+> ⚠️ **Staging holds real member data. Treat it as production.**
+> `scripts/prod-to-dev-snapshot.sh` runs nightly at 04:00 and copies **the whole
+> `public` schema plus `auth.users` and `auth.identities`** from production,
+> **unscrubbed**: real names, real email addresses, real phone numbers, officer
+> notes about members, fee records. There is no anonymisation step in it and
+> none was ever written.
+>
+> Everything that follows from that: staging is a second full copy of the
+> membership database, so it doubles the blast radius of any breach and belongs
+> in the scope of one; a member who deletes their account is *not* deleted from
+> staging until the next refresh carries the anonymisation across; access to the
+> staging admin console is access to real member records, not to test rows; and
+> nothing safe-by-accident protects it, since it is reachable on the public
+> internet at `badminton.polardev.org` behind the same auth as production and
+> nothing more.
+>
+> The one thing that is genuinely isolated is **outbound email**: staging sends
+> to mailpit, so a real address in the staging database can never be mailed by
+> mistake. That is the mail path only. It says nothing about the data at rest.
+>
+> **This is worth changing.** Staging does not need real people in it: the
+> original seed was 14 synthetic accounts covering every state the admin UI has
+> controls for — competitive, recreational, pending approval, suspended, banned,
+> inactive, exec, trainer — plus two admin accounts on the owner's own
+> addresses, and that covered the UI fine. The options are to stop copying
+> member rows at all, or to add a scrub pass to the snapshot script that
+> rewrites emails, names and phone numbers on the staging side after the load.
+> Until one of those lands, every privacy claim made about production has to be
+> made about staging too.
+
 Configuration rows (`platform_settings`, `legal_documents`, `seasons`) are
-copied because they are settings, not people. **No production member data is
-copied.** The roster is 14 synthetic accounts covering every state the admin UI
-has controls for — competitive, recreational, pending approval, suspended,
-banned, inactive, exec, trainer — plus two admin accounts on the owner's own
-addresses.
+copied because they are settings, not people. Two things are deliberately
+**not** faithful copies: staging keeps its own Discord config, so the staging
+bot can never aim at the real guild, and the owner's staging admin role is
+re-granted after each refresh, because production roles leave the console
+unusable.
 
 ## Deploying a change to staging
 

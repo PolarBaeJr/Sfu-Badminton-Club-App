@@ -22,8 +22,8 @@
 ## Data safety & backups
 
 - **Nightly backups** of the entire database.
-- Backups are kept for a **rolling window** locally, and copied **off-site** — to encrypted cloud storage (Google Drive) and a second machine.
-- Backups are **encrypted** before they leave, so even the off-site copies are protected.
+- Backups are kept for a **rolling 14-day window** locally, and copied **off-site** — to cloud storage (Google Drive) and a second machine.
+- The **cloud copy is encrypted** before it leaves, so Google only ever holds ciphertext. The **copy on the second machine is not encrypted**: it holds plaintext dumps of the member database. That is a known open gap, tracked in `backup/README.md`.
 - This means the club can **recover** from hardware failure, accidental deletion, or worse.
 
 ## Reliability

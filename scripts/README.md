@@ -83,7 +83,51 @@ run them against prod with `psql -At`, pipe the output into the target:
 > command tags (`CREATE TABLE`, `DO`) into the captured output and the replay
 > fails.
 
+## Privacy and retention
+
+### `request-account-deletion.sh`
+
+Schedules a member's deletion on their behalf, for the case the app cannot
+cover: a member who asks by email, or whose own request was wiped out by a
+database restore. The in-app **Settings → delete account** is the only other
+writer of `deletion_requested_at`, and the admin console can only *cancel* a
+pending deletion, never start one. Until that console button exists, this is the
+route.
+
+```sh
+./scripts/request-account-deletion.sh --actor <admin-email> \
+  --target <member-email> --reason "emailed request 2026-09-21"   # dry run
+./scripts/request-account-deletion.sh … --confirm                 # commits
+```
+
+It is a **dry run unless `--confirm` is passed** (the transaction ends in
+`ROLLBACK;` instead of `COMMIT;`), and it refuses before writing anything if the
+actor or target does not resolve to exactly one player, if they are the same
+person, if the target is already scheduled, or if the target is already purged.
+
+The refusal worth knowing about: it also stops on a target who holds console
+access. Scheduling a deletion sets `active_flag = false`, and
+`apps/admin/src/lib/supabase-server.ts` rejects exactly that, so deleting an
+admin, exec or trainer locks them out of the only screen the cancel button lives
+on. `--allow-officer` overrides it, deliberately, once you have read that
+sentence.
+
+Every commit writes an `audit_logs` row with `action_type =
+'officer_deletion_requested'` — distinct from the app's
+`self_deletion_requested`, so the log always says which of the two happened.
+
+### `run-edge-fn.sh`
+
+Invokes one Supabase edge function with the cron secret and **records the
+result**. The seven crontab lines on the Pi call this; the nightly retention
+jobs run through it, `purge-deleted-accounts` included, which is the job that
+has to satisfy a deletion request inside 30 days. Read the header before
+changing it: the version it replaced discarded the HTTP status, so a function
+failing every night for a month looked identical to one that never failed.
+
 ## One-off SQL
+
+These live in **`supabase/One Time Scripts/`**, not in this directory.
 
 - **`cleanup-orphan-challenges.sql`** — deletes zero-participant challenges left
   by a since-fixed RLS failure. Only touches challenges with no participants and
@@ -91,6 +135,16 @@ run them against prod with `psql -At`, pipe the output into the target:
 - **`reseed-admin.sql`** — recreates the owner's admin account after a
   fresh-schema apply. Also the fix for staging, where the nightly refresh drops
   the owner's admin role.
+- **`wipe-summer-2026-test-data.sql`** — deletes the Summer 2026 test rows that
+  members can still see. The season was *retired* separately on 2026-09-10,
+  which zeroed the counters but deleted nothing; this is the deletion half, and
+  it is owner-run section by section. Read the header: the ordering matters,
+  because the derived-stats tables carry no foreign key and an FK sweep cannot
+  find them.
+- **`00094-fee-ledger-data-migration.sql`** — the data half of migration 00094,
+  deliberately kept out of `supabase/migrations/` so no automated step applies
+  it. It moves the club's money records, and the counts on either side are meant
+  to be read by a person.
 
 ## Assets
 

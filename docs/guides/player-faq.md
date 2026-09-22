@@ -64,6 +64,14 @@ Yes — there's an option to be hidden from the public ranking. Ask an admin if 
 **Who can see my info?**
 Your name and rating appear on the ladder (unless you opt out). Personal details (email, fees) are only visible to admins. See the [Privacy Policy](../legal/privacy-policy.md).
 
+**Can I get a copy of everything the club holds about me?**
+Yes, and you don't have to ask anyone. Go to **Settings → your data** and download it. It's one file covering every part of your record: your profile, matches, sessions, RSVPs, waivers, notifications and more. It also tells you what *isn't* in the file and why, so you can see where the edges are instead of guessing.
+
+**How do I delete my account?**
+**Settings → delete account.** Your account is deactivated straight away and permanently anonymised after **30 days**. That gap is deliberate: if you change your mind, sign back in during those 30 days and restore it.
+
+One thing worth knowing: your past matches and results don't vanish, they stop being linked to you. That's because deleting them outright would also erase your opponents' match history and ratings, which is their record too, not just yours.
+
 ## Appearance
 
 **Dark mode?**

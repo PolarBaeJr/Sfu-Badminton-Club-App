@@ -146,7 +146,7 @@ A database-backed shared limiter was built and **rejected by the owner on
 
 CONFIRMED LIVE 2026-08-26, not a prediction: the Mac mini is running three
 badminton-player replicas, its own routes.json has ZERO sfubadminton.com
-entries, and its proxy nonetheless reports all nine limited paths at the right
+entries, and its proxy nonetheless reports every limited path at the right
 rpm -- which is exactly the learned-only shape described below.
 
 Every entry in the table above is a *static* routes.json entry that backfills its

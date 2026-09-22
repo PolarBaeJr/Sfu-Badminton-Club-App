@@ -44,7 +44,7 @@ src/
   components/     App-specific React components (nav, scanner, gates, banners).
                   Anything reusable across both apps belongs in packages/ui.
   lib/            Plain modules: rules, queries, formatting. This is the tested
-                  layer — 44 suites in lib/__tests__ point here.
+                  layer — the suites in lib/__tests__ point here.
     actions/      'use server' Server Actions, one file per domain.
   fonts/          Barlow Condensed. .woff2 for the browser, .ttf for next/og.
   middleware.ts   Auth gate + redirects on every non-static request.
@@ -69,6 +69,16 @@ Beyond the pages, `src/app/api/` exposes:
 - **`/api/discord/*`** — the service API the Discord bot calls. Machine-to-machine
   only; auth is checked in `lib/discord-service-auth.ts`, not by a user session.
   See [`../bot`](../bot/README.md).
+- **`/api/account/export`** — everything the club holds about the signed-in
+  member, as one download. It is the most sensitive response this app produces,
+  and two properties keep it safe. Its handler **takes no arguments at all**:
+  the player id comes from the session, so there is no `?playerId=` to tamper
+  with and no admin override to bolt on here. And it is declared
+  `force-dynamic` with `no-store`, because a cached export is not a slow page,
+  it is one member downloading another member's file. The route header explains
+  why it authenticates without `requirePlayer()`; read it before tightening the
+  gate, because the population that gate excludes is precisely the population
+  that files access requests.
 
 ## Things that will catch you
 

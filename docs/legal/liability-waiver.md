@@ -43,7 +43,7 @@ By accepting in the app, I agree to the above, and this acceptance is recorded w
 
 ## Notes for implementation (delete before publishing)
 
-- The app plans to record waiver acceptance with a **version number** and **timestamp** (roadmap A7), so re-acceptance can be required when the document changes each season/term.
+- The app **records** waiver acceptance with a **version number** and **timestamp**, as append-only records, so re-acceptance can be required when the document changes each season/term. The waiver must be re-signed every 365 days. This shipped on 2026-07-19; it is no longer a plan.
 - Keep **media consent** and **emergency contact** as separate optional fields — don't bundle non-essential consent into the core waiver.
 - Confirm the **age of majority / minor consent** approach with a reviewer if any members are minors.
 

@@ -2,7 +2,7 @@
 
 *A living overview of the club's app: what it is, what's built, what's next, and how it's kept safe and running. Written for the executive team — no engineering background needed.*
 
-**Status:** Built and deployed to production. **The first official release to members is Monday 2026-09-14**, so it is not live to them yet. General sign-up opens with the semester.
+**Status:** Live to members since **2026-09-13**. General sign-up opens with the semester.
 **Live at:** [sfubadminton.com](https://sfubadminton.com) — admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin)
 
 > `badminton.polardev.org` is **staging**, not the live site. It runs against a
@@ -37,4 +37,4 @@ The SFU Badminton Club App is a members' web app (installable on phones like a r
 - 🔒 **Security:** multiple layers — modern login, role-based access, database-level protection, encrypted off-site backups, and an automated security review on every code change.
 - 💰 **Running cost:** near-zero — self-hosted on the club's own hardware.
 
-*Last updated: September 8, 2026.*
+*Last updated: September 21, 2026.*

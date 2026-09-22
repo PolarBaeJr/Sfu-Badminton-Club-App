@@ -35,7 +35,7 @@
 - **A9 · Semester/term-aware scheduling** *(M)* — Fall / Spring / Summer terms built in, with fees and memberships scoped per term.
 
 ### 📊 Data
-- **A5 · Open read-only data feed** *(M)* — a safe, privacy-respecting way to pull match/results data out to build **stats models** (e.g. win/loss prediction, a "who should I play" recommender), plus CSV export.
+- **A5 · Open read-only data feed** *(M)* — **started: the contract exists, the service does not.** `apps/data-api/API.md` is a draft version 0 settling the field names, scopes and error shapes before anything is built, so they were still free to change. Nothing is live. The goal is a safe, privacy-respecting way to pull match/results data out to build **stats models** (e.g. win/loss prediction, a "who should I play" recommender), plus CSV export.
 
 ### 🔧 Tournaments
 - ~~**A4 · Tournament suspension** *(S–M)*~~ — ✅ **Shipped 2026-07-19.** Pause with a reason / resume cleanly; registration, check-in, brackets, and scoring are blocked while suspended, and everyone sees why. See [02-completed.md](02-completed.md).
@@ -55,7 +55,7 @@
 
 ## Also on the table (not yet committed)
 
-A longer list of ideas we've captured for future consideration, including: session capacity + waitlists, court allocation, membership renewals, a merch store, door-QR / wallet-pass check-in, a phone-as-scoreboard live mode, coach roles + drills, richer player profiles, gamification (badges, hall of fame), a churn/disengagement flag for exec outreach, a full finance dashboard, exec task boards, sponsorship management, SFU single-sign-on, privacy self-service (data export/delete), inter-university fixtures, and accessibility/inclusivity improvements (para categories, localization).
+A longer list of ideas we've captured for future consideration, including: session capacity + waitlists, court allocation, membership renewals, a merch store, door-QR / wallet-pass check-in, a phone-as-scoreboard live mode, coach roles + drills, richer player profiles, gamification (badges, hall of fame), a churn/disengagement flag for exec outreach, a full finance dashboard, exec task boards, sponsorship management, SFU single-sign-on, inter-university fixtures, and accessibility/inclusivity improvements (para categories, localization).
 
 *These are parked as candidates — they can be promoted into the committed list anytime.*
 

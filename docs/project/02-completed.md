@@ -97,7 +97,7 @@ A full tournament system, not just a bracket generator:
 ## 📊 Monitoring & observability
 
 - **Error tracking (Sentry)** — if something breaks for a member, the app reports the crash automatically (across the app's browser, server, and edge parts), tagged with the player it happened to, so the technical exec can find and fix it fast. Session Replay is deliberately **off** for privacy.
-- **Product analytics (PostHog)** — anonymous, cookieless usage tracking (pageviews plus key actions like challenges, match results, check-ins, RSVPs, and leaderboard views) helps the exec team see what's actually used. It only tracks signed-in members and has **no session recording**.
+- **Product analytics (PostHog)** — built, but **switched off in production** and collecting nothing: the API key is not set there, so the client is never constructed. The instrumentation covers pageviews plus key actions (challenges, match results, check-ins, RSVPs, leaderboard views) and has **no session recording**. It is **not anonymous**: it identifies the signed-in member by their player id, so turning it on is a privacy decision rather than a config change.
 
 ## 📱 Installable app (PWA)
 
@@ -105,7 +105,7 @@ A full tournament system, not just a bracket generator:
 
 ## 🎨 Design & polish (the details)
 
-- **Professional design system** — a consistent set of ~two dozen reusable interface pieces gives every screen the same polished look.
+- **Professional design system** — a consistent set of a library of about thirty reusable interface pieces gives every screen the same polished look.
 - **Light and dark mode** — full support for both; the app remembers your choice and even loads in the right theme instantly (no flash of the wrong colors).
 - **Club branding** — a custom shuttlecock logo throughout.
 - **Modern, scanner-safe login** — a **6-digit code** login that reliably works even when corporate/email security tools "click" links in emails (a common bug that breaks normal magic-link logins). Plus one-tap **Google sign-in**.
@@ -129,6 +129,8 @@ The app has been through several deliberate phases:
 3. **Self-hosting migration** — moved onto the club's own infrastructure with proper, private security keys (this closed a serious hole — see the security doc), plus automatic backups.
 4. **Seasons / fees / roles rework** — the big structural upgrade: the seasons system, fees-follow-seasons, executive access levels, the rating rescale and reset policy, the public pages, and finance tracking.
 5. **Polish & design** — the professional redesign, dark mode, login redesign, and the mobile/visual fixes above.
-6. **Executive beta (now)** — private testing with the exec team, July 2026.
+6. **Executive beta** — private testing with the exec team, July 2026.
+7. **Public launch** — opened to the membership on 13 September 2026 as version 1.0.0.
+8. **Privacy and data rights (now)** — self-serve data download and account deletion, the four legal documents published, a breach procedure, and bounded retention on every backup copy.
 
 ➡️ Continue to **[03-roadmap.md](03-roadmap.md)** for what's coming next.

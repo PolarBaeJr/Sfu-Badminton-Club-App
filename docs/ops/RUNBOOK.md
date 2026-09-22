@@ -8,7 +8,7 @@ Step-by-step procedures for running the app in production. Written for whoever h
 
 ## Mental model
 
-- **The app** (player + admin) runs as **compose-managed** Docker containers (`badminton-player-1` / `badminton-admin-1`) on a **self-hosted server** (Raspberry Pi), behind the club's own **reverse proxy**.
+- **The app** (player + admin) runs as Docker containers on **self-hosted servers**, behind the club's own **reverse proxy**, which **auto-updates them from GHCR**. They are not managed by hand. **Never run `docker compose up` or `docker compose pull` against the player or admin containers** — doing so is what took production down on 2026-08-06. The containers also float across both hosts under dynamic scaling, so a `docker ps` on one machine is not a map of where they run.
 - **The database** is a self-hosted **Supabase** stack on the same server. It is **separate** from the app — deploying the app never touches data.
 - **A deploy is a push.** CI builds the image and the proxy rolls the containers on its own; there is no manual step on the server. **Migrations are manual.** **Backups are nightly.**
 
@@ -16,7 +16,7 @@ Step-by-step procedures for running the app in production. Written for whoever h
 
 ## Deploy a change
 
-1. Make the change on a branch, open a PR to `main`, get the **security-review** + **test** checks green, merge.
+1. Make the change on a branch, open a PR against **`deploy/docker-prod`**, get the **CI / checks** job green (type-check, lint, test, plus the edge-function drift check), merge. There is no `security-review` check and no `main` branch gate; if you are waiting for either, you are waiting for something that does not exist.
 2. Fast-forward / push to **`deploy/docker-prod`** (the CI build branch):
    ```sh
    git push <remote> HEAD:deploy/docker-prod
@@ -95,16 +95,45 @@ rolling back and re-arming the thing that rolls you forward again.
 
 ## Restore a database backup
 
-Backups are nightly `pg_dump` archives kept locally (rolling retention) and copied **encrypted** off-site (Google Drive + a second machine). To restore:
+Backups are nightly `pg_dump` archives kept locally on a 14-day window and
+copied off-site to Google Drive (encrypted) and to a second machine (**not**
+encrypted). To restore:
+
+> ### Read this first: the dump does not carry permissions
+>
+> The nightly dumps are taken with `--no-acl`, and `pg_dump` never emits roles
+> at any flag combination. So the archive contains **no roles and no grants**.
+> Because `--clean --if-exists` drops and recreates every table, and a freshly
+> created table carries only its owner's privileges, a plain restore leaves
+> `anon` and `authenticated` able to read **nothing**.
+>
+> **That failure is silent.** A denied PostgREST read comes back as an empty
+> list, not an error, so the restored site serves 200s with no data on it. You
+> will think the restore worked.
+>
+> Read the "Restoring" section of `backup/README.md` before running anything
+> here: it carries the globals-first procedure and the caveats. The permanent
+> fix is written on branch `fix/backup-globals-and-acls` and is **not merged**.
 
 1. Locate the desired dump (local backup dir or the decrypted off-site copy).
 2. **Take a fresh backup first** (never restore over the only copy).
-3. Restore into the running Postgres container:
+3. Restore roles and grants **first**, per `backup/README.md`. Applying globals
+   to a container that already has `anon`, `authenticated`, `authenticator` and
+   `service_role` will print `already exists` for each and still exit 0, so
+   capture stderr and check that `already exists` is the *only* error there.
+4. Then restore the dump into the running Postgres container:
    ```sh
    # custom-format dump:
    docker exec -i <db-container> pg_restore -U postgres -d postgres --clean --if-exists < backup.dump
    ```
-4. Verify: log in, check the leaderboard and a recent match.
+5. **Re-apply any deletions made since the dump was taken.** A restore brings
+   back members who asked to be deleted, and if the dump predates their
+   request it erases the request too, so nothing will ever delete them again.
+   `backup/README.md` has the procedure and `scripts/request-account-deletion.sh`
+   is the tool.
+6. Verify, and do not verify by loading a page: a permissions failure renders
+   as an empty page, not an error. Check that a table a member should be able
+   to read actually returns rows.
 
 See `backup/README.md` for the backup scripts and the rclone/crypt setup.
 
@@ -211,7 +240,7 @@ Also set the shared VAPID + Resend secrets (same values as the apps). Full steps
 
 ## Monitoring (Sentry / PostHog)
 
-**Sentry** captures errors across each app's browser, server, and edge runtimes (source maps uploaded at build time so stack traces are readable). **PostHog** captures anonymous, cookieless product analytics from the client. Both are configured **by environment variable only** — no values in this repo; real values live in the password manager / [CREDENTIALS.md](CREDENTIALS.md).
+**Sentry** captures errors across each app's browser, server, and edge runtimes (source maps uploaded at build time so stack traces are readable). **PostHog ships in the code but is inert in production.** `NEXT_PUBLIC_POSTHOG_KEY` is not set there, so `lib/posthog.ts` and `lib/actions/_shared.ts` both short-circuit and no client is ever constructed: nothing is collected and nothing is sent. Treat it as disabled rather than as a data source. Note also that it would **not** be anonymous if enabled, because `components/posthog-identify.tsx` calls `identify()` with the player's uuid. Setting that key is therefore a privacy decision, not a config change, and it adds an entry to the member data export's disclosed-recipients list in the same commit. Both are configured **by environment variable only** — no values in this repo; real values live in the password manager / [CREDENTIALS.md](CREDENTIALS.md).
 
 Env var names (values kept private):
 
