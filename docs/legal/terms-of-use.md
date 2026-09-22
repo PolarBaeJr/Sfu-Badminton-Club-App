@@ -52,7 +52,7 @@ We may update these terms; material changes will be communicated to members. Con
 
 ## 10. Contact
 
-`[CONTACT EMAIL]`
+`hello@sfubadminton.com`
 
 ---
 

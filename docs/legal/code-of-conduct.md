@@ -42,7 +42,7 @@ Violations of ladder integrity may result in rating corrections, match voids, or
 
 ## Reporting
 
-If you experience or witness a violation, contact `[CONDUCT CONTACT — e.g. exec email / specific role]`. Reports will be handled discreetly and taken seriously. `[Describe the club's process and, where relevant, escalation to SFU.]`
+If you experience or witness a violation, contact `conduct@sfubadminton.com`. Reports will be handled discreetly and taken seriously. `[Describe the club's process and, where relevant, escalation to SFU.]`
 
 ## Consequences
 
