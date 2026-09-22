@@ -70,6 +70,18 @@ scripts/*
 # next. A generator that owns committed files has to ship with them.
 !scripts/make-icons.py
 
+# request-account-deletion.sh is the only way an officer can action a deletion
+# request at all: players.deletion_requested_at has exactly one writer in the
+# app (deleteMyAccount, which needs the MEMBER signed in), and the console can
+# only cancel. So this is not someone's local maintenance habit, it is the
+# club's procedure for honouring a legal request, and a procedure that exists
+# only on one laptop is one the next exec cannot carry out. backup/README.md
+# points at it. It holds no credentials: it reaches the database through an ssh
+# alias and docker exec, exactly as the already-tracked run-edge-fn.sh and
+# prod-to-dev-snapshot.sh do. Delete this exception when the admin console
+# grows the button and the script retires.
+!scripts/request-account-deletion.sh
+
 # prod-to-dev-snapshot.sh is itself tracked, and as of 2026-08-18 it refuses to
 # run without these two — it exits FATAL if either is missing. A tracked script
 # whose dependencies are gitignored is a script that is broken on every fresh
