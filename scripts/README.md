@@ -67,8 +67,11 @@ through `docker exec` so the host needs no `postgresql-client`. Copies the whole
 `public` schema plus `auth.users` and `auth.identities` (so `player.user_id` FKs
 stay valid); prod sessions and refresh tokens are deliberately skipped.
 
-This is what runs nightly at 04:00. It is **not** a faithful copy on purpose,
-and the header comment says exactly where it diverges.
+This is what runs nightly at 04:00, **from `~/ssd/Deploy/badminton-staging` on
+the Pi** and not from the stale `~/ssd/Deploy/badminton` checkout next to it. It
+is a plain checkout that nothing auto-updates, so a change here is live only
+after it reaches `deploy/docker-staging` and someone pulls there. It is **not** a
+faithful copy on purpose, and the header comment says exactly where it diverges.
 
 **It scrubs the members at the end of the run.** The dump itself carries real
 names, emails, phones, officer notes and fee records, because that is what a

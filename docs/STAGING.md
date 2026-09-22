@@ -85,9 +85,13 @@ production is never written to. Verified at parity: 46 tables, 104 RLS policies,
 > surface; they can name a member, so that is an accepted trade rather than an
 > oversight.
 >
-> **UNTIL THE SCRIPT IS PULLED ON THE PI, NONE OF THAT IS RUNNING.** It executes
-> from a plain checkout there and nothing auto-updates it, unlike the player and
-> admin images. Until then staging is a second full copy of the membership
+> **UNTIL THE SCRIPT IS PULLED ON THE PI, NONE OF THAT IS RUNNING**, and the
+> path is not the obvious one. There are two checkouts: `~/ssd/Deploy/badminton`
+> is stale, months behind, dirty, and nothing runs it; the crontab calls
+> `~/ssd/Deploy/badminton-staging`, which tracks `deploy/docker-staging` and is
+> clean. A change reaches the nightly job only after it is merged to that branch
+> and someone runs `git pull` in that second directory. Nothing auto-updates it,
+> unlike the player and admin images. Until then staging is a second full copy of the membership
 > database: it doubles the blast radius of any breach and belongs in the scope of
 > one, a member who deletes their account is not deleted here until the next
 > refresh, and access to the staging console is access to real member records.

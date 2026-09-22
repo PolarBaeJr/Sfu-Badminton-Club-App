@@ -33,21 +33,41 @@
 # Usage:
 #   ./prod-to-dev-snapshot.sh
 #
-# Cron (4am daily):
-#   0 4 * * * /home/polarbaejr/ssd/Deploy/badminton/scripts/prod-to-dev-snapshot.sh \
+# Cron (4am daily), and READ THE PATH:
+#   0 4 * * * /home/polarbaejr/ssd/Deploy/badminton-staging/scripts/prod-to-dev-snapshot.sh \
 #     >> /home/polarbaejr/ssd/Deploy/badminton-snapshots/cron.log 2>&1
 #
 # ---------------------------------------------------------------------------
-# READ THIS FIRST: IT HAS NOT RUN SINCE 7 JULY 2026.
+# THERE ARE TWO CHECKOUTS ON THE PI AND THE CRON USES THE ONE YOU DO NOT EXPECT.
 #
-# Everything below describes defects in what this script DOES. Before any of
-# them could matter it has to get past its own container check, and it has not:
-# the two names were `supabase_db_badminton` / `..._dev`, which do not exist.
-# `cron.log` is 4,493 lines, one FATAL per night, and the newest real dump is
-# `public-20260707T110001Z.sql.gz`. Fixed at the top of this file.
+# ~/ssd/Deploy/badminton            stale. Last commit `b96dc74b`, months behind
+#                                   production, on branch fixup/security-and-cleanup,
+#                                   with a dirty docker-compose.yml and an
+#                                   untracked backup/ directory. Its copy of this
+#                                   script is the July version with the dead
+#                                   container names. NOTHING RUNS IT.
+# ~/ssd/Deploy/badminton-staging    LIVE. Branch deploy/docker-staging, clean.
+#                                   This is what the crontab calls, and it is the
+#                                   only copy that matters.
 #
-# So read (1)-(3) as "what would have happened, measured on throwaway clusters",
-# NOT as "what has been happening nightly". In particular the blanket GRANT in
+# Editing this file in the repo changes nothing on the Pi by itself: that is a
+# plain checkout and nothing auto-updates it, unlike the player and admin
+# images. A change here reaches production behaviour only after this branch is
+# merged to deploy/docker-staging AND someone runs `git pull` in
+# ~/ssd/Deploy/badminton-staging. Verified 2026-09-22 by reading both.
+#
+# HISTORY, because the header used to say the opposite. This script did fail
+# every night from 7 July 2026 on container names that do not exist
+# (`supabase_db_badminton` / `..._dev`). That was fixed and merged to
+# deploy/docker-staging, and it has been running successfully since: the live
+# copy is dated 27 August and cron.log's last entry is a clean completion. The
+# earlier "IT HAS NOT RUN SINCE 7 JULY" banner here was describing the stale
+# checkout above, which still has the broken names, and it was wrong about the
+# one that runs. It is now copying real production members nightly, which is
+# exactly why the scrub at the bottom of this file exists.
+#
+# So read (1)-(3) below as "what would have happened, measured on throwaway
+# clusters", NOT as "what has been happening nightly". In particular the blanket GRANT in
 # (2) has not been re-opening `anon`'s access every night for the last six weeks,
 # because it has not been reached. Whatever staging drift 00157 cleans up
 # predates 7 July.
