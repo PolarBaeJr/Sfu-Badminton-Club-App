@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AUDITABLE_COLUMNS, WITHHELD_COLUMNS, auditablePlayer } from '../auditable-player';
 
@@ -184,5 +184,171 @@ describe('no admin action writes a raw player row to the audit log', () => {
       offenders,
       'a whole player row is being written to audit_logs — wrap it in auditablePlayer()',
     ).toEqual([]);
+  });
+});
+
+describe('a purged member keeps no artifact that was only ever theirs', () => {
+  /**
+   * Every `player_id`-keyed table in the schema, read from the migrations
+   * rather than from a list somebody maintains.
+   */
+  function playerKeyedTables(): string[] {
+    const dir = join(REPO, 'supabase/migrations');
+    const found = new Set<string>();
+    for (const file of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
+      const src = readFileSync(join(dir, file), 'utf8');
+      for (const m of src.matchAll(
+        /CREATE TABLE(?: IF NOT EXISTS)?\s+(?:public\.)?([a-z_0-9]+)\s*\(([\s\S]*?)\n\)\s*;/gi,
+      )) {
+        if (/^\s*player_id\b/m.test(m[2] ?? '')) found.add(m[1] as string);
+      }
+    }
+    expect(found.size, 'no player_id tables parsed, the regex has rotted').toBeGreaterThan(20);
+    return [...found].sort();
+  }
+
+  /**
+   * A named list from _shared/anonymize.ts.
+   *
+   * Ends the slice on `] as const` rather than on the first `]`. The comments
+   * in that file cite route paths, and `/api/calendar/[token]` closed the array
+   * early: the parser returned the first four tables, silently, and the pin
+   * below passed for the wrong reason. Exactly the failure these tests exist to
+   * make loud, so the fix is pinned by the length assertion too.
+   */
+  function sharedList(name: string): string[] {
+    const src = readFileSync(ANONYMIZE, 'utf8');
+    const block = src.slice(src.indexOf(`export const ${name}`));
+    const end = block.indexOf('] as const');
+    expect(end, `${name} should be a list ending in "] as const"`).toBeGreaterThan(-1);
+    // Drop comment lines before matching rather than anchoring on layout: one
+    // of these lists is multi-line with a comment per entry and the other is a
+    // single line, so any rule about where a name sits is wrong for one of them.
+    const arr = block
+      .slice(block.indexOf('['), end)
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    const names = [...arr.matchAll(/'([a-z_]+)'/g)].map((m) => m[1] as string);
+    expect(names.length, `${name} parsed as empty`).toBeGreaterThan(0);
+    return names;
+  }
+
+  // Why each player-keyed table the purge does NOT clear is allowed to stay.
+  //
+  // A reason per table, rather than a bare allowlist, because the two bugs this
+  // file exists for were both "nobody looked at that one". Writing the sentence
+  // is the review. Most of these come down to one of two things: the row is
+  // also somebody ELSE's record, or it is a record the club has to keep.
+  const KEPT: Record<string, string> = {
+    announcement_reads: 'the club\'s record of who has seen a notice; no identity in the row',
+    challenge_participants: 'a challenge has two players and the row is both their record',
+    club_fees: 'a financial record, kept for the same reason a receipt is',
+    digest_deliveries: 'the delivery key that stops a digest sending twice; activity, not identity',
+    event_feedback: 'written about a club event, and part of the record of that event',
+    event_waiver_acceptances: 'legal evidence, per tournament',
+    legacy_tournament_participants: 'shared competitive history',
+    match_participants: 'a match has two to four players',
+    ratings: 'derived from matches other members played, and their Elo depends on it',
+    reinstatement_fees: 'a financial record of a reinstatement the club processed',
+    reliability_metrics: 'derived attendance, referenced by other members\' no-show handling',
+    season_final_ratings: 'historical standings that other members appear in',
+    season_snapshots: 'historical standings, and the input to season comparisons',
+    session_attendance: 'who was at a session, which is every attendee\'s record',
+    session_rsvp: 'the club\'s operational record of a session',
+    tournament_fees: 'a financial record of an entry the member paid for',
+    tournament_participants: 'shared competitive history, draws and results',
+    // NOT SETTLED, and deliberately recorded as unsettled rather than quietly
+    // kept. `varsity_notes.note` is free text an exec wrote ABOUT this member,
+    // so it is plainly information about the person, and an argument for
+    // clearing it is easy to make. It is kept for now because the club runs
+    // under SFU Recreation: FIPPA brings a records retention schedule with it,
+    // and under a schedule deleting early is its own breach. Erasing on a guess
+    // is the one move that cannot be undone. See docs/design/open-issues.md
+    // Part 10.6.
+    varsity_notes: 'OPEN: free text about the member, held pending the records-schedule answer',
+    waiver_acceptances: 'legal evidence, and the reason the table is append-only',
+  };
+
+  it('classifies every player-keyed table as cleared, unlinked or kept', () => {
+    // THE PIN, and the check that was missing when player_discord_links was
+    // added. A new table keyed on player_id is neither cleared nor justified
+    // until somebody says which, and this fails until they do.
+    const handled = new Set<string>([
+      ...sharedList('PERSONAL_ARTIFACT_TABLES'),
+      ...sharedList('DELINKED_TABLES'),
+      ...Object.keys(KEPT),
+    ]);
+    const unclassified = playerKeyedTables().filter((t) => !handled.has(t));
+    expect(
+      unclassified,
+      'new player_id table(s): add to PERSONAL_ARTIFACT_TABLES, DELINKED_TABLES, or KEPT with a reason',
+    ).toEqual([]);
+  });
+
+  it('gives every kept table a real reason', () => {
+    for (const [table, reason] of Object.entries(KEPT)) {
+      expect(reason.length, `${table} needs a reason, not a placeholder`).toBeGreaterThan(20);
+    }
+  });
+
+  it('clears the Discord link and the calendar token', () => {
+    // The two that re-identify a purged member. The Discord link maps the row
+    // to a live snowflake anyone holding it can read through; the calendar token
+    // IS the authentication for that member's feed.
+    const cleared = sharedList('PERSONAL_ARTIFACT_TABLES');
+    expect(cleared).toContain('player_discord_links');
+    expect(cleared).toContain('calendar_feed_tokens');
+    expect(cleared).toContain('push_subscriptions');
+    expect(cleared).toContain('passkey_credentials');
+  });
+
+  it('does not clear a table that belongs to a second member', () => {
+    // The inverse failure, and the more damaging one: clearing session
+    // attendance or match participation would rewrite other members' history
+    // and silently change their Elo. Nothing in the shared lists may name a
+    // table justified as shared.
+    const cleared = new Set<string>([
+      ...sharedList('PERSONAL_ARTIFACT_TABLES'),
+      ...sharedList('DELINKED_TABLES'),
+    ]);
+    const overlap = Object.keys(KEPT).filter((t) => cleared.has(t));
+    expect(overlap, 'a table is both kept and cleared, so one of the two is wrong').toEqual([]);
+  });
+
+  it('is the only place either purge job decides which tables to touch', () => {
+    for (const job of ['purge-deleted-accounts', 'purge-inactive-accounts']) {
+      const src = readFileSync(join(REPO, `supabase/functions/${job}/index.ts`), 'utf8');
+      expect(src, `${job} should iterate the shared table list`).toContain(
+        'for (const table of PERSONAL_ARTIFACT_TABLES)',
+      );
+      expect(src, `${job} should honour the declared SET NULL`).toContain(
+        'for (const table of DELINKED_TABLES)',
+      );
+      // The shape the shared list replaced. A reintroduced literal is how the
+      // lists drifted apart the first time.
+      expect(src, `${job} should not name artifact tables inline`).not.toMatch(
+        /from\('push_subscriptions'\)/,
+      );
+    }
+  });
+
+  it('scrubs the audit trails once after the loop, never inside it', () => {
+    // scrub_deleted_identity() takes no arguments and finds its work by two
+    // predicates that only hold once the loop has finished: an auth row whose
+    // actor is gone from auth.users, and a players row with user_id NULL and a
+    // deleted+ sentinel email. Called per player before the anonymising update
+    // it matches nothing, scrubs nothing, and reports success.
+    for (const job of ['purge-deleted-accounts', 'purge-inactive-accounts']) {
+      const src = readFileSync(join(REPO, `supabase/functions/${job}/index.ts`), 'utf8');
+      expect(src, `${job} should call the scrub`).toContain("rpc('scrub_deleted_identity')");
+      const loopStart = src.indexOf('for (const player of');
+      const loopEnd = src.indexOf('\n  }\n', loopStart);
+      const insideLoop = src.slice(loopStart, loopEnd);
+      expect(
+        insideLoop,
+        `${job} calls scrub_deleted_identity inside the per-player loop, where it matches nothing`,
+      ).not.toContain('scrub_deleted_identity');
+    }
   });
 });

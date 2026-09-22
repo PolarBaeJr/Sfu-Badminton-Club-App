@@ -40,7 +40,11 @@
 
 import { requireCronSecret } from '../_shared/auth.ts';
 import { createServiceClient, jsonResponse } from '../_shared/client.ts';
-import { anonymizedPlayerFields } from '../_shared/anonymize.ts';
+import {
+  anonymizedPlayerFields,
+  DELINKED_TABLES,
+  PERSONAL_ARTIFACT_TABLES,
+} from '../_shared/anonymize.ts';
 
 Deno.serve(async (req) => {
   const denied = requireCronSecret(req);
@@ -104,16 +108,34 @@ Deno.serve(async (req) => {
 
   for (const player of eligible) {
     // Order matters and mirrors purge-deleted-accounts: purely personal
-    // artifacts first, then the auth user, then the anonymising update LAST.
-    // A partial failure therefore leaves the row still matching the view, so
-    // the next night retries it — idempotent per player.
-    const { error: pushError } = await supabase
-      .from('push_subscriptions').delete().eq('player_id', player.id);
-    const { error: passkeyError } = await supabase
-      .from('passkey_credentials').delete().eq('player_id', player.id);
-    const { error: notifError } = await supabase
-      .from('notifications').delete().eq('player_id', player.id);
-    const depError = pushError ?? passkeyError ?? notifError;
+    // artifacts first, then the links, then the auth user, then the anonymising
+    // update LAST. A partial failure therefore leaves the row still matching the
+    // view, so the next night retries it — idempotent per player. The table
+    // lists are _shared/anonymize.ts, alongside the field list.
+    let depError: { message: string } | null = null;
+    for (const table of PERSONAL_ARTIFACT_TABLES) {
+      const { error: tableError } = await supabase
+        .from(table).delete().eq('player_id', player.id);
+      if (tableError) {
+        depError = tableError;
+        break;
+      }
+    }
+    if (depError) {
+      errors.push(`${player.id}: ${depError.message}`);
+      continue;
+    }
+
+    // Cut the link, keep the row. See DELINKED_TABLES: this is the FK action
+    // the schema declares and that an UPDATE-only purge can never trigger.
+    for (const table of DELINKED_TABLES) {
+      const { error: unlinkError } = await supabase
+        .from(table).update({ player_id: null }).eq('player_id', player.id);
+      if (unlinkError) {
+        depError = unlinkError;
+        break;
+      }
+    }
     if (depError) {
       errors.push(`${player.id}: ${depError.message}`);
       continue;
@@ -163,6 +185,28 @@ Deno.serve(async (req) => {
     }
 
     purged++;
+  }
+
+  // The audit trails, which the anonymising update cannot reach. Identical to
+  // purge-deleted-accounts, and the reasoning is written out there: the scrub
+  // takes no arguments, finds its own work by predicates that only hold AFTER
+  // the loop, and so must be called once at the end rather than per player.
+  //
+  // Unreachable on a dry run, because the dry run returned above. That is the
+  // intended shape: this function is the only writer here that could touch a
+  // row belonging to somebody the view did not select, so it stays behind the
+  // same arming switch as everything else.
+  if (purged > 0) {
+    const { data: scrubbed, error: scrubError } = await supabase.rpc('scrub_deleted_identity');
+    if (scrubError) {
+      errors.push(`scrub_deleted_identity: ${scrubError.message}`);
+    } else {
+      const rows = Array.isArray(scrubbed) ? scrubbed[0] : scrubbed;
+      console.log(
+        `Scrubbed identity from audit trails: ${rows?.auth_rows_scrubbed ?? 0} auth row(s), ` +
+          `${rows?.audit_rows_scrubbed ?? 0} audit_logs row(s)`,
+      );
+    }
   }
 
   if (errors.length > 0) {
