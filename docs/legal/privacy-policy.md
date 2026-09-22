@@ -4,7 +4,13 @@
 >
 > **Which law applies is an open question, and it is with SFU Recreation.** The two candidates are **FIPPA**, if the membership data counts as an SFU record because the club sits under Recreation, and BC's **PIPA**, if the club is a private organisation holding its own records. The app is currently built and documented on the **FIPPA** reading, as the more conservative of the two. The facts point the other way (the club manages itself, collects its own records, holds them on its own hardware, Recreation has no access, and this is not an official SFU application), which is exactly why it is being asked rather than assumed. It matters here: the deadline for answering a member's request for their own data is **30 business days under FIPPA and 30 calendar days under PIPA**, and PIPA additionally requires the club to designate a privacy officer and maintain a written privacy management program.
 
-**Effective date:** `[DATE]`
+**Effective date:** 2026-07-19
+**Version:** `2026-07-19`, which is the value in `legal_documents.version` for
+`privacy_policy` and the version every current member has on record as having
+accepted. These two are the same string on purpose: the app gates access on the
+database's version, so a date written here that disagreed with it would be a
+policy nobody had agreed to. Change one and you must change the other, and
+changing the version is what forces re-acceptance.
 **Applies to:** the SFU Badminton Club app and website (https://sfubadminton.com).
 **Contact:** `privacy@sfubadminton.com`
 

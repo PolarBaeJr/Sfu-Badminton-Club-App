@@ -44,7 +44,13 @@
     "test": {
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/supabase/migrations/**"
+        "$TURBO_ROOT$/supabase/migrations/**",
+        // legal-doc-version-contract.test.ts reads docs/legal off disk the same
+        // way the schema tests read migrations. Without this line, editing an
+        // effective date leaves the cache untouched and the guard replays a PASS
+        // against the previous text, which is the exact failure the guard exists
+        // to catch.
+        "$TURBO_ROOT$/docs/legal/**"
       ]
     },
     "lint": {},
