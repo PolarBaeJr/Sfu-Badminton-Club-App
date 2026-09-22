@@ -94,6 +94,14 @@ scripts/*
 # db-migrate.sh does not already carry.
 !scripts/README.md
 
+# run-edge-fn.sh is the only thing that invokes the nightly edge functions, and
+# seven crontab lines on the Pi call it, including the deletion purge that has to
+# satisfy a request inside 30 days. It lived in one home directory, described
+# nowhere in the checkout, and it discarded every status it computed. Tracked for
+# the same reason db-migrate.sh is: it is toolchain, not somebody's local
+# maintenance habit, and untracked nobody can see what the retention jobs do.
+!scripts/run-edge-fn.sh
+
 # Internal working notes / security findings — keep out of the public repo
 docs/sensitive/
 
