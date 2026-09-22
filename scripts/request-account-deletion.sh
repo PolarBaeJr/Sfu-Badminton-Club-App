@@ -27,13 +27,38 @@
 # cancelAccountDeletion still undoes it and nothing downstream can tell the
 # difference except the audit trail, which is exactly where the difference
 # belongs.
+#
+# ---------------------------------------------------------------------------
+# WHY IT WRITES TO STAGING TOO, BY DEFAULT.
+#
+# Staging is not test data. scripts/prod-to-dev-snapshot.sh copies the whole
+# public schema plus auth.users and auth.identities from production every night
+# at 04:00, unscrubbed, so the staging database holds the real membership: real
+# names, real emails, real phones. There are two copies of these people on the
+# public internet, not one.
+#
+# That nightly refresh does eventually carry an anonymisation across, because it
+# drops and reloads the schema. Two reasons not to rely on it:
+#
+#   1. It is a job, and this one has been dead before. It failed silently every
+#      night from 7 July to 21 September 2026 on a container name that no longer
+#      existed. A deletion whose completeness depends on a cron job nobody is
+#      watching is a deletion you cannot promise.
+#   2. Even working, it leaves the member readable on staging until 04:00.
+#
+# So the default is --db both, and prod is written FIRST: if prod refuses, the
+# mirror is never touched. On the mirror the script is deliberately laxer -- a
+# member missing from staging is a no-op, not an error -- and it writes no audit
+# row there, because staging's audit_logs is wiped every night and is not the
+# record of anything.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 SSH_HOST="${SSH_HOST:-pi}"
-DB_CONTAINER="${DB_CONTAINER:-supabase-db}"
+PROD_CONTAINER="${PROD_CONTAINER:-supabase-db}"
+STAGING_CONTAINER="${STAGING_CONTAINER:-supabase-staging-db}"
 
-ACTOR="" TARGET="" REASON="" CONFIRM="" ALLOW_OFFICER="0"
+ACTOR="" TARGET="" REASON="" CONFIRM="" ALLOW_OFFICER="0" DB="both"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -54,8 +79,15 @@ usage: request-account-deletion.sh --actor <id> --target <id> --reason "<text>" 
              scheduling a deletion sets active_flag=false, which locks that
              account OUT of the admin console, and the only cancel button is
              inside it. Cancel from a DIFFERENT admin account afterwards.
+  --db       which databases to write. both (default) | prod | staging.
+             STAGING IS NOT TEST DATA: it is refreshed from prod nightly with no
+             scrub, so it holds the same real people. "both" is the default
+             because a deletion that only covers one of the two copies is not a
+             deletion. prod is always written first.
 
-env: SSH_HOST (default: pi), DB_CONTAINER (default: supabase-db)
+env: SSH_HOST (default: pi)
+     PROD_CONTAINER    (default: supabase-db)
+     STAGING_CONTAINER (default: supabase-staging-db)
 USAGE
   exit 2
 }
@@ -67,10 +99,16 @@ while [ $# -gt 0 ]; do
     --reason)  REASON="${2:-}"; shift 2 ;;
     --confirm) CONFIRM=1;       shift   ;;
     --allow-officer) ALLOW_OFFICER=1; shift ;;
+    --db)      DB="${2:-}";     shift 2 ;;
     -h|--help) usage ;;
     *) die "unknown argument: $1" ;;
   esac
 done
+
+case "$DB" in
+  both|prod|staging) ;;
+  *) die "--db must be both, prod or staging (got: $DB)" ;;
+esac
 
 [ -n "$ACTOR" ]  || usage
 [ -n "$TARGET" ] || usage
@@ -103,6 +141,7 @@ echo "=== $MODE ==="
 echo "  actor:  $ACTOR"
 echo "  target: $TARGET"
 echo "  reason: $REASON"
+echo "  db:     $DB"
 echo
 
 # ---------------------------------------------------------------------------
@@ -120,8 +159,32 @@ emit_sql() {
 cat <<'PLPGSQL'
 BEGIN;
 
+-- THE PARAMETERS HAVE TO ARRIVE THROUGH set_config, NOT AS :'var' INSIDE THE
+-- BLOCK. psql performs variable interpolation while it lexes, and it treats a
+-- dollar-quoted string as opaque, so a psql-style parameter written between
+-- $do$ and $do$ is passed to the server literally and dies with
+-- `syntax error at or near ":"`. (Verified against psql, not assumed. It is a
+-- silent trap because the identical parameter a few lines higher, outside the
+-- quoting, expands perfectly.)
+--
+-- These SELECTs are outside the block, so they do expand. `true` as the third
+-- argument makes each setting LOCAL to the transaction, which means the dry
+-- run's ROLLBACK discards them along with everything else and nothing leaks
+-- into the next statement on that connection.
+\o /dev/null
+SELECT set_config('deletion.actor',         :'actor',         true),
+       set_config('deletion.target',        :'target',        true),
+       set_config('deletion.reason_b64',    :'reason_b64',    true),
+       set_config('deletion.allow_officer', :'allow_officer', true),
+       set_config('deletion.mirror',        :'mirror',        true);
+\o
+
 DO $do$
 DECLARE
+  c_actor      text := current_setting('deletion.actor');
+  c_target     text := current_setting('deletion.target');
+  c_reason_b64 text := current_setting('deletion.reason_b64');
+  c_allow_off  text := current_setting('deletion.allow_officer');
   v_n          integer;
   v_target     uuid;
   v_actor      uuid;
@@ -135,39 +198,66 @@ DECLARE
   v_trainer    boolean;
   v_actor_name text;
   v_now        timestamptz := now();
+  -- THE MIRROR FLAG. '1' when this run is against staging, which is a nightly
+  -- unscrubbed copy of prod rather than an independent record. Everything it
+  -- changes below is a RELAXATION, never a new power: prod has already run and
+  -- already refused, so re-refusing here would only strand the two copies in
+  -- different states, with the member deleted on prod and readable on staging.
+  v_mirror     boolean := (current_setting('deletion.mirror') = '1');
 BEGIN
-  -- Resolve the actor.
+  -- Resolve the actor. On the mirror a missing actor is survivable: it costs
+  -- the audit row (skipped below), not the deletion.
   SELECT count(*) INTO v_n FROM players
-   WHERE email = :'actor' OR member_code = :'actor' OR id::text = :'actor';
-  IF v_n <> 1 THEN
-    RAISE EXCEPTION 'actor "%" matched % players, need exactly 1', :'actor', v_n;
+   WHERE email = c_actor OR member_code = c_actor OR id::text = c_actor;
+  IF v_n <> 1 AND NOT v_mirror THEN
+    RAISE EXCEPTION 'actor "%" matched % players, need exactly 1', c_actor, v_n;
   END IF;
-  SELECT id, full_name INTO v_actor, v_actor_name FROM players
-   WHERE email = :'actor' OR member_code = :'actor' OR id::text = :'actor';
+  IF v_n = 1 THEN
+    SELECT id, full_name INTO v_actor, v_actor_name FROM players
+     WHERE email = c_actor OR member_code = c_actor OR id::text = c_actor;
+  ELSE
+    RAISE NOTICE 'mirror: actor "%" is not on this database; applying the deletion without an audit row', c_actor;
+  END IF;
 
-  -- Resolve the target.
+  -- Resolve the target. On the mirror, absent means there is nothing here to
+  -- delete, which is the desired end state rather than a failure. Staging can
+  -- legitimately lag prod by up to a day.
   SELECT count(*) INTO v_n FROM players
-   WHERE email = :'target' OR member_code = :'target' OR id::text = :'target';
+   WHERE email = c_target OR member_code = c_target OR id::text = c_target;
   IF v_n <> 1 THEN
-    RAISE EXCEPTION 'target "%" matched % players, need exactly 1', :'target', v_n;
+    IF v_mirror THEN
+      RAISE NOTICE 'mirror: target "%" matched % rows here, nothing to do', c_target, v_n;
+      RETURN;
+    END IF;
+    RAISE EXCEPTION 'target "%" matched % players, need exactly 1', c_target, v_n;
   END IF;
   SELECT id, full_name, email, member_code, active_flag, deletion_requested_at,
          role, coalesce(is_exec, false), coalesce(is_trainer, false)
     INTO v_target, v_name, v_email, v_code, v_flag, v_stamp,
          v_role, v_exec, v_trainer
    FROM players
-   WHERE email = :'target' OR member_code = :'target' OR id::text = :'target';
+   WHERE email = c_target OR member_code = c_target OR id::text = c_target;
 
-  -- Refusals, in the order that gives the most useful message first.
-  IF v_actor = v_target THEN
+  -- Refusals, in the order that gives the most useful message first. Each one
+  -- becomes a skip on the mirror: prod is the database that decides, and these
+  -- three all describe a state in which the mirror already needs no change.
+  IF v_actor = v_target AND NOT v_mirror THEN
     RAISE EXCEPTION 'that is you. Delete your own account from the member settings page, which is the audited self-service path';
   END IF;
 
   IF v_email LIKE 'deleted+%@deleted.invalid' THEN
+    IF v_mirror THEN
+      RAISE NOTICE 'mirror: target % (%) is already anonymised here, nothing to do', v_name, v_code;
+      RETURN;
+    END IF;
     RAISE EXCEPTION 'target % (%) is already purged and anonymised; there is nothing left to schedule', v_name, v_code;
   END IF;
 
   IF v_stamp IS NOT NULL THEN
+    IF v_mirror THEN
+      RAISE NOTICE 'mirror: target % (%) already scheduled here (requested %), nothing to do', v_name, v_code, v_stamp;
+      RETURN;
+    END IF;
     RAISE EXCEPTION 'target % (%) already has a deletion scheduled, requested %; it purges 30 days after that. Use the console to cancel if that is wrong', v_name, v_code, v_stamp;
   END IF;
 
@@ -181,7 +271,12 @@ BEGIN
   --
   -- Overridable, because an officer who leaves the club is a real case. But it
   -- has to be said out loud rather than discovered afterwards.
-  IF (v_role = 'admin' OR v_exec OR v_trainer) AND :'allow_officer' <> '1' THEN
+  --
+  -- Skipped on the mirror for a specific reason, not laziness: the snapshot
+  -- script re-grants admin to $STAGING_ADMIN_EMAILS after every refresh, so a
+  -- member who is an ordinary player on prod can be an admin on staging. Left
+  -- in, that mismatch would abort the mirror write AFTER prod had committed.
+  IF (v_role = 'admin' OR v_exec OR v_trainer) AND c_allow_off <> '1' AND NOT v_mirror THEN
     RAISE EXCEPTION 'target % (%) holds console access (role=%, is_exec=%, is_trainer=%). Scheduling a deletion sets active_flag=false, which locks them OUT of the admin console, and the only cancel button is inside it. Re-run with --allow-officer if that is genuinely what you want, and cancel it from another admin account, not theirs', v_name, v_code, v_role, v_exec, v_trainer;
   END IF;
 
@@ -203,28 +298,51 @@ BEGIN
   -- to be able to tell the writers of active_flag apart. Filing an officer's
   -- action under the member's name would put a deletion they did not perform
   -- in their own audit trail, which is the opposite of what this row is for.
-  INSERT INTO audit_logs (actor_id, action_type, target_type, target_id, old_value, new_value, reason)
-  VALUES (
-    v_actor,
-    'officer_deletion_requested',
-    'player',
-    v_target,
-    jsonb_build_object('deletion_requested_at', NULL, 'active_flag', v_flag),
-    jsonb_build_object('deletion_requested_at', v_now, 'active_flag', false),
-    convert_from(decode(:'reason_b64', 'base64'), 'UTF8')
-  );
+  --
+  -- Not written on the mirror. Staging's audit_logs is dropped and reloaded
+  -- from prod at 04:00, so a row inserted here survives hours and is then
+  -- replaced by prod's copy of the same event. Writing it would create a second
+  -- record of one action that disagrees with the real one about its timestamp.
+  IF v_actor IS NOT NULL AND NOT v_mirror THEN
+    INSERT INTO audit_logs (actor_id, action_type, target_type, target_id, old_value, new_value, reason)
+    VALUES (
+      v_actor,
+      'officer_deletion_requested',
+      'player',
+      v_target,
+      jsonb_build_object('deletion_requested_at', NULL, 'active_flag', v_flag),
+      jsonb_build_object('deletion_requested_at', v_now, 'active_flag', false),
+      convert_from(decode(c_reason_b64, 'base64'), 'UTF8')
+    );
+  END IF;
 END
 $do$;
 PLPGSQL
 echo "$FINAL"
 }
 
-emit_sql | ssh "$SSH_HOST" "docker exec -i $DB_CONTAINER psql -U postgres -d postgres \
-  -v ON_ERROR_STOP=1 \
-  -v actor=\"$ACTOR\" \
-  -v target=\"$TARGET\" \
-  -v reason_b64=\"$REASON_B64\" \
-  -v allow_officer=\"$ALLOW_OFFICER\""
+apply_to() {
+  local label="$1" container="$2" mirror="$3"
+  echo "--- $label ($container) ---"
+  emit_sql | ssh "$SSH_HOST" "docker exec -i $container psql -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 \
+    -v actor=\"$ACTOR\" \
+    -v target=\"$TARGET\" \
+    -v reason_b64=\"$REASON_B64\" \
+    -v allow_officer=\"$ALLOW_OFFICER\" \
+    -v mirror=\"$mirror\""
+  echo
+}
+
+# PROD FIRST, ALWAYS. `set -e` then means a refusal on prod stops the run before
+# the mirror is touched, so the two copies can never end up with the member
+# deleted on staging and live on production.
+case "$DB" in
+  prod|both) apply_to "production" "$PROD_CONTAINER" 0 ;;
+esac
+case "$DB" in
+  staging|both) apply_to "staging mirror" "$STAGING_CONTAINER" 1 ;;
+esac
 
 echo
 if [ -n "$CONFIRM" ]; then
