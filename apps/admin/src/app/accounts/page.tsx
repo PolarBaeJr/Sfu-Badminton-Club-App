@@ -27,6 +27,7 @@ import { AvatarChip, Badge, Card, EmptyState, PageHeader, ResponsiveTable, Table
 import Link from 'next/link';
 import { PlatformSettingsForm } from '@/components/platform-settings-form';
 import { settingsForSection } from '@/lib/platform-setting-sections';
+import { DataApiKeysCard } from './DataApiKeysCard';
 
 // TWO QUESTIONS, ONE PAGE, AND THEY ARE BOTH CALLED "ACCOUNTS".
 //
@@ -78,6 +79,16 @@ export default async function AccountsPage() {
   const viewerPermissions = permissionsOf(accessLevelFor(viewer), viewer);
   const showOfficers = permits(viewerLevel, viewerPermissions, 'permissions.page');
   const showPlatformSettings = permits(viewerLevel, viewerPermissions, 'platform.page');
+  // THE FOURTH ANSWER, and it is a FETCH gate rather than a render one. See
+  // capability-gates.ts on `accounts.apikey.read`: what it withholds is the
+  // rows, so the query below is skipped exactly the way the officer and
+  // settings halves skip theirs. The two write capabilities decide only which
+  // CONTROLS the card draws; the real gate on both acts is the
+  // requireCapability inside actions/data-api-keys.ts, and render-gating a
+  // button has never stopped a POST.
+  const showDataApiKeys = permits(viewerLevel, viewerPermissions, 'accounts.apikey.read');
+  const canMintDataApiKey = permits(viewerLevel, viewerPermissions, 'accounts.apikey.mint.write');
+  const canRevokeDataApiKey = permits(viewerLevel, viewerPermissions, 'accounts.apikey.revoke.write');
 
   const adminClient = createAdminClient();
 
@@ -187,6 +198,46 @@ export default async function AccountsPage() {
     ? await adminClient.from('platform_settings').select('*').order('key')
     : { data: null };
 
+  // THE ISSUED KEYS.
+  //
+  // `key_hash` IS NOT IN THIS SELECT and must never be. Not rendering it is not
+  // the same as not fetching it: an unrendered column still travels in the RSC
+  // payload, which is the argument this page already makes at :55-57 about
+  // gated fetches versus gated renders. The hash is not usable as a credential,
+  // but it is a probe against a candidate list and there is no reason for it to
+  // leave the database.
+  //
+  // BOTH EMBEDS NAME THEIR FOREIGN KEY. `data_api_keys` has two columns
+  // referencing `players` (minted_by and revoked_by), so an unqualified
+  // `players(...)` embed is ambiguous and PostgREST refuses the whole select.
+  const { data: apiKeyRows, error: apiKeysError } = showDataApiKeys
+    ? await adminClient
+        .from('data_api_keys')
+        .select(
+          'id, key_prefix, label, scopes, created_at, expires_at, revoked_at, consumer:data_api_consumers!data_api_keys_consumer_id_fkey(name), minter:players!data_api_keys_minted_by_fkey(full_name)',
+        )
+        .order('created_at', { ascending: false })
+    : { data: null, error: null };
+
+  // AN ERROR HERE IS A KNOWN STATE, NOT A FAULT, which is why it is not
+  // reported the way the access-log read above is. 00241 creates these tables
+  // and ships UNAPPLIED: applying it is the owner's, so until they run it
+  // PostgREST answers this select with "table not found" and supabase-js
+  // returns { data: null }. The same shape as the `roleRows` fallback below.
+  // Either way the honest sentence is that the key store is not reachable, and
+  // the card says so rather than claiming the club has issued nothing.
+  const apiKeys = (apiKeyRows ?? []).map((row) => ({
+    id: row.id as string,
+    consumer: embedded<{ name: string }>(row.consumer)?.name ?? 'Unknown consumer',
+    key_prefix: row.key_prefix as string,
+    label: (row.label as string | null) ?? null,
+    scopes: (row.scopes as string[] | null) ?? [],
+    created_at: row.created_at as string,
+    expires_at: (row.expires_at as string | null) ?? null,
+    revoked_at: (row.revoked_at as string | null) ?? null,
+    minted_by_name: embedded<{ full_name: string }>(row.minter)?.full_name ?? null,
+  }));
+
   // WHAT THE ROLES ACTUALLY SAY, READ FROM THE TABLE RATHER THAN FROM THE CODE.
   //
   // This card is club-facing documentation of the four jobs, and until 00104 it
@@ -240,6 +291,9 @@ export default async function AccountsPage() {
       : []),
     ...(showPlatformSettings
       ? [{ id: 'account-rules', label: 'Account rules', sub: "What a membership may do" }]
+      : []),
+    ...(showDataApiKeys
+      ? [{ id: 'data-api-keys', label: 'Data API keys', sub: 'Who reads the data from outside' }]
       : []),
   ];
 
@@ -482,6 +536,41 @@ export default async function AccountsPage() {
               </Card>
             </section>
           )}
+
+          {showDataApiKeys ? (
+            // The anchor lives on a wrapper for the same reason the officers
+            // one does: Card takes no id and packages/ui is not this change's
+            // to edit.
+            <section id="data-api-keys" className="scroll-mt-32">
+              {apiKeysError ? (
+                <Card>
+                  <CardHeading title="Data API keys" />
+                  <p className="mt-3 text-[13px] text-[var(--mute)]">
+                    The key store cannot be read. Migration 00241 creates it and has to be
+                    applied to this database before the panel works; until then this is
+                    expected rather than a fault.
+                  </p>
+                </Card>
+              ) : (
+                <DataApiKeysCard
+                  keys={apiKeys}
+                  canMint={canMintDataApiKey}
+                  canRevoke={canRevokeDataApiKey}
+                />
+              )}
+            </section>
+          ) : (
+            // WITHHELD, NOT EMPTY, exactly as the officers half above. A page
+            // with no key card at all reads as a club that has never thought
+            // about the question.
+            <Card>
+              <CardHeading title="Data API keys" />
+              <p className="mt-3 text-[13px] text-[var(--mute)]">
+                Who holds a data API key is not shown to you. It needs the Data API keys
+                capability.
+              </p>
+            </Card>
+          )}
         </div>
 
         {/* RIGHT */}
@@ -577,6 +666,20 @@ export default async function AccountsPage() {
 // Presentation helpers. Nothing here decides anything — every authorisation
 // answer on this page comes from officer-access.ts or from permits().
 // ---------------------------------------------------------------------------
+
+/**
+ * One embedded row from a PostgREST many-to-one join.
+ *
+ * PostgREST returns a many-to-one embed as an OBJECT, but supabase-js types it
+ * as an ARRAY whenever the client carries no generated Database type, which
+ * this one deliberately does not (see supabase-server.ts). Unwrapping rather
+ * than casting blind means the row survives whichever shape arrives, instead of
+ * reading `.name` off an array and rendering "undefined".
+ */
+function embedded<T>(value: unknown): T | null {
+  if (Array.isArray(value)) return (value[0] as T | undefined) ?? null;
+  return (value as T | null) ?? null;
+}
 
 function CardHeading({
   title,

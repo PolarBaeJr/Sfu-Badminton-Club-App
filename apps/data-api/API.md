@@ -24,8 +24,23 @@ use case it was designed around, and the shape reflects it.
 ### What it deliberately does not carry
 
 No names, emails, Discord handles, phone numbers, avatars, student numbers or
-member codes. Not by omission: the feed reads from a purpose-built view that
-cannot join to those columns at all.
+member codes.
+
+Not by omission, and the precise claim is worth stating honestly rather than
+overstating. Computing a `player_ref` requires reading a member's internal id,
+so "the feed cannot reach those columns at all" is not literally achievable.
+What IS structurally true, and what migration 00241 asserts as a condition of
+applying at all, is this: **the database role the service connects as holds no
+grant that reaches any identifier column.** It cannot select from `players`, it
+cannot select the columns of `players`, and it cannot select the internal view
+the feed is built from. It holds EXECUTE on two functions and nothing else, and
+those two functions return a hash where an id went in.
+
+The remaining hole, named rather than hidden: a service configured with the
+Supabase **service role key** bypasses every one of those grants, because that
+key is defined by bypassing them. Nothing in the database can prevent that. The
+enforcement for it lives in the service's own environment, in which key it is
+given, and that is a deployment decision rather than a schema one.
 
 ---
 
@@ -75,6 +90,12 @@ default; it is allowed nothing by default.
 For win-rate prediction you want `players:read` today, and `matches:read` as
 match data accumulates.
 
+`ratings:history:read` is **accepted and empty**. A key may carry it, and it is
+in the database's own list of valid scopes, but nothing in the club's system
+journals a rating change per match, so there is no history to return. It
+answers with an empty history rather than a `403`, because the scope is granted;
+what is missing is the data, not the permission. See the honesty note below.
+
 ### Revocation
 
 A revoked key stops working within 30 seconds. Verification results are cached
@@ -96,11 +117,13 @@ Unauthenticated. For uptime checks.
 
 Requires `players:read`.
 
-Every member with a rating, one object each.
+Every member with a rating who is in the feed's population, one object each.
+See "who is in the feed" below: it is not the same set as the club's public
+leaderboard, and it is not the same as the club's membership.
 
 ```json
 {
-  "season": { "name": "Fall 2026", "started_on": "2026-09-01" },
+  "season": { "name": "Fall 2026", "start_date": "2026-09-01" },
   "generated_at": "2026-09-19T22:14:03Z",
   "count": 39,
   "players": [
@@ -143,10 +166,25 @@ Requires `matches:read`. **Returns an empty list today. See the honesty note.**
 | `*_wins` / `*_losses` | rated matches only |
 | `updated_at` | when the rating row last changed |
 
+**The `season` block is context, and nothing else.** It reports the club's
+currently active season so you know roughly when a pull was taken. The field is
+`start_date`, which is what the column is called; there is no `started_on`.
+
+**The figures are LIFETIME, not season-scoped.** This is the trap in the block
+above and it is worth reading twice. A rating row carries no season at all, so
+every number in a player object is that member's running total across their
+whole time at the club, not their total within the season named beside it. Do
+not slice these figures by season; they cannot be sliced.
+
+When the active season is one the club has chosen to keep out of its public
+history, the `season` block reports `null` rather than the hidden season's name.
+The figures are unaffected, because they were never season-scoped in the first
+place.
+
 **Elo here is not earned from play.** New members are assigned a starting rating
 by skill tier at signup. A 1200 and a 400 have not necessarily played anybody.
-Ratings currently span 400 to 1423 across 39 members, and almost all of that
-spread is assignment rather than results.
+Ratings span roughly 400 to 1400, and almost all of that spread is assignment
+rather than results.
 
 **Singles and doubles are separate ladders.** Do not average them, and do not
 use one to predict the other.
@@ -154,6 +192,35 @@ use one to predict the other.
 **Wins plus losses does not always equal matches played.** Walkovers and
 forfeits are counted differently. Derive win rate from `wins` and `losses`, not
 by subtracting.
+
+---
+
+## Who is in the feed
+
+Do not treat `count` as the club's membership, and do not compare it against
+any figure on the club's public site expecting them to agree. Four conditions
+decide whether a member appears, and two of them are privacy controls rather
+than filters:
+
+- they are an active member, and
+- their account is neither awaiting approval nor suspended, and
+- **they have not asked to be kept off published rankings**, and
+- **they have not requested deletion of their account.**
+
+The club's public leaderboard applies the first three. It does **not** apply the
+fourth, because a deletion request is not a leaderboard setting. This feed
+applies all four, and it applies the fourth from the moment the request is made
+rather than when the club's purge next runs, because the purge anonymises the
+record rather than erasing it and the ratings survive it.
+
+So the feed's population is the leaderboard's population minus anyone with a
+deletion request outstanding. The two legitimately differ, neither is wrong, and
+this document deliberately quotes no hard number for either: the set changes
+week to week, and a number written down here would be stale before it was read.
+
+`count` in the response is the size of the set at the moment of that request.
+That is the only figure worth trusting, and a member who leaves the set between
+two pulls simply stops appearing, with no tombstone and no notice.
 
 ---
 
@@ -171,8 +238,13 @@ Concretely, for anyone building a predictor:
 - **There is no historical training data.** A model cannot be fitted on club
   results today.
 
-What does exist is ratings across 39 members. The standard starting point for
-"who wins when A challenges B" is the rating difference, which needs no history:
+- `ratings:history:read` is accepted and returns an empty history, for the same
+  reason: nothing journals a rating change per match, so there is no series to
+  return even for a key that carries the scope.
+
+What does exist is a current rating for every member in the feed. The standard
+starting point for "who wins when A challenges B" is the rating difference,
+which needs no history:
 
 ```
 P(A beats B) = 1 / (1 + 10 ** ((elo_B - elo_A) / 400))

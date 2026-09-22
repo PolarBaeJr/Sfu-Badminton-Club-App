@@ -556,6 +556,20 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     disposition: 'counted',
     why: 'Discord messages you asked the console to send, as an officer. Counted rather than listed: the message is a club-wide post.',
   },
+  data_api_consumers: {
+    playerColumns: ['created_by'],
+    disposition: 'counted',
+    why: 'Outside organisations you wrote down as data API recipients, as an officer. Counted rather than listed: the row is about that organisation and the club\'s agreement with it, not about you.',
+  },
+  data_api_keys: {
+    // key_hash is withheld for the same reason discord_link_tokens withholds
+    // its token hash: it is a credential probe, and nothing about it is a fact
+    // about the officer who minted it.
+    playerColumns: ['minted_by', 'revoked_by'],
+    disposition: 'counted',
+    withheldColumns: ['key_hash'],
+    why: 'Data API keys you minted or revoked, as an officer. Counted rather than listed: issuing a key is an official act on behalf of the club, and the key itself is about the organisation that received it. The stored hash of a key is never exported. If you want to know what the data API publishes ABOUT YOU, that is your ratings row above, reduced to a pseudonym.',
+  },
 
   // ---------------------------------------------------------------
   // WITHHELD -- never in the file, reason given

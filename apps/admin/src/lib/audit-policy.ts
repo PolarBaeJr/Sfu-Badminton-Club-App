@@ -128,6 +128,21 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'tournament_checkin_token_rotated',
   'session_checkin_token_rotated',
 
+  // THE DATA API'S KEYS. No RISK_CLASS_PATTERNS prefix matches either name, so
+  // nothing forces these into the required class: they are classified by hand,
+  // the way 'discord_link_forced' above is, and this comment is the only thing
+  // that will remind the next person to do it for a third one.
+  //
+  // Minting is the one act in that panel that MANUFACTURES DURABLE READ ACCESS
+  // to club data. A key reads the roster's ratings from outside every gate in
+  // access-level.ts, with no session behind it and no audit row per read, and
+  // it keeps answering after the minter's console is gone. So the audit row
+  // written here is the only record that ties the key to a person at all, and
+  // losing it means the club cannot say who let a consumer in. Revocation is
+  // required for the other half of the same fact: when the access stopped.
+  'data_api_key_minted',
+  'data_api_key_revoked',
+
   // THE TOURNAMENT TRAIL, WHICH THIS SET SILENTLY DID NOT COVER.
   //
   // audit.ts's logAudit calls isRequiredAudit(params.action) against this very
