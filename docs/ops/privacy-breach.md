@@ -77,17 +77,33 @@ The rest is reference.
 
 ---
 
-## Two gaps that will slow you down, today
+## How the club is reached
+
+`privacy@sfubadminton.com` is **live as of 2026-09-22** and is the address to
+use on this page. Cloudflare Email Routing holds the apex MX records and
+forwards it, along with `conduct@` and `exec@`, into the club's Gmail account.
+The three share one mailbox and are separated by Gmail label rather than by
+destination. The catch-all rule is deliberately set to drop.
+
+Two limits worth knowing before an incident rather than during one:
+
+- **Receiving only.** Nothing sends *as* `privacy@` yet, so a reply arrives from
+  the club Gmail address instead. That is cosmetic for a breach notice and fine
+  for the legal duty, which is that a member can reach the club.
+- **It is only as good as whoever opens it.** A channel collecting unanswered
+  reports is worse than no channel, because it is documented evidence of a duty
+  the club is not meeting. If the exec team grows past one person reading
+  everything, give `conduct@` its own destination: a report is sometimes about
+  somebody holding the shared password.
+
+## The gap that will still slow you down
 
 - **No designated privacy officer.** PIPA requires an organization to designate
   one and make their contact available. There isn't one, so in a real incident
-  the first ten minutes go on deciding who owns the decision.
-- **The privacy address is chosen but not yet live.** The policy draft now names
-  `privacy@sfubadminton.com`, and that is the address to use here. It only works
-  once a mailbox exists behind it: the apex domain has no MX record, so mail sent
-  there today bounces. Stand it up before this page is ever needed, and check it
-  is actually being read — an address that collects unanswered reports is worse
-  than no address, because it documents a channel the club is not answering.
+  the first ten minutes go on deciding who owns the decision. Whether this is
+  binding at all depends on the regime question that is still with SFU
+  Recreation: it is a PIPA requirement, and the app is built on the FIPPA
+  reading. Designating someone costs nothing and settles it either way.
 
 ---
 
