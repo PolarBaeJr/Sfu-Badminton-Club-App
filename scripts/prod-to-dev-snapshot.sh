@@ -733,6 +733,9 @@ DECLARE
      WHERE btrim(e) <> ''
   );
   n integer;
+  -- How many email identities hold a user id in provider_id rather than an
+  -- address. The scrub must not change this number: see the assertion below.
+  n_uuid_pids integer;
 BEGIN
   -- A stable, non-negative index from a uuid. hashtext() returns a signed int4
   -- and abs() throws on INT_MIN, so shift into positive range instead.
@@ -848,17 +851,43 @@ BEGIN
      AND NOT EXISTS (
        SELECT 1 FROM auth.users u WHERE u.id = i.user_id AND u.email = ANY(keep));
 
-  -- provider_id is scrubbed as well as identity_data, and that is not belt and
-  -- braces: for the `email` provider, provider_id IS the address. Rewriting only
-  -- identity_data leaves the real email sitting in the next column along. Found
-  -- by reading the table after a test run rather than by reasoning about it, so
-  -- do not drop either half of this UPDATE. The replacement stays unique
-  -- because the scrubbed addresses are derived from unique ids.
+  -- provider_id is rewritten ONLY when it actually holds an address, and the
+  -- condition is the whole point of this statement.
+  --
+  -- What provider_id means for the `email` provider depends on the GoTrue
+  -- version. Older builds store the address there, which makes it a second
+  -- copy of the real email sitting in the next column along from identity_data.
+  -- The build running here stores the user's UUID instead: measured on staging,
+  -- 29 email identities, the untouched one holding provider_id = user_id.
+  --
+  -- An unconditional rewrite is therefore not belt and braces, it is damage: it
+  -- replaces the id GoTrue resolves a login by with an email address, and the
+  -- identity lookup for those accounts stops matching. It did exactly that to
+  -- 28 rows before this condition existed. Testing for '%@%' handles both
+  -- builds without having to know which one is deployed. The replacement stays
+  -- unique because the scrubbed addresses are derived from unique ids.
+  SELECT count(*) INTO n_uuid_pids FROM auth.identities
+   WHERE provider = 'email' AND provider_id = user_id::text;
+
   UPDATE auth.identities i
      SET identity_data = jsonb_build_object('sub', i.user_id::text, 'email', u.email),
-         provider_id   = CASE WHEN i.provider = 'email' THEN u.email ELSE i.provider_id END
+         provider_id   = CASE WHEN i.provider = 'email' AND i.provider_id LIKE '%@%'
+                              THEN u.email ELSE i.provider_id END
     FROM auth.users u
    WHERE u.id = i.user_id AND NOT (u.email = ANY(keep));
+
+  -- The floor guard at the end of this script cannot catch the corruption the
+  -- condition above prevents: once provider_id has been overwritten with a
+  -- scrubbed address it looks exactly like a legitimately scrubbed legacy
+  -- value, and every leak check passes. So assert it here, where the before
+  -- count is still known. Dropping the '%@%' test trips this instead of
+  -- quietly breaking sign-in for every member on staging.
+  IF (SELECT count(*) FROM auth.identities
+       WHERE provider = 'email' AND provider_id = user_id::text) <> n_uuid_pids THEN
+    RAISE EXCEPTION 'scrub rewrote auth.identities.provider_id on rows holding a user id (% before, % after). That column is what GoTrue resolves a login by; it is not an address on this build.',
+      n_uuid_pids, (SELECT count(*) FROM auth.identities
+                     WHERE provider = 'email' AND provider_id = user_id::text);
+  END IF;
 
   -- BEARER TOKENS. Each of these is "knowing the string is being the member".
   -- A calendar feed token read out of a staging dump works against PRODUCTION
@@ -994,8 +1023,14 @@ SELECT 'non-email identities  ' || count(*) FROM auth.identities i
   JOIN public.players p ON p.user_id = i.user_id
  WHERE i.provider <> 'email' AND p.email NOT IN (SELECT email FROM keep)
 UNION ALL
+-- Only address-shaped values are asserted about. On this GoTrue, provider_id
+-- for the email provider is the user's UUID, and demanding that it look like a
+-- scrubbed address failed the run over a row that was correct: the keep-list
+-- admin's, deliberately skipped by the scrub. A UUID carries no address to
+-- leak, so it has nothing to prove here; one containing '@' does.
 SELECT 'identity provider_id  ' || count(*) FROM auth.identities i
  WHERE i.provider = 'email'
+   AND i.provider_id LIKE '%@%'
    AND i.provider_id NOT LIKE '%@staging.invalid'
    AND i.provider_id NOT LIKE 'deleted+%@deleted.invalid'
    AND i.provider_id NOT IN (SELECT email FROM keep)
