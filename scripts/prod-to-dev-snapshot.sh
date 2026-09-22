@@ -872,7 +872,33 @@ BEGIN
   -- Device records. Passkeys are scoped to the hostname they were enrolled on,
   -- so production's cannot work on staging regardless; push endpoints are
   -- per-device URLs that would aim staging's notifications at real phones.
-  IF to_regclass('public.passkey_credentials') IS NOT NULL THEN DELETE FROM public.passkey_credentials; END IF;
+  --
+  -- This delete has to stand a guard down first. trg_guard_last_admin_passkey
+  -- (00050) refuses to remove the last passkey belonging to an admin, because
+  -- on production that is the row whose loss makes the console unreachable.
+  -- Staging is the case that guard was not written for: these rows arrived in
+  -- the dump, WebAuthn scopes a credential to the hostname it was enrolled on
+  -- so not one of them can authenticate here, and the owner re-enrols after
+  -- every refresh regardless. The guard is BEFORE DELETE FOR EACH ROW with no
+  -- current_user escape hatch, so running as postgres does not help: superuser
+  -- bypasses RLS and grants, never triggers. That is the whole class of bug,
+  -- not one trigger.
+  --
+  -- Disabled by name rather than with session_replication_role, which would
+  -- also stop foreign keys and could leave dangling references behind. Both
+  -- ALTERs are inside this transaction, so an abort puts the guard back with
+  -- everything else, and the floor guard below re-checks that it is on.
+  IF to_regclass('public.passkey_credentials') IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM pg_trigger
+                WHERE tgname = 'trg_guard_last_admin_passkey'
+                  AND tgrelid = 'public.passkey_credentials'::regclass) THEN
+      ALTER TABLE public.passkey_credentials DISABLE TRIGGER trg_guard_last_admin_passkey;
+      DELETE FROM public.passkey_credentials;
+      ALTER TABLE public.passkey_credentials ENABLE TRIGGER trg_guard_last_admin_passkey;
+    ELSE
+      DELETE FROM public.passkey_credentials;
+    END IF;
+  END IF;
   IF to_regclass('public.push_subscriptions')  IS NOT NULL THEN DELETE FROM public.push_subscriptions; END IF;
 
   -- Resend's bounce and complaint records. Pure address data, no test value.
@@ -978,7 +1004,18 @@ SELECT 'identity_data emails  ' || count(*) FROM auth.identities i
  WHERE i.identity_data->>'email' IS NOT NULL
    AND i.identity_data->>'email' NOT LIKE '%@staging.invalid'
    AND i.identity_data->>'email' NOT LIKE 'deleted+%@deleted.invalid'
-   AND i.identity_data->>'email' NOT IN (SELECT email FROM keep);
+   AND i.identity_data->>'email' NOT IN (SELECT email FROM keep)
+UNION ALL
+-- Not a leak check: the scrub switches trg_guard_last_admin_passkey off to
+-- delete the passkeys, and a guard left switched off would silently remove a
+-- production safety net from the environment that exists to rehearse it.
+-- Joined by name rather than cast through regclass so a missing table counts
+-- zero instead of making this guard itself the hard failure.
+SELECT 'passkey guard disabled ' || count(*) FROM pg_trigger t
+  JOIN pg_class c     ON c.oid = t.tgrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public' AND c.relname = 'passkey_credentials'
+   AND t.tgname = 'trg_guard_last_admin_passkey' AND t.tgenabled = 'D';
 SQL
   )
   echo "$leak" | sed 's/^/  remaining /'

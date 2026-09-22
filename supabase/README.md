@@ -56,6 +56,14 @@ first.
   an error. You diagnose that from the gateway access log, not from the UI.
 - **A `psql` superuser check proves nothing.** Superuser bypasses both RLS and
   grants, and reaches past the PostgREST schema cache. Verify with `SET ROLE`.
+  It does **not** bypass triggers, though, and that catches people from the
+  other direction: a maintenance script running as `postgres` still trips every
+  guard trigger on the tables it writes. Give a guard a `current_user NOT IN
+  ('anon', 'authenticated')` early return if maintenance is meant to pass
+  through it (and then it cannot be `SECURITY DEFINER`, or `current_user`
+  resolves to the owner and the guard never fires for anyone). The nightly
+  staging scrub has to stand `trg_guard_last_admin_passkey` down by name
+  because 00050 deliberately has no such hatch.
 - **`information_schema.role_table_grants` reports grants that do not exist.**
   Read `pg_class.relacl` (and `pg_attribute.attacl` for column-level grants)
   instead.
