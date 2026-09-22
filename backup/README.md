@@ -136,6 +136,115 @@ restore replaces current data with the backup. **Test a restore into a scratch
 database at least once** before you rely on it — an untested backup is a hope,
 not a backup.
 
+> ### After any restore: re-apply deletions
+>
+> A restore replaces the live database with an older one, so members deleted
+> since that dump was taken can come back. Whether the system heals itself
+> depends on one thing: **whether the dump is older or newer than the deletion
+> request.**
+>
+> - **Dump taken after the request: self-healing, and no action needed.** The
+>   row carries its `deletion_requested_at` tombstone, so the nightly purge sees
+>   a request more than 30 days old and re-anonymises it. Already-purged rows
+>   are safe for the same reason: they keep the tombstone and the
+>   `deleted+…@deleted.invalid` sentinel, which is what marks them done.
+> - **Dump taken before the request: NOT self-healing, and nothing reports it.**
+>   The restore erases the request along with everything else. There is no
+>   tombstone, so the purge has no reason to look at that row, and the member is
+>   back permanently with their real name, email and phone.
+>
+> That second case is not exotic. The request waits 30 days for the purge while
+> the dumps only go back 14, so any restore performed in the weeks after a
+> request can land on a dump that predates it.
+>
+> So after a restore, before the site is serving again:
+>
+> 1. List who requested deletion since the dump was taken. This is why a
+>    deletion request has to be recorded somewhere **outside the database it
+>    deletes from**: restoring that database is exactly when you need the list,
+>    and that is exactly when it is gone.
+> 2. Re-enter the request for anyone missing it, then run the purge by hand
+>    rather than waiting for 04:05, so the window is minutes.
+> 3. Write down that you did it, with the date.
+>
+> **Step 2 currently has no button.** The only writer of `deletion_requested_at`
+> in the whole codebase is `deleteMyAccount`
+> (`apps/player/src/lib/actions/profile.ts:313`), which requires the member to
+> be signed in and to type a confirmation. The admin console can only
+> **cancel** a deletion (`cancelAccountDeletion`), never start one. So a member
+> whose request a restore erased cannot be re-deleted by an officer at all, and
+> they will not do it again themselves because as far as they know it already
+> happened.
+>
+> Until an admin-initiated deletion exists, step 2 means a hand-written SQL
+> update against production, which is exactly the kind of manual write that
+> gets skipped or fumbled during an incident. Treat that as the gap it is.
+>
+> This is not optional politeness. Bounded backup retention is only defensible
+> as a deletion practice on the condition that a restore re-applies the
+> deletions, and a restore that quietly resurrects deleted members turns an
+> honoured request into an unhonoured one.
+
+---
+
+## Retention, and what it has to do with deleting a member
+
+The three tiers expire on their own schedules, and those windows are the reason
+the club can honestly tell a member they have been deleted.
+
+| Tier | Window | Notes |
+|---|---|---|
+| 1, Pi | 14 days | `RETAIN_DAYS` in `backup-db.sh`, swept nightly |
+| 2, Mac | 14 days | `RETAIN_DAYS` in `pull-to-mac.sh`, swept after each successful pull |
+| 3, Drive | 14 days **plus roughly 30** | `rclone delete --min-age`, then Google's trash holds it invisibly on top |
+
+So a member deleted today is gone from the live database at once, off the Pi and
+this Mac within about two weeks, and out of Drive in roughly six.
+
+**Keep tier 1 and tier 2 on the same number.** Tier 2 exists to survive the loss
+of tier 1, so a Mac window longer than the Pi's does not buy more safety, it
+just holds personal information for longer than the club has said it does.
+
+> **Tier 2 went unbounded for its whole life until 2026-09-21.** `pull-to-mac.sh`
+> had no sweep at all, so nothing on this Mac had ever expired. Combined with
+> the outage below, it was sitting on a frozen July snapshot of every member,
+> including people who had asked to be deleted since. Both are fixed; the point
+> worth keeping is that **an unbounded backup makes a deletion promise untrue**,
+> and nothing in the system would have reported it.
+
+### Tier 2 was dead from 2026-07-20 to 2026-09-21
+
+`pull-to-mac.sh` hardcoded `polardev.org:2222`, which is a verbatim copy of the
+`pi-remote` block in `~/.ssh/config`. That domain was retired, so every run
+failed with ssh's exit 255 while the launchd job kept firing daily. The dumps
+already on disk made it look healthy from the outside for two months.
+
+It now connects by **ssh alias** (`pi`, falling back to `pi-lan`), so connection
+details live in one place and a host move cannot strand it again. Check it is
+alive the fast way, which is the state file rather than the log:
+
+```sh
+cat ~/badminton-backups/.last-pull          # timestamp of the last successful pull
+launchctl list | grep badminton             # second column is the last exit status; 0 is good
+ls -1 ~/badminton-backups/*.dump | wc -l    # should be near the retention window
+```
+
+A non-zero exit status there means the off-site copy is stale, and the script
+prints the last good pull date when it fails. It never sweeps on a failed run,
+so a bad night costs you freshness and never the backup itself.
+
+### Still open: tier 2 is unencrypted
+
+Tier 3 encrypts before the data leaves the Pi, so Google only ever holds
+ciphertext. Tier 2 does not. These dumps sit in `~/badminton-backups` in
+plaintext, and anyone with access to this Mac has every member's name, email,
+phone and waiver without needing a key. `pull-to-mac.sh` prints a warning on
+every run until a `.encryption-configured` marker exists in that directory.
+
+Fixing it needs a tool that is not installed on this Mac (`age` and `gpg` are
+both absent, and rclone has no config file here) and a key that is the owner's
+to create, so it is deliberately left as a decision rather than guessed at.
+
 ---
 
 ## Troubleshooting the off-site upload
