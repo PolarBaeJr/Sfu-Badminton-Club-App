@@ -206,6 +206,32 @@ chmod 600 "$DISCORD_SQL" "$DISCORD_RAW"
 # than a second copy of the scrub: a fallback that duplicates the logic it is
 # protecting can fail the same way the thing it replaces just did.
 MEMBERS_EXPOSED=0
+
+# TELL SOMEBODY. This ran broken for a night and was found by accident, because
+# a failure at 04:00 goes to cron.log and cron.log is not a person. Set
+# SNAPSHOT_ALERT_WEBHOOK in the crontab's environment to a Discord webhook URL
+# and failures arrive somewhere with a human attached.
+#
+# Deliberately failure-only. A nightly "it worked" message is read for a week
+# and then filtered, and a filtered channel is the same as no channel.
+#
+# The URL is a credential: it is never echoed, never written to the log, and
+# never passed as an argument, where `ps` would show it to every user on the
+# box. It reaches curl through `--config -` on stdin instead. Note that curl has
+# no --url-from-env on 8.14, which is what the Pi runs; that option was tried
+# first and silently does nothing.
+#
+# The alert can never fail the run, hence the `|| true`. This exists to report a
+# problem, not to become one, and a webhook that 500s at 04:00 must not be what
+# stops staging from being scrubbed.
+alert() {
+  [ -n "${SNAPSHOT_ALERT_WEBHOOK:-}" ] || return 0
+  printf 'url = "%s"\n' "$SNAPSHOT_ALERT_WEBHOOK" \
+    | curl -fsS --max-time 15 -X POST -H 'Content-Type: application/json' \
+        --data "$(jq -nc --arg c "$1" '{content: $c}')" \
+        --config - >/dev/null 2>&1 || true
+}
+
 on_exit() {
   local rc=$?
   rm -f "$DISCORD_SQL" "$DISCORD_RAW"
@@ -214,14 +240,30 @@ on_exit() {
     echo "FATAL: the run failed with real member data already restored to" >&2
     echo "       staging and NOT yet scrubbed. Wiping the member tables now." >&2
     echo "       Staging will be empty until the next successful snapshot." >&2
-    docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -c \
-      "TRUNCATE public.players CASCADE; TRUNCATE auth.identities CASCADE; TRUNCATE auth.users CASCADE;" \
-      && echo "       wiped." >&2 \
-      || echo "       WIPE FAILED. Treat staging as holding real member data." >&2
+    if docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -c \
+      "TRUNCATE public.players CASCADE; TRUNCATE auth.identities CASCADE; TRUNCATE auth.users CASCADE;"
+    then
+      echo "       wiped." >&2
+      alert "Staging snapshot FAILED (exit $rc) with members restored and unscrubbed. The member tables were wiped, so staging is empty but holds no real data. Check cron.log."
+    else
+      echo "       WIPE FAILED. Treat staging as holding real member data." >&2
+      alert "Staging snapshot FAILED (exit $rc) with members restored and unscrubbed, AND THE WIPE ALSO FAILED. Treat badminton.polardev.org as serving real member data right now. Check cron.log."
+    fi
+  elif [ "$rc" -ne 0 ]; then
+    alert "Staging snapshot FAILED (exit $rc). No member data was exposed: the failure was outside the restore-to-scrub window. Check cron.log."
   fi
   exit "$rc"
 }
 trap on_exit EXIT
+
+# Said out loud every run, because "alerting is configured" is exactly the kind
+# of belief that is never checked until the night it matters.
+if [ -n "${SNAPSHOT_ALERT_WEBHOOK:-}" ]; then
+  echo "[$(date -u +%FT%TZ)] failure alerts: ON"
+else
+  echo "[$(date -u +%FT%TZ)] failure alerts: OFF (SNAPSHOT_ALERT_WEBHOOK unset)" >&2
+fi
+
 PUB_SQL="$OUT_DIR/publications-$TS.sql"
 
 # Verify both containers are up
