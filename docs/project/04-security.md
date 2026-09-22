@@ -64,7 +64,8 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 
 - The database is **backed up nightly**, kept for a rolling 14-day window, and copied **off-site** two ways: to cloud storage, and to a second machine.
   - *Protects against:* hardware failure, ransomware, or accidental deletion — the club can recover its data.
-  - **Both off-site copies are encrypted at rest.** The cloud copy is encrypted before it leaves the Pi, so the storage provider only ever holds ciphertext. The second-machine copy is encrypted on arrival, and only the *public* key lives on that machine, so it can write the backup and cannot read it back. A stolen or seized laptop yields ciphertext.
+  - **Both off-site copies are encrypted at rest.** The cloud copy is encrypted before it leaves the Pi, so the storage provider only ever holds ciphertext. The second-machine copy is encrypted on arrival, and only the *public* key is meant to live on that machine, so it can write the backup and cannot read it back. A stolen or seized laptop then yields ciphertext.
+  - *The write-only property depends on one habit:* the private key belongs in the password manager and nowhere on that disk. Encrypting to a key stored beside the ciphertext protects against nothing, so the nightly job checks for a private key on the machine and prints a warning instead of reporting success. **If that warning is firing, treat this copy as unencrypted for scoping purposes.**
   - *Closed 2026-09-22:* the second-machine copy was plaintext until that date. Those dumps held every member's name, email, phone and waiver, and anyone with access to the machine had the member database without needing a key. Any incident dated before 2026-09-22 should be scoped on that basis.
   - **Encryption does not extend the retention clock.** A backup the club can still decrypt is still the club holding that member's data, so the 14-day sweep applies to the encrypted copies unchanged.
 

@@ -242,9 +242,10 @@ It is now encrypted with [`age`](https://github.com/FiloSottile/age). Each dump
 is encrypted the moment it lands and the plaintext is removed, so the files on
 disk are `badminton-<ts>.dump.age`.
 
-**Only the public key is on this Mac**, in `~/badminton-backups/.age-recipient`.
-The private key is in the owner's password manager and deliberately not on this
-disk. That is the whole property being bought: this machine can write the
+**Only the public key belongs on this Mac**, in
+`~/badminton-backups/.age-recipient`. The private key belongs in the owner's
+password manager and deliberately not on this disk. That is the whole property
+being bought: this machine can write the
 off-site copy and cannot read it back, so a stolen or seized laptop yields
 ciphertext. Encrypting to a key stored beside the backups would protect against
 nothing, so the script greps the obvious locations for an `AGE-SECRET-KEY-`

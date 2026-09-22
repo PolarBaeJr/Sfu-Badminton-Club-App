@@ -96,8 +96,9 @@ rolling back and re-arming the thing that rolls you forward again.
 ## Restore a database backup
 
 Backups are nightly `pg_dump` archives kept locally on a 14-day window and
-copied off-site to Google Drive (encrypted) and to a second machine (**not**
-encrypted). To restore:
+copied off-site to Google Drive and to a second machine. **Both off-site copies
+are encrypted**, the second machine's with `age` since 2026-09-22, so a restore
+from either starts with a decrypt. See `backup/README.md`. To restore:
 
 > ### Read this first: the dump does not carry permissions
 >
