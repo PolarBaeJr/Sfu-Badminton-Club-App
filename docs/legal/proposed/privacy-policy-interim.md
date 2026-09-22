@@ -14,8 +14,9 @@ while four retention periods are still `[SFU-approved period and disposition]`.
 Two things, both small, neither needing anyone's approval.
 
 **1. The document tells members to "contact a club executive" and gives them no
-way to do it.** It says this twice, in sections 9 and 10, and those are the two
-places a member goes when they want their data or want to complain. The club now
+way to do it.** It says this twice, at the end of section 7 (Your rights) and
+again as the whole of section 10 (Contact), which are the two places a member
+goes when they want their data or want to complain. The club now
 has routed addresses, so the policy can name one. A privacy request that has to
 be guessed at is a privacy request that does not get made.
 
@@ -32,9 +33,16 @@ actually deleting rather than trashing. Leave it as it stands.
 
 ## How to apply it
 
-Admin console, **Legal**, select the privacy policy. These are find-and-replace
-edits in the editor, not a full repaste, so the rest of the document cannot be
-disturbed. Tick **bump version**, give a reason, publish.
+**Paste `final/privacy_policy.md` whole.** It is the live document with these
+four lines changed and nothing else, built by script from the live export rather
+than retyped, and `diff`ed against it to prove only those four lines moved. Tick
+**bump version**, give a reason, publish.
+
+The four edits are listed below so a reviewer can see what changed without
+diffing, and so they can be applied by hand if the console's editor is easier to
+work in that way. If you do it by hand, note that the two lines carrying an em
+dash keep it: the surrounding list uses that punctuation throughout, and one
+bullet in a different style is a visible defect in a document members read.
 
 ### Section 2, the account and technical data line
 
@@ -54,9 +62,9 @@ Find:
 
 Replace with:
 
-> - **Service providers:** we use third-party services to run the app — email delivery, error monitoring, sign-in, and our hosting, network and backup infrastructure. They process data only to provide their service. We do not run usage analytics: the software is present in the app's code but is switched off and collects nothing.
+> - **Service providers:** we use third-party services to run the app — email delivery, error monitoring, sign-in, and our hosting, network and backup infrastructure. They process data only to provide their service. We do **not** run usage analytics: the software is present in the app's code but is switched off and collects nothing.
 
-### Section 9, the closing line
+### Section 7, the closing line of Your rights
 
 Find:
 

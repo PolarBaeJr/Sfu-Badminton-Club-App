@@ -56,6 +56,14 @@ checkbox as a signature.
 
 ## The text to paste
 
+**It lives in `final/waiver.md`, not here.** That file holds the document and
+nothing else: no heading, no commentary, no effective date line. What is in it is
+exactly what goes into `legal_documents.content`, so it can be selected whole and
+pasted without anyone having to judge where the document starts and stops.
+
+A copy follows for reading. `final/waiver.md` is the authoritative one; if these
+ever disagree, that file wins.
+
 ---
 
 ## 1. Assumption of risk
