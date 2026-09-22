@@ -48,7 +48,11 @@ function adminUrl(): URL {
  * move invalidates every enrolled passkey. Admins then cannot pass the gate to
  * reach the page that enrolls a new one, which is an outright lockout.
  *
- * Set PASSKEY_RP_ID explicitly in production. The fallback strips a single
+ * Set NEXT_PUBLIC_PASSKEY_RP_ID explicitly in production — that exact name, and
+ * at BUILD time, because NEXT_PUBLIC_* is inlined into the bundle and setting it
+ * in a host's runtime .env does nothing. This comment named a shorter variable
+ * that the code has never read, which is a bad thing to get wrong in the
+ * paragraph above explaining how this causes a lockout. The fallback strips a single
  * leading label to recover the registrable parent for a subdomain host, and
  * returns a two-label host (sfubadminton.com) unchanged; it is deliberately not
  * a public-suffix parser.
