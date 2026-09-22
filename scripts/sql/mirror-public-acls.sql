@@ -244,13 +244,16 @@ stmts AS (
   --     what is projected, and because a column added by a later migration
   --     then sorts into place instead of landing at the end.
   --
-  --     ord 25 MUST stay above ord 20. A table-level REVOKE also clears that
-  --     role's column-level privileges on the table, verified: GRANT SELECT (a)
-  --     then REVOKE ALL ON TABLE ... FROM anon leaves has_column_privilege
-  --     false. Today nothing is hurt by the order, because the REVOKE at ord 20
-  --     names only PUBLIC, anon, authenticated and service_role and no column
-  --     grant here targets them. The moment one does, reordering these two
-  --     sections would silently drop it back out.
+  --     ord 25 MUST stay above ord 20, and this is load-bearing TODAY, not a
+  --     precaution. A table-level REVOKE also clears that role's column-level
+  --     privileges on the table. Verified: GRANT SELECT (a) ON t TO anon, then
+  --     REVOKE ALL ON TABLE t FROM anon, leaves has_column_privilege false.
+  --     00241 grants SELECT (id, name, created_at, created_by, notes) on
+  --     data_api_consumers to service_role, pointedly withholding
+  --     player_ref_salt, and service_role is named in the ord-20 REVOKE. So the
+  --     two sections already collide on a real grant, and only the ordering
+  --     keeps the column grant alive. Swap them and the console loses its read
+  --     of the consumer list, silently, the way an empty list is always silent.
   UNION ALL
   SELECT 25, obj, 1,
          format('GRANT %s (%s) ON TABLE %s TO %s%s;',
