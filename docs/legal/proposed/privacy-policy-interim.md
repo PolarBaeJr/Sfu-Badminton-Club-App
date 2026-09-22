@@ -35,8 +35,9 @@ actually deleting rather than trashing. Leave it as it stands.
 
 **Paste `final/privacy_policy.md` whole.** It is the live document with these
 four lines changed and nothing else, built by script from the live export rather
-than retyped, and `diff`ed against it to prove only those four lines moved. Tick
-**bump version**, give a reason, publish.
+than retyped, and `diff`ed against it to prove only those four lines moved. Give
+a reason, and press **Publish and require re-sign**, not **Publish
+quietly**. See `final/README.md` for what those two buttons differ on.
 
 The four edits are listed below so a reviewer can see what changed without
 diffing, and so they can be applied by hand if the console's editor is easier to

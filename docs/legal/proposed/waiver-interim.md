@@ -14,8 +14,11 @@ current text does not already ask for, and none needs app work.
 
 ## How it gets published
 
-Admin console, **Legal**, select the waiver, paste the text below, tick
-**bump version**, give a reason, publish.
+Admin console, **Legal**, select the waiver, paste `final/waiver.md` over the
+Markdown box, give a reason, and press **Publish and require re-sign**. Not
+**Publish quietly**, which is the button beside it: that one changes the text
+and leaves the version at `2026-07-19`, so nobody re-signs and the record cannot
+say who saw which wording. `final/README.md` has the rest.
 
 The version string is stamped automatically from the club's own today, so
 publishing on Friday makes it `2026-09-25`. Do not type a version.

@@ -23,8 +23,36 @@ diff docs/legal/live/privacy_policy.md docs/legal/proposed/final/privacy_policy.
 
 ## Publishing
 
-Admin console, **Legal**. For each document: select it, replace the editor
-contents with the file, tick **bump version**, type a reason, publish.
+Admin console, **Legal**. Select the document, select all in the Markdown box and
+paste the file over it, type a reason, then press **Publish and require
+re-sign**.
+
+**There is no bump-version checkbox.** An earlier draft of this file said there
+was. Under the editor are three buttons and the middle one is a trap:
+
+| Button | What it does |
+| --- | --- |
+| Discard changes | Drops your edits. Nothing published. |
+| Publish quietly | Changes the text and **keeps version `2026-07-19`**. Nobody re-signs, every existing signature still reads as current, and new members sign the new text under the old version number. The record then cannot say who saw which wording. |
+| Publish and require re-sign | Bumps the version. Every active member is gated out until they sign again. **This is the one.** |
+
+A fourth button, **Require re-signature now**, sits below them and re-prompts
+everyone without changing the text. Not needed on Friday; useful if a publish
+goes out quietly by mistake.
+
+A confirmation dialog follows, naming the document and the number of members it
+will gate. It is an in-page dialog, so nothing is written until you confirm.
+
+This whole path was driven end to end on staging on 2026-09-22 before this file
+was written, because nothing had ever been published through it: all four
+documents still sat at `2026-07-19`, which is the version seeded by migration
+`00010`. It works. The staging waiver went to version `2026-09-22`, the content
+stored back byte-identical to `waiver.md` (1825 characters, matching md5), and
+the audit row recorded `2026-07-19 -> 2026-09-22` with the old and new content
+lengths and the typed reason. Staging is now sitting in exactly the state prod
+will be in on Friday, with 34 fixture members owing a signature, so the player
+side of the gate can be looked at there. The 04:00 snapshot restores it from
+prod either way.
 
 **Do both in the same sitting.** Each bump re-prompts all 40 members on their
 next visit, and the two documents version independently, so publishing a week
@@ -47,8 +75,9 @@ today via `clubToday()`, which is why a Friday-evening publish no longer comes
 out dated Saturday. Publishing on 2026-09-25 yields version `2026-09-25`. A
 second publish of the same document on the same day appends `.2`.
 
-The reason field is stored on the audit row and is required to be at least a few
-characters, enforced server-side rather than only in the form. Write something a
+The reason field is required and must be at least 10 characters, enforced
+server-side rather than only in the form. It is stored on the audit row, where
+the app prefixes it with the document name and what happened. Write something a
 future reader can use. Suggested:
 
 - Waiver: `Release now names ordinary negligence, acknowledgement states plainly that accepting gives up a right to sue, and section 5 no longer claims a guardian can accept the release for a minor.`
@@ -73,12 +102,15 @@ cp docs/legal/proposed/final/privacy_policy.md docs/legal/live/privacy_policy.md
 Then confirm production actually holds those bytes before committing:
 
 ```
-md5 docs/legal/live/waiver.md docs/legal/live/privacy_policy.md
+printf '%s' "$(cat docs/legal/live/waiver.md)" | md5
 ```
 
-and compare against the same hash taken over `legal_documents.content` on prod.
-If they disagree, the console editor changed something on the way in (a trailing
-newline, a smart quote) and the live export, not the paste, is the truth.
+and compare against `md5(content)` read from `legal_documents` on prod. The
+`printf '%s' "$(cat ...)"` is not decoration: the console stores the text with no
+trailing newline, and the file on disk ends with one, so a plain `md5` of the
+file will never match no matter how correct the paste was. On staging, hashed
+this way, the two agreed exactly, so the editor passes the text through
+untouched.
 
 ## What these are not
 
