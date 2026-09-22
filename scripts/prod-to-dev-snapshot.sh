@@ -772,10 +772,18 @@ BEGIN
   RAISE NOTICE 'scrubbing % member records (% already purged, % kept as staging admins)',
     n, (SELECT count(*) FROM _scrub_targets WHERE purged), coalesce(array_length(keep,1), 0);
 
+  --
+  -- full_name IS NOT ASSIGNED HERE, and must not be. It is a generated column
+  -- (00023_split_player_name.sql):
+  --   GENERATED ALWAYS AS (btrim(first_name || COALESCE(' ' || NULLIF(btrim(last_name),''),''))) STORED
+  -- so setting first_name and last_name rewrites it for free, and naming it in
+  -- the SET list fails the whole statement with "column full_name can only be
+  -- updated to DEFAULT". Caught by running this against the real staging schema;
+  -- a local fixture with full_name as a plain column passes happily and proves
+  -- nothing.
   UPDATE public.players p
      SET first_name   = s.fn,
          last_name    = s.ln,
-         full_name    = s.fn || ' ' || s.ln,
          display_name = CASE WHEN p.display_name IS NULL THEN NULL
                              ELSE s.fn || ' ' || left(s.ln, 1) || '.' END,
          handle       = CASE WHEN p.handle IS NULL THEN NULL
