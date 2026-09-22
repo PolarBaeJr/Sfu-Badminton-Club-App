@@ -9,7 +9,9 @@
 
 ## 1. Eligibility & accounts
 
-- The app is for `[club members / SFU students, as applicable]`.
+- The app is for SFU students and members of the SFU Badminton Club. If you are
+  under 19, you need a parent or guardian's consent, which you confirm when you
+  accept the liability waiver.
 - You're responsible for keeping your account secure and for activity under it.
 - Provide accurate information (name, email) and keep it current.
 

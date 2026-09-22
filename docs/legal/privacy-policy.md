@@ -58,7 +58,27 @@ We use multiple safeguards, including secure login, role-based access, database-
 
 ## 6. How long we keep it
 
-We keep your information while you're a member and as needed for club records (e.g. past-season standings). You can request deletion — see below. Some anonymized/aggregate statistics may be retained.
+We keep your information while you're a member and as needed for club records
+(e.g. past-season standings). You can request deletion, see below. Some
+anonymized or aggregate statistics may be retained.
+
+Three things are kept for longer, and we'd rather say so plainly:
+
+- **Your acceptance of the legal documents is a permanent record.** Each time
+  you accept the waiver, code of conduct, terms, or this policy, we record which
+  version you accepted and when. That includes your confirmation that you are 19
+  or older, or that you have a parent or guardian's consent. These records are
+  append-only and are **kept even after your account is deleted**, attached to an
+  anonymized record rather than to your name. We keep them because they are the
+  club's only evidence that a liability release was actually agreed to, and a
+  release nobody can show was accepted is worth nothing to the club or to you.
+- **Backups.** The database is backed up nightly and those copies are kept for a
+  rolling 14-day window, so information you delete can persist in a backup for up
+  to 14 days after we remove it from the live system. Our cloud storage provider
+  may hold a deleted backup in its own trash for roughly 30 days beyond that. All
+  off-site backups are encrypted.
+- **Records we are required to keep**, such as financial records of fees paid,
+  for as long as the law requires.
 
 ## 7. Your rights
 
@@ -78,7 +98,11 @@ For anything else, or if you would rather not do it yourself, contact `privacy@s
 
 ## 8. Children / eligibility
 
-The app is intended for `[eligibility, e.g. SFU students and club members 16+]`. `[Adjust as needed.]`
+The app is intended for SFU students and members of the SFU Badminton Club. BC's
+age of majority is 19, so members under 19 may join and play with a parent or
+guardian's consent, which is confirmed when accepting the liability waiver. The
+app is not directed at children, and the club does not knowingly collect
+personal information from anyone under 13.
 
 ## 9. Changes
 
