@@ -177,6 +177,7 @@ export async function POST(request: Request) {
     .filter((part) => part.startsWith('v1,'))
     .some((part) => signatureMatches(expected, part.slice(3)));
   if (!ok) {
+    console.warn('[resend-webhook] rejected: bad signature');
     return new NextResponse('Bad signature', { status: 401 });
   }
 
@@ -189,7 +190,12 @@ export async function POST(request: Request) {
     return new NextResponse('Bad JSON', { status: 400 });
   }
 
+  // One line per verified event, so a working endpoint is visible in the logs
+  // rather than indistinguishable from one nobody calls. The event type and a
+  // count only: never the addresses, which are member PII.
+  const eventType = String((event as { type?: unknown } | null)?.type ?? 'unknown');
   const suppressions = extractSuppressions(event);
+  console.log(`[resend-webhook] ${eventType} verified, ${suppressions.length} to suppress`);
   if (suppressions.length === 0) return new NextResponse('OK', { status: 200 });
 
   const db = createAdminClient();
