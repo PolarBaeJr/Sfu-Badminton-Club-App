@@ -531,10 +531,19 @@ for f in "$MIGRATIONS_DIR"/*.sql; do
 
   # Recorded only after psql actually succeeded -- db-migrate.sh's rule that a
   # migration nobody watched succeed is never marked applied.
+  # 'runner', NOT 'snapshot'. schema_migrations_applied_by_known permits exactly
+  # backfill, runner and manual, and that constraint arrives here inside prod's
+  # own dump, so staging cannot widen it locally: prod would have to change
+  # first. This line said 'snapshot' from the day it was written and had never
+  # once executed, because until 00241 there was no migration staging held that
+  # prod did not. The first time it ran it aborted the whole snapshot under
+  # ON_ERROR_STOP=1, at the replay step, which sits ABOVE the member scrub, and
+  # left staging holding real names, emails and phone numbers on a public host
+  # for six hours. Any failure in this window has that consequence.
   checksum="$(shasum -a 256 "$f" | awk '{print $1}')"
   docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -c \
     "INSERT INTO public.schema_migrations (version, name, checksum, applied_by, verified)
-     VALUES ('$version', '$base', '$checksum', 'snapshot', true)
+     VALUES ('$version', '$base', '$checksum', 'runner', true)
      ON CONFLICT (version) DO NOTHING;"
   replayed=$((replayed + 1))
 done
