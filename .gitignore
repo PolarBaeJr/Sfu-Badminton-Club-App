@@ -105,6 +105,15 @@ scripts/*
 # Internal working notes / security findings — keep out of the public repo
 docs/sensitive/
 
+# auth-logs/ is where the GoTrue sign-in log exports land. THIS REPO IS PUBLIC and
+# those CSVs are the real thing: the working copy on 2026-09-21 held 48 distinct
+# member email addresses across 408 rows. The directory was already ignored on a
+# docs branch, but not here and not on prod, so on the branch anyone actually
+# works from it was one `git add -A` away from being world-readable and cached by
+# third parties within minutes. Ignored at the root so it cannot come back under
+# a different working directory.
+auth-logs/
+
 # Supabase CLI local state. .temp/start-secrets holds generated keys — this
 # repo is public (see docs/ops/CREDENTIALS.md), so it must never be committable.
 supabase/.branches/
