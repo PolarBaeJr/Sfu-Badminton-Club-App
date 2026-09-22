@@ -54,6 +54,16 @@ what is actually true today: the guardian's permission covers participation, the
 release does not reach a minor's claims, and the club is not treating a
 checkbox as a signature.
 
+**The sentence has to stay one clause, joined by "or".** There is a single
+checkbox behind all four documents (`age_attestation`), so whatever section 5
+asserts, a member asserts all of it at once. An earlier draft of this correction
+split it into a flat "I am 19 or older" followed by a separate "if I am under
+19" paragraph. That reads fine to an adult and is a trap for anyone else: a
+17-year-old ticking the one box would be asserting they are 19, which is a false
+statement the live document never asked for. The live text was disjunctive for a
+reason and the correction keeps it that way. Fixing this properly needs the
+parent-signer model, which is app work, not wording.
+
 ## The text to paste
 
 **It lives in `final/waiver.md`, not here.** That file holds the document and
@@ -86,9 +96,9 @@ I consent to the club arranging emergency medical care if needed. I am responsib
 
 ## 5. Age and participation
 
-I confirm that I am 19 years of age or older.
+I confirm that I am 19 years of age or older, or that I am under 19 and my parent or guardian knows I take part in club activities and permits it.
 
-If I am under 19, I confirm that my parent or guardian knows I take part in club activities and permits it. A parent or guardian cannot give up a minor's own legal claims, so the release in section 3 does not release the claims of a participant under 19.
+A parent or guardian cannot give up a minor's own legal claims, so the release in section 3 does not release the claims of a participant under 19.
 
 ## 6. Acknowledgement
 

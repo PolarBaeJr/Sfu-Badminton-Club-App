@@ -18,9 +18,9 @@ I consent to the club arranging emergency medical care if needed. I am responsib
 
 ## 5. Age and participation
 
-I confirm that I am 19 years of age or older.
+I confirm that I am 19 years of age or older, or that I am under 19 and my parent or guardian knows I take part in club activities and permits it.
 
-If I am under 19, I confirm that my parent or guardian knows I take part in club activities and permits it. A parent or guardian cannot give up a minor's own legal claims, so the release in section 3 does not release the claims of a participant under 19.
+A parent or guardian cannot give up a minor's own legal claims, so the release in section 3 does not release the claims of a participant under 19.
 
 ## 6. Acknowledgement
 
