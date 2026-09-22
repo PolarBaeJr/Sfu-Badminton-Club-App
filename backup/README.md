@@ -251,6 +251,18 @@ ciphertext. Encrypting to a key stored beside the backups would protect against
 nothing, so the script greps the obvious locations for an `AGE-SECRET-KEY-`
 marker and warns on every run if it finds one.
 
+**Store the bare `AGE-SECRET-KEY-...` token, not the file.** `age-keygen` writes
+three lines: two `#` comments and the key. Password manager fields and note
+editors flatten that onto one line, replacing the newlines with spaces, and
+`age` then refuses the whole file with `unknown identity type` even though the
+key material is perfectly intact. Saving only the token removes the line breaks
+there is anything to do to. This was hit for real on 2026-09-22, and it is the
+reason the save is verified by decrypting rather than by looking at it.
+
+If it does turn up flattened during a restore, nothing is lost: pull the token
+back out with `grep -o 'AGE-SECRET-KEY-[A-Z0-9]*'` into a file of its own and
+use that as the identity.
+
 The public key is not a secret and does not need protecting. If
 `.age-recipient` is ever lost, put the public key back from the password
 manager entry; new dumps cannot be written without it and the script refuses to
