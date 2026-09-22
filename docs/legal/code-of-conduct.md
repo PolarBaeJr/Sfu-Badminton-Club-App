@@ -4,13 +4,13 @@
 
 > 🚧 **DRAFT — REVIEW REQUIRED.** Template for the club to adopt. Align it with SFU's student-club and athletics/rec conduct policies. Fill in `[PLACEHOLDER]`s.
 
-**Applies to:** all members of `[CLUB LEGAL NAME]`, at all club activities (sessions, tournaments, socials) and in the club app.
+**Applies to:** all members of SFU Badminton Club, at all club activities (sessions, tournaments, socials) and in the club app.
 
 ---
 
 ## Our commitment
 
-`[CLUB LEGAL NAME]` is a welcoming, inclusive community for players of all skill levels. Everyone deserves to play and participate free from harassment and discrimination.
+SFU Badminton Club is a welcoming, inclusive community for players of all skill levels. Everyone deserves to play and participate free from harassment and discrimination.
 
 ## Expected behaviour
 

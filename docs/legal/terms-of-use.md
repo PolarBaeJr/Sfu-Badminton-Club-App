@@ -3,7 +3,7 @@
 > 🚧 **DRAFT — REVIEW REQUIRED.** Template, not legal advice. Review with the club exec before publishing. Fill in `[PLACEHOLDER]`s.
 
 **Effective date:** `[DATE]`
-**Applies to:** use of the `[CLUB LEGAL NAME]` app and website (`[APP URL]`).
+**Applies to:** use of the SFU Badminton Club app and website (https://sfubadminton.com).
 
 ---
 

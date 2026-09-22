@@ -5,7 +5,7 @@
 > 🚧 **DRAFT — REVIEW REQUIRED. This is NOT legal advice.** A liability waiver is a legal document whose enforceability depends on wording and jurisdiction (British Columbia). **Have this reviewed by SFU student-club/risk resources or a lawyer before using it.** Do not rely on this draft as-is. Fill in `[PLACEHOLDER]`s.
 
 **Participant:** the member accepting this waiver in the app.
-**Organization:** `[CLUB LEGAL NAME]` ("the Club").
+**Organization:** SFU Badminton Club ("the Club").
 
 ---
 
@@ -19,7 +19,7 @@ I confirm that I am physically able to participate, or have obtained medical cle
 
 ## 3. Release
 
-To the extent permitted by law, I release `[CLUB LEGAL NAME]`, its executives, volunteers, and `[SFU / venue as applicable]` from liability for injury, loss, or damage arising from my participation, **except** where caused by gross negligence or willful misconduct. `[Confirm carve-outs required by BC law with a reviewer.]`
+To the extent permitted by law, I release SFU Badminton Club, its executives, volunteers, and `[SFU / venue as applicable]` from liability for injury, loss, or damage arising from my participation, **except** where caused by gross negligence or willful misconduct. `[Confirm carve-outs required by BC law with a reviewer.]`
 
 ## 4. Emergency care
 

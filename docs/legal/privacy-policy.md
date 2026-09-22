@@ -5,14 +5,14 @@
 > **Which law applies is an open question, and it is with SFU Recreation.** The two candidates are **FIPPA**, if the membership data counts as an SFU record because the club sits under Recreation, and BC's **PIPA**, if the club is a private organisation holding its own records. The app is currently built and documented on the **FIPPA** reading, as the more conservative of the two. The facts point the other way (the club manages itself, collects its own records, holds them on its own hardware, Recreation has no access, and this is not an official SFU application), which is exactly why it is being asked rather than assumed. It matters here: the deadline for answering a member's request for their own data is **30 business days under FIPPA and 30 calendar days under PIPA**, and PIPA additionally requires the club to designate a privacy officer and maintain a written privacy management program.
 
 **Effective date:** `[DATE]`
-**Applies to:** the `[CLUB LEGAL NAME]` app and website (`[APP URL]`).
-**Contact:** `[PRIVACY CONTACT EMAIL]`
+**Applies to:** the SFU Badminton Club app and website (https://sfubadminton.com).
+**Contact:** `privacy@sfubadminton.com`
 
 ---
 
 ## 1. Who we are
 
-`[CLUB LEGAL NAME]` ("the Club", "we") operates a members' app for managing club activities — a competitive ladder, sessions, tournaments, and membership. This policy explains what personal information we collect and how we handle it.
+SFU Badminton Club ("the Club", "we") operates a members' app for managing club activities — a competitive ladder, sessions, tournaments, and membership. This policy explains what personal information we collect and how we handle it.
 
 ## 2. What we collect
 
@@ -74,7 +74,7 @@ You may:
 - **Download everything held about you.** Settings → your data. It produces a single file covering every table the club holds about you, and it also lists what is *not* included and why, so you can see the limits of it rather than having to trust that it is complete.
 - **Delete your account.** Settings → delete account. Your account is deactivated immediately and permanently anonymised after 30 days, so you have 30 days to change your mind by signing back in.
 
-For anything else, or if you would rather not do it yourself, contact `[PRIVACY CONTACT EMAIL]`.
+For anything else, or if you would rather not do it yourself, contact `privacy@sfubadminton.com`.
 
 ## 8. Children / eligibility
 
@@ -86,7 +86,7 @@ We may update this policy. Material changes will be communicated to members. The
 
 ## 10. Contact
 
-Questions or requests: `[PRIVACY CONTACT EMAIL]`.
+Questions or requests: `privacy@sfubadminton.com`.
 
 ---
 

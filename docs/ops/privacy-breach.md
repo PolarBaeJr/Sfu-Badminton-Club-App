@@ -82,10 +82,12 @@ The rest is reference.
 - **No designated privacy officer.** PIPA requires an organization to designate
   one and make their contact available. There isn't one, so in a real incident
   the first ten minutes go on deciding who owns the decision.
-- **No privacy contact address.** `docs/legal/privacy-policy.md` still points
-  members at the placeholder `[PRIVACY CONTACT EMAIL]`, so there is no address a
-  member could report a suspected breach *to*, and none the club can be reached
-  *at*. Fill both before this page is ever needed.
+- **The privacy address is chosen but not yet live.** The policy draft now names
+  `privacy@sfubadminton.com`, and that is the address to use here. It only works
+  once a mailbox exists behind it: the apex domain has no MX record, so mail sent
+  there today bounces. Stand it up before this page is ever needed, and check it
+  is actually being read — an address that collects unanswered reports is worse
+  than no address, because it documents a channel the club is not answering.
 
 ---
 
