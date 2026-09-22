@@ -40,9 +40,9 @@ The rest is reference.
 2. **Write down the time** you noticed and what you saw, verbatim, before you
    start theorising. This becomes the timeline and it is much harder to
    reconstruct honestly an hour later.
-3. **Tell the club's privacy officer and the exec.** If no privacy officer has
-   been designated yet, that is an open gap (see below) and the decision falls to
-   the exec.
+3. **Tell the club's privacy officer and the exec.** The privacy officer is the
+   technical exec, named below. If they are unreachable, the decision falls to
+   the exec as a body rather than waiting.
 4. **Preserve, then assess scope.** What personal information, whose, how many,
    and for how long it was exposed. The table below is the checklist.
 5. **Then decide on notification.** Under PIPA the test is whether the breach
@@ -63,7 +63,7 @@ The rest is reference.
 
 | Who | When | Note |
 |-----|------|------|
-| Club privacy officer / exec | Immediately | The club decides. There is no escalation path that takes this off you. |
+| Club privacy officer, then the exec | Immediately | The technical exec holds the role (see below). The club decides: there is no escalation path that takes this off you. |
 | **Affected members** | Without unreasonable delay, if significant harm is possible | Directly, not via a Discord announcement. |
 | **OIPC BC** | Same test, same timing | The club reports; see the OIPC's breach reporting guidance for the current form. |
 | **SFU Recreation** | Early, in any real incident | Two reasons: if any record you handed them is involved it is theirs to report, and until the regime question below is answered they may turn out to own the notification outright. |
@@ -96,14 +96,25 @@ Two limits worth knowing before an incident rather than during one:
   everything, give `conduct@` its own destination: a report is sometimes about
   somebody holding the shared password.
 
-## The gap that will still slow you down
+## Who owns the decision
 
-- **No designated privacy officer.** PIPA requires an organization to designate
-  one and make their contact available. There isn't one, so in a real incident
-  the first ten minutes go on deciding who owns the decision. Whether this is
-  binding at all depends on the regime question that is still with SFU
-  Recreation: it is a PIPA requirement, and the app is built on the FIPPA
-  reading. Designating someone costs nothing and settles it either way.
+**The privacy officer is the club's technical exec, currently Matthew Cheng,
+designated 2026-09-22.** Reachable at `privacy@sfubadminton.com`.
+
+Written as a **role with a current holder**, not as a name, because the point of
+designating one is that the answer survives the person leaving. When the
+technical exec changes, this line changes with it and nothing else has to.
+
+PIPA requires an organization to designate someone and make their contact
+available, and until this date nobody was, so the first ten minutes of a real
+incident would have gone on deciding who owned the call. Whether the
+requirement binds at all depends on the regime question still with SFU
+Recreation: it is a PIPA duty, and the app is built on the FIPPA reading.
+Designating someone costs nothing and settles it either way.
+
+The remaining weakness is that it is one person. There is no second reader and
+no cover if that person is unreachable during an incident, so the exec as a
+body is the fallback, as in step 3 above.
 
 ---
 
@@ -117,7 +128,7 @@ information is concentrated in one place, worst first.
 | **Prod Postgres** (`supabase-db`, on the Pi) | Everything: names, emails, phones, photos, waivers, officer notes about members | `auth.users` holds the real email even for members whose `players` row has been anonymised, and `auth.audit_log_entries` holds it in `payload.actor_username` on every sign-in |
 | **Staging Postgres** (`supabase-staging-db`, same Pi) | A nightly copy of prod, scrubbed of member identifiers at the end of the refresh | **Confirm the scrub is actually live on the Pi before you scope it out.** The snapshot script runs from a checkout nothing auto-updates, so an unpulled Pi means staging is a second full copy of the membership: real names, emails and phones, reachable at `badminton.polardev.org`. Scrubbed or not, ids and match history survive, and a deletion applied only to prod is still readable here until the next 04:00 |
 | **Nightly `pg_dump` backups** | A full copy of the above, per night | Local rolling copies, an encrypted Google Drive copy, and a second-machine copy. Deleted rows persist in older dumps, and Drive trash adds roughly 30 days invisibly on top of the stated retention |
-| **The off-site copy on the Mac** | Same | Rsynced **without encryption at rest**, so treat it as a full unencrypted copy of the member database. Bounded since 2026-09-21 to a 14-day window, so scope it to the last 14 days rather than to all history |
+| **The off-site copy on the Mac** | Same | **Encrypted at rest since 2026-09-22** (`age`), and the private key is not on that machine, so a stolen or seized Mac is ciphertext and not a disclosure. Two caveats: anything dated **before 2026-09-22** was plaintext, and the protection is only real while the key stays off the disk, so check that before scoping it out. Bounded since 2026-09-21 to a 14-day window |
 | **Resend** | Email addresses, delivery and bounce records | A service provider. Its suppression payloads are mirrored into `email_suppressions.detail` |
 | **Sentry** | Whatever was in scope at the moment of an error | `auditable-player.ts` exists because whole player rows have historically reached places they should not. Assume error payloads may contain personal information until checked |
 | **Discord** | The linked `discord_user_id` per member, plus anything typed into feedback | A snowflake plus the club roster is a re-identification path on its own |

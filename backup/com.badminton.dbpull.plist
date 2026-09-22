@@ -17,6 +17,15 @@
     <string>/bin/bash</string>
     <string>/ABSOLUTE/PATH/TO/backup/pull-to-mac.sh</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd otherwise hands this job /usr/bin:/bin:/usr/sbin:/sbin, which
+         has no Homebrew in it, so `age` would be missing on every scheduled
+         run and present on every run anyone tests by hand. The script also
+         resolves age by absolute path, so this is the belt to that braces. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key><integer>9</integer>

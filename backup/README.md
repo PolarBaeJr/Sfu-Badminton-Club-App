@@ -224,26 +224,55 @@ details live in one place and a host move cannot strand it again. Check it is
 alive the fast way, which is the state file rather than the log:
 
 ```sh
-cat ~/badminton-backups/.last-pull          # timestamp of the last successful pull
-launchctl list | grep badminton             # second column is the last exit status; 0 is good
-ls -1 ~/badminton-backups/*.dump | wc -l    # should be near the retention window
+cat ~/badminton-backups/.last-pull            # timestamp of the last successful pull
+launchctl list | grep badminton               # second column is the last exit status; 0 is good
+ls -1 ~/badminton-backups/*.dump.age | wc -l  # should be near the retention window
 ```
 
 A non-zero exit status there means the off-site copy is stale, and the script
 prints the last good pull date when it fails. It never sweeps on a failed run,
 so a bad night costs you freshness and never the backup itself.
 
-### Still open: tier 2 is unencrypted
+### Tier 2 encryption, closed 2026-09-22
 
-Tier 3 encrypts before the data leaves the Pi, so Google only ever holds
-ciphertext. Tier 2 does not. These dumps sit in `~/badminton-backups` in
-plaintext, and anyone with access to this Mac has every member's name, email,
-phone and waiver without needing a key. `pull-to-mac.sh` prints a warning on
-every run until a `.encryption-configured` marker exists in that directory.
+Tier 2 held plaintext dumps for its whole life until 2026-09-22: anyone with
+this Mac had every member's name, email, phone and waiver with no key needed.
 
-Fixing it needs a tool that is not installed on this Mac (`age` and `gpg` are
-both absent, and rclone has no config file here) and a key that is the owner's
-to create, so it is deliberately left as a decision rather than guessed at.
+It is now encrypted with [`age`](https://github.com/FiloSottile/age). Each dump
+is encrypted the moment it lands and the plaintext is removed, so the files on
+disk are `badminton-<ts>.dump.age`.
+
+**Only the public key is on this Mac**, in `~/badminton-backups/.age-recipient`.
+The private key is in the owner's password manager and deliberately not on this
+disk. That is the whole property being bought: this machine can write the
+off-site copy and cannot read it back, so a stolen or seized laptop yields
+ciphertext. Encrypting to a key stored beside the backups would protect against
+nothing, so the script greps the obvious locations for an `AGE-SECRET-KEY-`
+marker and warns on every run if it finds one.
+
+The public key is not a secret and does not need protecting. If
+`.age-recipient` is ever lost, put the public key back from the password
+manager entry; new dumps cannot be written without it and the script refuses to
+run rather than quietly falling back to plaintext.
+
+**Losing the private key means losing every tier 2 copy.** There is no recovery
+path, by design. Tier 1 on the Pi and tier 3 on Drive are what cover that.
+
+To restore from this tier:
+
+```sh
+age -d -i <identity-file> ~/badminton-backups/badminton-20260921T103002Z.dump.age > restore.dump
+```
+
+Then follow the restore order in this README, globals first. Note that
+`pg_restore` on this Mac is currently **16.15** while the Pi writes dump format
+**v1.16** (PostgreSQL 17), so a local `pg_restore` fails with `unsupported
+version (1.16) in file header`. That is unrelated to encryption and was equally
+true of the plaintext dumps: restore on the Pi, or install a matching client.
+
+The sweep applies to ciphertext exactly as it did to plaintext. A dump the club
+can still decrypt is still the club holding that member's data, so encryption
+does not extend the retention clock.
 
 ---
 

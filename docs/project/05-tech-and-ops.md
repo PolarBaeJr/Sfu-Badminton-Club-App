@@ -23,7 +23,7 @@
 
 - **Nightly backups** of the entire database.
 - Backups are kept for a **rolling 14-day window** locally, and copied **off-site** — to cloud storage (Google Drive) and a second machine.
-- The **cloud copy is encrypted** before it leaves, so Google only ever holds ciphertext. The **copy on the second machine is not encrypted**: it holds plaintext dumps of the member database. That is a known open gap, tracked in `backup/README.md`.
+- **Both off-site copies are encrypted at rest.** The cloud copy is encrypted before it leaves, so Google only ever holds ciphertext. The second-machine copy is encrypted on arrival and that machine holds only the public key, so it can write the backup and cannot read it back. It was plaintext until 2026-09-22; see `backup/README.md`.
 - This means the club can **recover** from hardware failure, accidental deletion, or worse.
 
 ## Reliability

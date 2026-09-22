@@ -64,7 +64,9 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 
 - The database is **backed up nightly**, kept for a rolling 14-day window, and copied **off-site** two ways: to cloud storage, and to a second machine.
   - *Protects against:* hardware failure, ransomware, or accidental deletion — the club can recover its data.
-  - **The cloud copy is encrypted before it leaves; the copy on the second machine is not.** Those plaintext dumps hold every member's name, email, phone and waiver, so anyone with access to that machine has the member database without needing a key. This is a known open gap, tracked in `backup/README.md` under "Still open". Do not describe the backups as encrypted without that qualification.
+  - **Both off-site copies are encrypted at rest.** The cloud copy is encrypted before it leaves the Pi, so the storage provider only ever holds ciphertext. The second-machine copy is encrypted on arrival, and only the *public* key lives on that machine, so it can write the backup and cannot read it back. A stolen or seized laptop yields ciphertext.
+  - *Closed 2026-09-22:* the second-machine copy was plaintext until that date. Those dumps held every member's name, email, phone and waiver, and anyone with access to the machine had the member database without needing a key. Any incident dated before 2026-09-22 should be scoped on that basis.
+  - **Encryption does not extend the retention clock.** A backup the club can still decrypt is still the club holding that member's data, so the 14-day sweep applies to the encrypted copies unchanged.
 
 ## 10. Staging holds real member data
 
@@ -92,11 +94,11 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 | Fail-closed automated jobs | Outsiders triggering privileged actions |
 | Tests and type checks on every change | Regressions reaching members (not: new vulnerabilities — there is no security scanner) |
 | Input validation | Malicious/malformed data |
-| Nightly off-site backups, cloud copy encrypted | Data loss, ransomware (the second-machine copy is plaintext — see 9) |
+| Nightly off-site backups, both copies encrypted at rest | Data loss, ransomware, and a stolen backup device (see 9) |
 
 | Known risk | Why it is listed |
 |---------|------------------|
-| Staging carries an unscrubbed nightly copy of production | Two full copies of the membership on the public internet, not one (see 10) |
-| The second-machine backup copy is unencrypted | Plaintext member database on that machine, no key needed (see 9) |
+| No automated security scanning in CI | Tests catch regressions, not new vulnerabilities (see 7) |
+| Announcement bodies are not scrubbed on staging | An exec-authored broadcast can name a member (see 10) |
 
 ➡️ Continue to **[05-tech-and-ops.md](05-tech-and-ops.md)** for hosting, deployment, and cost.
