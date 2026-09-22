@@ -224,6 +224,20 @@ MEMBERS_EXPOSED=0
 # The alert can never fail the run, hence the `|| true`. This exists to report a
 # problem, not to become one, and a webhook that 500s at 04:00 must not be what
 # stops staging from being scrubbed.
+# The webhook may also live in a FILE, which is the preferred way and the
+# default. A crontab line is world-readable on most boxes, appears in `ps` while
+# cron expands it, and has to be typed into a terminal to be installed, which
+# puts the URL into shell history and into whatever transcript is watching. A
+# 0600 file is typed into an editor and stays there.
+#
+# The env var still wins if set, so nothing that already exports it changes.
+SNAPSHOT_ALERT_WEBHOOK_FILE="${SNAPSHOT_ALERT_WEBHOOK_FILE:-$HOME/.config/badminton/snapshot-alert-webhook}"
+if [ -z "${SNAPSHOT_ALERT_WEBHOOK:-}" ] && [ -r "$SNAPSHOT_ALERT_WEBHOOK_FILE" ]; then
+  # Only the first line, and trimmed: an editor appends a newline and a pasted
+  # URL often brings a trailing space, neither of which belongs in a URL.
+  SNAPSHOT_ALERT_WEBHOOK="$(head -n1 "$SNAPSHOT_ALERT_WEBHOOK_FILE" | tr -d '[:space:]')"
+fi
+
 alert() {
   [ -n "${SNAPSHOT_ALERT_WEBHOOK:-}" ] || return 0
   printf 'url = "%s"\n' "$SNAPSHOT_ALERT_WEBHOOK" \
@@ -261,7 +275,8 @@ trap on_exit EXIT
 if [ -n "${SNAPSHOT_ALERT_WEBHOOK:-}" ]; then
   echo "[$(date -u +%FT%TZ)] failure alerts: ON"
 else
-  echo "[$(date -u +%FT%TZ)] failure alerts: OFF (SNAPSHOT_ALERT_WEBHOOK unset)" >&2
+  echo "[$(date -u +%FT%TZ)] failure alerts: OFF. Put a Discord webhook URL in" >&2
+  echo "    $SNAPSHOT_ALERT_WEBHOOK_FILE (chmod 600), or export SNAPSHOT_ALERT_WEBHOOK." >&2
 fi
 
 PUB_SQL="$OUT_DIR/publications-$TS.sql"
