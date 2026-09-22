@@ -1266,3 +1266,30 @@ describe('every third-party processor is disclosed to the member', () => {
     expect(result.document.disclosure_recipients).toEqual(DISCLOSURE_RECIPIENTS);
   });
 });
+
+describe('tables with column-level grants', () => {
+  it('never asks for * on data_api_consumers, which 00241 refuses to service_role', async () => {
+    // STAGING CAUGHT THIS, NOT A TEST. 00241 grants service_role SELECT on
+    // named columns of data_api_consumers only, withholding player_ref_salt.
+    // PostgREST checks every column a select list names even for a head-only
+    // count, so `select('*', { head: true })` came back 403, and one failed
+    // read fails the whole export by design. Every member's export on staging
+    // returned 503. This stub refuses '*' on that table the way Postgres does.
+    const base = stubClient();
+    const client: ExportClient = {
+      from(table: string) {
+        const inner = base.from(table);
+        return {
+          select(columns: string, options?: any) {
+            if (table === 'data_api_consumers' && columns.trim() === '*') {
+              return new StubQuery([], options?.head === true, 'permission denied for table data_api_consumers');
+            }
+            return inner.select(columns, options);
+          },
+        };
+      },
+    };
+    const result = await assembleMemberExport(client, PLAYER_ID);
+    expect(result.ok, result.ok ? '' : JSON.stringify(result.failures)).toBe(true);
+  });
+});

@@ -182,9 +182,16 @@ class Reader {
    * for `varsity_notes` can be honest about the stakes while the notes
    * themselves stay where 00117 and 00118 put them.
    */
-  async countOnly(table: string, filter: (q: any) => any): Promise<number> {
+  //
+  // `column`, NOT '*'. PostgREST checks SELECT on every column a select list
+  // names, even with `head: true` and no body coming back, so '*' is refused
+  // outright on any table with column-level grants. data_api_consumers is one
+  // (00241 withholds `player_ref_salt` from service_role), and that one 403 was
+  // failing every member's whole export on staging. The filter column is always
+  // readable, since the filter itself needs it, so counting by it is safe.
+  async countOnly(table: string, column: string, filter: (q: any) => any): Promise<number> {
     const { count, error } = await filter(
-      this.supabase.from(table).select('*', { count: 'exact', head: true }),
+      this.supabase.from(table).select(column, { count: 'exact', head: true }),
     );
     if (error) {
       this.fail(table, error.message);
@@ -849,7 +856,7 @@ export async function assembleMemberExport(
   // ---- counted: official acts, not personal records -----------------------
   for (const [table, entry] of Object.entries(EXPORT_TABLES)) {
     if (entry.disposition !== 'counted') continue;
-    counted[table] = await reader.countOnly(table, (q) =>
+    counted[table] = await reader.countOnly(table, entry.playerColumns[0]!, (q) =>
       q.or(orEq(entry.playerColumns, playerId)),
     );
   }
@@ -862,7 +869,7 @@ export async function assembleMemberExport(
   // minutes. The rows themselves are never read: 00181:63-65 says outright
   // "There is nothing here a member should read, including their own rows."
   const challengeSubjects = authUserId ? [playerId, authUserId] : [playerId];
-  withheldRows.passkey_challenges = await reader.countOnly('passkey_challenges', (q) =>
+  withheldRows.passkey_challenges = await reader.countOnly('passkey_challenges', 'user_id', (q) =>
     q.in('user_id', challengeSubjects),
   );
   // Check-in tokens are per session and per tournament, not per member, so
@@ -874,7 +881,7 @@ export async function assembleMemberExport(
 
   // Officer free text written ABOUT the member. COUNTED AND NEVER READ, so the
   // owner can see the stakes of the pending decision without the text moving.
-  withheldRows.varsity_notes = await reader.countOnly('varsity_notes', (q) =>
+  withheldRows.varsity_notes = await reader.countOnly('varsity_notes', 'player_id', (q) =>
     q.eq('player_id', playerId),
   );
   withheldRows.match_admin_notes = await countByParent(
@@ -986,7 +993,7 @@ async function countByParent(
   // budget ever did, and the only symptom would be these counts starting to
   // 414.
   for (const batch of chunkIds(parentIds)) {
-    total += await reader.countOnly(table, (q) => q.in(column, batch));
+    total += await reader.countOnly(table, column, (q) => q.in(column, batch));
   }
   return total;
 }
