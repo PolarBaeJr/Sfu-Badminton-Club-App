@@ -10,7 +10,7 @@ Step-by-step procedures for running the app in production. Written for whoever h
 
 - **The app** (player + admin) runs as **compose-managed** Docker containers (`badminton-player-1` / `badminton-admin-1`) on a **self-hosted server** (Raspberry Pi), behind the club's own **reverse proxy**.
 - **The database** is a self-hosted **Supabase** stack on the same server. It is **separate** from the app — deploying the app never touches data.
-- **Deploys are a push + a compose recreate** on the server. **Migrations are manual.** **Backups are nightly.**
+- **A deploy is a push.** CI builds the image and the proxy rolls the containers on its own; there is no manual step on the server. **Migrations are manual.** **Backups are nightly.**
 
 ---
 
@@ -22,14 +22,40 @@ Step-by-step procedures for running the app in production. Written for whoever h
    git push <remote> HEAD:deploy/docker-prod
    ```
 3. GitHub Actions builds ARM64 images and pushes to GHCR, tagged **`latest`** and **`sha-<commit>`**.
-4. **Recreate the serving containers on the server** — pull the new images and let compose recreate them:
-   ```sh
-   # on the server
-   cd <deploy-dir> && docker compose pull player admin && docker compose up -d player admin
-   ```
-   This is the only manual step; nothing on the server updates on its own.
+4. **Nothing.** The proxy on the host watches the registry, notices the new
+   digest and rolls the serving containers itself. Confirm it landed with the
+   read-only check in the next section.
 
-> ⚠️ **Env-clone gotcha.** If your change adds a **new runtime variable** to the server's `.env`, you must do a real `docker compose up -d` so the container picks it up. Do **not** use the proxy dashboard's **"Replace"** to redeploy in that case — Replace **clones the old environment** and your new variable will be missing. Compose recreate reads `.env` fresh; Replace does not.
+> ⚠️ **Never recreate the app containers by hand.** This step used to read
+> `docker compose pull player admin && docker compose up -d player admin`, and
+> told you it was "the only manual step; nothing on the server updates on its
+> own". Both halves were wrong, and the command is now forbidden outright by
+> [`.github/CI.md`](../../.github/CI.md), which names this file as its
+> authority. It fails in three separate ways:
+>
+> - It **detaches the containers from auto-update.** The player and admin
+>   containers are owned by the proxy. A manual recreate takes them out of its
+>   hands, so the next real deploy silently does nothing and the symptom appears
+>   days later as "new code didn't go live".
+> - Under dynamic scaling a compose recreate **drops the replica count to 1**
+>   without reporting it, and prod player/admin float across both hosts.
+> - The compose **service** names are not the container names. The obvious
+>   invocation therefore targets the wrong thing, which is how production went
+>   down on 2026-08-06.
+
+> ⚠️ **A new runtime variable has no settled procedure. Do not improvise one
+> during a deploy.** Three things are known and they do not yet add up to an
+> instruction:
+>
+> - The dashboard's **"Replace"** clones the old environment, so a genuinely new
+>   variable is missing from the clone.
+> - A plain **restart does not re-read `.env`**, so it cannot pick one up either.
+> - **`compose up -d` reads `.env` fresh but is forbidden above**, for the three
+>   reasons given.
+>
+> So settle this before it is next needed rather than in the middle of needing
+> it. Until it is settled, treat adding a new runtime variable to player or admin
+> as a change that needs a plan, not a step in this list.
 
 ### Verify a deploy landed (read-only)
 
@@ -53,7 +79,17 @@ Deploys and verification run **on the server** over SSH. If the public SSH port 
 
 ## Roll back
 
-Every build is tagged `sha-<commit>` (immutable). To roll back, point the compose service at the previous `sha-<commit>` tag (pin the image tag in the compose file / `.env`, then `docker compose pull player admin && docker compose up -d player admin`), or redeploy an earlier commit to `deploy/docker-prod`. Prefer this over editing containers by hand.
+Every build is tagged `sha-<commit>` (immutable).
+
+**Roll back by redeploying an earlier commit to `deploy/docker-prod`.** It goes
+out the same way every other deploy does, so it needs no manual step on the
+server and leaves auto-update intact.
+
+The older advice here was to pin the previous `sha-<commit>` in the compose file
+and then `docker compose pull player admin && docker compose up -d player admin`.
+Do not: that is the forbidden recreate from the Deploy section, and pinning a tag
+additionally fights the proxy, which is watching for a newer digest. You would be
+rolling back and re-arming the thing that rolls you forward again.
 
 ---
 
@@ -182,11 +218,11 @@ Env var names (values kept private):
 | Variable | Where | When it takes effect |
 |----------|-------|----------------------|
 | `NEXT_PUBLIC_SENTRY_DSN` | **build-time** (GitHub Actions secret) — client bundle | needs a **CI rebuild** |
-| `SENTRY_DSN` | **runtime** (server `.env`) | needs the **compose recreate** (`up -d`) |
+| `SENTRY_DSN` | **runtime** (server `.env`) | see the unsettled-procedure note in Deploy |
 | `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | **build-time** — source-map upload | needs a **CI rebuild** |
 | `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST` | **build-time**, client-only | needs a **CI rebuild** |
 
-> Rule of thumb: anything `NEXT_PUBLIC_*` is baked into the client bundle at **build time** → change it → **rebuild via CI**. The server-side `SENTRY_DSN` is a runtime var → change `.env` → **compose recreate** (mind the env-clone gotcha above).
+> Rule of thumb: anything `NEXT_PUBLIC_*` is baked into the client bundle at **build time** → change it → **rebuild via CI**. The server-side `SENTRY_DSN` is a runtime var, and getting a changed runtime var into the app containers is the unsettled procedure flagged under Deploy. Read that note before you start.
 
 ---
 
@@ -194,9 +230,38 @@ Env var names (values kept private):
 
 **Always restart the full stack**, not individual containers — restarting one container can leave the API gateway caching stale internal addresses and break auth routing.
 
+The code block here was empty. The one procedure the page insists on gave no
+command, which is why it is written out below in full.
+
+Prod is the compose project **`supabase`** (11 containers) at
+`/mnt/ssd/Deploy/supabase-prod`; staging is `supabase-staging` at
+`/mnt/ssd/Deploy/supabase-staging`. Two compose files are in play per stack, the
+base and an override, so run these from the directory and let compose pick up
+both rather than passing `-p`.
+
+**No config change, just bounce it.** Same containers, so the internal addresses
+do not move and there is nothing for kong to cache stale:
+
 ```sh
-# stop then start the whole Supabase stack together
+# on the server
+cd /mnt/ssd/Deploy/supabase-prod && docker compose restart
 ```
+
+**After editing `.env` or a compose file.** A restart does NOT re-read `.env`,
+so a rotated secret or a new variable needs a real recreate. This is a full API
+outage for as long as it takes to come back, so it is a maintenance-window
+action, not a casual one:
+
+```sh
+# on the server
+cd /mnt/ssd/Deploy/supabase-prod && docker compose down && docker compose up -d
+```
+
+> Two notes before anyone generalises from this. The prohibition on
+> `docker compose up/pull` applies to the **player and admin** containers, which
+> the proxy owns; the Supabase stack is a separate project that nothing
+> auto-updates, so compose is the correct tool here. And `down` takes the
+> database container with it, so confirm a current backup exists first.
 
 ---
 
@@ -206,8 +271,8 @@ Env var names (values kept private):
 |---------|--------------|
 | **Site down** | Is the server up? Are the app + Supabase containers running? Check the proxy is routing to a container with the right host label. |
 | **Login broken** | Supabase Auth container healthy? Full-stack restart if the gateway is caching stale IPs. Email (Resend) sending? |
-| **New code didn't go live** | Did CI build succeed? Did anyone run the **compose recreate** (`docker compose pull player admin && up -d`) on the server? A push alone doesn't deploy. |
-| **New env var not taking effect** | `NEXT_PUBLIC_*`? Needs a **CI rebuild**. Server-side var? Needs `docker compose up -d` — **not** dashboard "Replace" (it clones the old env). |
+| **New code didn't go live** | Did CI build succeed and push the image? Then the proxy should have rolled it on its own. If it did not, suspect the containers were detached from auto-update by a past manual `compose up`. Verify by image, per the read-only check under Deploy. |
+| **New env var not taking effect** | `NEXT_PUBLIC_*`? Needs a **CI rebuild**. Server-side var on player/admin? No settled procedure: see the note under Deploy. Supabase stack? Needs a `down`/`up -d`, per Restart Supabase. |
 | **Push notifications silent** | VAPID secrets set on both apps and the edge functions? |
 | **Emails not sending** | `RESEND_API_KEY` set? Sender domain still verified? |
 | **A scheduled job stopped** | `CRON_SECRET` set and the job sending the `x-cron-secret` header? |
@@ -216,10 +281,10 @@ Env var names (values kept private):
 
 ## Golden rules
 
-- ✅ Deploys via `deploy/docker-prod` → CI builds → **compose recreate on the server** (`docker compose pull player admin && up -d`).
+- ✅ Deploys via `deploy/docker-prod` → CI builds and pushes the image → **the proxy rolls the containers itself**. Verify by image; never recreate player/admin by hand.
 - ✅ Migrations manual, additive, forward-only, backup first.
 - ✅ Verify deploys by inspecting the running image against `latest`.
-- ✅ A new runtime var in `.env` needs a real `compose up -d`, **not** dashboard "Replace" (Replace clones the old env).
+- ❌ Never `docker compose up -d` or `pull` the **player/admin** containers: it detaches them from auto-update, drops replicas to 1, and the service names are not the container names. A new runtime var on those two has no settled procedure yet.
 - ✅ Restart Supabase as a full stack.
 - ❌ Never `docker compose --build` on the server (CI builds images; the server pulls).
 - ❌ Never commit real secrets to this public repo.
