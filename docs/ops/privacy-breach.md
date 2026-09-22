@@ -4,15 +4,23 @@ For whoever is holding the technical exec role when member data is exposed, lost
 or accessed by someone who should not have it. Read the first section, then act.
 The rest is reference.
 
-> **The club carries this itself.** An earlier version of this page routed
-> everything through SFU Recreation and told you never to contact the
-> Commissioner directly. That was written on the assumption that the club's data
-> was SFU's record, which it is not: the club manages itself, collects its own
-> records, holds them on its own hardware, Recreation has no access to them, and
-> the club is not an official university app. So the operating regime is **PIPA**
-> (BC's Personal Information Protection Act), the club is the "organization" that
-> holds the information, and **the duty to assess and to notify is the club's.**
-> There is no university privacy office standing between you and it.
+> **Assume the club carries this itself.** Which statute governs turns on
+> whether the membership data is the club's record or SFU's, and that
+> determination is being put to SFU Recreation for review rather than assumed.
+> The facts point at **PIPA** (BC's Personal Information Protection Act): the
+> club manages itself, collects its own records, holds them on its own hardware,
+> Recreation has no access to them, and this is not an official university app.
+> If that is right, the club is the "organization" and **the duty to assess and
+> to notify is the club's**, with no university privacy office between you and
+> it. If Recreation comes back and says the data is SFU's record, then FIPPA
+> applies and the university's privacy office runs the notification instead.
+>
+> **This does not change a single action in the next section**, which is why the
+> section is first. Containment, evidence and scope are identical under both
+> Acts. The regime only changes who files the notification, and that decision is
+> hours away, not minutes. So: work the list, and call Recreation as well as the
+> club exec while you do. Notifying when it turned out you did not have to is
+> recoverable; the reverse is not.
 
 > ⚠️ **Confirm the exact statutory thresholds and timing before you notify.** The
 > shape below is right and is enough to act on in the first hour, but the precise
@@ -58,7 +66,7 @@ The rest is reference.
 | Club privacy officer / exec | Immediately | The club decides. There is no escalation path that takes this off you. |
 | **Affected members** | Without unreasonable delay, if significant harm is possible | Directly, not via a Discord announcement. |
 | **OIPC BC** | Same test, same timing | The club reports; see the OIPC's breach reporting guidance for the current form. |
-| SFU Recreation | Only if *their* records are involved | See the note below. |
+| **SFU Recreation** | Early, in any real incident | Two reasons: if any record you handed them is involved it is theirs to report, and until the regime question below is answered they may turn out to own the notification outright. |
 
 > **When Recreation does come into it.** The club's own database is not SFU's
 > record, but if Recreation requires your waivers, or receives a roster from you

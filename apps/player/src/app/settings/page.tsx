@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
 import { AvatarUpload } from '@/components/AvatarUpload';
 import { CalendarFeed } from './calendar-feed';
+import { DataExport } from './data-export';
 import { PasskeyManager } from '@/components/passkey-manager';
 import {
   User,
@@ -763,6 +764,22 @@ export default function SettingsPage() {
                 description="Your rank will be visible to others."
               />
             </div>
+            {/* OUTSIDE THE isApproved GUARD, DELIBERATELY, unlike the Calendar
+                section above it. isApproved is getAccountStanding(), the same
+                three checks requirePlayer() makes, so gating this row on it
+                would hide the export from exactly the members most likely to
+                want it: someone pending approval, someone suspended, someone
+                banned wanting to read the reason the club wrote about them,
+                someone who has asked to be deleted and would like a copy
+                first. Standing withholds the CONTROLS, not the information,
+                which is the same distinction the calendar feed route's header
+                draws, and the route agrees with this on purpose: it
+                authenticates and does not call requirePlayer().
+
+                In the Privacy section and not the Danger zone, because an
+                export is not destructive. */}
+            <div className="sep" />
+            <DataExport />
           </Section>
 
           <Section icon={KeyRound} title="Passkeys">

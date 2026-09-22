@@ -50,11 +50,29 @@ function code(file: string): string {
 
 const files = sourceFiles(SRC).filter((f) => !f.includes('__tests__'));
 
+// THE MEMBER DATA EXPORT NAMES EVERY COLUMN ON `players`, INCLUDING THIS ONE,
+// AND THAT IS NOT §2.5 COMING BACK.
+//
+// lib/data-export/registry.ts carries an allowlist of every column the export
+// hands the member out of their OWN row, precisely so that a column added later
+// fails a test rather than going quietly missing from a statutory access
+// response (data-export-coverage.test.ts). Naming a column in order to give one
+// member their own stored value is not the disclosure this file guards against:
+// nothing in the export shows one member another member's activity, the switch
+// is still absent from Settings, and the export's own text says outright that
+// the setting governs nothing today, so it cannot manufacture the confidence
+// the switch did.
+//
+// NAMED, not a pattern, and named in BOTH assertions below, so that a second
+// file reaching for either column still has to be a deliberate edit here.
+const DATA_EXPORT_REGISTRY = 'lib/data-export/registry.ts';
+
 describe('the members\' app does not offer a privacy control it cannot honour', () => {
   it('has no reader or writer of show_activity_status', () => {
     const offenders = files
       .filter((f) => /show_activity_status/.test(code(f)))
-      .map(rel);
+      .map(rel)
+      .filter((f) => f !== DATA_EXPORT_REGISTRY);
     expect(
       offenders,
       'show_activity_status is back in the members\' app. Audit §2.5: this column ' +
@@ -83,6 +101,10 @@ describe('the members\' app does not offer a privacy control it cannot honour', 
         'lib/actions/profile.ts',
         'lib/actions/_shared.ts',
         'lib/actions/sessions.ts',
+        // Reads it, for the caller's own row only, to put it in their data
+        // export. See DATA_EXPORT_REGISTRY above: giving somebody their own
+        // last-active time is not a disclosure of anybody's.
+        DATA_EXPORT_REGISTRY,
       ].includes(f));
     expect(
       offenders,

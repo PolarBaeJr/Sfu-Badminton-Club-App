@@ -28,11 +28,32 @@ All on host `sfubadminton.com`, keyed per client IP (full address for IPv4,
 | `/auth/callback` | 120 | player Supabase auth callback |
 | `/api/calendar` | 120 | ICS feed, incl. token enumeration |
 | `/api/discord` | 600 | every `/api/discord/*` service route |
+| `/api/account/export` | 20 | member data export (FIPPA access request) |
 | `/unsubscribe` | 120 | email unsubscribe |
 | `/link` | 120 | Discord account linking page |
 | `/checkin` | 240 | session check-in QR landing page |
 | `/admin/api/passkey` | 60 | console passkey routes |
 | `/admin/auth/callback` | 60 | console auth callback |
+
+### Why `/api/account/export` is the one small number
+
+It is the only limit here set BELOW a real member's measured peak, and
+deliberately: nobody downloads their own data twenty times a minute, and the
+route is not on any critical path, so a 429 on it costs somebody one retry
+rather than the way into their account.
+
+It earns a limit at all because it is the most expensive request the player app
+serves. One call is roughly fifty sequential PostgREST reads against the single
+Postgres everything else shares, held entirely in memory before a single byte
+goes out (see `apps/player/src/app/api/account/export/route.ts` for why it is
+not streamed). Five hundred of those a minute from one address would be a
+self-inflicted outage.
+
+**This entry has to exist on BOTH hosts.** The limited paths do not spread: each
+proxy reads its own `routes.json`, so an entry added on one host leaves the
+other serving the same path unthrottled, and nothing anywhere reports the
+asymmetry. Verify on each host with the `/ratelimit` command under Gotchas
+below, and remember a bad rpm fails open silently.
 
 The bot has its own limit via a compose label rather than a routes.json entry
 (`proxy.ratelimit` / `proxy.ratelimit.rpm: 300` in `docker-compose.yml`),
