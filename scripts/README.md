@@ -70,6 +70,21 @@ stay valid); prod sessions and refresh tokens are deliberately skipped.
 This is what runs nightly at 04:00. It is **not** a faithful copy on purpose,
 and the header comment says exactly where it diverges.
 
+**It scrubs the members at the end of the run.** The dump itself carries real
+names, emails, phones, officer notes and fee records, because that is what a
+faithful `pg_dump` of production is. The scrub replaces each of those with a
+value derived from the row's own id (stable across refreshes, so a member is the
+same person on staging tomorrow), blanks the officer notes and audit diffs, and
+deletes the bearer tokens, passkeys, push endpoints and bounce records. Ids,
+ratings, matches, fee status and row counts survive untouched. `$STAGING_ADMIN_EMAILS`
+is kept in the clear on purpose: sign-in on staging is an email code, so
+scrubbing the owner's address locks the owner out of staging.
+
+The run then queries staging for any surviving real identifier and **fails** if
+it finds one. `SCRUB_MEMBER_DATA=0` skips the scrub and warns loudly; use it only
+to reproduce a bug that genuinely depends on the real values, and re-run the
+snapshot straight afterwards.
+
 Its three SQL helpers live in `sql/` and are all **read-only on the source** —
 run them against prod with `psql -At`, pipe the output into the target:
 
@@ -98,7 +113,16 @@ route.
 ./scripts/request-account-deletion.sh --actor <admin-email> \
   --target <member-email> --reason "emailed request 2026-09-21"   # dry run
 ./scripts/request-account-deletion.sh … --confirm                 # commits
+./scripts/request-account-deletion.sh … --db prod                 # skip staging
 ```
+
+It writes to **both** databases by default, production first, so a refusal on
+prod never leaves the two copies disagreeing. On staging the checks relax rather
+than tighten: a member who is not there is a no-op, and no audit row is written,
+because staging's `audit_logs` is reloaded from prod every night. With the
+snapshot scrub live this is belt and braces rather than the main event, since
+staging no longer holds the member's real identifiers either way, but it still
+applies the deletion immediately instead of waiting for 04:00.
 
 It is a **dry run unless `--confirm` is passed** (the transaction ends in
 `ROLLBACK;` instead of `COMMIT;`), and it refuses before writing anything if the

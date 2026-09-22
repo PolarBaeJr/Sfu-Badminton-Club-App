@@ -20,6 +20,11 @@
 #     below) — inheriting prod's would aim the staging bot at the real guild.
 #   - $STAGING_ADMIN_EMAILS are re-granted admin on staging, because prod roles
 #     leave the owner unable to use the staging admin console at all.
+#   - THE MEMBERS ARE SCRUBBED. Names, emails, phones, bios, officer notes,
+#     audit diffs and every bearer token are replaced or deleted at the end of
+#     the run, because staging is on the public internet and is where untested
+#     code gets deployed on purpose. Ids, ratings, matches and row counts are
+#     kept, so it stays a realistic rehearsal. See "SCRUB THE MEMBERS" below.
 #
 # Idempotent. Safe to re-run. Existing dev DB rows in those scopes are wiped,
 # and so is anything in dev's public schema that prod does not have — see
@@ -632,6 +637,330 @@ SQL
     echo "WARNING: the above address(es) are not in prod's players table, so" >&2
     echo "         nothing was granted for them. Staging will render the admin" >&2
     echo "         console for that account but show no Edit controls at all." >&2
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# SCRUB THE MEMBERS.
+#
+# Everything above this point has faithfully copied production's membership onto
+# staging: real names, real email addresses, real phone numbers, officer notes
+# written about members, fee records. That is what `pg_dump public` plus
+# auth.users gives you, and for two months nobody noticed because the script was
+# failing before it got here.
+#
+# WHY THIS EXISTS AT ALL. Staging is not a locked room. It is reachable on the
+# public internet at badminton.polardev.org, it is deliberately NOT gated on the
+# test suite (docs/STAGING.md: staging is where you go to find out whether
+# something works, and refusing to deploy a red commit there removes the one
+# place it is safe to look at one), and it is the target of every rehearsal. A
+# copy of the real membership sitting behind untested code is a risk that buys
+# nothing: the original staging seed was fourteen synthetic accounts and it
+# covered every state the console has a control for.
+#
+# So the copy stays, because realistic row counts and real relationships are the
+# whole point of a rehearsal, and the PEOPLE are replaced.
+#
+# WHAT IS PRESERVED, deliberately:
+#   - every id, foreign key, rating, match, score, date and count
+#   - member_code, role, is_exec, active_flag, membership_type, fee status
+#   - the deleted+...@deleted.invalid sentinel on already-purged members, so
+#     staging keeps a real example of an anonymised account
+#   - $STAGING_ADMIN_EMAILS, untouched, because sign-in on staging is an email
+#     code and scrubbing the owner's address locks the owner out of staging
+#     entirely. Those are the owner's own addresses, not a member's.
+#
+# STABLE ACROSS REFRESHES. Every replacement is derived from the row's own id,
+# so a member is the same "Jordan Nguyen" tomorrow morning as today. A random
+# name per run would make a bug report written against staging unreadable by the
+# next day.
+#
+# Set SCRUB_MEMBER_DATA=0 to skip, for the rare case of reproducing a bug that
+# genuinely depends on the real values. It is off-by-default in the other
+# direction on purpose: skipping has to be a decision someone typed.
+SCRUB_MEMBER_DATA="${SCRUB_MEMBER_DATA:-1}"
+
+if [ "$SCRUB_MEMBER_DATA" != "1" ]; then
+  echo "WARNING: SCRUB_MEMBER_DATA=$SCRUB_MEMBER_DATA -- staging now holds REAL" >&2
+  echo "         member names, emails and phone numbers. Re-run the snapshot" >&2
+  echo "         without that variable as soon as you are done." >&2
+else
+  echo "[$(date -u +%FT%TZ)] scrubbing member personal data out of staging..."
+  docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
+      -q -v ON_ERROR_STOP=1 -v emails="$STAGING_ADMIN_EMAILS" <<'SQL'
+BEGIN;
+
+-- The keep-list reaches the DO block through a transaction-local setting.
+-- psql expands :'emails' out here but NOT inside a $do$ block, where it would
+-- be passed through literally and die on `syntax error at or near ":"`.
+\o /dev/null
+SELECT set_config('scrub.keep_emails', :'emails', true);
+\o
+
+DO $scrub$
+DECLARE
+  -- Ordinary names on purpose. Placeholders like "Test User 41" make every
+  -- screen look like a fixture and hide the layout bugs that only show up on a
+  -- name of a realistic length, which is one of the things staging is for.
+  fns text[] := ARRAY['Alex','Jordan','Sam','Riley','Morgan','Casey','Jamie',
+                      'Avery','Quinn','Rowan','Harper','Emerson','Parker',
+                      'Reese','Skyler','Devon','Marlow','Shay'];
+  lns text[] := ARRAY['Chen','Patel','Nguyen','Kim','Garcia','Okafor','Silva',
+                      'Haddad','Lindqvist','Moreau','Tanaka','Rossi','Novak',
+                      'Ferreira','Osei','Dubois','Ivanov','Mensah'];
+  keep text[] := ARRAY(
+    SELECT btrim(e) FROM unnest(string_to_array(current_setting('scrub.keep_emails'), ',')) e
+     WHERE btrim(e) <> ''
+  );
+  n integer;
+BEGIN
+  -- A stable, non-negative index from a uuid. hashtext() returns a signed int4
+  -- and abs() throws on INT_MIN, so shift into positive range instead.
+  --
+  -- TWO SETS, and the difference matters. `_scrub_targets` is every member who
+  -- is not on the keep-list, INCLUDING the already-purged ones. `_scrub_names`
+  -- is the subset that still has a real name to replace.
+  --
+  -- A purged member's players row already reads deleted+...@deleted.invalid and
+  -- must keep reading that, because it is the one genuine example of an
+  -- anonymised account on staging. But their auth.users row still holds the
+  -- REAL address: that is precisely the asymmetry docs/ops/privacy-breach.md
+  -- calls out, and it is why the auth half below keys off _scrub_targets and
+  -- not off _scrub_names. Getting that wrong leaves the deleted members as the
+  -- only people on staging whose real email survived, which would be the exact
+  -- opposite of the intent.
+  CREATE TEMP TABLE _scrub_targets ON COMMIT DROP AS
+  SELECT p.id,
+         p.user_id,
+         (p.email LIKE 'deleted+%@deleted.invalid') AS purged,
+         CASE WHEN p.email LIKE 'deleted+%@deleted.invalid'
+              THEN p.email
+              ELSE 'member.' || substr(md5(p.id::text), 1, 10) || '@staging.invalid'
+         END AS new_email
+    FROM public.players p
+   WHERE NOT (p.email = ANY(keep));
+
+  CREATE TEMP TABLE _scrub_names ON COMMIT DROP AS
+  SELECT t.id,
+         fns[1 + ((hashtext(t.id::text)::bigint + 2147483648) % array_length(fns,1))] AS fn,
+         lns[1 + ((hashtext(t.id::text || 'l')::bigint + 2147483648) % array_length(lns,1))] AS ln,
+         substr(md5(t.id::text), 1, 10) AS tag
+    FROM _scrub_targets t
+   WHERE NOT t.purged;
+
+  SELECT count(*) INTO n FROM _scrub_names;
+  RAISE NOTICE 'scrubbing % member records (% already purged, % kept as staging admins)',
+    n, (SELECT count(*) FROM _scrub_targets WHERE purged), coalesce(array_length(keep,1), 0);
+
+  UPDATE public.players p
+     SET first_name   = s.fn,
+         last_name    = s.ln,
+         full_name    = s.fn || ' ' || s.ln,
+         display_name = CASE WHEN p.display_name IS NULL THEN NULL
+                             ELSE s.fn || ' ' || left(s.ln, 1) || '.' END,
+         handle       = CASE WHEN p.handle IS NULL THEN NULL
+                             ELSE lower(s.fn) || s.tag END,
+         email        = 'member.' || s.tag || '@staging.invalid',
+         -- 555 is the reserved-for-fiction exchange, so a scrubbed number can
+         -- never dial a real person if one is ever pasted somewhere.
+         phone        = CASE WHEN p.phone IS NULL THEN NULL
+                             ELSE '+1555' || lpad(((hashtext(p.id::text)::bigint + 2147483648) % 10000000)::text, 7, '0') END,
+         avatar_url   = NULL,
+         bio          = CASE WHEN p.bio     IS NULL THEN NULL ELSE 'Bio text removed for staging.' END,
+         exec_bio     = CASE WHEN p.exec_bio IS NULL THEN NULL ELSE 'Exec bio removed for staging.' END,
+         -- Kept as a non-empty string rather than nulled: a suspended member
+         -- with no reason renders differently from one with a reason, and that
+         -- difference is a screen worth testing.
+         ban_reason   = CASE WHEN p.ban_reason IS NULL THEN NULL ELSE 'Reason removed for staging.' END
+    FROM _scrub_names s
+   WHERE p.id = s.id;
+
+  -- auth.users is the half that a public-schema-only scrub misses, and it is
+  -- the half that still holds the real address after a member is anonymised.
+  -- raw_user_meta_data carries name, email and picture from the Google sign-in.
+  UPDATE auth.users u
+     SET email              = t.new_email,
+         phone              = NULL,
+         raw_user_meta_data = jsonb_build_object('full_name', p.full_name,
+                                                 'email',     t.new_email,
+                                                 'scrubbed',  true)
+    FROM _scrub_targets t
+    JOIN public.players p ON p.id = t.id
+   WHERE u.id = t.user_id;
+
+  -- AUTH USERS WITH NO PLAYERS ROW. Someone who authenticated and never
+  -- finished onboarding has an auth.users row and nothing in public.players, so
+  -- every join above misses them and their real address stays. They are easy to
+  -- forget precisely because they are invisible in the app.
+  UPDATE auth.users u
+     SET email              = 'orphan.' || substr(md5(u.id::text), 1, 10) || '@staging.invalid',
+         phone              = NULL,
+         raw_user_meta_data = jsonb_build_object('scrubbed', true)
+   WHERE u.email IS NOT NULL
+     AND NOT (u.email = ANY(keep))
+     AND NOT EXISTS (SELECT 1 FROM public.players p WHERE p.user_id = u.id);
+
+  -- A pending email change holds a second real address, in its own column, and
+  -- survives everything above. Guarded on the column existing so a GoTrue
+  -- schema change cannot turn the nightly refresh into a hard failure.
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'auth' AND table_name = 'users'
+                AND column_name = 'email_change') THEN
+    EXECUTE $q$UPDATE auth.users SET email_change = '' WHERE coalesce(email_change, '') <> ''$q$;
+  END IF;
+
+  -- identity_data holds the provider's own copy of the email and name, and for
+  -- Google, provider_id IS the account's permanent subject identifier. Google
+  -- sign-in is off on staging (its redirect URI is registered against the
+  -- production domain), so these rows cannot be used here for anything. Delete
+  -- rather than rewrite: rewriting provider_id risks the (provider,provider_id)
+  -- unique constraint, and nothing on staging needs them.
+  DELETE FROM auth.identities i
+   WHERE i.provider <> 'email'
+     AND NOT EXISTS (
+       SELECT 1 FROM auth.users u WHERE u.id = i.user_id AND u.email = ANY(keep));
+
+  -- provider_id is scrubbed as well as identity_data, and that is not belt and
+  -- braces: for the `email` provider, provider_id IS the address. Rewriting only
+  -- identity_data leaves the real email sitting in the next column along. Found
+  -- by reading the table after a test run rather than by reasoning about it, so
+  -- do not drop either half of this UPDATE. The replacement stays unique
+  -- because the scrubbed addresses are derived from unique ids.
+  UPDATE auth.identities i
+     SET identity_data = jsonb_build_object('sub', i.user_id::text, 'email', u.email),
+         provider_id   = CASE WHEN i.provider = 'email' THEN u.email ELSE i.provider_id END
+    FROM auth.users u
+   WHERE u.id = i.user_id AND NOT (u.email = ANY(keep));
+
+  -- BEARER TOKENS. Each of these is "knowing the string is being the member".
+  -- A calendar feed token read out of a staging dump works against PRODUCTION
+  -- if the same row exists there, which it does, because staging is a copy.
+  -- There is nothing to anonymise here, only to remove.
+  IF to_regclass('public.calendar_feed_tokens')     IS NOT NULL THEN DELETE FROM public.calendar_feed_tokens; END IF;
+  IF to_regclass('public.session_checkin_tokens')   IS NOT NULL THEN DELETE FROM public.session_checkin_tokens; END IF;
+  IF to_regclass('public.tournament_checkin_tokens') IS NOT NULL THEN DELETE FROM public.tournament_checkin_tokens; END IF;
+  IF to_regclass('public.discord_link_tokens')      IS NOT NULL THEN DELETE FROM public.discord_link_tokens; END IF;
+
+  -- Device records. Passkeys are scoped to the hostname they were enrolled on,
+  -- so production's cannot work on staging regardless; push endpoints are
+  -- per-device URLs that would aim staging's notifications at real phones.
+  IF to_regclass('public.passkey_credentials') IS NOT NULL THEN DELETE FROM public.passkey_credentials; END IF;
+  IF to_regclass('public.push_subscriptions')  IS NOT NULL THEN DELETE FROM public.push_subscriptions; END IF;
+
+  -- Resend's bounce and complaint records. Pure address data, no test value.
+  IF to_regclass('public.email_suppressions') IS NOT NULL THEN DELETE FROM public.email_suppressions; END IF;
+
+  -- FREE TEXT WRITTEN ABOUT MEMBERS. The six note tables are where the five
+  -- columns dropped from `players` went, and they are the most sensitive text
+  -- in the database: an officer's private assessment of a person. Rows are kept
+  -- so the "has notes" state still renders; only the text goes.
+  IF to_regclass('public.match_admin_notes')           IS NOT NULL THEN UPDATE public.match_admin_notes           SET note = 'Note removed for staging.'; END IF;
+  IF to_regclass('public.tournament_match_notes')      IS NOT NULL THEN UPDATE public.tournament_match_notes      SET note = 'Note removed for staging.'; END IF;
+  IF to_regclass('public.tournament_pair_notes')       IS NOT NULL THEN UPDATE public.tournament_pair_notes       SET note = 'Note removed for staging.'; END IF;
+  IF to_regclass('public.tournament_participant_notes') IS NOT NULL THEN UPDATE public.tournament_participant_notes SET note = 'Note removed for staging.'; END IF;
+  IF to_regclass('public.varsity_notes')               IS NOT NULL THEN UPDATE public.varsity_notes               SET note = 'Note removed for staging.'; END IF;
+  IF to_regclass('public.walkover_admin_notes')        IS NOT NULL THEN UPDATE public.walkover_admin_notes        SET note = 'Note removed for staging.'; END IF;
+
+  IF to_regclass('public.disputes')        IS NOT NULL THEN UPDATE public.disputes        SET resolution_note = CASE WHEN resolution_note IS NULL THEN NULL ELSE 'Resolution note removed for staging.' END; END IF;
+  IF to_regclass('public.challenges')      IS NOT NULL THEN UPDATE public.challenges      SET note  = CASE WHEN note  IS NULL THEN NULL ELSE 'Note removed for staging.'  END; END IF;
+  IF to_regclass('public.sessions')        IS NOT NULL THEN UPDATE public.sessions        SET notes = CASE WHEN notes IS NULL THEN NULL ELSE 'Notes removed for staging.' END; END IF;
+  IF to_regclass('public.feedback_reports') IS NOT NULL THEN UPDATE public.feedback_reports SET body = 'Feedback body removed for staging.'; END IF;
+
+  -- manual_name names a person who has no account at all, so it is the one
+  -- identifier in the fee ledger that the players scrub above cannot reach.
+  IF to_regclass('public.club_fees') IS NOT NULL THEN
+    UPDATE public.club_fees
+       SET manual_name = CASE WHEN manual_name IS NULL THEN NULL ELSE 'Unnamed Payer' END,
+           ban_reason  = CASE WHEN ban_reason  IS NULL THEN NULL ELSE 'Reason removed for staging.' END;
+  END IF;
+
+  -- The audit log's old_value/new_value hold whole field-level diffs, which is
+  -- exactly where a pre-scrub name or email survives a scrub of its own table.
+  -- Rows and action types stay so the audit screen still has something to sort,
+  -- filter and paginate.
+  IF to_regclass('public.audit_logs') IS NOT NULL THEN
+    UPDATE public.audit_logs
+       SET reason    = CASE WHEN reason IS NULL THEN NULL ELSE 'Reason removed for staging.' END,
+           old_value = CASE WHEN old_value IS NULL THEN NULL ELSE '{"scrubbed": true}'::jsonb END,
+           new_value = CASE WHEN new_value IS NULL THEN NULL ELSE '{"scrubbed": true}'::jsonb END;
+  END IF;
+  IF to_regclass('public.tournament_audit_log') IS NOT NULL THEN
+    UPDATE public.tournament_audit_log
+       SET details = CASE WHEN details IS NULL THEN NULL ELSE '{"scrubbed": true}'::jsonb END;
+  END IF;
+
+  -- Notification bodies name people ("X challenged you"), and after the scrub
+  -- those names would disagree with the roster anyway.
+  IF to_regclass('public.notifications') IS NOT NULL THEN
+    UPDATE public.notifications SET body = 'Body removed for staging.';
+  END IF;
+
+  -- Browser fingerprints captured at signature time.
+  IF to_regclass('public.waiver_acceptances')       IS NOT NULL THEN UPDATE public.waiver_acceptances       SET user_agent = 'scrubbed' WHERE user_agent IS NOT NULL; END IF;
+  IF to_regclass('public.event_waiver_acceptances') IS NOT NULL THEN UPDATE public.event_waiver_acceptances SET user_agent = 'scrubbed' WHERE user_agent IS NOT NULL; END IF;
+
+  -- KNOWN RESIDUAL, left on purpose: public.announcements.body. Announcements
+  -- are exec-authored broadcasts already shown to the whole membership, and
+  -- blanking them removes a real rendering surface. They CAN name a member, so
+  -- this is an accepted trade rather than an oversight. Revisit if announcement
+  -- text ever starts carrying anything private.
+END
+$scrub$;
+
+COMMIT;
+SQL
+
+  # ---------------------------------------------------------------------------
+  # THE FLOOR GUARD, in the same spirit as the three above: assert the outcome
+  # against the database rather than trusting that the statements ran. A scrub
+  # that silently matched zero rows looks identical to one that worked, and the
+  # failure is invisible until someone reads a real address off staging.
+  echo "[$(date -u +%FT%TZ)] verifying the scrub..."
+  leak=$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
+      -Atq -v ON_ERROR_STOP=1 -v emails="$STAGING_ADMIN_EMAILS" <<'SQL'
+WITH keep AS (
+  SELECT btrim(e) AS email FROM unnest(string_to_array(:'emails', ',')) e WHERE btrim(e) <> ''
+)
+SELECT 'players.email         ' || count(*) FROM public.players p
+ WHERE p.email NOT LIKE '%@staging.invalid'
+   AND p.email NOT LIKE 'deleted+%@deleted.invalid'
+   AND p.email NOT IN (SELECT email FROM keep)
+UNION ALL
+SELECT 'auth.users.email      ' || count(*) FROM auth.users u
+ WHERE u.email IS NOT NULL
+   AND u.email NOT LIKE '%@staging.invalid'
+   AND u.email NOT LIKE 'deleted+%@deleted.invalid'
+   AND u.email NOT IN (SELECT email FROM keep)
+UNION ALL
+SELECT 'players.phone         ' || count(*) FROM public.players p
+ WHERE p.phone IS NOT NULL AND p.phone NOT LIKE '+1555%'
+   AND p.email NOT IN (SELECT email FROM keep)
+UNION ALL
+SELECT 'non-email identities  ' || count(*) FROM auth.identities i
+  JOIN public.players p ON p.user_id = i.user_id
+ WHERE i.provider <> 'email' AND p.email NOT IN (SELECT email FROM keep)
+UNION ALL
+SELECT 'identity provider_id  ' || count(*) FROM auth.identities i
+ WHERE i.provider = 'email'
+   AND i.provider_id NOT LIKE '%@staging.invalid'
+   AND i.provider_id NOT LIKE 'deleted+%@deleted.invalid'
+   AND i.provider_id NOT IN (SELECT email FROM keep)
+UNION ALL
+SELECT 'identity_data emails  ' || count(*) FROM auth.identities i
+ WHERE i.identity_data->>'email' IS NOT NULL
+   AND i.identity_data->>'email' NOT LIKE '%@staging.invalid'
+   AND i.identity_data->>'email' NOT LIKE 'deleted+%@deleted.invalid'
+   AND i.identity_data->>'email' NOT IN (SELECT email FROM keep);
+SQL
+  )
+  echo "$leak" | sed 's/^/  remaining /'
+  if echo "$leak" | awk '{ if ($NF + 0 > 0) exit 1 }'; then
+    echo "  scrub verified: no real member identifiers remain outside the keep-list."
+  else
+    echo "FATAL: the scrub did not remove everything it claims to." >&2
+    echo "       Staging is holding real member data right now. Treat it as" >&2
+    echo "       production until this is fixed, and do not hand anyone access." >&2
+    exit 1
   fi
 fi
 

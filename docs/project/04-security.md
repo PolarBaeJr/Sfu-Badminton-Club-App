@@ -68,11 +68,11 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 
 ## 10. Staging holds real member data
 
-- The staging site (`badminton.polardev.org`) is refreshed from production every night at 04:00, and the copy is **unscrubbed** — real names, emails, phone numbers, officer notes, fee records.
-  - *Protects against:* nothing. This is a listed **risk**, not a control, and it is here so it is not discovered during an incident.
-  - *What it means:* there are two full copies of the membership database on the public internet, not one, behind the same login and nothing more. Any statement made about production's data has to be made about staging as well, and any breach is scoped to both.
-  - *The one real isolation:* staging's outbound mail goes to a local mailpit and never leaves the Pi, so a real address in the staging database cannot be emailed by accident. That covers the mail path and nothing else.
-  - *The fix:* either stop copying member rows into staging (the original synthetic roster of 14 accounts covered every screen the console has), or add a scrub pass to `scripts/prod-to-dev-snapshot.sh` that rewrites names, emails and phones after the load. See `docs/STAGING.md`.
+- The staging site (`badminton.polardev.org`) is refreshed from production every night at 04:00. The copy itself is faithful, so what arrives is real names, emails, phone numbers, officer notes and fee records.
+  - **A scrub now runs at the end of that refresh**, replacing every member's name, email, phone, bio and avatar with values derived from their own row id, blanking officer notes and audit-log diffs, and deleting the bearer tokens, passkeys, push endpoints and bounce records. Ratings, matches and row counts survive, so staging stays realistic. The refresh **fails** if any real identifier is left behind, because a scrub that matched nothing looks identical to one that worked.
+  - *Still open:* the snapshot script runs from a plain checkout on the Pi that nothing auto-updates, so **the scrub is not protecting anything until that checkout is pulled**. Until then there are two full copies of the membership on the public internet, not one, behind the same login and nothing more, and any breach is scoped to both.
+  - *Genuinely isolated either way:* staging's outbound mail goes to a local mailpit and never leaves the Pi, so a real address in the staging database cannot be emailed by accident. That covers the mail path and nothing else.
+  - *Accepted residual:* announcement bodies are not scrubbed. They are exec-authored broadcasts already shown to the whole membership and are a real rendering surface, but they can name a member. See `docs/STAGING.md`.
 
 ---
 

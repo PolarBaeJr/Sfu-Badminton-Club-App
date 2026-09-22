@@ -111,7 +111,9 @@ again the next morning). The refresh also strips **column-level** grants —
 owner's staging admin role.
 
 That refresh copies `auth.users` and `auth.identities` along with the whole
-`public` schema, with **no scrub**. **Staging therefore holds a live copy of the
-real membership**, names, emails and phone numbers included, refreshed nightly.
-Treat the staging database as production data with a different hostname. More in
-[`docs/STAGING.md`](../docs/STAGING.md).
+`public` schema, so what lands on staging is the real membership. A **scrub** at
+the end of the same script replaces every name, email and phone with values
+derived from the row's own id and deletes the tokens, and the run fails if any
+real identifier survives it. **It runs from a plain checkout on the Pi that
+nothing auto-updates**, so until that checkout is pulled, staging is production
+data with a different hostname. More in [`docs/STAGING.md`](../docs/STAGING.md).

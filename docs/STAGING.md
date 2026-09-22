@@ -54,35 +54,57 @@ Schema is a `pg_dump --schema-only` of production's `public` schema — a read;
 production is never written to. Verified at parity: 46 tables, 104 RLS policies,
 53 functions, 27 triggers.
 
-> ⚠️ **Staging holds real member data. Treat it as production.**
+> ⚠️ **The snapshot copies real people, and a scrub removes them again. Know
+> which half is live on the Pi before you trust either.**
+>
 > `scripts/prod-to-dev-snapshot.sh` runs nightly at 04:00 and copies **the whole
-> `public` schema plus `auth.users` and `auth.identities`** from production,
-> **unscrubbed**: real names, real email addresses, real phone numbers, officer
-> notes about members, fee records. There is no anonymisation step in it and
-> none was ever written.
+> `public` schema plus `auth.users` and `auth.identities`** from production. That
+> copy is faithful, which means real names, real email addresses, real phone
+> numbers, officer notes about members and fee records.
 >
-> Everything that follows from that: staging is a second full copy of the
-> membership database, so it doubles the blast radius of any breach and belongs
-> in the scope of one; a member who deletes their account is *not* deleted from
-> staging until the next refresh carries the anonymisation across; access to the
-> staging admin console is access to real member records, not to test rows; and
-> nothing safe-by-accident protects it, since it is reachable on the public
-> internet at `badminton.polardev.org` behind the same auth as production and
-> nothing more.
+> **The scrub** runs at the end of the same script. It replaces every member's
+> name, email, phone, bio and avatar with values derived from their own row id,
+> blanks the officer notes and the audit-log diffs, and deletes the bearer
+> tokens, passkeys, push endpoints and bounce records outright. Ids, ratings,
+> matches, fee status and row counts are preserved, so staging stays a realistic
+> rehearsal rather than becoming a fixture. Replacements are stable across
+> refreshes, so a member is the same "Jordan Nguyen" tomorrow as today, and a bug
+> report written against staging still reads the next morning.
 >
-> The one thing that is genuinely isolated is **outbound email**: staging sends
-> to mailpit, so a real address in the staging database can never be mailed by
-> mistake. That is the mail path only. It says nothing about the data at rest.
+> It ends by querying staging for any remaining real identifier and **failing the
+> whole refresh** if it finds one. That check is not decoration: a scrub that
+> silently matched zero rows looks exactly like one that worked, and the first
+> symptom otherwise is someone reading a real address off staging. Ablating one
+> statement of the scrub does make it fail, which has been tested.
+> `SCRUB_MEMBER_DATA=0` skips the whole thing and says so loudly on stderr.
 >
-> **This is worth changing.** Staging does not need real people in it: the
-> original seed was 14 synthetic accounts covering every state the admin UI has
-> controls for — competitive, recreational, pending approval, suspended, banned,
-> inactive, exec, trainer — plus two admin accounts on the owner's own
-> addresses, and that covered the UI fine. The options are to stop copying
-> member rows at all, or to add a scrub pass to the snapshot script that
-> rewrites emails, names and phone numbers on the staging side after the load.
-> Until one of those lands, every privacy claim made about production has to be
-> made about staging too.
+> **Two things it deliberately does not touch.** `$STAGING_ADMIN_EMAILS`, because
+> sign-in here is an email code and scrubbing the owner's address locks the owner
+> out of staging entirely. And announcement bodies, which are exec-authored
+> broadcasts already shown to the whole membership and are a real rendering
+> surface; they can name a member, so that is an accepted trade rather than an
+> oversight.
+>
+> **UNTIL THE SCRIPT IS PULLED ON THE PI, NONE OF THAT IS RUNNING.** It executes
+> from a plain checkout there and nothing auto-updates it, unlike the player and
+> admin images. Until then staging is a second full copy of the membership
+> database: it doubles the blast radius of any breach and belongs in the scope of
+> one, a member who deletes their account is not deleted here until the next
+> refresh, and access to the staging console is access to real member records.
+> Nothing accidental protects it either, since it is reachable on the public
+> internet behind the same auth as production and nothing more, and staging is
+> deliberately **not** gated on the test suite, so it is also where untested code
+> runs.
+>
+> The one thing genuinely isolated either way is **outbound email**: staging
+> sends to mailpit, so a real address in the staging database can never be mailed
+> by mistake. That is the mail path only. It says nothing about the data at rest.
+>
+> If the scrub ever becomes a nuisance, the other option is to stop copying
+> member rows at all. The original seed was 14 synthetic accounts covering every
+> state the admin UI has a control for (competitive, recreational, pending
+> approval, suspended, banned, inactive, exec, trainer) plus two admin accounts
+> on the owner's own addresses, and it covered the UI fine.
 
 Configuration rows (`platform_settings`, `legal_documents`, `seasons`) are
 copied because they are settings, not people. Two things are deliberately
