@@ -1191,22 +1191,42 @@ describe('every third-party processor is disclosed to the member', () => {
       'Gated on NEXT_PUBLIC_POSTHOG_KEY, which is not set in prod. lib/posthog.ts and lib/actions/_shared.ts both short-circuit when it is absent, so neither the browser nor the server client is constructed.',
   };
 
+  const WORKSPACE_ROOTS = ['apps/player', 'apps/admin', 'apps/bot', 'packages/shared'];
+
+  /**
+   * THE ROOTS THAT RESOLVED ARE RETURNED ALONGSIDE THE TEXT, AND THE CALLER
+   * ASSERTS ALL FOUR. An earlier version swallowed a missing path on the
+   * grounds that repo layout is another test's business. That reasoning is
+   * wrong here in a specific way: this guard concludes "not shipped" from the
+   * ABSENCE of a string, so a manifest that fails to load is indistinguishable
+   * from a dependency that is not there. If `apps/bot` moved, `discord.js`
+   * would go undetected, Discord's disclosure would stop being guarded, and
+   * the suite would stay green while checking three workspaces instead of
+   * four. A guard that reads fewer inputs than it thinks must fail, not pass.
+   */
   const workspaceManifests = () => {
-    const roots = ['apps/player', 'apps/admin', 'apps/bot', 'packages/shared'];
+    const found: string[] = [];
     const out: string[] = [];
-    for (const r of roots) {
+    for (const r of WORKSPACE_ROOTS) {
       try {
         out.push(readFileSync(join(REPO_ROOT, r, 'package.json'), 'utf8'));
+        found.push(r);
       } catch {
-        // A workspace that no longer exists is not this test's business; the
-        // migration-manifest test owns repo layout.
+        // Recorded by its absence from `found`, and asserted on below.
       }
     }
-    return out.join('\n');
+    return { text: out.join('\n'), found };
   };
 
+  it('reads every workspace manifest it claims to check', () => {
+    expect(
+      workspaceManifests().found,
+      'workspace manifest(s) did not load, so the processor check below is silently reading fewer manifests than it believes',
+    ).toEqual(WORKSPACE_ROOTS);
+  });
+
   it('names every shipped processor, or records it as inert with a reason', () => {
-    const manifests = workspaceManifests();
+    const { text: manifests } = workspaceManifests();
     const named = new Set(DISCLOSURE_RECIPIENTS.map((r) => r.organisation));
 
     const undisclosed: string[] = [];
