@@ -122,7 +122,11 @@ That refresh copies `auth.users` and `auth.identities` along with the whole
 `public` schema, so what lands on staging is the real membership. A **scrub** at
 the end of the same script replaces every name, email and phone with values
 derived from the row's own id and deletes the tokens, and the run fails if any
-real identifier survives it. **It runs from a plain checkout on the Pi
-(`~/ssd/Deploy/badminton-staging`, not `~/ssd/Deploy/badminton`, which is stale
-and runs nothing) that nothing auto-updates**, so until that checkout is pulled,
-staging is production data with a different hostname. More in [`docs/STAGING.md`](../docs/STAGING.md).
+real identifier survives it. It has been running clean since **2026-09-22**.
+
+**It runs from a plain checkout on the Pi (`~/ssd/Deploy/badminton-staging`, not
+`~/ssd/Deploy/badminton`, which is stale and runs nothing) that nothing
+auto-updates**, so a change to the scrub does nothing until someone pulls there.
+Pull first and confirm the pull landed, *then* run: a refresh against an
+un-pulled checkout silently repeats the previous day's failure, which has
+happened once already. More in [`docs/STAGING.md`](../docs/STAGING.md).

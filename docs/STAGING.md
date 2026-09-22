@@ -85,20 +85,26 @@ production is never written to. Verified at parity: 46 tables, 104 RLS policies,
 > surface; they can name a member, so that is an accepted trade rather than an
 > oversight.
 >
-> **UNTIL THE SCRIPT IS PULLED ON THE PI, NONE OF THAT IS RUNNING**, and the
+> **This is live as of 2026-09-22**, when the first end-to-end run finished with
+> all seven checks at zero. Before that date staging was a second full copy of
+> the membership database: double the blast radius of any breach, a member who
+> deleted their account still readable here until the next refresh, and access to
+> the staging console equal to access to real member records. Nothing accidental
+> protected it, since staging is reachable on the public internet behind the same
+> auth as production and nothing more, and is deliberately **not** gated on the
+> test suite, so it is also where untested code runs.
+>
+> **A change to the scrub is not running until it is pulled on the Pi**, and the
 > path is not the obvious one. There are two checkouts: `~/ssd/Deploy/badminton`
 > is stale, months behind, dirty, and nothing runs it; the crontab calls
 > `~/ssd/Deploy/badminton-staging`, which tracks `deploy/docker-staging` and is
 > clean. A change reaches the nightly job only after it is merged to that branch
 > and someone runs `git pull` in that second directory. Nothing auto-updates it,
-> unlike the player and admin images. Until then staging is a second full copy of the membership
-> database: it doubles the blast radius of any breach and belongs in the scope of
-> one, a member who deletes their account is not deleted here until the next
-> refresh, and access to the staging console is access to real member records.
-> Nothing accidental protects it either, since it is reachable on the public
-> internet behind the same auth as production and nothing more, and staging is
-> deliberately **not** gated on the test suite, so it is also where untested code
-> runs.
+> unlike the player and admin images.
+>
+> Pull, **confirm the pull landed**, then run the refresh. Running it against an
+> un-pulled checkout reproduces the previous failure exactly, which reads as the
+> fix not working rather than as the fix not being there. That has happened once.
 >
 > The one thing genuinely isolated either way is **outbound email**: staging
 > sends to mailpit, so a real address in the staging database can never be mailed
