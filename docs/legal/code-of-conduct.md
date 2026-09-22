@@ -1,8 +1,9 @@
 # Code of Conduct
 
-> The live text is stored in the database (legal_documents) and editable in Admin → Settings → Legal documents. This file is the original draft.
-
-> 🚧 **DRAFT — REVIEW REQUIRED.** Template for the club to adopt. Align it with SFU's student-club and athletics/rec conduct policies. Fill in `[PLACEHOLDER]`s.
+> **The live text is in the database, not in this file.** Members read and
+> accept `legal_documents.content`, edited in Admin → Settings → Legal
+> documents. This file is the source it was drafted from, kept for history.
+> Where the two differ, the database is what members agreed to.
 
 **Applies to:** all members of SFU Badminton Club, at all club activities (sessions, tournaments, socials) and in the club app.
 

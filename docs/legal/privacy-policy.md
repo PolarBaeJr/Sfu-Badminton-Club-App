@@ -1,6 +1,14 @@
 # Privacy Policy
 
-> 🚧 **DRAFT — REVIEW REQUIRED.** This is a starting-point template, **not legal advice**. Before publishing, have it reviewed by the club executive and, ideally, SFU student-club resources or a legal advisor. Fill in every `[PLACEHOLDER]`.
+> **The live text is in the database, not in this file.** Members read and
+> accept `legal_documents.content`, edited in Admin → Settings → Legal
+> documents. This file is the source it was drafted from, kept for history.
+> Where the two differ, the database is what members agreed to, and as of
+> 2026-09-22 they do differ in substance: the live copy does not name the
+> service providers listed in section 4 below, and its backup-retention line
+> states 14 days without the roughly 30 further days a deleted backup can sit
+> in the storage provider's trash. Section 4 and section 6 here are the
+> accurate ones; promoting them into the live document is an open item.
 >
 > **Which law applies is an open question, and it is with SFU Recreation.** The two candidates are **FIPPA**, if the membership data counts as an SFU record because the club sits under Recreation, and BC's **PIPA**, if the club is a private organisation holding its own records. The app is currently built and documented on the **FIPPA** reading, as the more conservative of the two. The facts point the other way (the club manages itself, collects its own records, holds them on its own hardware, Recreation has no access, and this is not an official SFU application), which is exactly why it is being asked rather than assumed. It matters here: the deadline for answering a member's request for their own data is **30 business days under FIPPA and 30 calendar days under PIPA**, and PIPA additionally requires the club to designate a privacy officer and maintain a written privacy management program.
 

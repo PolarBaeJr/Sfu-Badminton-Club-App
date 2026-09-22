@@ -1,6 +1,9 @@
 # Terms of Use
 
-> 🚧 **DRAFT — REVIEW REQUIRED.** Template, not legal advice. Review with the club exec before publishing. Fill in `[PLACEHOLDER]`s.
+> **The live text is in the database, not in this file.** Members read and
+> accept `legal_documents.content`, edited in Admin → Settings → Legal
+> documents. This file is the source it was drafted from, kept for history.
+> Where the two differ, the database is what members agreed to.
 
 **Effective date:** 2026-07-19
 **Version:** `2026-07-19`, which is the value in `legal_documents.version` for
