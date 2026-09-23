@@ -1432,7 +1432,7 @@ export function PermissionEditor({
         {!solo && (
         <div
           className={cn(
-            'md:sticky md:top-[120px] md:self-start md:h-[calc(100vh-140px)] md:flex md:flex-col md:border-r md:border-[var(--line)]',
+            'md:sticky md:top-[53px] md:self-start md:h-[calc(100vh-73px)] md:flex md:flex-col md:border-r md:border-[var(--line)]',
             selected && 'hidden md:flex',
           )}
         >
@@ -1861,7 +1861,10 @@ export function PermissionEditor({
                   looking like something you can edit. */}
               {composable && (
                 <>
-                  <div className="sticky top-[120px] z-10 flex flex-wrap items-center gap-2 border-y border-[var(--line)] bg-[var(--surface)] px-3 py-2.5">
+                  {/* 53px is the console header's height (sidebar.tsx): one row since the nav
+                      became dropdowns. It was 120px for the old two-row bar, which left a gap
+                      that rows scrolled through above this filter. */}
+                  <div className="sticky top-[53px] z-10 flex flex-wrap items-center gap-2 border-y border-[var(--line)] bg-[var(--surface)] px-3 py-2.5">
                     <SearchFilter
                       className="min-w-[200px] flex-1"
                       label="Filter capabilities by name or dotted path"
