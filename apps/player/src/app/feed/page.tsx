@@ -7,7 +7,7 @@ import {
   getAccountStanding,
   pickOne,
   featureGate,
-  hasConsoleAccess,
+  featureAccessFor,
   scopeToActiveSeason,
   type FeatureId,
 } from '@badminton/shared';
@@ -123,11 +123,13 @@ export default async function FeedPage() {
   if (!player) redirect('/login');
 
   // THE CLUB FEATURE SWITCHES. A card belonging to a switched-off feature is
-  // dropped, the same as its nav item, unless the viewer holds a console level
-  // and can still open its pages. The reads still run; this only decides what
-  // is drawn, and nothing here is personal to anyone but the viewer.
+  // dropped, the same as its nav item, unless the viewer holds its
+  // `page.access.<id>` key and can still open its pages. The reads still run;
+  // this only decides what is drawn, and nothing here is personal to anyone but
+  // the viewer.
   const features = await getFeatureFlags();
-  const on = (id: FeatureId) => featureGate(features[id], hasConsoleAccess(player)) !== 'redirect';
+  const access = featureAccessFor(player);
+  const on = (id: FeatureId) => featureGate(features[id], access.includes(id)) !== 'redirect';
 
   const supabase = await createServerSupabaseClient();
   const now = new Date();

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { cn, NavMenu, isRouteActive, isGroupActive } from '@badminton/ui';
 import { desktopEntries } from '@/lib/nav-entries';
-import { ALL_FEATURES_ENABLED, type FeatureFlags } from '@badminton/shared/src/utils/features';
+import { ALL_FEATURES_ENABLED, type FeatureFlags, type FeatureId } from '@badminton/shared/src/utils/features';
 import { ShuttleMark } from './shuttle-mark';
 import {
   Bell,
@@ -23,6 +23,7 @@ export function TopBar({
   activeSeasonId,
   isApproved = true,
   features = ALL_FEATURES_ENABLED,
+  featureAccess = [],
 }: {
   playerName: string;
   avatarUrl?: string | null;
@@ -36,6 +37,8 @@ export function TopBar({
   isApproved?: boolean;
   /** The club feature switches, read by the layout. */
   features?: FeatureFlags;
+  /** Switched-off features whose `page.access.<id>` key the viewer holds. */
+  featureAccess?: readonly FeatureId[];
 }) {
   const pathname = usePathname();
   // This chrome renders above every page, and a LAYOUT never receives
@@ -58,9 +61,9 @@ export function TopBar({
   const viewingPastSeason = viewedSeasonId !== '' && viewedSeasonId !== activeSeasonId;
   // Gated destinations are filtered on isApproved inside, and a group left
   // empty (Play and Events, for a pending member) is dropped with them.
-  // A switched-off feature is dropped the same way, except for a console
-  // holder, who can still open its pages.
-  const navEntries = isAuthenticated ? desktopEntries(isApproved, features, isExecOrAdmin) : [];
+  // A switched-off feature is dropped the same way, except for a holder of its
+  // key, who can still open its pages.
+  const navEntries = isAuthenticated ? desktopEntries(isApproved, features, featureAccess) : [];
   // Auth, onboarding and the Discord consent screen render their own
   // full-screen layout — no app chrome.
   if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {

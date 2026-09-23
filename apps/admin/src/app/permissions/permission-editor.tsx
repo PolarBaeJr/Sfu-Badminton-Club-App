@@ -91,6 +91,7 @@ const AREA_LABELS: Record<Area, string> = {
   ratings: 'Ratings',
   accounts: 'Accounts',
   platform: 'Platform',
+  page: 'Switched-off pages',
 };
 
 const GROUP_LABELS: Record<string, string> = {

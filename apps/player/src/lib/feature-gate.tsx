@@ -5,8 +5,8 @@ import {
   ExpectedError,
   featureGate,
   featureLabel,
+  featureAccessFor,
   featureOffMessage,
-  hasConsoleAccess,
   readFeatureFlags,
   type FeatureFlags,
   type FeatureId,
@@ -34,9 +34,11 @@ export const getFeatureFlags = cache(async (): Promise<FeatureFlags> => {
 
 /**
  * Wraps a switchable feature's pages. A member is sent to the feed (a signed
- * out visitor to the home page) server-side; anyone with console access, the
- * same test as the top bar's Exec Panel link, sees the page under a banner so
- * they can check it before switching it back on.
+ * out visitor to the home page) server-side; anyone holding the feature's
+ * `page.access.<id>` key (an admin by level, anybody else by an explicit grant)
+ * sees the page under a banner so they can check it before switching it back
+ * on. Console access alone is not enough any more: that was 47fc75e7's rule,
+ * and the club owner replaced it with a key that is granted per feature.
  */
 export async function FeatureGate({
   feature,
@@ -49,7 +51,7 @@ export async function FeatureGate({
     getFeatureFlags(),
     getViewer().catch(() => ({ user: null, player: null })),
   ]);
-  const decision = featureGate(flags[feature], hasConsoleAccess(viewer.player));
+  const decision = featureGate(flags[feature], featureAccessFor(viewer.player).includes(feature));
   if (decision === 'redirect') redirect(viewer.user ? '/feed' : '/');
 
   return (
@@ -68,7 +70,7 @@ export async function FeatureGate({
         >
           <div style={{ maxWidth: 'var(--page-max)', margin: '0 auto' }}>
             <strong style={{ color: 'var(--red)' }}>{featureLabel(feature)} is switched off for members.</strong>{' '}
-            You can see it because you have console access. Members are sent to the feed.
+            You can see it because you have been given access to it while it is off. Members are sent to the feed.
           </div>
         </div>
       )}
@@ -78,16 +80,17 @@ export async function FeatureGate({
 }
 
 /**
- * Refuses a member's write on a feature that is switched off. Console holders
- * pass, the same as on the pages, so an exec can still try the feature out.
- * Called after requirePlayer(), with the row it returned.
+ * Refuses a member's write on a feature that is switched off. Holders of the
+ * feature's key pass, the same as on the pages, so whoever was let in can
+ * still try the feature out. Called after requirePlayer(), with the row it
+ * returned, which is `select('*')` and so carries the permission columns.
  */
 export async function assertFeatureOn(
   feature: FeatureId,
-  player: Parameters<typeof hasConsoleAccess>[0],
+  player: Parameters<typeof featureAccessFor>[0],
 ): Promise<void> {
   const flags = await getFeatureFlags();
-  if (featureGate(flags[feature], hasConsoleAccess(player)) === 'redirect') {
+  if (featureGate(flags[feature], featureAccessFor(player).includes(feature)) === 'redirect') {
     throw new ExpectedError(featureOffMessage(feature));
   }
 }

@@ -11,6 +11,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import {
   canAccess,
+  effectiveCapabilities,
   permissionsOf,
   UNRESTRICTED,
   type AccessLevel,
@@ -166,12 +167,13 @@ export function Sidebar({
   // A group this person can open nothing in is dropped; one with anything in it
   // stays a menu, even a menu of one, so the bar keeps the same shape as a
   // grant or revoke lands.
+  const held = effectiveCapabilities(access.level, permissions);
   const entries = visibleEntries(
     NAV_LAYOUT,
     (item) =>
       accessLoaded
       && canAccess(access.level, permissions, item.href)
-      && adminNavItemOn(item.href, features),
+      && adminNavItemOn(item.href, features, held),
   );
 
   const navText = (isActive: boolean) =>

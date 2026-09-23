@@ -14,7 +14,14 @@ import {
   Megaphone,
   ShieldCheck,
 } from 'lucide-react';
-import { canAccess, type AccessLevel, type Area, type Permissions } from '../lib/permissions';
+import {
+  canAccess,
+  featureAccessCapability,
+  type AccessLevel,
+  type Area,
+  type Capability,
+  type Permissions,
+} from '../lib/permissions';
 // Deep and type-only, NOT the '@badminton/ui' barrel: that loads every
 // component in the package, and this module is imported by tests that must not
 // need a DOM.
@@ -145,11 +152,19 @@ export const NAV_LAYOUT: NavEntry<NavItem>[] = [
 ];
 
 /**
- * False for the nav item of a club feature that is switched off. Layered on
- * top of canAccess() by the top bar and the dashboard's signposts; the page
- * itself stays reachable by URL and says the feature is off.
+ * False for the nav item of a club feature that is switched off, unless the
+ * viewer holds that feature's `page.access.<id>` key (an admin always does, by
+ * level). Layered on top of canAccess() by the top bar and the dashboard; the
+ * page itself stays reachable by URL and says the feature is off.
+ *
+ * `held` is the viewer's resolved set, from effectiveCapabilities(), so this
+ * asks the same question the members' app asks through featureAccessFor().
  */
-export function adminNavItemOn(href: string, features: FeatureFlags): boolean {
+export function adminNavItemOn(
+  href: string,
+  features: FeatureFlags,
+  held: ReadonlySet<Capability>,
+): boolean {
   const id = adminFeatureFor(href);
-  return id === null || features[id];
+  return id === null || features[id] || held.has(featureAccessCapability(id));
 }

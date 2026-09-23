@@ -7,7 +7,15 @@ import {
   visibleEntries,
   type NavEntry,
 } from '@badminton/ui/src/nav-groups';
-import { canAccess, resolvePermissions, UNRESTRICTED, type AccessLevel, type Permissions } from '../permissions';
+import {
+  canAccess,
+  effectiveCapabilities,
+  resolvePermissions,
+  EXEC_BASELINE,
+  UNRESTRICTED,
+  type AccessLevel,
+  type Permissions,
+} from '../permissions';
 
 // THE TOP BAR IS A SECOND ARRANGEMENT OF THE SAME LIST, and these pin the two
 // together. NAV_SECTIONS is what nav-drift.test.ts checks against the
@@ -97,19 +105,30 @@ describe('the console top bar layout', () => {
 
 // A CLUB FEATURE SWITCHED OFF LOSES ITS NAV ITEM, on top of canAccess(), and a
 // group it leaves empty goes with it. The page itself stays open by URL.
+//
+// UNLESS THE VIEWER HOLDS ITS `page.access.<id>` KEY, and an admin holds every
+// one by level. So the hiding cases below run as an unassigned exec, who holds
+// the section pages and none of the keys; run as an admin they would show
+// nothing hidden at all, which is the last two tests' point rather than a bug.
 describe('the console top bar with a feature switched off', () => {
   const off = (...ids: (keyof FeatureFlags)[]): FeatureFlags => ({
     ...ALL_FEATURES_ENABLED,
     ...Object.fromEntries(ids.map((id) => [id, false])),
   });
-  const visibleWith = (features: FeatureFlags) =>
-    visibleEntries(
+  const visibleWith = (
+    features: FeatureFlags,
+    level: AccessLevel = 'exec',
+    permissions: Permissions = UNRESTRICTED,
+  ) => {
+    const held = effectiveCapabilities(level, permissions);
+    return visibleEntries(
       NAV_LAYOUT,
-      (item) => canAccess('admin', UNRESTRICTED, item.href) && adminNavItemOn(item.href, features),
+      (item) => canAccess(level, permissions, item.href) && adminNavItemOn(item.href, features, held),
     );
+  };
 
   it('changes nothing while every feature is on', () => {
-    expect(visibleWith(ALL_FEATURES_ENABLED)).toEqual(NAV_LAYOUT);
+    expect(visibleWith(ALL_FEATURES_ENABLED, 'admin')).toEqual(NAV_LAYOUT);
   });
 
   it('drops the Events menu when tournaments are off', () => {
@@ -129,9 +148,25 @@ describe('the console top bar with a feature switched off', () => {
   it('never hides an item that belongs to no feature', () => {
     const allOff = off(...FEATURES.map((f) => f.id));
     const owned = new Set<string>(FEATURES.flatMap((f) => f.adminRoutes));
+    const none = effectiveCapabilities('exec', UNRESTRICTED);
     for (const item of ITEMS) {
-      expect(adminNavItemOn(item.href, allOff), item.href).toBe(!owned.has(item.href));
+      expect(adminNavItemOn(item.href, allOff, none), item.href).toBe(!owned.has(item.href));
     }
+  });
+
+  // An admin holds every key by level, so nothing they could open is hidden.
+  it('hides nothing from an admin, who holds every key', () => {
+    const allOff = off(...FEATURES.map((f) => f.id));
+    expect(visibleWith(allOff, 'admin')).toEqual(NAV_LAYOUT);
+  });
+
+  // THE KEY IS PER FEATURE: an exec handed page.access.tournaments keeps
+  // Events, and still loses Sessions, whose key they were not given.
+  it('keeps exactly the feature whose key an exec was granted', () => {
+    const granted = resolvePermissions('exec', 'custom', [...EXEC_BASELINE, 'page.access.tournaments'], []);
+    const visible = shape(visibleWith(off('tournaments', 'sessions'), 'exec', granted));
+    expect(visible).toContainEqual({ events: ['/tournaments'] });
+    expect(visible).toContainEqual({ play: ['/matches', '/seasons'] });
   });
 });
 

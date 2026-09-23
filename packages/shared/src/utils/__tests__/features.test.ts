@@ -76,7 +76,7 @@ describe('featureGate', () => {
     expect(featureGate(true, true)).toBe('allow');
   });
 
-  it('redirects a member and lets an exec in under a banner while off', () => {
+  it('redirects a viewer without the key and lets a holder in under a banner while off', () => {
     expect(featureGate(false, false)).toBe('redirect');
     expect(featureGate(false, true)).toBe('banner');
   });
@@ -91,11 +91,15 @@ describe('player paths', () => {
     expect(playerFeatureFor('/feed')).toBeNull();
   });
 
-  it('hides an off feature from a member and not from an exec', () => {
-    const flags = { ...ALL_FEATURES_ENABLED, challenges: false };
-    expect(playerPathVisible('/challenges', flags, false)).toBe(false);
-    expect(playerPathVisible('/challenges', flags, true)).toBe(true);
-    expect(playerPathVisible('/feed', flags, false)).toBe(true);
+  // PER FEATURE, not per person: the key to one switched-off feature opens that
+  // feature and no other, which is the reason there is a key per feature.
+  it('hides an off feature from everybody but a holder of its own key', () => {
+    const flags = { ...ALL_FEATURES_ENABLED, challenges: false, tournaments: false };
+    expect(playerPathVisible('/challenges', flags, [])).toBe(false);
+    expect(playerPathVisible('/challenges', flags, ['challenges'])).toBe(true);
+    expect(playerPathVisible('/challenges', flags, ['tournaments'])).toBe(false);
+    expect(playerPathVisible('/tournaments', flags, ['tournaments'])).toBe(true);
+    expect(playerPathVisible('/feed', flags, [])).toBe(true);
   });
 });
 

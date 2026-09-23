@@ -16,6 +16,7 @@ import {
   ALL_FEATURES_ENABLED,
   playerPathVisible,
   type FeatureFlags,
+  type FeatureId,
 } from '@badminton/shared/src/utils/features';
 import { Home, Trophy, LogIn } from 'lucide-react';
 
@@ -29,15 +30,15 @@ export function BottomNav({
   isAuthenticated,
   isApproved = true,
   features = ALL_FEATURES_ENABLED,
-  isExec = false,
+  featureAccess = [],
 }: {
   isAuthenticated: boolean;
   /** False while the account is pending approval or suspended. */
   isApproved?: boolean;
   /** The club feature switches, read by the layout. */
   features?: FeatureFlags;
-  /** Holds a console level, so switched-off features stay in the nav. */
-  isExec?: boolean;
+  /** Switched-off features whose `page.access.<id>` key the viewer holds, so they stay in the nav. */
+  featureAccess?: readonly FeatureId[];
 }) {
   const pathname = usePathname();
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
@@ -235,9 +236,9 @@ export function BottomNav({
   // (Play and Events, for a pending member) is dropped with them.
   // A signed-out visitor's Ranks slot follows the leaderboard switch as well.
   const slots = isAuthenticated
-    ? mobileSlots(isApproved, features, isExec)
+    ? mobileSlots(isApproved, features, featureAccess)
     : publicSlots.filter(
-        (slot) => slot.kind !== 'link' || playerPathVisible(slot.item.href, features, false),
+        (slot) => slot.kind !== 'link' || playerPathVisible(slot.item.href, features, []),
       );
   const openGroup = slots.flatMap((slot) =>
     slot.kind === 'group' && slot.group.id === openGroupId ? [slot.group] : [],

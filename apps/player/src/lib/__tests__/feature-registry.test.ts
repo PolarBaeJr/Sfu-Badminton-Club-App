@@ -7,6 +7,8 @@ import {
   playerFeatureFor,
   type FeatureId,
 } from '@badminton/shared/src/utils/features';
+import { isCapability } from '@badminton/shared/src/utils/access-level';
+import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
 
 // THE REGISTRY IS A LIST OF PROMISES ABOUT ROUTES, and these check each one
 // against the files. A route prefix that names no directory gates nothing; a
@@ -70,6 +72,19 @@ describe('the feature registry', () => {
     }
   });
 
+  // EVERY FEATURE HAS ITS KEY, `page.access.<id>`, derived in access-level.ts,
+  // and the key's enforcement point is the FeatureGate this file already checks.
+  it('gives every feature a page.access key gated on its own pages', () => {
+    for (const f of FEATURES) {
+      const key = `page.access.${f.id}`;
+      expect(isCapability(key), key).toBe(true);
+      const file = f.id === 'leaderboard' ? 'page.tsx' : 'layout.tsx';
+      expect(CAPABILITY_GATES[key as keyof typeof CAPABILITY_GATES].gate, key).toBe(
+        `player app${f.playerRoutes[0]}/${file} FeatureGate`,
+      );
+    }
+  });
+
   it('never makes an account, legal or safety path switchable', () => {
     for (const path of PROTECTED) {
       expect(playerFeatureFor(path), path).toBeNull();
@@ -81,7 +96,7 @@ describe('the feature registry', () => {
 describe('the gate decision, for every feature', () => {
   for (const f of FEATURES) {
     const id: FeatureId = f.id;
-    it(`${id}: on lets everyone in, off redirects a member and shows an exec a banner`, () => {
+    it(`${id}: on lets everyone in, off redirects a viewer without the key and shows a holder a banner`, () => {
       expect(featureGate(true, false)).toBe('allow');
       expect(featureGate(true, true)).toBe('allow');
       expect(featureGate(false, true)).toBe('banner');

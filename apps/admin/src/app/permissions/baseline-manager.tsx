@@ -84,6 +84,7 @@ const AREA_LABELS: Record<Area, string> = {
   ratings: 'Ratings',
   accounts: 'Accounts',
   platform: 'Platform',
+  page: 'Switched-off pages',
 };
 
 /** The offerable capabilities, in area order — the same order the editor uses. */

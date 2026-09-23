@@ -458,8 +458,8 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
     FEATURES.map((f): [string, FieldMeta] => [
       featureField(f.id),
       {
-        label: `${f.label} on`,
-        hint: `${f.description} Off hides it from members and sends them to the feed; anyone with console access can still open it.`,
+        label: f.label,
+        hint: `${f.description} Off hides it from members and sends them to the feed; admins, and anyone given its access key (page.access.${f.id}) under Permissions, can still open it.`,
         type: 'boolean',
       },
     ]),

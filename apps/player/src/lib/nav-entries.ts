@@ -7,6 +7,7 @@ import {
   ALL_FEATURES_ENABLED,
   playerPathVisible,
   type FeatureFlags,
+  type FeatureId,
 } from '@badminton/shared/src/utils/features';
 
 // THE SIGNED-IN NAV, as data, shared by the top bar and the mobile tab bar so
@@ -72,25 +73,27 @@ export const MOBILE_SLOTS: PlayerNavEntry[] = [
   { kind: 'link', item: { ...MY_STATS, label: 'Me' } },
 ];
 
-// A club feature that is switched off is hidden too, unless the viewer holds a
-// console level: they can still open its pages (under a banner), so the nav
-// still takes them there. A slot whose only destination is hidden goes with it.
+// A club feature that is switched off is hidden too, unless the viewer holds
+// its `page.access.<id>` key (featureAccessFor, resolved by the layout): they
+// can still open its pages (under a banner), so the nav still takes them there.
+// A slot whose only destination is hidden goes with it.
 const allowedFor =
-  (isApproved: boolean, features: FeatureFlags, isExec: boolean) => (item: PlayerNavItem) =>
-    (isApproved || !item.gated) && playerPathVisible(item.href, features, isExec);
+  (isApproved: boolean, features: FeatureFlags, access: readonly FeatureId[]) =>
+  (item: PlayerNavItem) =>
+    (isApproved || !item.gated) && playerPathVisible(item.href, features, access);
 
 export function desktopEntries(
   isApproved: boolean,
   features: FeatureFlags = ALL_FEATURES_ENABLED,
-  isExec = false,
+  access: readonly FeatureId[] = [],
 ): PlayerNavEntry[] {
-  return visibleEntries(DESKTOP_ENTRIES, allowedFor(isApproved, features, isExec));
+  return visibleEntries(DESKTOP_ENTRIES, allowedFor(isApproved, features, access));
 }
 
 export function mobileSlots(
   isApproved: boolean,
   features: FeatureFlags = ALL_FEATURES_ENABLED,
-  isExec = false,
+  access: readonly FeatureId[] = [],
 ): PlayerNavEntry[] {
-  return visibleEntries(MOBILE_SLOTS, allowedFor(isApproved, features, isExec));
+  return visibleEntries(MOBILE_SLOTS, allowedFor(isApproved, features, access));
 }

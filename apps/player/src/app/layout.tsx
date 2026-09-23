@@ -15,7 +15,7 @@ import { StandingProvider } from '@/components/standing-provider';
 import { StandingBanner } from '@/components/standing-banner';
 import { LegalFooter } from '@/components/legal-footer';
 import { cookies } from 'next/headers';
-import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, getAccountStanding, type AccountStanding } from '@badminton/shared';
+import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, featureAccessFor, getAccountStanding, type AccountStanding, type FeatureId } from '@badminton/shared';
 import { evaluateLegalGate, type LegalAcceptance } from '../lib/legal-gate';
 import { createServerSupabaseClient, getActiveSeason, getViewer } from '@/lib/supabase-server';
 import { getFeatureFlags } from '@/lib/feature-gate';
@@ -180,6 +180,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let missingLegalDocs: string[] = [];
   let deletionRequestedAt: string | null = null;
   let isExecOrAdmin = false;
+  // The switched-off features this viewer holds the key to, for the nav. A
+  // separate value from isExecOrAdmin, which still decides the Exec Panel link.
+  let featureAccess: FeatureId[] = [];
   // Published to every client control via StandingProvider so none of them has
   // to re-derive it (or, as before, offer a button the server is certain to
   // refuse). Defaults to good standing, which is what a signed-out visitor is.
@@ -243,6 +246,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // deactivated exec is shown no route in, because the console would reject them
   // and a link that always errors is worse than no link.
   isExecOrAdmin = hasConsoleAccess(player);
+  featureAccess = featureAccessFor(player);
 
   const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
   singlesElo = (ratings as Record<string, unknown>)?.singles_elo as number ?? null;
@@ -337,7 +341,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <DeletionGate deletionRequestedAt={deletionRequestedAt} />
                 {/* Deletion screen wins when both gates would apply. */}
                 <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
-                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} activeSeasonId={season?.id ?? ''} features={features} />
+                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} activeSeasonId={season?.id ?? ''} features={features} featureAccess={featureAccess} />
                 {/* Under the top bar, above the page: the one place that says
                     why the controls below are missing. Nav gating is left as
                     it was — a link that still loads its page is not a control
@@ -348,7 +352,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   {children}
                   <LegalFooter />
                 </main>
-                <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} isExec={isExecOrAdmin} />
+                <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} featureAccess={featureAccess} />
               </StandingProvider>
             </ConfirmProvider>
           </ToastProvider>

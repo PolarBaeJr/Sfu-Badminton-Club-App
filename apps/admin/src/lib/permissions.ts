@@ -66,6 +66,7 @@ export {
   baselineNameRefusal,
   consoleAccessLevelFor,
   effectiveCapabilities,
+  featureAccessCapability,
   hasConsoleAccess,
   isBuiltinPermissionRole,
   isCapability,

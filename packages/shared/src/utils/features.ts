@@ -15,6 +15,11 @@
 // a gate on its routes; feature-registry.test.ts in the player app checks that
 // every route named below exists and that no protected route is switchable.
 //
+// EVERY ENTRY ALSO MINTS A CAPABILITY, `page.access.<id>`, derived in
+// ./access-level.ts: the key that lets one person into the feature while it is
+// off. So a new entry also needs the string added to the vocabulary CHECKs in
+// a migration, and capability-storage.test.ts fails until it is.
+//
 // Deliberately dependency-free, so the nav modules and a client component can
 // import it deeply without pulling the shared barrel.
 //
@@ -30,14 +35,15 @@ export interface FeatureDefinition {
   /**
    * Player app route prefixes this feature owns: hidden from the nav when off,
    * and gated by a FeatureGate in app/<route>/layout.tsx, which redirects
-   * non-execs. The leaderboard gates its index page only, so profiles under it
+   * anybody not holding the feature's `page.access.<id>` key. The leaderboard gates its index page only, so profiles under it
    * stay reachable.
    */
   playerRoutes: readonly string[];
   /**
    * Admin console pages this feature owns. Their nav items and dashboard
-   * signposts are hidden when off; the pages stay reachable by URL and carry
-   * a banner (app/<route>/layout.tsx in the admin app).
+   * signposts are hidden when off from anybody not holding the feature's
+   * `page.access.<id>` key; the pages stay reachable by URL and carry a banner
+   * (app/<route>/layout.tsx in the admin app).
    */
   adminRoutes: readonly string[];
 }
@@ -157,21 +163,30 @@ export function featureLabel(id: FeatureId): string {
  * What a viewer gets on a feature's page.
  *
  *   allow     the feature is on
- *   banner    it is off, but the viewer holds a console level, so they can
- *             still open it (to check it before switching it back on)
- *   redirect  it is off and the viewer is a member
+ *   banner    it is off, but the viewer holds its `page.access.<id>` key
+ *             (featureAccessFor in ./access-level.ts), so they can still open
+ *             it, to check it before switching it back on
+ *   redirect  it is off and the viewer does not hold the key
  */
 export type FeatureGateDecision = 'allow' | 'banner' | 'redirect';
 
-export function featureGate(enabled: boolean, isExec: boolean): FeatureGateDecision {
+export function featureGate(enabled: boolean, holdsAccess: boolean): FeatureGateDecision {
   if (enabled) return 'allow';
-  return isExec ? 'banner' : 'redirect';
+  return holdsAccess ? 'banner' : 'redirect';
 }
 
-/** Can this viewer be shown a link to this player path? */
-export function playerPathVisible(path: string, flags: FeatureFlags, isExec: boolean): boolean {
+/**
+ * Can this viewer be shown a link to this player path? `access` is the list of
+ * features whose key they hold: a plain array, because it crosses from the
+ * server layout into client components.
+ */
+export function playerPathVisible(
+  path: string,
+  flags: FeatureFlags,
+  access: readonly FeatureId[],
+): boolean {
   const id = playerFeatureFor(path);
-  return id === null || featureGate(flags[id], isExec) !== 'redirect';
+  return id === null || featureGate(flags[id], access.includes(id)) !== 'redirect';
 }
 
 /** The sentence a refused player action throws. */

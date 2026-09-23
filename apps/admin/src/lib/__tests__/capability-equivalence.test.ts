@@ -333,6 +333,24 @@ const TODAY: Row[] = [
   // admin-only in every half, which is where this row's answers come from.
   { capability: 'platform.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — the form on ratings/page.tsx and accounts/page.tsx' },
   { capability: 'platform.settings.write',            admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — settings.ts:14' },
+
+  // ---- page --------------------------------------------------------------
+  // THE KEYS TO SWITCHED-OFF FEATURES, and the rows where this table's columns
+  // and the gate they replaced deliberately part. For the one commit these
+  // features were switchable without keys (47fc75e7), hasConsoleAccess() let
+  // every console level in, trainers included. The club owner replaced that
+  // with a key per feature, handed to one person at a time, so an unrestricted
+  // exec or trainer now holds none of them. That is a narrowing, which the
+  // implication in the per-row cases is silent about on purpose, and `exec: F`
+  // is what keeps the exec column equal to EXEC_ASSIGNABLE, which these are
+  // not in: they are offerable through OFFERABLE_BEYOND_EXEC instead.
+  { capability: 'page.access.sessions',               admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.challenges',             admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.tournaments',            admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.leaderboard',            admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.my_stats',               admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.announcements',          admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.fees',                   admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
 ];
 
 describe('capability equivalence — nobody gained anything', () => {

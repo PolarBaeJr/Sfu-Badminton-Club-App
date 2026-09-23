@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, atLeast, canAccess, permissionsOf, permits, sectionLabelFor } from '@/lib/permissions';
+import { accessLevelFor, atLeast, canAccess, effectiveCapabilities, permissionsOf, permits, sectionLabelFor } from '@/lib/permissions';
 import { AvatarChip, Badge, Card, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import {
   ACTIVE_CHALLENGE_STATUSES,
@@ -162,6 +162,7 @@ export default async function DashboardPage({
   ]);
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(accessLevelFor(viewer), viewer);
+  const held = effectiveCapabilities(level, permissions);
 
   // Sections. `canAccess` asks the same question the sidebar and the middleware
   // ask, through the same helper, so a panel here can never link somewhere that
@@ -171,13 +172,14 @@ export default async function DashboardPage({
   const showMatches = canAccess(level, permissions, '/matches');
   //
   // A club feature that is switched off loses its panels too, through the same
-  // flags, so its fetches, its signposts and hasTiles below all move together.
+  // flags, so its fetches, its signposts and hasTiles below all move together,
+  // unless the viewer holds its `page.access.<id>` key, exactly as in the nav.
   // Its page stays reachable by URL and says it is off.
-  const showSessions = canAccess(level, permissions, '/sessions') && features.sessions;
+  const showSessions = canAccess(level, permissions, '/sessions') && adminNavItemOn('/sessions', features, held);
   const showDisputes = canAccess(level, permissions, '/disputes');
   const showWalkovers = canAccess(level, permissions, '/walkovers');
-  const showTournaments = canAccess(level, permissions, '/tournaments') && features.tournaments;
-  const showChallenges = canAccess(level, permissions, '/challenges') && features.challenges;
+  const showTournaments = canAccess(level, permissions, '/tournaments') && adminNavItemOn('/tournaments', features, held);
+  const showChallenges = canAccess(level, permissions, '/challenges') && adminNavItemOn('/challenges', features, held);
 
   // NOT canAccess(…, '/players') — a COUNT of the members is roster data, and
   // the roster has its own capability. Reaching /players needs players.page,
@@ -261,7 +263,7 @@ export default async function DashboardPage({
   const openSections = hasTiles
     ? []
     : openableSections(level, permissions).filter(
-        (item) => item.href !== '/dashboard' && adminNavItemOn(item.href, features),
+        (item) => item.href !== '/dashboard' && adminNavItemOn(item.href, features, held),
       );
 
   // ------------------------------------------------------------------------

@@ -37,6 +37,8 @@ const store = vi.hoisted(() => ({
   // The stored club feature switches; null is no row, which is every feature on.
   features: null as Record<string, unknown> | null,
   isExec: false,
+  // The viewer's granted capabilities; any at all composes them as `custom`.
+  grants: [] as string[],
 }));
 
 vi.mock('../supabase-server', async (importOriginal) => ({
@@ -90,7 +92,12 @@ vi.mock('../supabase-server', async (importOriginal) => ({
 vi.mock('../actions/_shared', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   requirePlayer: () =>
-    Promise.resolve({ id: 'p1', is_banned: false, is_exec: store.isExec, status: 'competitive', active_flag: true }),
+    Promise.resolve({
+      id: 'p1', is_banned: false, is_exec: store.isExec, status: 'competitive', active_flag: true,
+      permission_role: store.grants.length > 0 ? 'custom' : null,
+      permission_grants: store.grants,
+      permission_revokes: [],
+    }),
   assertCurrentWaiver: () => Promise.resolve(),
 }));
 vi.mock('../event-waiver', () => ({
@@ -127,7 +134,7 @@ beforeEach(() => {
   store.tableReads = []; store.pairs = [];
   store.requiredHash = null; store.acceptances = [];
   store.entries = [entry('pt1')];
-  store.features = null; store.isExec = false;
+  store.features = null; store.isExec = false; store.grants = [];
 });
 
 // TOURNAMENTS SWITCHED OFF. The page gate redirects a member, but a scan posts
@@ -142,10 +149,27 @@ describe('the QR check-in scan with tournaments switched off', () => {
     expect(store.rpc).toHaveLength(0);
   });
 
-  it('lets somebody with console access through, as the page does', async () => {
+  // CONSOLE ACCESS ALONE IS NOT THE KEY ANY MORE. It was in 47fc75e7; the
+  // club owner replaced it with `page.access.tournaments`, granted per person.
+  it('refuses an exec who was not given the key', async () => {
     store.features = { tournaments_enabled: false };
     store.isExec = true;
+    expect((await checkInToTournament(TOKEN)).ok).toBe(false);
+    expect(store.rpc).toHaveLength(0);
+  });
+
+  it('lets a holder of page.access.tournaments through, as the page does', async () => {
+    store.features = { tournaments_enabled: false };
+    store.isExec = true;
+    store.grants = ['page.access.tournaments'];
     expect((await checkInToTournament(TOKEN)).ok).toBe(true);
+  });
+
+  it('does not let the key to another feature through', async () => {
+    store.features = { tournaments_enabled: false };
+    store.isExec = true;
+    store.grants = ['page.access.challenges'];
+    expect((await checkInToTournament(TOKEN)).ok).toBe(false);
   });
 
   it('checks in as usual when only another feature is off', async () => {

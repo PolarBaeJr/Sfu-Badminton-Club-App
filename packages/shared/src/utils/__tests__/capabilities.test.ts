@@ -5,11 +5,13 @@ import {
   EDITOR_OFFERABLE,
   EXEC_ASSIGNABLE,
   EXEC_BASELINE,
+  FEATURE_ACCESS_CAPABILITIES,
   TRAINER_BASELINE,
   PERMISSION_ROLES,
   ROLE_DEFAULTS,
   UNRESTRICTED,
   effectiveCapabilities,
+  featureAccessFor,
   isCapability,
   pageOf,
   permits,
@@ -19,14 +21,19 @@ import {
   type Capability,
 } from '../access-level';
 import { CAPABILITY_GATES, ENFORCEMENT_POINTS } from '../capability-gates';
+import { FEATURES } from '../features';
 
-// 124 capabilities is 124 promises that something is enforced. This suite is
+// 131 capabilities is 131 promises that something is enforced. This suite is
 // what keeps the vocabulary closed: it pins the list literally, refuses the
 // shapes that would let one capability quietly imply another, and asserts that
 // every one of them names a place in the app that reads it.
 
 const resourceOf = (capability: string) => capability.split('.').slice(0, -1);
 const modeOf = (capability: string) => capability.split('.').at(-1)!;
+// The one area whose names do not end in a mode. See the `page` entry at the
+// end of CAPABILITIES; every grammar test below states its exception for this
+// area by name rather than loosening the rule for all of them.
+const inPageArea = (capability: string) => capability.split('.')[0] === 'page';
 
 describe('the capability vocabulary', () => {
   // 119 BECAME 120 with `announcements.discord.write` — the console's half of
@@ -67,14 +74,31 @@ describe('the capability vocabulary', () => {
   //
   // Not a new area, for the reason the two entries above are not: the panel
   // lives on /accounts and sits behind that page's key.
-  it('is exactly 124 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(124);
-    expect(new Set(CAPABILITIES).size).toBe(124);
+  //
+  // 124 BECAME 131 with the seven `page.access.<feature id>` keys, one per club
+  // feature switch: the club owner's "build a permission node for access to a
+  // restricted page". They replaced 47fc75e7's rule that anybody with console
+  // access could open a switched-off feature, so being let into tournaments
+  // before they go live is now a key somebody was handed, and it does not open
+  // challenges too.
+  //
+  // THIS ONE IS A NEW AREA, `page`, and the first whose names the grammar test
+  // below does not hold: the owner chose `page.access.<id>`, which ends in the
+  // feature id rather than a mode. The area has no `page.page` either; each key
+  // is its own page. Both exceptions are stated below for this area alone.
+  //
+  // DERIVED FROM THE FEATURE REGISTRY, so the count moves when a feature is
+  // added. That is on purpose: this literal and the vocabulary migration are
+  // the two things a new feature then has to touch.
+  it('is exactly 131 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(131);
+    expect(new Set(CAPABILITIES).size).toBe(131);
   });
 
-  it('has 16 areas, every one of them used', () => {
-    expect(AREAS.length).toBe(16);
-    expect(new Set(AREAS).size).toBe(16);
+  // 16 BECAME 17 with `page`, the keys to switched-off features.
+  it('has 17 areas, every one of them used', () => {
+    expect(AREAS.length).toBe(17);
+    expect(new Set(AREAS).size).toBe(17);
     for (const area of AREAS) {
       expect(
         CAPABILITIES.some((c) => c.split('.')[0] === area),
@@ -92,6 +116,7 @@ describe('the capability vocabulary', () => {
 
   it('ends every capability in page, read or write, at depth 2 to 5', () => {
     for (const capability of CAPABILITIES) {
+      if (inPageArea(capability)) continue;
       const segments = capability.split('.');
       expect(['page', 'read', 'write']).toContain(segments.at(-1));
       expect(segments.length, `${capability} depth`).toBeGreaterThanOrEqual(2);
@@ -107,12 +132,35 @@ describe('the capability vocabulary', () => {
   // name by taking the first segment and appending '.page' — so an area with no
   // page is an area where nothing can ever be held, and an area with two is a
   // second name for the same door that only one of the two closes.
+  //
+  // EXCEPT `page`, which has no `page.page`: every key in it is its own page,
+  // and pageOf() maps each to itself. Pinned as its own test below.
   it('gives every area exactly one page, and puts it at depth 2', () => {
     for (const area of AREAS) {
+      if (area === 'page') continue;
       const pages = CAPABILITIES.filter((c) => c.split('.')[0] === area && modeOf(c) === 'page');
       expect(pages, `area ${area}`).toEqual([`${area}.page`]);
     }
-    expect(CAPABILITIES.filter((c) => modeOf(c) === 'page').length).toBe(AREAS.length);
+    expect(CAPABILITIES.filter((c) => modeOf(c) === 'page').length).toBe(AREAS.length - 1);
+  });
+
+  // THE `page` AREA, IN FULL. Exactly one `page.access.<id>` per club feature,
+  // the registry id used verbatim, and nothing else in the area: a feature
+  // added to the registry gets its key with no line typed here, and a key with
+  // no feature behind it cannot exist.
+  it('gives the page area exactly one key per club feature, named by its id', () => {
+    const inArea = CAPABILITIES.filter(inPageArea);
+    expect([...inArea].sort()).toEqual(FEATURES.map((f) => `page.access.${f.id}`).sort());
+    expect([...FEATURE_ACCESS_CAPABILITIES]).toEqual(inArea);
+    for (const capability of inArea) {
+      const [, access, id] = capability.split('.');
+      expect(access, capability).toBe('access');
+      // The ids are lower-case with underscores, which is the one character the
+      // rest of the vocabulary does not allow.
+      expect(id, capability).toMatch(/^[a-z0-9_]+$/);
+      expect(capability.split('.').length, capability).toBe(3);
+      expect(pageOf(capability), capability).toBe(capability);
+    }
   });
 
   // pageOf() is a first-segment lookup and the resolver's whole invariant rests
@@ -123,7 +171,7 @@ describe('the capability vocabulary', () => {
       const page = pageOf(capability);
       expect(isCapability(page), `${capability} → ${page}`).toBe(true);
       expect(page.split('.')[0]).toBe(capability.split('.')[0]);
-      if (modeOf(capability) === 'page') expect(page).toBe(capability);
+      if (modeOf(capability) === 'page' || inPageArea(capability)) expect(page).toBe(capability);
     }
   });
 
@@ -174,7 +222,9 @@ describe('CAPABILITY_GATES', () => {
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       expect(entry.area, capability).toBe(capability.split('.')[0]);
-      expect(entry.mode, capability).toBe(modeOf(capability));
+      // The `page` area's keys are drawn as reads: the editor keeps one page
+      // slot per area, and seven page-mode entries would overwrite each other.
+      expect(entry.mode, capability).toBe(inPageArea(capability) ? 'read' : modeOf(capability));
       expect(entry.label.length, `${capability} has no label`).toBeGreaterThan(0);
       // A group, where there is one, is the capability's own second segment —
       // it is a real interior node of the path, never a category invented for
@@ -236,16 +286,26 @@ describe('CAPABILITY_GATES', () => {
   // the two writes are the mint and the revoke, each a function of its own.
   // Handing a key out and taking one back are opposite acts and the club may
   // well want one person doing each, so there was never a merge to argue.
-  it('names 145 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 145 BECAME 168 with the seven `page.access.*` keys, the first gates in this
+  // map that stand in the MEMBERS' app. Each key's gate is the FeatureGate on
+  // its pages (7), and sessions, challenges and tournaments also claim every
+  // member action that calls assertFeatureOn for them: 4 more for sessions
+  // (the /checkin layout and three actions), 6 for challenges and 6 for
+  // tournaments, 23 in all. They merged because opening a switched-off feature
+  // and using it are one act, argued in the shared `merged` prose. The nav
+  // filters and the feed's cards ask the same question for every feature at
+  // once, so they are not listed as anybody's site.
+  it('names 168 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(145);
-    expect(new Set(sites).size).toBe(145);
-    expect(ENFORCEMENT_POINTS).toBe(145);
+    expect(sites.length).toBe(168);
+    expect(new Set(sites).size).toBe(168);
+    expect(ENFORCEMENT_POINTS).toBe(168);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -637,7 +697,7 @@ describe('ROLE_DEFAULTS', () => {
   // ONE CAPABILITY AT A TIME RATHER THAN EVERY SUBSET. A grant cannot mask
   // another grant's missing page: pruning tests each member against the final
   // set independently, so the single-grant case is the whole of the behaviour
-  // and 2^124 subsets would prove nothing further.
+  // and 2^131 subsets would prove nothing further.
   it('prunes to a page-complete set for every level, role and grant', () => {
     for (const level of ['exec', 'trainer'] as const) {
       for (const role of PERMISSION_ROLES) {
@@ -958,16 +1018,17 @@ describe('EDITOR_OFFERABLE', () => {
 // ---------------------------------------------------------------------------
 
 describe('permits', () => {
-  // 121 BECAME 124 with the data API's three key capabilities. This number
+  // 121 BECAME 124 with the data API's three key capabilities, and 124 BECAME
+  // 131 with the seven keys to switched-off features. This number
   // tracks CAPABILITIES.length by construction (admin is a superuser BY LEVEL,
   // so every capability added is automatically theirs), and it is written as a
   // literal anyway, because a count derived from the list it is checking would
   // pass for an empty list.
-  it('makes an admin a superuser BY LEVEL, holding all 124', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 131', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(124);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(131);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {
@@ -1457,5 +1518,84 @@ describe('varsity notes', () => {
 
   it('is held by an admin by LEVEL, with nothing stored', () => {
     expect(permits('admin', resolvePermissions('admin', 'finance', [], []), VARSITY)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE KEYS TO SWITCHED-OFF FEATURES
+// ---------------------------------------------------------------------------
+// `page.access.<feature id>`. Switched off means off, so nobody holds one by
+// level except an admin; everybody else is handed one on /permissions.
+
+describe('the page.access keys', () => {
+  const KEYS = [...FEATURE_ACCESS_CAPABILITIES];
+
+  it('are in no baseline and no role, and every one is offerable', () => {
+    const offerable = new Set<Capability>(EDITOR_OFFERABLE);
+    for (const key of KEYS) {
+      expect(EXEC_BASELINE, key).not.toContain(key);
+      expect(TRAINER_BASELINE, key).not.toContain(key);
+      expect(EXEC_ASSIGNABLE, key).not.toContain(key);
+      for (const role of PERMISSION_ROLES) expect(ROLE_DEFAULTS[role], `${role} ${key}`).not.toContain(key);
+      expect(offerable.has(key), key).toBe(true);
+    }
+  });
+
+  // A grant stands alone: the key is its own page, so the prune keeps it for a
+  // trainer whose floor opens nothing else, and a revoke closes just that one.
+  it('survive a lone grant at every level, and a revoke takes exactly the one', () => {
+    for (const level of ['exec', 'trainer'] as const) {
+      const granted = resolvePermissions(level, 'custom', ['page.access.tournaments'], []);
+      expect(permits(level, granted, 'page.access.tournaments'), level).toBe(true);
+      expect(permits(level, granted, 'page.access.challenges'), level).toBe(false);
+    }
+    const revoked = resolvePermissions(
+      'exec', 'custom', ['page.access.tournaments', 'page.access.challenges'], ['page.access.challenges'],
+    );
+    expect(permits('exec', revoked, 'page.access.tournaments')).toBe(true);
+    expect(permits('exec', revoked, 'page.access.challenges')).toBe(false);
+  });
+
+  // featureAccessFor() is what the members' app asks, and it is the same
+  // resolver the console uses.
+  describe('featureAccessFor', () => {
+    const exec = { is_exec: true, role: 'member', status: 'active', is_banned: false, active_flag: true };
+
+    it('gives an admin every feature, by level', () => {
+      expect(featureAccessFor({ ...exec, role: 'admin', is_exec: false })).toEqual(FEATURES.map((f) => f.id));
+    });
+
+    // THE BEHAVIOUR THIS CHANGED. 47fc75e7 let any console holder in; an exec
+    // with nothing granted now holds no key at all.
+    it('gives an unassigned exec nothing', () => {
+      expect(featureAccessFor(exec)).toEqual([]);
+      expect(featureAccessFor({
+        ...exec, permission_role: null, permission_grants: [], permission_revokes: [],
+      })).toEqual([]);
+    });
+
+    it('gives a composed exec exactly the keys they were granted', () => {
+      expect(featureAccessFor({
+        ...exec,
+        permission_role: 'custom',
+        permission_grants: ['page.access.tournaments'],
+        permission_revokes: [],
+      })).toEqual(['tournaments']);
+    });
+
+    it('gives a member, a banned exec and a signed-out visitor nothing', () => {
+      const grants = { permission_role: 'custom', permission_grants: [...KEYS], permission_revokes: [] };
+      expect(featureAccessFor({ ...exec, is_exec: false, ...grants })).toEqual([]);
+      expect(featureAccessFor({ ...exec, is_banned: true, ...grants })).toEqual([]);
+      expect(featureAccessFor(null)).toEqual([]);
+    });
+
+    // FAILS CLOSED. A role with a missing delta column makes the resolver
+    // throw; the feature is off, so the answer is no key rather than an error.
+    it('fails closed on a row the resolver refuses', () => {
+      const partial = { ...exec, permission_role: 'custom', permission_grants: [...KEYS] };
+      expect(() => permissionsOf('exec', partial)).toThrow();
+      expect(featureAccessFor(partial)).toEqual([]);
+    });
   });
 });

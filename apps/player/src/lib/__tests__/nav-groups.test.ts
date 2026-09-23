@@ -87,9 +87,15 @@ describe('the nav with a feature switched off', () => {
     expect(labels(mobileSlots(true, off('tournaments')))).toEqual(['Feed', 'Ranks', 'Play', 'Me']);
   });
 
-  it('keeps Events for a console holder, who can still open the pages', () => {
-    expect(labels(desktopEntries(true, off('tournaments'), true))).toEqual(['Feed', 'Play', 'Events', 'Stats']);
-    expect(labels(mobileSlots(true, off('tournaments'), true))).toEqual(['Feed', 'Ranks', 'Play', 'Events', 'Me']);
+  it('keeps Events for a holder of page.access.tournaments, who can still open the pages', () => {
+    expect(labels(desktopEntries(true, off('tournaments'), ['tournaments']))).toEqual(['Feed', 'Play', 'Events', 'Stats']);
+    expect(labels(mobileSlots(true, off('tournaments'), ['tournaments']))).toEqual(['Feed', 'Ranks', 'Play', 'Events', 'Me']);
+  });
+
+  // THE KEY IS PER FEATURE. Holding the one for challenges is not a way into
+  // tournaments, which is what "console access" used to be.
+  it('drops Events for a holder of a different feature key', () => {
+    expect(labels(desktopEntries(true, off('tournaments'), ['challenges']))).toEqual(['Feed', 'Play', 'Stats']);
   });
 
   it('drops a mobile slot whose only destination is off', () => {
