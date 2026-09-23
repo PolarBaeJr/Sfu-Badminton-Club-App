@@ -3,7 +3,8 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
-import { getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import { ALL_FEATURES_ENABLED, readFeatureFlags } from '@badminton/shared';
 import {
   accessLevelFor,
   permissionTripleOf,
@@ -168,6 +169,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // which is exactly when the sidebar renders nothing anyway.
   let initialAccessLevel: AccessLevel | null = null;
   let initialPermissions: PermissionsInput | null = null;
+  // Started before the viewer read and awaited after it, so the two overlap.
+  // Never throws: a failed read is every feature on.
+  const featuresRead = (async () => readFeatureFlags(createAdminClient()))()
+    .catch(() => ({ ...ALL_FEATURES_ENABLED }));
   try {
     const viewer = await getAuthenticatedConsoleUser({ skipPasskey: true });
     initialAccessLevel = accessLevelFor(viewer);
@@ -175,6 +180,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   } catch {
     initialAccessLevel = null;
   }
+  const features = await featuresRead;
 
   return (
     <html
@@ -212,6 +218,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Sidebar
               initialAccessLevel={initialAccessLevel}
               initialPermissions={initialPermissions}
+              features={features}
             />
             <MainContent>
               {children}

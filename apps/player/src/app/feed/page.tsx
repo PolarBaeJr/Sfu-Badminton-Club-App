@@ -6,7 +6,10 @@ import {
   formatTime,
   getAccountStanding,
   pickOne,
+  featureGate,
+  hasConsoleAccess,
   scopeToActiveSeason,
+  type FeatureId,
 } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { Fragment } from 'react';
@@ -33,6 +36,7 @@ import { countEnteredPlayers, occupiesAPlace } from '@/lib/tournament-index';
 import { AnnouncementMarkdown } from '@/lib/announcement-markdown';
 import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
 import { onVisibleTracks } from '@/lib/session-track-filter';
+import { getFeatureFlags } from '@/lib/feature-gate';
 
 type PlayerEmbed = { id: string; full_name: string | null; handle: string | null; avatar_url: string | null };
 type MatchParticipantRow = {
@@ -117,6 +121,13 @@ function Handle({ handle }: { handle: string | null }) {
 export default async function FeedPage() {
   const { player } = await getViewer();
   if (!player) redirect('/login');
+
+  // THE CLUB FEATURE SWITCHES. A card belonging to a switched-off feature is
+  // dropped, the same as its nav item, unless the viewer holds a console level
+  // and can still open its pages. The reads still run; this only decides what
+  // is drawn, and nothing here is personal to anyone but the viewer.
+  const features = await getFeatureFlags();
+  const on = (id: FeatureId) => featureGate(features[id], hasConsoleAccess(player)) !== 'redirect';
 
   const supabase = await createServerSupabaseClient();
   const now = new Date();
@@ -317,7 +328,7 @@ export default async function FeedPage() {
       });
     }
   }
-  const nextSession = (nextSessionRes.data ?? [])[0] as SessionRow | undefined;
+  const nextSession = on('sessions') ? ((nextSessionRes.data ?? [])[0] as SessionRow | undefined) : undefined;
   const pastSessions = (pastSessionsRes.data ?? []) as { id: string }[];
   const attendedIds = new Set((myAttendanceRes.data ?? []).map((r) => r.session_id as string));
   const streak = attendanceStreak(pastSessions, attendedIds);
@@ -374,6 +385,7 @@ export default async function FeedPage() {
   // page documents having had ("This was `!doubles` on the grounds that a
   // doubles entrant had no participant row"). Neither table is consulted
   // per-format here; both are read and both are searched.
+  if (!on('tournaments')) liveTournaments = [];
   const runningEventIds = liveTournaments.flatMap((t) => runningEvents(t).map((e) => e.id));
 
   let tournamentEntryRows: Array<{ event_id: string; player_id: string; status: string }> = [];
@@ -433,7 +445,7 @@ export default async function FeedPage() {
   // RLS only checks status='published'. Expiry and season are filtered in the
   // query above; audience is the one part that cannot be, because it is matched
   // against a value on the viewer rather than on the row.
-  const notice = ((announcementsRes.data ?? []) as unknown as AnnouncementRow[]).find((a) =>
+  const notice = ((on('announcements') ? announcementsRes.data ?? [] : []) as unknown as AnnouncementRow[]).find((a) =>
     isAddressedTo(a, player),
   );
   const noticeAuthor = pickOne(notice?.author ?? null);
@@ -494,12 +506,12 @@ export default async function FeedPage() {
         // Another member's row goes to that member's profile; the reader's own
         // goes to their stats. Sending everything to /my-stats meant tapping
         // "Jordan Lee beat Priya Patel" landed you on your own numbers.
-        href: mine ? '/my-stats' : `/leaderboard/${face.id}`,
+        href: mine && on('my_stats') ? '/my-stats' : `/leaderboard/${face.id}`,
       };
     })
     .filter((i): i is RiverItem => i !== null);
 
-  const challengeItems: RiverItem[] = (pendingChallengesRes.data ?? [])
+  const challengeItems: RiverItem[] = (on('challenges') ? pendingChallengesRes.data ?? [] : [])
     .map((pc): RiverItem | null => {
       const c = pickOne(pc.challenge as unknown as Record<string, unknown> | null) as Record<string, unknown> | null;
       if (!c) return null;
@@ -724,7 +736,7 @@ export default async function FeedPage() {
                   Results and challenges land here as the club plays. Issue a challenge to
                   put the first one on the board.
                 </div>
-                {isApproved && (
+                {isApproved && on('challenges') && (
                   <Link href="/challenges/new" className="btn btn-ghost">
                     Issue a challenge <ChevronRight size={12} />
                   </Link>
@@ -788,50 +800,52 @@ export default async function FeedPage() {
 
         <aside className="wide-rail">
           {/* NEXT SESSION --------------------------------------------- */}
-          <div className="card-base">
-            <div className="wide-cap">Next session</div>
-            {nextSession ? (
-              <>
-                <div
-                  style={{
-                    fontFamily: 'var(--display)',
-                    fontSize: 30,
-                    fontWeight: 700,
-                    letterSpacing: '-.02em',
-                    lineHeight: 1.05,
-                    margin: '8px 0 6px',
-                  }}
-                >
-                  {sessionWhen} · {nextSession.location}
-                </div>
-                <div className="mono muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em' }}>
-                  {/* The mockup also printed "COURTS 1–6". There is no court
-                      column on `sessions`, so it is left out rather than
-                      guessed at. The session's own name is shown instead when
-                      it has one. */}
-                  {[sessionHours, nextSession.name].filter(Boolean).join(' · ') || 'Time to be confirmed'}
-                </div>
-                <div className="session-stats">
-                  {/* "Spots left" is drawn in the mockup and is NOT built:
-                      `sessions` has no capacity column and there is no waitlist
-                      table, so any number here would be invented. */}
-                  <div className="stat">
-                    <div className="stat-label">Going</div>
-                    <div className="stat-value mono" style={{ fontSize: 24 }}>{goingCount ?? 0}</div>
+          {on('sessions') && (
+            <div className="card-base">
+              <div className="wide-cap">Next session</div>
+              {nextSession ? (
+                <>
+                  <div
+                    style={{
+                      fontFamily: 'var(--display)',
+                      fontSize: 30,
+                      fontWeight: 700,
+                      letterSpacing: '-.02em',
+                      lineHeight: 1.05,
+                      margin: '8px 0 6px',
+                    }}
+                  >
+                    {sessionWhen} · {nextSession.location}
                   </div>
-                  <div className="stat">
-                    <div className="stat-label">Your streak</div>
-                    <div className="stat-value mono" style={{ fontSize: 24 }}>{streak}</div>
+                  <div className="mono muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+                    {/* The mockup also printed "COURTS 1–6". There is no court
+                        column on `sessions`, so it is left out rather than
+                        guessed at. The session's own name is shown instead when
+                        it has one. */}
+                    {[sessionHours, nextSession.name].filter(Boolean).join(' · ') || 'Time to be confirmed'}
                   </div>
+                  <div className="session-stats">
+                    {/* "Spots left" is drawn in the mockup and is NOT built:
+                        `sessions` has no capacity column and there is no waitlist
+                        table, so any number here would be invented. */}
+                    <div className="stat">
+                      <div className="stat-label">Going</div>
+                      <div className="stat-value mono" style={{ fontSize: 24 }}>{goingCount ?? 0}</div>
+                    </div>
+                    <div className="stat">
+                      <div className="stat-label">Your streak</div>
+                      <div className="stat-value mono" style={{ fontSize: 24 }}>{streak}</div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="muted" style={{ fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
+                  Nothing on the schedule yet. The exec posts sessions a week or two ahead —
+                  check back, or look at what has already been played.
                 </div>
-              </>
-            ) : (
-              <div className="muted" style={{ fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
-                Nothing on the schedule yet. The exec posts sessions a week or two ahead —
-                check back, or look at what has already been played.
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* CHECK IN, on a laptop ------------------------------------ */}
           {/* The same control as the sticky bar at the foot of the document,
@@ -898,42 +912,44 @@ export default async function FeedPage() {
               Desktop only, for the same reason as the rail cards on /sessions:
               on a phone this is a lift of the top of /my-stats, one tab away,
               on a screen that is supposed to have one thing to do. */}
-          <Link href="/my-stats" className="card-base press wide-desktop-only">
-            <div className="wide-cap">Your record</div>
-            {played === 0 ? (
-              <p className="wide-note">
-                No rated matches yet. Your singles and doubles ratings start
-                level and move the first time a result is confirmed.
-              </p>
-            ) : (
-              <div className="wide-figures">
-                <div className="stat">
-                  <div className="stat-label">Singles</div>
-                  <div className="stat-value mono" style={{ fontSize: 24 }}>
-                    {rating?.singles_elo ?? '—'}
+          {on('my_stats') && (
+            <Link href="/my-stats" className="card-base press wide-desktop-only">
+              <div className="wide-cap">Your record</div>
+              {played === 0 ? (
+                <p className="wide-note">
+                  No rated matches yet. Your singles and doubles ratings start
+                  level and move the first time a result is confirmed.
+                </p>
+              ) : (
+                <div className="wide-figures">
+                  <div className="stat">
+                    <div className="stat-label">Singles</div>
+                    <div className="stat-value mono" style={{ fontSize: 24 }}>
+                      {rating?.singles_elo ?? '—'}
+                    </div>
+                    {/* "Provisional" leads the sub-line, the way /my-stats and
+                        the ladder both write it — a rating still settling means
+                        something different from one that has, and the figure
+                        above says nothing about which it is. */}
+                    <div className="wide-item-sub" style={{ marginTop: 2 }}>
+                      {rating?.singles_provisional ? 'Provisional · ' : ''}
+                      {rating?.singles_wins ?? 0}W · {rating?.singles_losses ?? 0}L
+                    </div>
                   </div>
-                  {/* "Provisional" leads the sub-line, the way /my-stats and
-                      the ladder both write it — a rating still settling means
-                      something different from one that has, and the figure
-                      above says nothing about which it is. */}
-                  <div className="wide-item-sub" style={{ marginTop: 2 }}>
-                    {rating?.singles_provisional ? 'Provisional · ' : ''}
-                    {rating?.singles_wins ?? 0}W · {rating?.singles_losses ?? 0}L
+                  <div className="stat">
+                    <div className="stat-label">Doubles</div>
+                    <div className="stat-value mono" style={{ fontSize: 24 }}>
+                      {rating?.doubles_elo ?? '—'}
+                    </div>
+                    <div className="wide-item-sub" style={{ marginTop: 2 }}>
+                      {rating?.doubles_provisional ? 'Provisional · ' : ''}
+                      {rating?.doubles_wins ?? 0}W · {rating?.doubles_losses ?? 0}L
+                    </div>
                   </div>
                 </div>
-                <div className="stat">
-                  <div className="stat-label">Doubles</div>
-                  <div className="stat-value mono" style={{ fontSize: 24 }}>
-                    {rating?.doubles_elo ?? '—'}
-                  </div>
-                  <div className="wide-item-sub" style={{ marginTop: 2 }}>
-                    {rating?.doubles_provisional ? 'Provisional · ' : ''}
-                    {rating?.doubles_wins ?? 0}W · {rating?.doubles_losses ?? 0}L
-                  </div>
-                </div>
-              </div>
-            )}
-          </Link>
+              )}
+            </Link>
+          )}
         </aside>
       </div>
 

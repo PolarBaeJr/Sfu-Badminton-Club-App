@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { cn, NavMenu, isRouteActive, isGroupActive } from '@badminton/ui';
 import { desktopEntries } from '@/lib/nav-entries';
+import { ALL_FEATURES_ENABLED, type FeatureFlags } from '@badminton/shared/src/utils/features';
 import { ShuttleMark } from './shuttle-mark';
 import {
   Bell,
@@ -21,6 +22,7 @@ export function TopBar({
   activeSeasonName,
   activeSeasonId,
   isApproved = true,
+  features = ALL_FEATURES_ENABLED,
 }: {
   playerName: string;
   avatarUrl?: string | null;
@@ -32,6 +34,8 @@ export function TopBar({
   activeSeasonId?: string;
   /** False while the account is pending approval or suspended. */
   isApproved?: boolean;
+  /** The club feature switches, read by the layout. */
+  features?: FeatureFlags;
 }) {
   const pathname = usePathname();
   // This chrome renders above every page, and a LAYOUT never receives
@@ -54,7 +58,9 @@ export function TopBar({
   const viewingPastSeason = viewedSeasonId !== '' && viewedSeasonId !== activeSeasonId;
   // Gated destinations are filtered on isApproved inside, and a group left
   // empty (Play and Events, for a pending member) is dropped with them.
-  const navEntries = isAuthenticated ? desktopEntries(isApproved) : [];
+  // A switched-off feature is dropped the same way, except for a console
+  // holder, who can still open its pages.
+  const navEntries = isAuthenticated ? desktopEntries(isApproved, features, isExecOrAdmin) : [];
   // Auth, onboarding and the Discord consent screen render their own
   // full-screen layout — no app chrome.
   if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
@@ -125,13 +131,15 @@ export function TopBar({
             })
           ) : (
             <>
-              <Link
-                href="/leaderboard"
-                className={cn('nav-item', pathname.startsWith('/leaderboard') && 'active')}
-                aria-current={pathname.startsWith('/leaderboard') ? 'page' : undefined}
-              >
-                Leaderboard
-              </Link>
+              {features.leaderboard && (
+                <Link
+                  href="/leaderboard"
+                  className={cn('nav-item', pathname.startsWith('/leaderboard') && 'active')}
+                  aria-current={pathname.startsWith('/leaderboard') ? 'page' : undefined}
+                >
+                  Leaderboard
+                </Link>
+              )}
               {/* /exec IS ready and has been for a while: it lists ten officers
                   from get_executives(), which is granted to anon, and the landing
                   page, the fees page and the settings page all link straight to

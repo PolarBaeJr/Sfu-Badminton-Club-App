@@ -10,12 +10,13 @@ import {
   getCheckinWindow,
   getMissingLegalDocuments,
   parseCheckinSettings,
+  readFeatureFlags,
   wallClockToUtc,
 } from '@badminton/shared';
 import Link from 'next/link';
 import { AlertTriangle, ArrowUpRight } from 'lucide-react';
 import { PlayerActions } from '../players/player-actions';
-import { openableSections } from '@/components/nav-sections';
+import { adminNavItemOn, openableSections } from '@/components/nav-sections';
 import { getSeasonFinances } from '@/lib/season-finance';
 import { getDashboardFinances } from '@/lib/dashboard-finance';
 import { getOutstandingClubFees } from '@/lib/fees-outstanding';
@@ -155,7 +156,10 @@ export default async function DashboardPage({
   // found across /fees, /sessions and /players, every one of them an
   // unconditional fetch feeding a conditional render.
   // ------------------------------------------------------------------------
-  const viewer = await getAuthenticatedConsoleUser();
+  const [viewer, features] = await Promise.all([
+    getAuthenticatedConsoleUser(),
+    readFeatureFlags(supabase),
+  ]);
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(accessLevelFor(viewer), viewer);
 
@@ -165,11 +169,15 @@ export default async function DashboardPage({
   // `disputes.read` in the vocabulary — those areas have a page key and nothing
   // finer — so the page key IS the capability that owns their data.
   const showMatches = canAccess(level, permissions, '/matches');
-  const showSessions = canAccess(level, permissions, '/sessions');
+  //
+  // A club feature that is switched off loses its panels too, through the same
+  // flags, so its fetches, its signposts and hasTiles below all move together.
+  // Its page stays reachable by URL and says it is off.
+  const showSessions = canAccess(level, permissions, '/sessions') && features.sessions;
   const showDisputes = canAccess(level, permissions, '/disputes');
   const showWalkovers = canAccess(level, permissions, '/walkovers');
-  const showTournaments = canAccess(level, permissions, '/tournaments');
-  const showChallenges = canAccess(level, permissions, '/challenges');
+  const showTournaments = canAccess(level, permissions, '/tournaments') && features.tournaments;
+  const showChallenges = canAccess(level, permissions, '/challenges') && features.challenges;
 
   // NOT canAccess(…, '/players') — a COUNT of the members is roster data, and
   // the roster has its own capability. Reaching /players needs players.page,
@@ -252,7 +260,9 @@ export default async function DashboardPage({
   // signposts itself with no list here to keep.
   const openSections = hasTiles
     ? []
-    : openableSections(level, permissions).filter((item) => item.href !== '/dashboard');
+    : openableSections(level, permissions).filter(
+        (item) => item.href !== '/dashboard' && adminNavItemOn(item.href, features),
+      );
 
   // ------------------------------------------------------------------------
   // THE SEASON, AND THE ONE COLUMN PAIR THAT IS NOT FURNITURE

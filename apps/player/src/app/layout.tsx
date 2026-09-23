@@ -18,6 +18,7 @@ import { cookies } from 'next/headers';
 import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, getAccountStanding, type AccountStanding } from '@badminton/shared';
 import { evaluateLegalGate, type LegalAcceptance } from '../lib/legal-gate';
 import { createServerSupabaseClient, getActiveSeason, getViewer } from '@/lib/supabase-server';
+import { getFeatureFlags } from '@/lib/feature-gate';
 import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 import { ConfirmProvider, StaleBuildBanner } from "@badminton/ui";
@@ -194,7 +195,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // NEITHER OF THESE WAITS ON THE OTHER, and until now both did. The season is
   // not a property of the viewer, but it ran first and to completion in front of
   // everything below purely because of the order this function was written in.
-  const [season, viewer] = await Promise.all([
+  const [season, viewer, features] = await Promise.all([
     // No active season is the ordinary answer here, not an error.
     getActiveSeason().catch(() => null),
     // A signed-out visitor comes back as nulls rather than a throw, so a throw
@@ -207,6 +208,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       console.error('Root layout could not load the viewer:', err);
       return { user: null, player: null } as Awaited<ReturnType<typeof getViewer>>;
     }),
+    // The club feature switches, for the nav. Never throws; a failed read is
+    // every feature on.
+    getFeatureFlags(),
   ]);
 
   activeSeasonName = season?.name ?? '';
@@ -333,7 +337,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <DeletionGate deletionRequestedAt={deletionRequestedAt} />
                 {/* Deletion screen wins when both gates would apply. */}
                 <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
-                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} activeSeasonId={season?.id ?? ''} />
+                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} activeSeasonId={season?.id ?? ''} features={features} />
                 {/* Under the top bar, above the page: the one place that says
                     why the controls below are missing. Nav gating is left as
                     it was — a link that still loads its page is not a control
@@ -344,7 +348,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   {children}
                   <LegalFooter />
                 </main>
-                <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} />
+                <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} isExec={isExecOrAdmin} />
               </StandingProvider>
             </ConfirmProvider>
           </ToastProvider>

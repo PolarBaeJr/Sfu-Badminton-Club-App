@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { NAV_LAYOUT, NAV_SECTIONS, type NavItem } from '../../components/nav-sections';
+import { NAV_LAYOUT, NAV_SECTIONS, adminNavItemOn, type NavItem } from '../../components/nav-sections';
+import { ALL_FEATURES_ENABLED, FEATURES, type FeatureFlags } from '@badminton/shared/src/utils/features';
 import {
   flattenEntries,
   isRouteActive,
@@ -91,6 +92,46 @@ describe('the console top bar layout', () => {
       { club: ['/fees'] },
       '/settings',
     ]);
+  });
+});
+
+// A CLUB FEATURE SWITCHED OFF LOSES ITS NAV ITEM, on top of canAccess(), and a
+// group it leaves empty goes with it. The page itself stays open by URL.
+describe('the console top bar with a feature switched off', () => {
+  const off = (...ids: (keyof FeatureFlags)[]): FeatureFlags => ({
+    ...ALL_FEATURES_ENABLED,
+    ...Object.fromEntries(ids.map((id) => [id, false])),
+  });
+  const visibleWith = (features: FeatureFlags) =>
+    visibleEntries(
+      NAV_LAYOUT,
+      (item) => canAccess('admin', UNRESTRICTED, item.href) && adminNavItemOn(item.href, features),
+    );
+
+  it('changes nothing while every feature is on', () => {
+    expect(visibleWith(ALL_FEATURES_ENABLED)).toEqual(NAV_LAYOUT);
+  });
+
+  it('drops the Events menu when tournaments are off', () => {
+    const visible = shape(visibleWith(off('tournaments')));
+    expect(visible).not.toContainEqual({ events: ['/tournaments'] });
+    expect(flattenEntries(visibleWith(off('tournaments'))).map((i) => i.href)).not.toContain('/tournaments');
+  });
+
+  it('drops only Sessions from Play when sessions are off', () => {
+    expect(shape(visibleWith(off('sessions')))).toContainEqual({ play: ['/matches', '/seasons'] });
+  });
+
+  it('drops Announcements from Club when announcements are off', () => {
+    expect(shape(visibleWith(off('announcements')))).toContainEqual({ club: ['/fees', '/legal'] });
+  });
+
+  it('never hides an item that belongs to no feature', () => {
+    const allOff = off(...FEATURES.map((f) => f.id));
+    const owned = new Set<string>(FEATURES.flatMap((f) => f.adminRoutes));
+    for (const item of ITEMS) {
+      expect(adminNavItemOn(item.href, allOff), item.href).toBe(!owned.has(item.href));
+    }
   });
 });
 

@@ -7,7 +7,14 @@
 // starting rating is 800 on one page and 400 on the other.
 //
 // Deliberately dependency-free: no React, no Supabase. It is imported by a
-// client component, a server page and the tests.
+// client component, a server page and the tests. The feature registry is
+// imported deeply for the same reason: it has no imports of its own.
+import {
+  FEATURES,
+  FEATURES_SETTING_KEY,
+  defaultFeaturesValue,
+  featureField,
+} from '@badminton/shared/src/utils/features';
 
 export interface PlatformSetting {
   key: string;
@@ -27,6 +34,7 @@ export const SETTING_LABELS: Record<string, string> = {
   inactivity_rules: 'Inactivity Rules',
   session_attendance: 'Session Attendance',
   signup_settings: 'Signup Approval',
+  features: 'Club Features',
 };
 
 export const SETTING_DESCRIPTIONS: Record<string, string> = {
@@ -40,6 +48,7 @@ export const SETTING_DESCRIPTIONS: Record<string, string> = {
   inactivity_rules: 'Days of inactivity before auto-marking players inactive',
   session_attendance: 'Check-in window and default session duration',
   signup_settings: 'Whether a new signup is approved automatically or waits for an exec',
+  features: 'Which member-facing features are running',
 };
 
 export interface FieldMeta {
@@ -443,4 +452,48 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       ],
     },
   },
+  // One switch per entry in the shared feature registry, so a feature added
+  // there appears here with no second list to keep in step.
+  [FEATURES_SETTING_KEY]: Object.fromEntries(
+    FEATURES.map((f): [string, FieldMeta] => [
+      featureField(f.id),
+      {
+        label: `${f.label} on`,
+        hint: `${f.description} Off hides it from members and sends them to the feed; anyone with console access can still open it.`,
+        type: 'boolean',
+      },
+    ]),
+  ),
 };
+
+/**
+ * Settings rows the console may create on first save, with the value a missing
+ * row stands for. Every other key still has to be seeded by a migration, and
+ * updatePlatformSettings refuses one that is absent.
+ *
+ * `features` is here so the switches need no migration: until somebody saves
+ * one, the absent row already means "everything on".
+ */
+export const SEEDABLE_SETTINGS: Record<string, () => Record<string, unknown>> = {
+  [FEATURES_SETTING_KEY]: defaultFeaturesValue,
+};
+
+/**
+ * The rows as the form should draw them: a seedable row that does not exist
+ * yet is stood in by its defaults, and one that exists gains any field added
+ * to its defaults since it was saved (a feature added to the registry later),
+ * so every switch renders.
+ */
+export function withSeededSettings(rows: PlatformSetting[]): PlatformSetting[] {
+  const out = rows.map((row) =>
+    SEEDABLE_SETTINGS[row.key]
+      ? { ...row, value: { ...SEEDABLE_SETTINGS[row.key]!(), ...row.value } }
+      : row,
+  );
+  for (const [key, defaults] of Object.entries(SEEDABLE_SETTINGS)) {
+    if (!out.some((row) => row.key === key)) {
+      out.push({ key, value: defaults(), updated_by: null, updated_at: new Date(0).toISOString() });
+    }
+  }
+  return out;
+}

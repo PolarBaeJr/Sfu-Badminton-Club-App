@@ -34,6 +34,9 @@ const store = vi.hoisted(() => ({
   tableReads: [] as string[],
   requiredHash: null as string | null,
   acceptances: [] as Array<Record<string, unknown>>,
+  // The stored club feature switches; null is no row, which is every feature on.
+  features: null as Record<string, unknown> | null,
+  isExec: false,
 }));
 
 vi.mock('../supabase-server', async (importOriginal) => ({
@@ -63,7 +66,9 @@ vi.mock('../supabase-server', async (importOriginal) => ({
       chain.maybeSingle = () => Promise.resolve({
         data: table === 'tournament_checkin_tokens'
           ? { tournament_id: 't1' }
-          : { name: 'Test Cup', suspended_at: null, suspension_reason: null },
+          : table === 'platform_settings'
+            ? store.features && { value: store.features }
+            : { name: 'Test Cup', suspended_at: null, suspension_reason: null },
         error: null,
       });
       // The list reads are awaited directly rather than through maybeSingle,
@@ -84,7 +89,8 @@ vi.mock('../supabase-server', async (importOriginal) => ({
 
 vi.mock('../actions/_shared', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  requirePlayer: () => Promise.resolve({ id: 'p1', is_banned: false }),
+  requirePlayer: () =>
+    Promise.resolve({ id: 'p1', is_banned: false, is_exec: store.isExec, status: 'competitive', active_flag: true }),
   assertCurrentWaiver: () => Promise.resolve(),
 }));
 vi.mock('../event-waiver', () => ({
@@ -121,6 +127,31 @@ beforeEach(() => {
   store.tableReads = []; store.pairs = [];
   store.requiredHash = null; store.acceptances = [];
   store.entries = [entry('pt1')];
+  store.features = null; store.isExec = false;
+});
+
+// TOURNAMENTS SWITCHED OFF. The page gate redirects a member, but a scan posts
+// straight to the action, so the action refuses on its own.
+describe('the QR check-in scan with tournaments switched off', () => {
+  it('refuses a member with the plain sentence, and writes nothing', async () => {
+    store.features = { tournaments_enabled: false };
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('The club has switched tournaments off for now.');
+    expect(store.rpc).toHaveLength(0);
+  });
+
+  it('lets somebody with console access through, as the page does', async () => {
+    store.features = { tournaments_enabled: false };
+    store.isExec = true;
+    expect((await checkInToTournament(TOKEN)).ok).toBe(true);
+  });
+
+  it('checks in as usual when only another feature is off', async () => {
+    store.features = { sessions_enabled: false };
+    expect((await checkInToTournament(TOKEN)).ok).toBe(true);
+  });
 });
 
 describe('the QR check-in scan goes through the field fence', () => {

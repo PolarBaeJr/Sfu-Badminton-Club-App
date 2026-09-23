@@ -12,6 +12,11 @@ import {
   withVisibleAnnouncements,
 } from '@/lib/announcement-visibility';
 import { mobileSlots, type PlayerNavEntry } from '@/lib/nav-entries';
+import {
+  ALL_FEATURES_ENABLED,
+  playerPathVisible,
+  type FeatureFlags,
+} from '@badminton/shared/src/utils/features';
 import { Home, Trophy, LogIn } from 'lucide-react';
 
 const publicSlots: PlayerNavEntry[] = [
@@ -23,10 +28,16 @@ const publicSlots: PlayerNavEntry[] = [
 export function BottomNav({
   isAuthenticated,
   isApproved = true,
+  features = ALL_FEATURES_ENABLED,
+  isExec = false,
 }: {
   isAuthenticated: boolean;
   /** False while the account is pending approval or suspended. */
   isApproved?: boolean;
+  /** The club feature switches, read by the layout. */
+  features?: FeatureFlags;
+  /** Holds a console level, so switched-off features stay in the nav. */
+  isExec?: boolean;
 }) {
   const pathname = usePathname();
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
@@ -222,7 +233,12 @@ export function BottomNav({
 
   // Gated slots are filtered on isApproved inside, and a group left empty
   // (Play and Events, for a pending member) is dropped with them.
-  const slots = isAuthenticated ? mobileSlots(isApproved) : publicSlots;
+  // A signed-out visitor's Ranks slot follows the leaderboard switch as well.
+  const slots = isAuthenticated
+    ? mobileSlots(isApproved, features, isExec)
+    : publicSlots.filter(
+        (slot) => slot.kind !== 'link' || playerPathVisible(slot.item.href, features, false),
+      );
   const openGroup = slots.flatMap((slot) =>
     slot.kind === 'group' && slot.group.id === openGroupId ? [slot.group] : [],
   )[0];
@@ -252,7 +268,7 @@ export function BottomNav({
           const { item } = slot;
           const active = isRouteActive(pathname, item.href);
           const isLeaderboard = item.href === '/leaderboard';
-          const showBadge = item.href === '/feed' && unreadAnnouncements > 0;
+          const showBadge = item.href === '/feed' && unreadAnnouncements > 0 && features.announcements;
           return (
             <Link
               key={item.href}

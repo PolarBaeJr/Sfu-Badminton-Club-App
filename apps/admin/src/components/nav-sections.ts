@@ -19,6 +19,8 @@ import { canAccess, type AccessLevel, type Area, type Permissions } from '../lib
 // component in the package, and this module is imported by tests that must not
 // need a DOM.
 import type { NavEntry } from '@badminton/ui/src/nav-groups';
+// Deep for the same reason: the registry has no imports of its own.
+import { adminFeatureFor, type FeatureFlags } from '@badminton/shared/src/utils/features';
 
 // THE CONSOLE'S NAVIGATION, as data.
 //
@@ -141,3 +143,13 @@ export const NAV_LAYOUT: NavEntry<NavItem>[] = [
   group('system', 'System', ['/ratings', '/audit']),
   { kind: 'link', item: navItem('/settings') },
 ];
+
+/**
+ * False for the nav item of a club feature that is switched off. Layered on
+ * top of canAccess() by the top bar and the dashboard's signposts; the page
+ * itself stays reachable by URL and says the feature is off.
+ */
+export function adminNavItemOn(href: string, features: FeatureFlags): boolean {
+  const id = adminFeatureFor(href);
+  return id === null || features[id];
+}

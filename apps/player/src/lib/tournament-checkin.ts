@@ -11,6 +11,7 @@ import {
 import { createServiceRoleClient } from './supabase-server';
 import { assertMyEventWaiverSigned, loadTournamentWaiverContext } from './event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
+import { assertFeatureOn } from './feature-gate';
 
 export interface TournamentCheckInResult {
   tournamentName: string;
@@ -57,6 +58,7 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   }
 
   const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
   if (player.is_banned) {
     throw new ExpectedError('Your account is suspended. Speak to an exec.');
   }

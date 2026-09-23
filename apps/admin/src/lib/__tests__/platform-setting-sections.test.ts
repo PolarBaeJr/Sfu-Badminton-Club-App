@@ -5,14 +5,18 @@ import {
   sectionForSettingKey,
   settingsForSection,
 } from '../platform-setting-sections';
+import { FIELD_META, withSeededSettings } from '../platform-setting-fields';
+import { defaultFeaturesValue } from '@badminton/shared/src/utils/features';
 
 // The rows that exist in platform_settings on production (nine verified
 // 2026-08-06; signup_settings added by migration 00220 on 2026-09-09). Pinned
 // here so splitting them across two pages can never lose one: a key that is
 // neither in SETTING_SECTION nor caught by the default would simply stop
-// rendering, with no error anywhere.
+// rendering, with no error anywhere. `features` is the exception: no migration
+// seeds it, and the console inserts it on the first save.
 const PRODUCTION_KEYS = [
   'challenge_rules',
+  'features',
   'inactivity_rules',
   'rating_defaults',
   'repeat_opponent_caps',
@@ -46,6 +50,7 @@ describe('platform settings section map', () => {
       'walkover_rules',
       'inactivity_rules',
       'session_attendance',
+      'features',
     ]) {
       expect(sectionForSettingKey(key)).toBe('accounts');
     }
@@ -76,5 +81,35 @@ describe('platform settings section map', () => {
       'tournament_bonuses',
       'season_settings',
     ]);
+  });
+});
+
+describe('withSeededSettings', () => {
+  const row = (key: string, value: Record<string, unknown>) => ({
+    key,
+    value,
+    updated_by: null,
+    updated_at: '2026-09-01T00:00:00.000Z',
+  });
+
+  it('stands in for an absent features row with every switch on', () => {
+    const out = withSeededSettings([row('session_caps', { max_rated_singles_per_session: 3 })]);
+    const features = out.find((r) => r.key === 'features');
+    expect(features?.value).toEqual(defaultFeaturesValue());
+    expect(Object.values(features!.value).every((v) => v === true)).toBe(true);
+  });
+
+  it('keeps a saved switch, and adds one a later feature brought in', () => {
+    const out = withSeededSettings([row('features', { tournaments_enabled: false })]);
+    const features = out.find((r) => r.key === 'features')!;
+    expect(features.value.tournaments_enabled).toBe(false);
+    expect(Object.keys(features.value).sort()).toEqual(Object.keys(defaultFeaturesValue()).sort());
+    expect(out.filter((r) => r.key === 'features')).toHaveLength(1);
+  });
+
+  it('draws a switch for every field it stores', () => {
+    for (const field of Object.keys(defaultFeaturesValue())) {
+      expect(FIELD_META.features?.[field]?.type, field).toBe('boolean');
+    }
   });
 });

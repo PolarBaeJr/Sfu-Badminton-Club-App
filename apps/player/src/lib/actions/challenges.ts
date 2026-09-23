@@ -14,6 +14,7 @@ import {
   type ChallengeCreateInput,
 } from '@badminton/shared';
 import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
+import { assertFeatureOn } from '../feature-gate';
 
 export async function createChallenge(input: ChallengeCreateInput): Promise<ActionResult<string>> {
   return runAction(() => createChallengeImpl(input));
@@ -22,6 +23,7 @@ export async function createChallenge(input: ChallengeCreateInput): Promise<Acti
 async function createChallengeImpl(input: ChallengeCreateInput) {
   parseOrThrow(challengeCreateSchema, input);
   const player = await requirePlayer();
+  await assertFeatureOn('challenges', player);
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);
 
@@ -147,6 +149,7 @@ export async function acceptChallenge(challengeId: string): Promise<ActionResult
 
 async function acceptChallengeImpl(challengeId: string) {
   const player = await requirePlayer();
+  await assertFeatureOn('challenges', player);
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);
 
@@ -204,6 +207,7 @@ export async function rejectChallenge(challengeId: string): Promise<ActionResult
 
 async function rejectChallengeImpl(challengeId: string) {
   const player = await requirePlayer();
+  await assertFeatureOn('challenges', player);
   const supabase = await createServerSupabaseClient();
 
   // Same RPC as acceptChallenge and the same reason (F-008). Rejection had the
@@ -247,6 +251,7 @@ export async function cancelChallenge(challengeId: string): Promise<ActionResult
 
 async function cancelChallengeImpl(challengeId: string) {
   const player = await requirePlayer();
+  await assertFeatureOn('challenges', player);
   const supabase = await createServerSupabaseClient();
 
   const { data: challenge, error: challengeError } = await supabase

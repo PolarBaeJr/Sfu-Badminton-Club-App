@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { TOURNAMENT_EVENT_TYPE_LABELS, wallClockToUtc } from '@badminton/shared';
+import { TOURNAMENT_EVENT_TYPE_LABELS, readFeatureFlags, wallClockToUtc } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -125,6 +125,17 @@ export async function GET(request: Request) {
 
   const supabase = createServiceRoleClient();
   const now = Date.now();
+
+  // TOURNAMENTS SWITCHED OFF: nothing to do, so no Discord event is created or
+  // changed. Ones already posted are left standing rather than cancelled, so a
+  // switch flipped by mistake does not tear down the club's Events tab. A
+  // failed read is "on", which is the behaviour before the switch existed.
+  if (!(await readFeatureFlags(supabase)).tournaments) {
+    return NextResponse.json({
+      actions: [],
+      skipped: [{ tournamentId: '*', reason: 'tournaments_disabled' }],
+    });
+  }
 
   const [settingsResult, mappedResult] = await Promise.all([
     supabase.from('discord_settings').select('key, value'),

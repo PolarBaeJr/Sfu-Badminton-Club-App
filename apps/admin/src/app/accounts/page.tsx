@@ -27,6 +27,7 @@ import { AvatarChip, Badge, Card, EmptyState, PageHeader, ResponsiveTable, Table
 import Link from 'next/link';
 import { PlatformSettingsForm } from '@/components/platform-settings-form';
 import { settingsForSection } from '@/lib/platform-setting-sections';
+import { withSeededSettings } from '@/lib/platform-setting-fields';
 import { DataApiKeysCard } from './DataApiKeysCard';
 
 // TWO QUESTIONS, ONE PAGE, AND THEY ARE BOTH CALLED "ACCOUNTS".
@@ -531,7 +532,7 @@ export default async function AccountsPage() {
                   sub="What a member's account may do — challenges, match caps, no-shows, inactivity, check-in."
                 />
                 <div className="mt-4">
-                  <PlatformSettingsForm settings={settingsForSection(settings ?? [], 'accounts')} />
+                  <PlatformSettingsForm settings={settingsForSection(withSeededSettings(settings ?? []), 'accounts')} />
                 </div>
               </Card>
             </section>

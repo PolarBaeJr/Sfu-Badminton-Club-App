@@ -16,7 +16,8 @@ import {
   type AccessLevel,
   type PermissionsInput,
 } from '@/lib/permissions';
-import { NAV_LAYOUT, type NavItem } from './nav-sections';
+import { NAV_LAYOUT, adminNavItemOn, type NavItem } from './nav-sections';
+import { ALL_FEATURES_ENABLED, type FeatureFlags } from '@badminton/shared/src/utils/features';
 
 // How quickly a promotion, demotion or narrowing reaches an already-open tab.
 const POLL_MS = 5000;
@@ -24,12 +25,16 @@ const POLL_MS = 5000;
 export function Sidebar({
   initialAccessLevel = null,
   initialPermissions = null,
+  features = ALL_FEATURES_ENABLED,
 }: {
   initialAccessLevel?: AccessLevel | null;
   // The stored triple, not a resolved Permissions: a Set does not survive the
   // boundary between a server component and this one. Resolved below with the
   // same function the server used.
   initialPermissions?: PermissionsInput | null;
+  // The club feature switches, read by the layout. Not polled with the access
+  // level: they change rarely, and saving one re-renders the layout.
+  features?: FeatureFlags;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -163,7 +168,10 @@ export function Sidebar({
   // grant or revoke lands.
   const entries = visibleEntries(
     NAV_LAYOUT,
-    (item) => accessLoaded && canAccess(access.level, permissions, item.href),
+    (item) =>
+      accessLoaded
+      && canAccess(access.level, permissions, item.href)
+      && adminNavItemOn(item.href, features),
   );
 
   const navText = (isActive: boolean) =>

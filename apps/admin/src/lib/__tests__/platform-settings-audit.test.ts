@@ -69,6 +69,7 @@ vi.mock('../actions/_shared', () => ({
 
 import { updatePlatformSettings } from '../actions/settings';
 import { REASON_MIN } from '../audit-reason';
+import { SEEDABLE_SETTINGS } from '../platform-setting-fields';
 
 const KEY = 'elo_settings';
 const settings = () => store.db.platform_settings ?? [];
@@ -239,6 +240,46 @@ describe('updatePlatformSettings — a partial blob is refused, not applied', ()
 
     expect(settings().find((s) => s.key === KEY)!.value).toEqual({ k_factor: 32 });
     expect(ratingRow().value).toEqual(REAL_RATING_BLOB);
+    expect(audits()).toHaveLength(0);
+  });
+});
+
+// THE FEATURE SWITCHES NEED NO MIGRATION. `features` is the one key the console
+// may create: the absent row already means "everything on", so its first save
+// inserts it. Every other absent key is still refused, above.
+describe('updatePlatformSettings: a seedable key with no row yet', () => {
+  const FEATURES_KEY = 'features';
+  const featuresRow = () => settings().find((s) => s.key === FEATURES_KEY);
+  const allOn = () => ({ ...SEEDABLE_SETTINGS[FEATURES_KEY]!() });
+
+  it('inserts the row on first save and audits it with no "before"', async () => {
+    const value = { ...allOn(), tournaments_enabled: false };
+    await updatePlatformSettings([{ key: FEATURES_KEY, value }], 'Not running tournaments this term');
+
+    expect(featuresRow()?.value).toEqual(value);
+    expect(featuresRow()?.updated_by).toBe(store.actor.id);
+    expect(audits()).toHaveLength(1);
+    expect(audits()[0]!.old_value).toBeNull();
+    expect(audits()[0]!.new_value).toEqual(value);
+  });
+
+  it('updates the row once it exists, rather than inserting a second', async () => {
+    store.db.platform_settings!.push({ key: FEATURES_KEY, value: allOn() });
+    await updatePlatformSettings(
+      [{ key: FEATURES_KEY, value: { ...allOn(), sessions_enabled: false } }],
+      'Summer break, no sessions',
+    );
+
+    expect(settings().filter((s) => s.key === FEATURES_KEY)).toHaveLength(1);
+    expect(featuresRow()?.value).toHaveProperty('sessions_enabled', false);
+    expect(audits()[0]!.old_value).toEqual(allOn());
+  });
+
+  it('still refuses a first save that would drop a switch', async () => {
+    await expect(
+      updatePlatformSettings([{ key: FEATURES_KEY, value: { tournaments_enabled: false } }], WHY),
+    ).rejects.toThrow(/would delete/);
+    expect(featuresRow()).toBeUndefined();
     expect(audits()).toHaveLength(0);
   });
 });

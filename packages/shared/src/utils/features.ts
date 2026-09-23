@@ -1,0 +1,205 @@
+// CLUB FEATURE SWITCHES: which optional member-facing features are running.
+//
+// One platform_settings row, key `features`, holding `<id>_enabled` booleans.
+// No migration seeds it: an absent row, an absent field and anything other
+// than a literal `false` all read as ENABLED, so nothing changes until an admin
+// flips a switch on /accounts. The first save inserts the row (see
+// SEEDABLE_SETTINGS in the admin's actions/settings.ts).
+//
+// A FAILED READ IS ALSO ENABLED. Hiding a feature is not a safety property,
+// and a settings blip must not make a live tournament vanish mid-event.
+//
+// THIS REGISTRY DRIVES EVERYTHING ELSE: the player nav, the admin nav, the
+// redirect gate on the player routes, the refusal in the player actions and
+// the switches on the settings form. Adding a feature is one entry here plus
+// a gate on its routes; feature-registry.test.ts in the player app checks that
+// every route named below exists and that no protected route is switchable.
+//
+// Deliberately dependency-free, so the nav modules and a client component can
+// import it deeply without pulling the shared barrel.
+//
+// NEVER SWITCHABLE: the feed and home page, settings, legal, sign-in,
+// onboarding, account linking, notifications, email and unsubscribe, the exec
+// panel and feedback. Account, legal and safety paths must always work.
+
+export interface FeatureDefinition {
+  id: string;
+  label: string;
+  /** Shown beside the switch. Names the knock-on effects of switching it off. */
+  description: string;
+  /**
+   * Player app route prefixes this feature owns: hidden from the nav when off,
+   * and gated by a FeatureGate in app/<route>/layout.tsx, which redirects
+   * non-execs. The leaderboard gates its index page only, so profiles under it
+   * stay reachable.
+   */
+  playerRoutes: readonly string[];
+  /**
+   * Admin console pages this feature owns. Their nav items and dashboard
+   * signposts are hidden when off; the pages stay reachable by URL and carry
+   * a banner (app/<route>/layout.tsx in the admin app).
+   */
+  adminRoutes: readonly string[];
+}
+
+export const FEATURES = [
+  {
+    id: 'sessions',
+    label: 'Sessions',
+    description:
+      'The schedule, RSVPs and session check-in, including the door QR code. Off also stops the automatic session reminders and the Discord session pings and list. WARNING: a session check-in is what keeps a membership active. With this off for longer than the inactivity threshold, every member who is not an exec is marked inactive and sent the inactivity notice, and one who then never signs in has their personal details erased on the usual schedule.',
+    playerRoutes: ['/sessions', '/checkin'],
+    adminRoutes: ['/sessions'],
+  },
+  {
+    id: 'challenges',
+    label: 'Challenges',
+    description:
+      'Members challenging each other to rated matches and reporting the results. Off stops members creating, answering or reporting challenges; matches an exec records are unaffected.',
+    playerRoutes: ['/challenges'],
+    adminRoutes: ['/challenges'],
+  },
+  {
+    id: 'tournaments',
+    label: 'Tournaments',
+    description:
+      'Tournament pages, entry, withdrawal and check-in. Off also stops Discord scheduled events being created for tournaments and empties the Discord tournament list. Past tournaments stay in the console.',
+    playerRoutes: ['/tournaments'],
+    adminRoutes: ['/tournaments'],
+  },
+  {
+    id: 'leaderboard',
+    label: 'Leaderboard',
+    description:
+      'The ranked ladder, and the Discord leaderboard command. Ratings still move. Member profiles stay reachable, since they are linked from everywhere.',
+    playerRoutes: ['/leaderboard'],
+    adminRoutes: [],
+  },
+  {
+    id: 'my_stats',
+    label: 'My stats',
+    description: "A member's own stats page. Their data is untouched.",
+    playerRoutes: ['/my-stats'],
+    adminRoutes: [],
+  },
+  {
+    id: 'announcements',
+    label: 'Announcements',
+    description:
+      'The announcements page and the announcements on the feed. Off also stops announcements being posted to Discord.',
+    playerRoutes: ['/announcements'],
+    adminRoutes: ['/announcements'],
+  },
+  {
+    id: 'fees',
+    label: 'Fees',
+    description:
+      "A member's own fees page. Fees are still owed and still recorded in Finances; members just cannot see their statement.",
+    playerRoutes: ['/fees'],
+    adminRoutes: [],
+  },
+] as const satisfies readonly FeatureDefinition[];
+
+export type FeatureId = (typeof FEATURES)[number]['id'];
+
+export type FeatureFlags = Record<FeatureId, boolean>;
+
+export const FEATURES_SETTING_KEY = 'features';
+
+/** The stored field for one feature, e.g. `tournaments_enabled`. */
+export function featureField(id: FeatureId): string {
+  return `${id}_enabled`;
+}
+
+export const ALL_FEATURES_ENABLED: FeatureFlags = Object.fromEntries(
+  FEATURES.map((f) => [f.id, true]),
+) as FeatureFlags;
+
+/** The row a first save starts from: every feature on. */
+export function defaultFeaturesValue(): Record<string, boolean> {
+  return Object.fromEntries(FEATURES.map((f) => [featureField(f.id), true]));
+}
+
+/**
+ * The stored row as a flag per feature. Only a literal `false` switches a
+ * feature off; an absent row, an absent field, a string, a null or a non-object
+ * all read as on.
+ */
+export function parseFeatureFlags(value: unknown): FeatureFlags {
+  const row =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return Object.fromEntries(
+    FEATURES.map((f) => [f.id, row[featureField(f.id)] !== false]),
+  ) as FeatureFlags;
+}
+
+function ownsPath(routes: readonly string[], path: string): boolean {
+  return routes.some((route) => path === route || path.startsWith(`${route}/`));
+}
+
+/** The feature that owns this player app path, or null for an always-on one. */
+export function playerFeatureFor(path: string): FeatureId | null {
+  return FEATURES.find((f) => ownsPath(f.playerRoutes, path))?.id ?? null;
+}
+
+/** The feature that owns this admin page, or null. */
+export function adminFeatureFor(href: string): FeatureId | null {
+  return FEATURES.find((f) => (f.adminRoutes as readonly string[]).includes(href))?.id ?? null;
+}
+
+export function featureLabel(id: FeatureId): string {
+  return FEATURES.find((f) => f.id === id)?.label ?? id;
+}
+
+/**
+ * What a viewer gets on a feature's page.
+ *
+ *   allow     the feature is on
+ *   banner    it is off, but the viewer holds a console level, so they can
+ *             still open it (to check it before switching it back on)
+ *   redirect  it is off and the viewer is a member
+ */
+export type FeatureGateDecision = 'allow' | 'banner' | 'redirect';
+
+export function featureGate(enabled: boolean, isExec: boolean): FeatureGateDecision {
+  if (enabled) return 'allow';
+  return isExec ? 'banner' : 'redirect';
+}
+
+/** Can this viewer be shown a link to this player path? */
+export function playerPathVisible(path: string, flags: FeatureFlags, isExec: boolean): boolean {
+  const id = playerFeatureFor(path);
+  return id === null || featureGate(flags[id], isExec) !== 'redirect';
+}
+
+/** The sentence a refused player action throws. */
+export function featureOffMessage(id: FeatureId): string {
+  return `The club has switched ${featureLabel(id).toLowerCase()} off for now.`;
+}
+
+// Minimal structural shape so any Supabase client in this repo fits.
+type FlagsReader = { from: (table: string) => any };
+
+/**
+ * Read the switches. Never throws: a failed read logs and returns everything
+ * ENABLED, which is the behaviour before this row existed.
+ */
+export async function readFeatureFlags(client: FlagsReader): Promise<FeatureFlags> {
+  try {
+    const { data, error } = await client
+      .from('platform_settings')
+      .select('value')
+      .eq('key', FEATURES_SETTING_KEY)
+      .maybeSingle();
+    if (error) {
+      console.error('[features] could not read the feature switches, treating all as on:', error.message);
+      return { ...ALL_FEATURES_ENABLED };
+    }
+    return parseFeatureFlags(data?.value ?? null);
+  } catch (err) {
+    console.error('[features] could not read the feature switches, treating all as on:', err);
+    return { ...ALL_FEATURES_ENABLED };
+  }
+}
