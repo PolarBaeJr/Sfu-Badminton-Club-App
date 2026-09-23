@@ -45,6 +45,7 @@ type Check = (value: string) => string | null;
 
 const channel: Check = (v) => (SNOWFLAKE.test(v) ? null : 'not a channel id');
 const clock: Check = (v) => (CLOCK.test(v) ? null : 'not a HH:MM time');
+const role: Check = (v) => (SNOWFLAKE.test(v) ? null : 'not a role id');
 
 const WRITABLE: Record<string, Check> = {
   announcement_channel_id: channel,
@@ -54,6 +55,10 @@ const WRITABLE: Record<string, Check> = {
   feedback_channel_id: channel,
   event_feedback_channel_id: channel,
   audit_channel_id: channel,
+  // Read by the session-pings route before it falls back to /rolepicker rows.
+  session_ping_all_role_id: role,
+  session_ping_competitive_role_id: role,
+  session_ping_recreational_role_id: role,
   tournament_event_start_time: clock,
   tournament_event_end_time: clock,
   // Bounded on both ends. Discord rejects a scheduled event whose description

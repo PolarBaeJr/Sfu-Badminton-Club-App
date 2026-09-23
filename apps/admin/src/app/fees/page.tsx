@@ -6,7 +6,7 @@ import { SeasonSelect } from '@/components/season-select';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
-import { RowSelectCheckbox, SelectAllCheckbox, SelectionProvider } from '@/components/selection';
+import { RowSelectCheckbox, SelectAllCheckbox } from '@/components/selection';
 import { isWaivedFee, summariseFeeCollection, type FeeStatusRow } from '@/lib/fee-status';
 import type { FeeRowState } from '@/lib/fee-bulk-eligibility';
 import { getSeasonFinances } from '@/lib/season-finance';
@@ -20,6 +20,7 @@ import { NetPositionStrip } from './net-position-strip';
 import { NetPositionChart } from './net-position-chart';
 import { CollectionCharts } from './collection-charts';
 import { CardHeading } from './card-heading';
+import { FeeTable } from './fee-table';
 
 // The three sections of the money page. 'fees' is the original table; the other
 // two are the ledgers the club owner asked for ("add other fees", "add another
@@ -335,8 +336,8 @@ export default async function FeesPage({
   // in neither of these lists: `items` and `visibleIds` have to agree with which
   // rows actually carry a box, or SelectAllCheckbox ticks rows that have none.
   //
-  // `visibleIds` is simply every selectable row, because this table has no
-  // client-side filter — everything it holds is on screen.
+  // `visibleIds` is not decided here: FeeTable derives it from whatever its
+  // search is showing, so select-all only ever ticks members on screen.
   const selectableMembers = players.map((p) => ({ id: p.id, label: p.full_name }));
   // AND THERE HAS TO BE SOMETHING TO SELECT. Holding one of the three
   // capabilities is not enough on its own: a roster where everybody is exec or
@@ -597,29 +598,45 @@ export default async function FeesPage({
           uses. The provider goes round both because the checkboxes the server
           renders inside the rows read it from where they land, and the bar reads
           the same selection back out. */}
-      <SelectionProvider items={selectableMembers} visibleIds={selectableMembers.map((m) => m.id)}>
-      <Card padding={false}>
+      <FeeTable
+        items={selectableMembers}
+        heading={
         <CardHeading
           title="Club fees"
           sub={`Who owes dues for ${season.name}, and what has been collected.`}
         />
-        {/* The empty state REPLACES the table rather than sitting under it. A
-            header row with no rows beneath it, followed by a sentence saying
-            there are none, states the same thing twice and the first statement
-            is furniture. Same shape the two ledger cards use. */}
-        {players.length === 0 && manualFees.length === 0 ? (
+        }
+        empty={
           <EmptyState
             title="Nobody owes fees yet"
             description={`No member is due to pay for ${season.name}. Members become due when they are approved as competitive or recreational and are not fee-exempt.`}
           />
-        ) : (
-        <ResponsiveTable
-          cards={[
-            ...players.map((player) => {
+        }
+        head={
+              <tr className="border-b border-[var(--border)]">
+                {canBulkFees && (
+                  <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase w-px">
+                    <SelectAllCheckbox noun="member" />
+                  </th>
+                )}
+                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Player</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Amount</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Method</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Actions</th>
+              </tr>
+        }
+        rows={[
+          ...players.map((player) => {
               const fee = feeByPlayer.get(player.id);
               const waived = isWaived(fee);
               const paid = Boolean(fee?.paid_at) && !waived;
-              return (
+            return {
+              id: player.id,
+              name: player.full_name,
+              email: player.email,
+              selectable: true,
+              card: (
                 <TableCard
                   key={player.id}
                   title={
@@ -654,44 +671,8 @@ export default async function FeesPage({
                     />
                   }
                 />
-              );
-            }),
-            ...manualFees.map((fee) => (
-              <TableCard
-                key={fee.id}
-                title={personTitle(fee.manual_name, 'Manual entry')}
-                value={<Atomic>{fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}</Atomic>}
-                badges={<Badge variant="success">Paid</Badge>}
-                fields={[
-                  { label: 'Method', value: fee.method ? formatPaymentMethod(fee.method) : '-' },
-                  { label: 'Reference', value: fee.reference ? <Atomic className="font-mono text-xs">{fee.reference}</Atomic> : '-' },
-                ]}
-                actions={<RemoveManualFee id={fee.id} name={fee.manual_name} />}
-              />
-            )),
-          ]}
-        >
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[var(--border)]">
-                {canBulkFees && (
-                  <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase w-px">
-                    <SelectAllCheckbox noun="member" />
-                  </th>
-                )}
-                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Player</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Status</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Amount</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Method</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {players.map((player) => {
-                const fee = feeByPlayer.get(player.id);
-                const waived = isWaived(fee);
-                const paid = Boolean(fee?.paid_at) && !waived;
-                return (
+              ),
+              row: (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     {canBulkFees && (
                       <td className="px-4 py-3 w-px">
@@ -738,9 +719,27 @@ export default async function FeesPage({
                       />
                     </td>
                   </tr>
-                );
-              })}
-              {manualFees.map((fee) => (
+              ),
+            };
+          }),
+          ...manualFees.map((fee) => ({
+            id: fee.id,
+            name: fee.manual_name ?? '',
+            selectable: false,
+            card: (
+              <TableCard
+                key={fee.id}
+                title={personTitle(fee.manual_name, 'Manual entry')}
+                value={<Atomic>{fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}</Atomic>}
+                badges={<Badge variant="success">Paid</Badge>}
+                fields={[
+                  { label: 'Method', value: fee.method ? formatPaymentMethod(fee.method) : '-' },
+                  { label: 'Reference', value: fee.reference ? <Atomic className="font-mono text-xs">{fee.reference}</Atomic> : '-' },
+                ]}
+                actions={<RemoveManualFee id={fee.id} name={fee.manual_name} />}
+              />
+            ),
+            row: (
                 <tr key={fee.id} className="hover:bg-[var(--border-hover)] transition-colors">
                   {/* EMPTY, NOT MISSING. A manual entry has no player to act on
                       and so no checkbox — but the column exists in the header, and
@@ -773,12 +772,11 @@ export default async function FeesPage({
                     <RemoveManualFee id={fee.id} name={fee.manual_name} />
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </ResponsiveTable>
-        )}
-      </Card>
+            ),
+          })),
+        ]}
+        after={
+          <>
       {canBulkFees && (
         <BulkFeeActions
           seasonId={season.id}
@@ -789,7 +787,9 @@ export default async function FeesPage({
           canMarkUnpaid={bulkCan.markUnpaid}
         />
       )}
-      </SelectionProvider>
+          </>
+        }
+      />
 
       </>
       )}

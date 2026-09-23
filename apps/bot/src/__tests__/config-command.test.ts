@@ -227,6 +227,47 @@ describe('/config clear', () => {
   });
 });
 
+describe('/config ping_roles', () => {
+  // The ping job reads these keys before the /rolepicker fallback. Without this
+  // subcommand the only way to set them was hand-written SQL on production.
+  it('sets all three groups from every_session', async () => {
+    await run('ping_roles', [{ name: 'every_session', type: 8, value: '1547801288119558234' }]);
+    expect(writeDiscordSettings).toHaveBeenCalledWith({
+      session_ping_all_role_id: '1547801288119558234',
+      session_ping_competitive_role_id: '1547801288119558234',
+      session_ping_recreational_role_id: '1547801288119558234',
+    });
+  });
+
+  it('lets a specific group override every_session', async () => {
+    await run('ping_roles', [
+      { name: 'every_session', type: 8, value: '11111111111111111' },
+      { name: 'competitive', type: 8, value: '22222222222222222' },
+    ]);
+    expect(writeDiscordSettings).toHaveBeenCalledWith({
+      session_ping_all_role_id: '11111111111111111',
+      session_ping_competitive_role_id: '22222222222222222',
+      session_ping_recreational_role_id: '11111111111111111',
+    });
+  });
+
+  it('writes nothing when no role was picked', async () => {
+    const reply = await run('ping_roles');
+    expect(writeDiscordSettings).not.toHaveBeenCalled();
+    expect(reply.data.content).toContain('Pick at least one role');
+  });
+
+  it('shows the configured roles in /config show', async () => {
+    fetchDiscordSettings.mockResolvedValue({
+      settings: { session_ping_competitive_role_id: '22222222222222222' },
+    });
+    const reply = await run('show');
+    const text = JSON.stringify(reply.data);
+    expect(text).toContain('<@&22222222222222222>');
+    expect(text).toContain('club-wide sessions ping nobody');
+  });
+});
+
 describe('the command definition', () => {
   it('offers a picker for every channel setting, and only text channels', async () => {
     // Built from CHANNEL_SETTINGS rather than typed out, so a setting cannot

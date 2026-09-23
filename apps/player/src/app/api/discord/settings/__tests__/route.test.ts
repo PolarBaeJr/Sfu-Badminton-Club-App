@@ -124,6 +124,19 @@ describe('validation', () => {
     expect((await POST(post({ settings: { session_ping_lead_minutes: '90.5' } }))).status).toBe(400);
   });
 
+  it('accepts the three session ping role ids, and only as role ids', async () => {
+    // /config ping_roles writes these. Without them in the whitelist the only
+    // way to name a ping role was SQL on production.
+    for (const key of [
+      'session_ping_all_role_id',
+      'session_ping_competitive_role_id',
+      'session_ping_recreational_role_id',
+    ]) {
+      expect((await POST(post({ settings: { [key]: '1547801288119558234' } }))).status, key).toBe(200);
+      expect((await POST(post({ settings: { [key]: '@session ping' } }))).status, key).toBe(400);
+    }
+  });
+
   it('refuses a location longer than Discord will take', async () => {
     expect((await POST(post({ settings: { tournament_event_location: 'Court 1' } }))).status).toBe(200);
     expect((await POST(post({ settings: { tournament_event_location: 'x'.repeat(101) } }))).status).toBe(400);

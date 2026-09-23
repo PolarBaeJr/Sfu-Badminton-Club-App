@@ -115,7 +115,44 @@ export const VALUE_SETTINGS: readonly SettingSpec[] = [
   },
 ] as const;
 
-export const ALL_SETTINGS: readonly SettingSpec[] = [...CHANNEL_SETTINGS, ...VALUE_SETTINGS];
+/**
+ * Which role each session ping mentions, one per session group.
+ *
+ * ITS OWN SETTING, NOT THE ROLE PICKER. The ping job used to learn its roles
+ * only from /rolepicker rows carrying a track, which would also list the ping
+ * role in the picker and give members a second way to get a role Onboarding
+ * already hands out. The app reads these keys first (see the session-pings
+ * route); these options are what lets a club set them without SQL.
+ *
+ * The three mirror the session_group enum. A club with one ping role for
+ * everything sets it for all three, which is what `every_session` does.
+ */
+export const ROLE_SETTINGS: readonly SettingSpec[] = [
+  {
+    key: 'session_ping_all_role_id',
+    option: 'club_nights',
+    label: 'Ping role: club-wide sessions',
+    whenUnset: 'club-wide sessions ping nobody',
+  },
+  {
+    key: 'session_ping_competitive_role_id',
+    option: 'competitive',
+    label: 'Ping role: competitive sessions',
+    whenUnset: 'competitive sessions ping nobody',
+  },
+  {
+    key: 'session_ping_recreational_role_id',
+    option: 'recreational',
+    label: 'Ping role: recreational sessions',
+    whenUnset: 'recreational sessions ping nobody',
+  },
+] as const;
+
+export const ALL_SETTINGS: readonly SettingSpec[] = [
+  ...CHANNEL_SETTINGS,
+  ...ROLE_SETTINGS,
+  ...VALUE_SETTINGS,
+];
 
 export function specByOption(option: string): SettingSpec | undefined {
   return ALL_SETTINGS.find((s) => s.option === option);

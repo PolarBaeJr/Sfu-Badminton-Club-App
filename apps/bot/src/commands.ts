@@ -47,6 +47,7 @@ import { syncMemberEverywhere } from './sync.js';
 import {
   ALL_SETTINGS,
   CHANNEL_SETTINGS,
+  ROLE_SETTINGS,
   VALUE_SETTINGS,
   specByOption,
   validateValue,
@@ -616,6 +617,25 @@ export const COMMAND_DEFINITIONS = [
           // arrive later as a relay that 400s every five minutes.
           channel_types: [0, 5],
         })),
+      },
+      {
+        type: 1,
+        name: 'ping_roles',
+        description: 'Choose which role each session ping mentions',
+        options: [
+          {
+            type: 8, // ROLE
+            name: 'every_session',
+            description: 'One role for every session (sets all three below)',
+            required: false,
+          },
+          ...ROLE_SETTINGS.map((spec) => ({
+            type: 8, // ROLE
+            name: spec.option,
+            description: spec.label,
+            required: false,
+          })),
+        ],
       },
       {
         type: 1,
@@ -3427,12 +3447,21 @@ async function handleConfig(
       if (!value) return `**${spec.label}** — not set, so ${spec.whenUnset}`;
       return `**${spec.label}** — ${asChannel ? `<#${value}>` : value}`;
     };
+    // An ephemeral embed never notifies, so rendering the mention is safe.
+    const roleLine = (spec: (typeof ALL_SETTINGS)[number]) => {
+      const value = settings[spec.key];
+      return value
+        ? `**${spec.label}**: <@&${value}>`
+        : `**${spec.label}**: not set, so ${spec.whenUnset}`;
+    };
 
     return ephemeralEmbed({
       title: 'Discord relay settings',
       color: CLUB_RED,
       description: [
         CHANNEL_SETTINGS.map((spec) => line(spec, true)).join('\n'),
+        '',
+        ROLE_SETTINGS.map((spec) => roleLine(spec)).join('\n'),
         '',
         VALUE_SETTINGS.map((spec) => line(spec, false)).join('\n'),
       ].join('\n'),
@@ -3443,7 +3472,7 @@ async function handleConfig(
       footer: {
         text:
           'Tournaments become Discord events, not messages — that relay runs with no channel. ' +
-          'Change any of these with /config channels or /config tournament.',
+          'Change any of these with /config channels, /config ping_roles or /config tournament.',
       },
     });
   }
@@ -3488,6 +3517,29 @@ async function handleConfig(
       `${ok}\n\nI could not post in ${refused.join(', ')}, so ` +
         `${refused.length === 1 ? 'it was' : 'they were'} left unchanged. ` +
         'Give me **View Channel** and **Send Messages** there and run this again.'
+    );
+  }
+
+  if (sub === 'ping_roles') {
+    const every = option(args, 'every_session');
+    const write: Record<string, string> = {};
+    for (const spec of ROLE_SETTINGS) {
+      // A specific option beats every_session, so "this role for everything
+      // except competitive" is one command.
+      const chosen = option(args, spec.option) ?? every;
+      if (typeof chosen === 'string' && chosen) write[spec.key] = chosen;
+    }
+    if (Object.keys(write).length === 0) {
+      return ephemeral('Pick at least one role. Run **/config show** to see what is set.');
+    }
+    await writeDiscordSettings(write);
+    const lines = ROLE_SETTINGS.filter((spec) => write[spec.key]).map(
+      (spec) => `**${spec.label}**: <@&${write[spec.key]}>`
+    );
+    return ephemeral(
+      `Saved.\n${lines.join('\n')}\n\n` +
+        'The role must be mentionable, or I need **Mention Everyone** in the ping channel, ' +
+        'or the ping posts without notifying anyone.'
     );
   }
 
@@ -3541,7 +3593,9 @@ async function handleConfig(
     return ephemeral(`Unset **${spec.label}** — from now on ${spec.whenUnset}.`);
   }
 
-  return ephemeral('Use **/config show**, **/config channels**, **/config tournament** or **/config clear**.');
+  return ephemeral(
+    'Use **/config show**, **/config channels**, **/config ping_roles**, **/config tournament** or **/config clear**.'
+  );
 }
 
 async function handleRolePicker(
