@@ -814,6 +814,7 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   discord_match_posts: 'Which match results the bot has already posted.',
   discord_feedback_posts: 'Which feedback reports the bot has already relayed.',
   discord_tournament_events: 'Which tournament events the bot has already posted.',
+  discord_club_events: 'Which club events the bot has already posted to the Discord Events tab.',
 };
 
 /**

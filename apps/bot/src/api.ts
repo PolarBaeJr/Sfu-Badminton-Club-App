@@ -255,6 +255,54 @@ export function clearTournamentEvent(
   return send<{ ok: true }>('DELETE', `/api/discord/tournament-events?${params}`);
 }
 
+export interface ClubEventAction {
+  kind: 'create' | 'update' | 'cancel';
+  eventId: string;
+  /** null only for a create. */
+  discordEventId: string | null;
+  name: string;
+  /** What to SEND Discord: possibly clamped forward past a start already gone. */
+  startsAt: string;
+  endsAt: string;
+  /** What the club event ITSELF says. Recorded, so the change detector stays stable. */
+  syncedStartsAt: string;
+  syncedEndsAt: string;
+  /** False once Discord has started the event and will no longer retime it. */
+  patchTimes: boolean;
+  location: string | null;
+  description: string;
+}
+
+/** Club events that owe Discord a scheduled event, or a change to one. */
+export function fetchClubEventActions(guildId: string): Promise<{
+  actions: ClubEventAction[];
+  skipped: { eventId: string; reason: string }[];
+}> {
+  const params = new URLSearchParams({ guildId });
+  return get(`/api/discord/club-events?${params}`);
+}
+
+/** Record an event Discord has ALREADY accepted. Never call this beforehand. */
+export function recordClubEvent(input: {
+  eventId: string;
+  guildId: string;
+  discordEventId: string;
+  name: string;
+  syncedStartsAt: string;
+  syncedEndsAt: string;
+  /** The app's value, null when unset, never the fallback the bot sent. */
+  location: string | null;
+  description: string;
+}): Promise<{ ok: true }> {
+  return send<{ ok: true }>('POST', '/api/discord/club-events', input);
+}
+
+/** Forget a mapping, after the Discord event is gone. */
+export function clearClubEvent(eventId: string, guildId: string): Promise<{ ok: true }> {
+  const params = new URLSearchParams({ eventId, guildId });
+  return send<{ ok: true }>('DELETE', `/api/discord/club-events?${params}`);
+}
+
 export interface TournamentSummary {
   id: string;
   name: string;

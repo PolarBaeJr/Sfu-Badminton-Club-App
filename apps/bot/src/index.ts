@@ -42,6 +42,7 @@ import { reconcile } from './reconcile.js';
 import { registerCommandsOnBoot } from './register-commands.js';
 import { runSessionPings } from './session-pings.js';
 import { runTournamentEvents } from './tournament-events.js';
+import { runClubEvents } from './club-events.js';
 import { runAnnouncements } from './announcements.js';
 import { runOutbox } from './outbox.js';
 import { runSessionBoard } from './session-board.js';
@@ -270,21 +271,39 @@ const server = createServer(async (req, res) => {
     }
   }
 
-  // Tournament scheduled events, driven by pg_cron every 15 minutes. Polled
-  // rather than pushed when an exec hits Activate, so a bot that happens to be
-  // restarting at that moment causes a delay instead of a lost announcement
-  // nobody would notice was lost.
+  // Discord scheduled events for tournaments AND club events, driven by
+  // pg_cron every 15 minutes. Polled rather than pushed when an exec hits
+  // Activate or Publish, so a bot that happens to be restarting at that moment
+  // causes a delay instead of a lost announcement nobody would notice was lost.
+  //
+  // Club events ride this tick (00245) rather than getting a job of their own,
+  // for the reason the outbox rides /announcements: a new job is SQL an owner
+  // has to run on production. Two try/catch blocks, so neither pass can abort
+  // the other. The tournament counters stay flat at the top level, as before.
   if (req.method === 'POST' && req.url === '/tournament-events') {
     if (!isAuthorizedService(req.headers.authorization)) {
       return send(res, 401, { error: 'unauthorized' });
     }
+    let tournaments: Awaited<ReturnType<typeof runTournamentEvents>> | null = null;
+    let clubEvents: Awaited<ReturnType<typeof runClubEvents>> | null = null;
+
     try {
-      const result = await runTournamentEvents();
-      return send(res, 200, result);
+      tournaments = await runTournamentEvents();
     } catch (error) {
       console.error('[bot] tournament events failed:', error);
+    }
+
+    try {
+      clubEvents = await runClubEvents();
+    } catch (error) {
+      console.error('[bot] club events failed:', error);
+    }
+
+    if (!tournaments && !clubEvents) {
       return send(res, 500, { error: 'tournament_events_failed' });
     }
+
+    return send(res, 200, { ...(tournaments ?? {}), clubEvents });
   }
 
   // The announcement relay, driven by pg_cron every 5 minutes. Faster than the

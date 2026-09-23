@@ -77,7 +77,7 @@ export const FEATURES = [
     id: 'events',
     label: 'Club events',
     description:
-      'Socials, workshops, clinics, outings and the AGM, and signing up for them. Off hides them from members and refuses sign-ups; the console keeps every event and sign-up.',
+      'Socials, workshops, clinics, outings and the AGM, and signing up for them. Off hides them from members and refuses sign-ups, and stops club events being posted to the Discord Events tab; the console keeps every event and sign-up.',
     playerRoutes: ['/events'],
     adminRoutes: ['/events'],
   },

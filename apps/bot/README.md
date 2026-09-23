@@ -66,7 +66,8 @@ src/
   setup.ts          Pure: decides what /setup adopts vs. creates.
   sync.ts           Applies a role diff to a guild; sweeps every guild.
   api.ts            Calls back into the player app's /api/discord/* surface.
-  ...               announcements, session-pings, tournament-events,
+  scheduled-event-sync.ts  The Events tab loop shared by tournament-events and club-events.
+  ...               announcements, session-pings, tournament-events, club-events,
                     match-results, feedback, handles, audit, config, multipart.
   __tests__/        Vitest. The pure modules above are why this is testable.
 ```
@@ -86,7 +87,7 @@ All except `/health` require `Authorization` matching `DISCORD_SERVICE_SECRET`.
 | `POST /sync` | nightly `pg_cron` — full role reconciliation sweep |
 | `POST /sync-member` | the app, immediately on link/unlink |
 | `POST /session-pings` | `pg_cron`, alongside the app's reminder job |
-| `POST /tournament-events` | `pg_cron`, every 15 minutes |
+| `POST /tournament-events` | `pg_cron`, every 15 minutes: tournaments and club events |
 | `POST /announcements` | `pg_cron` |
 | `POST /match-results` | `pg_cron` |
 | `POST /feedback` | `pg_cron` |
