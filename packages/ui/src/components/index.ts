@@ -28,6 +28,7 @@ export {
 } from './StaleBuildBanner';
 export { Dialog } from './Dialog';
 export { Dropdown } from './Dropdown';
+export { NavMenu, type NavMenuItem, type NavMenuLinkProps } from './NavMenu';
 export { Spinner } from './Spinner';
 export { EmptyState } from './EmptyState';
 export { DataTable } from './DataTable';

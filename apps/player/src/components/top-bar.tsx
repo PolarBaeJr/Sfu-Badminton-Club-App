@@ -2,33 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { cn } from '@badminton/ui';
+import { cn, NavMenu, isRouteActive, isGroupActive } from '@badminton/ui';
+import { desktopEntries } from '@/lib/nav-entries';
 import { ShuttleMark } from './shuttle-mark';
 import {
-  Home,
-  Trophy,
-  Crosshair,
-  Calendar,
-  Award,
-  Sparkles,
   Bell,
   Settings,
   LogIn,
   Shield,
 } from 'lucide-react';
-
-// `gated` marks destinations that require an approved account. requirePlayer()
-// rejects a pending member with "Account pending approval", so linking them is
-// a promise the app can't keep — hide until approved rather than let someone
-// click through to an error.
-const desktopNavItems = [
-  { href: '/feed',          label: 'Feed',         icon: Home,      gated: false },
-  { href: '/leaderboard',   label: 'Leaderboard',  icon: Trophy,    gated: false },
-  { href: '/challenges',    label: 'Challenges',   icon: Crosshair, gated: true  },
-  { href: '/sessions',      label: 'Schedule',     icon: Calendar,  gated: true  },
-  { href: '/tournaments',   label: 'Tournaments',  icon: Award,     gated: true  },
-  { href: '/my-stats',      label: 'Stats',        icon: Sparkles,  gated: false },
-];
 
 export function TopBar({
   playerName,
@@ -70,9 +52,9 @@ export function TopBar({
   // every past-season screen already names its own term (past-season.tsx:267).
   // The only job here is to stop claiming a season the viewer is not looking at.
   const viewingPastSeason = viewedSeasonId !== '' && viewedSeasonId !== activeSeasonId;
-  const navItems = isAuthenticated
-    ? desktopNavItems.filter((item) => isApproved || !item.gated)
-    : [];
+  // Gated destinations are filtered on isApproved inside, and a group left
+  // empty (Play and Events, for a pending member) is dropped with them.
+  const navEntries = isAuthenticated ? desktopEntries(isApproved) : [];
   // Auth, onboarding and the Discord consent screen render their own
   // full-screen layout — no app chrome.
   if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
@@ -105,17 +87,40 @@ export function TopBar({
 
         <nav className="nav" aria-label="Main navigation">
           {isAuthenticated ? (
-            navItems.map((item) => {
-              const active = pathname.startsWith(item.href);
+            navEntries.map((entry) => {
+              if (entry.kind === 'link') {
+                const { item } = entry;
+                const active = isRouteActive(pathname, item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn('nav-item', active && 'active')}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              }
+              const { group } = entry;
+              const active = isGroupActive(pathname, group);
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn('nav-item', active && 'active')}
-                  aria-current={active ? 'page' : undefined}
-                >
-                  {item.label}
-                </Link>
+                <NavMenu
+                  key={group.id}
+                  id={group.id}
+                  label={group.label}
+                  active={active}
+                  pathname={pathname}
+                  items={group.items.map((item) => ({
+                    href: item.href,
+                    label: item.label,
+                    icon: item.icon,
+                    current: isRouteActive(pathname, item.href),
+                  }))}
+                  renderLink={(item, props) => <Link href={item.href} {...props} />}
+                  triggerClassName={cn('nav-item nav-group', active && 'active')}
+                  panelClassName="nav-menu"
+                />
               );
             })
           ) : (

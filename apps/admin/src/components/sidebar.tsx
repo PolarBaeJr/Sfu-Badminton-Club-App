@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { cn } from '@badminton/ui';
+import { cn, NavMenu, visibleEntries, isRouteActive, isGroupActive } from '@badminton/ui';
 // Deep import, not the '@badminton/shared' barrel — see the player middleware.
 import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
 import { withBase } from '@/lib/base-path';
@@ -16,7 +16,7 @@ import {
   type AccessLevel,
   type PermissionsInput,
 } from '@/lib/permissions';
-import { NAV_SECTIONS, type NavItem } from './nav-sections';
+import { NAV_LAYOUT, type NavItem } from './nav-sections';
 
 // How quickly a promotion, demotion or narrowing reaches an already-open tab.
 const POLL_MS = 5000;
@@ -158,26 +158,29 @@ export function Sidebar({
   const permissions = access.permissions
     ? permissionsOf(access.level, access.permissions)
     : UNRESTRICTED;
-  const visibleItems = NAV_SECTIONS.map((section) =>
-    section.items.filter(
-      (item) => accessLoaded && canAccess(access.level, permissions, item.href),
-    )
+  // A group this person can open nothing in is dropped; one with anything in it
+  // stays a menu, even a menu of one, so the bar keeps the same shape as a
+  // grant or revoke lands.
+  const entries = visibleEntries(
+    NAV_LAYOUT,
+    (item) => accessLoaded && canAccess(access.level, permissions, item.href),
   );
-  const manageItems = visibleItems[0] ?? [];
-  const adminItems = visibleItems[1] ?? [];
+
+  const navText = (isActive: boolean) =>
+    cn(
+      'relative px-3 py-3.5 text-[11px] font-semibold uppercase tracking-[0.08em] whitespace-nowrap transition-colors',
+      isActive
+        ? 'text-[var(--text-primary)]'
+        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+    );
 
   const navLink = (item: NavItem) => {
-    const isActive = pathname.startsWith(item.href);
+    const isActive = isRouteActive(pathname, item.href);
     return (
       <Link
         key={item.href}
         href={item.href}
-        className={cn(
-          'relative px-3 py-3.5 text-[11px] font-semibold uppercase tracking-[0.08em] whitespace-nowrap transition-colors',
-          isActive
-            ? 'text-[var(--text-primary)]'
-            : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-        )}
+        className={navText(isActive)}
       >
         {item.label}
         {isActive && (
@@ -189,7 +192,7 @@ export function Sidebar({
 
   return (
     <header className="sticky top-0 z-40 bg-[var(--bg-primary)] border-b border-[var(--border)]">
-      {/* Row 1 — brand + Manage nav + user */}
+      {/* Brand + grouped nav + user */}
       <div className="flex items-center gap-4 px-4 lg:px-6">
         <Link href="/dashboard" className="flex items-center gap-2.5 flex-shrink-0 py-2.5">
           <span className="w-8 h-8 grid place-items-center bg-[var(--color-accent)] text-white font-display font-bold text-sm">
@@ -200,7 +203,37 @@ export function Sidebar({
           </span>
         </Link>
         <nav className="flex items-center overflow-x-auto min-w-0">
-          {manageItems.map(navLink)}
+          {entries.map((entry) => {
+            if (entry.kind === 'link') return navLink(entry.item);
+            const { group } = entry;
+            const isActive = isGroupActive(pathname, group);
+            return (
+              // Keyed by the group's id, never its items: the access poll above
+              // hands back fresh arrays every five seconds, and a key built from
+              // them would remount the menu and shut it under the reader.
+              <NavMenu
+                key={group.id}
+                id={group.id}
+                label={group.label}
+                active={isActive}
+                pathname={pathname}
+                items={group.items.map((item) => ({
+                  href: item.href,
+                  label: item.label,
+                  current: isRouteActive(pathname, item.href),
+                }))}
+                renderLink={(item, props) => <Link href={item.href} {...props} />}
+                triggerClassName={cn(
+                  navText(isActive),
+                  'flex items-center gap-1',
+                  isActive &&
+                    "after:content-[''] after:absolute after:left-3 after:right-3 after:bottom-0 after:h-[2px] after:bg-[var(--color-accent)]"
+                )}
+                panelClassName="bg-[var(--bg-elevated)] border border-[var(--border)] shadow-xl py-1"
+                linkClassName="flex items-center gap-2.5 px-4 min-h-[40px] text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] focus-visible:outline-none focus-visible:bg-[var(--border-hover)] aria-[current=page]:text-[var(--text-primary)] aria-[current=page]:shadow-[inset_2px_0_0_var(--color-accent)] transition-colors"
+              />
+            );
+          })}
         </nav>
         <div className="ml-auto flex items-center gap-3 flex-shrink-0">
           {userEmail && (
@@ -221,13 +254,6 @@ export function Sidebar({
           </button>
         </div>
       </div>
-
-      {/* Row 2 — Admin-only sub-nav (hairline top; the header border gives the bottom) */}
-      {adminItems.length > 0 && (
-        <nav className="flex items-center overflow-x-auto px-4 lg:px-6 border-t border-[var(--border)]">
-          {adminItems.map(navLink)}
-        </nav>
-      )}
     </header>
   );
 }

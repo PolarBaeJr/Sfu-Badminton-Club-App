@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { cn, useLiveChannel } from '@badminton/ui';
+import { cn, useLiveChannel, Dialog, isRouteActive, isGroupActive } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import {
   ANNOUNCEMENT_VISIBILITY_COLUMNS,
@@ -11,21 +11,13 @@ import {
   unreadAnnouncementCount,
   withVisibleAnnouncements,
 } from '@/lib/announcement-visibility';
-import { Home, Trophy, Crosshair, Calendar, Sparkles, LogIn } from 'lucide-react';
+import { mobileSlots, type PlayerNavEntry } from '@/lib/nav-entries';
+import { Home, Trophy, LogIn } from 'lucide-react';
 
-// `gated` = needs an approved account (see top-bar.tsx).
-const navItems = [
-  { href: '/feed',        label: 'Feed',  icon: Home,      gated: false },
-  { href: '/leaderboard', label: 'Ranks', icon: Trophy,    gated: false },
-  { href: '/challenges',  label: 'Vs.',   icon: Crosshair, gated: true  },
-  { href: '/sessions',    label: 'Play',  icon: Calendar,  gated: true  },
-  { href: '/my-stats',    label: 'Me',    icon: Sparkles,  gated: false },
-];
-
-const publicNavItems = [
-  { href: '/',            label: 'Home',    icon: Home  },
-  { href: '/leaderboard', label: 'Ranks',   icon: Trophy },
-  { href: '/login',       label: 'Sign in', icon: LogIn },
+const publicSlots: PlayerNavEntry[] = [
+  { kind: 'link', item: { href: '/',            label: 'Home',    icon: Home,   gated: false } },
+  { kind: 'link', item: { href: '/leaderboard', label: 'Ranks',   icon: Trophy, gated: false } },
+  { kind: 'link', item: { href: '/login',       label: 'Sign in', icon: LogIn,  gated: false } },
 ];
 
 export function BottomNav({
@@ -40,6 +32,13 @@ export function BottomNav({
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
   /** The viewer's players.id, once resolved. Null while signed out. */
   const [playerId, setPlayerId] = useState<string | null>(null);
+  /** The id of the group whose sheet is open (Play, Events), or null. */
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+
+  // A navigation from anywhere, the back button included, shuts the sheet.
+  useEffect(() => {
+    setOpenGroupId(null);
+  }, [pathname]);
 
   // ONE CLIENT FOR THE LIFE OF THE NAV. This component sits in the layout and
   // never unmounts, and the count is re-read on every navigation now — a client
@@ -150,7 +149,7 @@ export function BottomNav({
   // read that lands from their other device.
   //
   // Nothing is subscribed until the viewer is resolved. A signed-out visitor
-  // has no badge to keep up to date — publicNavItems has no Feed tab — so a
+  // has no badge to keep up to date (publicSlots has no Feed tab), so a
   // socket for them would be a socket for nothing.
   // RE-COUNT WHEN THE CHANNEL COMES BACK, and note this one does NOT refresh
   // the route — it re-runs the same count query the two listeners below run,
@@ -221,56 +220,106 @@ export function BottomNav({
     return null;
   }
 
-  const items = isAuthenticated
-    ? navItems.filter((item) => isApproved || !item.gated)
-    : publicNavItems;
+  // Gated slots are filtered on isApproved inside, and a group left empty
+  // (Play and Events, for a pending member) is dropped with them.
+  const slots = isAuthenticated ? mobileSlots(isApproved) : publicSlots;
+  const openGroup = slots.flatMap((slot) =>
+    slot.kind === 'group' && slot.group.id === openGroupId ? [slot.group] : [],
+  )[0];
 
   return (
-    <nav className="mobile-tabbar" aria-label="Mobile navigation">
-      {items.map((item) => {
-        const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
-        const isLeaderboard = item.href === '/leaderboard';
-        const showBadge = item.href === '/feed' && unreadAnnouncements > 0;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn('press', active && 'active')}
-            aria-current={active ? 'page' : undefined}
-          >
-            <item.icon
-              size={20}
-              className={cn(
-                active && isLeaderboard && 'icon-trophy-shimmer',
-              )}
-            />
-            <span>{item.label}</span>
-            {showBadge && (
-              <span
-                aria-label={`${unreadAnnouncements} unread announcements`}
-                style={{
-                  position: 'absolute',
-                  top: 6,
-                  right: '38%',
-                  minWidth: 14,
-                  height: 14,
-                  padding: '0 4px',
-                  borderRadius: 999,
-                  background: 'var(--red)',
-                  color: '#fff',
-                  fontSize: 9,
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
+    <>
+      <nav className="mobile-tabbar" aria-label="Mobile navigation">
+        {slots.map((slot) => {
+          if (slot.kind === 'group') {
+            const { group } = slot;
+            const active = isGroupActive(pathname, group);
+            const GroupIcon = group.icon;
+            return (
+              <button
+                key={group.id}
+                type="button"
+                className={cn('press', active && 'active')}
+                aria-haspopup="dialog"
+                aria-expanded={openGroupId === group.id}
+                onClick={() => setOpenGroupId(group.id)}
               >
-                {unreadAnnouncements > 9 ? '9+' : unreadAnnouncements}
-              </span>
-            )}
-          </Link>
-        );
-      })}
-    </nav>
+                {GroupIcon && <GroupIcon size={20} />}
+                <span>{group.label}</span>
+              </button>
+            );
+          }
+          const { item } = slot;
+          const active = isRouteActive(pathname, item.href);
+          const isLeaderboard = item.href === '/leaderboard';
+          const showBadge = item.href === '/feed' && unreadAnnouncements > 0;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn('press', active && 'active')}
+              aria-current={active ? 'page' : undefined}
+            >
+              <item.icon
+                size={20}
+                className={cn(
+                  active && isLeaderboard && 'icon-trophy-shimmer',
+                )}
+              />
+              <span>{item.label}</span>
+              {showBadge && (
+                <span
+                  aria-label={`${unreadAnnouncements} unread announcements`}
+                  style={{
+                    position: 'absolute',
+                    top: 6,
+                    right: '38%',
+                    minWidth: 14,
+                    height: 14,
+                    padding: '0 4px',
+                    borderRadius: 999,
+                    background: 'var(--red)',
+                    color: '#fff',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {unreadAnnouncements > 9 ? '9+' : unreadAnnouncements}
+                </span>
+              )}
+            </Link>
+          );
+        })}
+      </nav>
+      {/* ONE dialog, outside the tab bar. Outside because the bar is fixed at
+          z-index 40, which would cap anything inside it; one because Dialog
+          names its heading with a fixed id, so two would collide. */}
+      <Dialog
+        open={openGroup !== undefined}
+        onClose={() => setOpenGroupId(null)}
+        title={openGroup?.label ?? ''}
+      >
+        <div className="nav-sheet">
+          {openGroup?.items.map((item) => {
+            const current = isRouteActive(pathname, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="nav-sheet-link"
+                aria-current={current ? 'page' : undefined}
+                onClick={() => setOpenGroupId(null)}
+              >
+                <item.icon size={18} />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      </Dialog>
+    </>
   );
 }

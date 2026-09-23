@@ -15,6 +15,10 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { canAccess, type AccessLevel, type Area, type Permissions } from '../lib/permissions';
+// Deep and type-only, NOT the '@badminton/ui' barrel: that loads every
+// component in the package, and this module is imported by tests that must not
+// need a DOM.
+import type { NavEntry } from '@badminton/ui/src/nav-groups';
 
 // THE CONSOLE'S NAVIGATION, as data.
 //
@@ -104,3 +108,36 @@ export function openableSections(
     canAccess(level, permissions, item.href),
   );
 }
+
+// THE TOP BAR'S LAYOUT: the same items, arranged into menus.
+//
+// NAV_SECTIONS above stays the list of record (its order is pinned by
+// nav-drift.test.ts, and openableSections() walks it); this only decides where
+// each item sits on screen. The two sections are no longer rendered as rows. Built by href lookup so an item cannot be copied
+// here with a different label or area, and a mistyped href fails at module
+// load rather than quietly dropping a link. nav-layout.test.ts checks that
+// every item appears exactly once.
+//
+// A new destination in a group is one href added to its list.
+const byHref = new Map(NAV_SECTIONS.flatMap((section) => section.items).map((item) => [item.href, item]));
+
+function navItem(href: string): NavItem {
+  const item = byHref.get(href);
+  if (!item) throw new Error(`NAV_LAYOUT names ${href}, which is not in NAV_SECTIONS`);
+  return item;
+}
+
+const group = (id: string, label: string, hrefs: string[]): NavEntry<NavItem> => ({
+  kind: 'group',
+  group: { id, label, items: hrefs.map(navItem) },
+});
+
+export const NAV_LAYOUT: NavEntry<NavItem>[] = [
+  { kind: 'link', item: navItem('/dashboard') },
+  group('play', 'Play', ['/sessions', '/matches', '/seasons']),
+  group('events', 'Events', ['/tournaments']),
+  group('members', 'Members', ['/players', '/permissions', '/accounts']),
+  group('club', 'Club', ['/announcements', '/fees', '/legal']),
+  group('system', 'System', ['/ratings', '/audit']),
+  { kind: 'link', item: navItem('/settings') },
+];

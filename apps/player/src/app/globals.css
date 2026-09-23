@@ -388,6 +388,36 @@ body {
 }
 .nav-item .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--red); }
 
+/* A nav group: the trigger is a .nav-item button, so it takes the same look and
+   the same active underline. The panel is portalled to <body>, which is why its
+   rules are top-level and not scoped under .topbar. */
+.nav-menu {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 4px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.nav-menu a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: var(--r-md);
+  color: var(--mute); font-weight: 600; font-size: 12px;
+  text-transform: uppercase; letter-spacing: .08em;
+  transition: color .15s, background-color .15s;
+}
+.nav-menu a:hover, .nav-menu a:focus-visible { color: var(--ink); background: var(--surface-2); outline: none; }
+.nav-menu a[aria-current="page"] { color: var(--ink); box-shadow: inset 2px 0 0 var(--red); }
+
+/* The mobile tab bar's Play and Events sheets. */
+.nav-sheet { display: flex; flex-direction: column; gap: 6px; }
+.nav-sheet-link {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 48px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  color: var(--ink); font-weight: 600; font-size: 14px;
+}
+.nav-sheet-link[aria-current="page"] { color: var(--red); border-color: var(--red); }
+
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 
 .icon-btn {

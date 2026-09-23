@@ -21,5 +21,13 @@ export {
   toggleValue,
   type MultiSelectOption,
 } from './multi-select';
+export {
+  visibleEntries,
+  isRouteActive,
+  isGroupActive,
+  flattenEntries,
+  type NavGroup,
+  type NavEntry,
+} from './nav-groups';
 export { useLiveChannel, type RecoverableChannel } from './use-live-channel';
 export { cn } from './utils';
