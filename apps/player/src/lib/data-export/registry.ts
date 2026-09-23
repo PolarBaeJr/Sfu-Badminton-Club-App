@@ -283,6 +283,11 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     disposition: 'export',
     why: 'Every session you said you were going to, and the reminder we sent or tried to send you for it.',
   },
+  club_event_signups: {
+    playerColumns: ['player_id'],
+    disposition: 'export',
+    why: 'Every club event you signed up for, and when.',
+  },
   waiver_acceptances: {
     playerColumns: ['player_id'],
     disposition: 'export',
@@ -489,6 +494,12 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     disposition: 'project',
     withheldColumns: ['created_by'],
     why: 'Only enough of each tournament to make your entries legible, plus a flag where you created it.',
+  },
+  club_events: {
+    playerColumns: ['created_by'],
+    disposition: 'project',
+    withheldColumns: ['created_by'],
+    why: 'Only enough of each club event to make your sign-ups legible, plus a flag where you created it.',
   },
   tournament_events: {
     playerColumns: [],

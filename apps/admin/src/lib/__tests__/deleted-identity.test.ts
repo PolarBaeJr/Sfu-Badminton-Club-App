@@ -243,6 +243,7 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
   const KEPT: Record<string, string> = {
     announcement_reads: 'the club\'s record of who has seen a notice; no identity in the row',
     challenge_participants: 'a challenge has two players and the row is both their record',
+    club_event_signups: 'who signed up for a club event, the operational record of that event like session_rsvp',
     club_fees: 'a financial record, kept for the same reason a receipt is',
     digest_deliveries: 'the delivery key that stops a digest sending twice; activity, not identity',
     event_feedback: 'written about a club event, and part of the record of that event',

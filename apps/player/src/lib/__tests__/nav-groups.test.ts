@@ -31,9 +31,9 @@ describe('the player top bar', () => {
     expect(flattenEntries(entries).some((item) => item.gated)).toBe(false);
   });
 
-  it('puts tournaments under Events', () => {
+  it('puts tournaments and club events under Events', () => {
     const events = DESKTOP_ENTRIES.find((e) => e.kind === 'group' && e.group.id === 'events');
-    expect(events?.kind === 'group' && events.group.items.map((item) => item.href)).toEqual(['/tournaments']);
+    expect(events?.kind === 'group' && events.group.items.map((item) => item.href)).toEqual(['/tournaments', '/events']);
   });
 
   it('never lists one destination twice', () => {
@@ -82,20 +82,26 @@ describe('the nav with a feature switched off', () => {
     expect(mobileSlots(true, ALL_FEATURES_ENABLED)).toEqual(MOBILE_SLOTS);
   });
 
-  it('drops the Events menu on both bars when tournaments are off', () => {
-    expect(labels(desktopEntries(true, off('tournaments')))).toEqual(['Feed', 'Play', 'Stats']);
-    expect(labels(mobileSlots(true, off('tournaments')))).toEqual(['Feed', 'Ranks', 'Play', 'Me']);
+  it('drops the Events menu on both bars when tournaments and club events are off', () => {
+    expect(labels(desktopEntries(true, off('tournaments', 'events')))).toEqual(['Feed', 'Play', 'Stats']);
+    expect(labels(mobileSlots(true, off('tournaments', 'events')))).toEqual(['Feed', 'Ranks', 'Play', 'Me']);
+  });
+
+  it('keeps Events with only club events in it when tournaments alone are off', () => {
+    expect(labels(desktopEntries(true, off('tournaments')))).toEqual(['Feed', 'Play', 'Events', 'Stats']);
+    expect(hrefs(desktopEntries(true, off('tournaments')))).not.toContain('/tournaments');
+    expect(hrefs(desktopEntries(true, off('tournaments')))).toContain('/events');
   });
 
   it('keeps Events for a holder of page.access.tournaments, who can still open the pages', () => {
-    expect(labels(desktopEntries(true, off('tournaments'), ['tournaments']))).toEqual(['Feed', 'Play', 'Events', 'Stats']);
-    expect(labels(mobileSlots(true, off('tournaments'), ['tournaments']))).toEqual(['Feed', 'Ranks', 'Play', 'Events', 'Me']);
+    expect(labels(desktopEntries(true, off('tournaments', 'events'), ['tournaments']))).toEqual(['Feed', 'Play', 'Events', 'Stats']);
+    expect(labels(mobileSlots(true, off('tournaments', 'events'), ['tournaments']))).toEqual(['Feed', 'Ranks', 'Play', 'Events', 'Me']);
   });
 
   // THE KEY IS PER FEATURE. Holding the one for challenges is not a way into
   // tournaments, which is what "console access" used to be.
   it('drops Events for a holder of a different feature key', () => {
-    expect(labels(desktopEntries(true, off('tournaments'), ['challenges']))).toEqual(['Feed', 'Play', 'Stats']);
+    expect(labels(desktopEntries(true, off('tournaments', 'events'), ['challenges']))).toEqual(['Feed', 'Play', 'Stats']);
   });
 
   it('drops a mobile slot whose only destination is off', () => {

@@ -185,6 +185,7 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
       'fees.reinstatements.read',
       'page.access.announcements',
       'page.access.challenges',
+      'page.access.events',
       'page.access.fees',
       'page.access.leaderboard',
       'page.access.my_stats',
@@ -271,6 +272,15 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
       'challenges.page',
       'walkovers.page',
       'disputes.page',
+      // Club events (00244): admin-only by level until the owner decides
+      // otherwise, which would be a ROLE_DEFAULTS re-seed.
+      'events.page',
+      'events.signups.read',
+      'events.signups.remove.write',
+      'events.manage.create.write',
+      'events.manage.update.write',
+      'events.manage.cancel.write',
+      'events.manage.delete.write',
     ] as Capability[]) {
       expect(offerable.has(capability), `${capability} became offerable`).toBe(false);
     }

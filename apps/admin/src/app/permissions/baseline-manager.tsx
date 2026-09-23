@@ -75,6 +75,7 @@ const AREA_LABELS: Record<Area, string> = {
   challenges: 'Challenges',
   announcements: 'Announcements',
   tournaments: 'Tournaments',
+  events: 'Club events',
   fees: 'Finances',
   legal: 'Legal',
   walkovers: 'Walkovers',

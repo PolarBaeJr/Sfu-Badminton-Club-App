@@ -262,6 +262,15 @@ const TODAY: Row[] = [
   { capability: 'tournaments.fees.markpaid.write',    admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — tournament-fees.ts:218' },
   { capability: 'tournaments.fees.markunpaid.write',  admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — tournament-fees.ts:294' },
 
+  // ---- events ----------------------------------------------------------
+  { capability: 'events.page',                         admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.signups.read',                 admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.signups.remove.write',         admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.manage.create.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.manage.update.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.manage.cancel.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.manage.delete.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+
   // ---- fees ------------------------------------------------------------
   // The exec rows in this whole area are the club owner's "allow execs to add
   // expenses too", and nothing else on the page ever was.
@@ -351,6 +360,7 @@ const TODAY: Row[] = [
   { capability: 'page.access.my_stats',               admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
   { capability: 'page.access.announcements',          admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
   { capability: 'page.access.fees',                   admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.events',                 admin: T, exec: F, trainer: F, was: 'no prior gate: the events switch is new in 00244' },
 ];
 
 describe('capability equivalence — nobody gained anything', () => {

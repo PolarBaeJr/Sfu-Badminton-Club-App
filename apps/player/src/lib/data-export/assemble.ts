@@ -839,6 +839,34 @@ export async function assembleMemberExport(
     you_created_this: row.created_by === playerId,
   }));
 
+  // Club events (00244): the member's sign-ups, then just enough of each event
+  // to read them by, plus any event they created without signing up for it.
+  data.club_event_signups = await reader.all('club_event_signups', (q) =>
+    q.eq('player_id', playerId),
+  );
+  const clubEventIds = ids(data.club_event_signups, 'event_id');
+  data.club_events = (
+    await reader.allInByKey(
+      'club_events',
+      clubEventIds,
+      (q, batch) => q.in('id', batch),
+      'id, title, kind, starts_at, ends_at, location, status, created_by',
+    )
+  ).map((row) => ({
+    ...dropColumns(row, ['created_by']),
+    you_created_this: row.created_by === playerId,
+  }));
+  const createdClubEvents = await reader.all(
+    'club_events',
+    (q) => q.eq('created_by', playerId),
+    'id, title, kind, starts_at, ends_at, location, status',
+  );
+  for (const row of createdClubEvents) {
+    if (!clubEventIds.includes(row.id as string)) {
+      data.club_events.push({ ...row, you_created_this: true });
+    }
+  }
+
   // Announcements they wrote, reduced to the title and the dates: the
   // announcement itself was published to the whole club.
   data.announcements = (

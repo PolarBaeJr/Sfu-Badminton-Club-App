@@ -143,6 +143,14 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'data_api_key_minted',
   'data_api_key_revoked',
 
+  // CLUB EVENTS (00244). The delete and the removal match the risk patterns and
+  // would be forced in anyway. The cancellation matches none, so it is
+  // classified by hand, like 'discord_link_forced': a cancellation is what
+  // tells members an event they signed up for is off.
+  'club_event_deleted',
+  'club_event_signup_removed',
+  'club_event_cancelled',
+
   // THE TOURNAMENT TRAIL, WHICH THIS SET SILENTLY DID NOT COVER.
   //
   // audit.ts's logAudit calls isRequiredAudit(params.action) against this very

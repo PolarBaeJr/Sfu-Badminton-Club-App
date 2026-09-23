@@ -586,6 +586,19 @@ const FIXTURES: Record<string, StubRow[]> = {
     { id: 'sa1', session_id: 'sess-1', player_id: PLAYER_ID, status: 'present', marked_by: SENTINEL },
   ],
   session_rsvp: [{ id: 'rsvp1', session_id: 'sess-1', player_id: PLAYER_ID, intent: 'going' }],
+  club_event_signups: [{ event_id: 'cev-1', player_id: PLAYER_ID, created_at: '2026-09-20T18:00:00Z' }],
+  club_events: [
+    {
+      id: 'cev-1',
+      title: 'Club social',
+      kind: 'social',
+      starts_at: '2026-10-02T02:00:00Z',
+      ends_at: null,
+      location: 'Gym',
+      status: 'published',
+      created_by: SENTINEL,
+    },
+  ],
   waiver_acceptances: [
     { id: 'w1', player_id: PLAYER_ID, document: 'waiver', user_agent: 'Mozilla/5.0 (fake)' },
   ],

@@ -38,6 +38,7 @@ export * from './utils/tournament-window';
 export * from './utils/tournament-bonuses';
 export * from './utils/tournament-withdrawal';
 export * from './utils/tournament-entry-cap';
+export * from './utils/club-events';
 export * from './utils/doubles-pool';
 export * from './utils/competition-category';
 export * from './utils/privilege-claim';

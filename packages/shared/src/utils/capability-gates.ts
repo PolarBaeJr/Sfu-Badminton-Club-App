@@ -480,6 +480,36 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     gate: 'actions/tournament-fees.ts markTournamentFeeUnpaid',
   },
 
+  // ---- events ------------------------------------------------------------
+  'events.page': {
+    label: 'Open Club events', area: 'events', group: null, mode: 'page',
+    gate: 'route /events',
+  },
+  'events.signups.read': {
+    label: 'See who signed up for a club event', area: 'events', group: null, mode: 'read',
+    gate: 'app/events/[id]/page.tsx signups fetch',
+  },
+  'events.signups.remove.write': {
+    label: 'Remove a member from a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts removeClubEventSignup',
+  },
+  'events.manage.create.write': {
+    label: 'Create a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts createClubEvent',
+  },
+  'events.manage.update.write': {
+    label: 'Edit or publish a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts updateClubEvent',
+  },
+  'events.manage.cancel.write': {
+    label: 'Cancel a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts cancelClubEvent',
+  },
+  'events.manage.delete.write': {
+    label: 'Delete a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts deleteClubEvent',
+  },
+
   // ---- fees --------------------------------------------------------------
   // The page and the Expenses ledger are two gates now, where they used to be
   // one. FeesPage admits anyone with the page; the ledger's own fetch is what
@@ -725,6 +755,15 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
       'player lib/tournament-actions.ts selfCheckIn',
       'player lib/tournament-actions.ts setMyMatchReady',
       'player lib/tournament-checkin.ts checkInToTournament',
+    ],
+    merged: SWITCHED_OFF,
+  },
+  'page.access.events': {
+    label: 'Club events while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/events/layout.tsx FeatureGate',
+    also: [
+      'player lib/club-event-actions.ts signUpForClubEvent',
+      'player lib/club-event-actions.ts withdrawFromClubEvent',
     ],
     merged: SWITCHED_OFF,
   },

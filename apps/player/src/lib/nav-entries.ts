@@ -1,4 +1,4 @@
-import { Home, Trophy, Crosshair, Calendar, Award, Sparkles, type LucideIcon } from 'lucide-react';
+import { Home, Trophy, Crosshair, Calendar, CalendarHeart, Award, Sparkles, type LucideIcon } from 'lucide-react';
 // Deep, NOT the '@badminton/ui' barrel: that loads every component in the
 // package, and this module is imported by a test that has no DOM.
 import { visibleEntries, type NavEntry, type NavGroup } from '@badminton/ui/src/nav-groups';
@@ -32,6 +32,7 @@ const LEADERBOARD: PlayerNavItem = { href: '/leaderboard', label: 'Leaderboard',
 const SCHEDULE: PlayerNavItem = { href: '/sessions', label: 'Schedule', icon: Calendar, gated: true };
 const CHALLENGES: PlayerNavItem = { href: '/challenges', label: 'Challenges', icon: Crosshair, gated: true };
 const TOURNAMENTS: PlayerNavItem = { href: '/tournaments', label: 'Tournaments', icon: Award, gated: true };
+const CLUB_EVENTS: PlayerNavItem = { href: '/events', label: 'Club events', icon: CalendarHeart, gated: true };
 const MY_STATS: PlayerNavItem = { href: '/my-stats', label: 'My stats', icon: Sparkles, gated: false };
 
 const PLAY: NavGroup<PlayerNavItem, LucideIcon> = {
@@ -46,7 +47,7 @@ const EVENTS: NavGroup<PlayerNavItem, LucideIcon> = {
   id: 'events',
   label: 'Events',
   icon: Award,
-  items: [TOURNAMENTS],
+  items: [TOURNAMENTS, CLUB_EVENTS],
 };
 
 const STATS: NavGroup<PlayerNavItem, LucideIcon> = {

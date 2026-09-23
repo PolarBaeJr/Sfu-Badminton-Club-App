@@ -109,6 +109,7 @@ export const AREAS = [
   'challenges',
   'announcements',
   'tournaments',
+  'events',
   'fees',
   'legal',
   'walkovers',
@@ -379,6 +380,19 @@ export const CAPABILITIES = [
   'tournaments.fees.tier.delete.write',
   'tournaments.fees.markpaid.write',
   'tournaments.fees.markunpaid.write',
+
+  // ---- events ------------------------------------------------------------
+  // Club events that are not tournaments: socials, workshops, clinics, outings
+  // and the AGM. Admin-only by level: in no baseline, and in neither
+  // EXEC_ASSIGNABLE nor OFFERABLE_BEYOND_EXEC. Making them exec work later is a
+  // ROLE_DEFAULTS re-seed like 00224, and that is the owner's decision.
+  'events.page',
+  'events.signups.read',
+  'events.signups.remove.write',
+  'events.manage.create.write',
+  'events.manage.update.write',
+  'events.manage.cancel.write',
+  'events.manage.delete.write',
 
   // ---- fees --------------------------------------------------------------
   // Four ledgers plus the net position, each with its own read, under one page

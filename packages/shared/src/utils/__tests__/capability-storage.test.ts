@@ -55,9 +55,12 @@ describe('the migrations and the vocabulary', () => {
   // `announcements.discord.write`, reaching 120, and 00232 adds
   // `players.discordlink.write`, reaching 121, and 00238 adds the data API's
   // three `accounts.apikey.*` keys, reaching 124, and 00243 adds the seven
-  // `page.access.*` keys to switched-off features, reaching 131. THE LIVE LIST
-  // IS THE LAST ONE, and only the last one.
-  const vocabularySql = migration('00243_');
+  // `page.access.*` keys to switched-off features, reaching 131, and 00244
+  // adds the club events keys, reaching 139. THE LIVE LIST IS THE LAST ONE,
+  // and only the last one.
+  const vocabularySql = migration('00244_');
+  // 00244 again, under a content name, for the same reason 00243 has one.
+  const clubEventsVocabularySql = migration('00244_');
   // 00243 again, under a content name, so the hop and the admit test for it
   // keep comparing 00243 when the pointer above moves on to the next file.
   const switchedOffPagesVocabularySql = migration('00243_');
@@ -154,7 +157,7 @@ describe('the migrations and the vocabulary', () => {
 
   // ...nor in 00105, which adds `players.consoleaccess.write`. Every hop from
   // the last RENAME (00088) to the live list is asserted individually: 00088 ->
-  // 00089 -> 00097 -> 00098 -> 00105 -> 00223 -> 00232 -> 00238 -> 00243. Adding one means
+  // 00089 -> 00097 -> 00098 -> 00105 -> 00223 -> 00232 -> 00238 -> 00243 -> 00244. Adding one means
   // adding a hop here, which is the price of the chain staying a chain.
   it('removes nothing in 00223 either, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(prevVocabularySql, 'players_permission_vocabulary_check');
@@ -179,7 +182,7 @@ describe('the migrations and the vocabulary', () => {
     expect(before.filter((capability) => !after.has(capability))).toEqual([]);
   });
 
-  // ...nor in 00243, the newest link and the live list.
+  // ...nor in 00243.
   it('removes nothing in 00243 either, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(dataApiVocabularySql, 'players_permission_vocabulary_check');
     const after = new Set(arrayLiteralAfter(switchedOffPagesVocabularySql, 'players_permission_vocabulary_check'));
@@ -205,6 +208,33 @@ describe('the migrations and the vocabulary', () => {
     ]) {
       expect(before.has(capability), `${capability} was already in 00238`).toBe(false);
       expect(after.has(capability), `${capability} is missing from 00243`).toBe(true);
+    }
+  });
+
+  // ...nor in 00244, the newest link and the live list.
+  it('removes nothing in 00244 either, which is why it needs no rewrite', () => {
+    const before = arrayLiteralAfter(switchedOffPagesVocabularySql, 'players_permission_vocabulary_check');
+    const after = new Set(arrayLiteralAfter(clubEventsVocabularySql, 'players_permission_vocabulary_check'));
+    expect(before.filter((capability) => !after.has(capability))).toEqual([]);
+  });
+
+  // THE EIGHT KEYS 00244 IS FOR: the seven admin-only `events.*` capabilities
+  // and `page.access.events`, the key to the new events feature switch.
+  it('admits the club events keys, which is what 00244 is for', () => {
+    const before = new Set(arrayLiteralAfter(switchedOffPagesVocabularySql, 'players_permission_vocabulary_check'));
+    const after = new Set(arrayLiteralAfter(clubEventsVocabularySql, 'players_permission_vocabulary_check'));
+    for (const capability of [
+      'events.page',
+      'events.signups.read',
+      'events.signups.remove.write',
+      'events.manage.create.write',
+      'events.manage.update.write',
+      'events.manage.cancel.write',
+      'events.manage.delete.write',
+      'page.access.events',
+    ]) {
+      expect(before.has(capability), `${capability} was already in 00243`).toBe(false);
+      expect(after.has(capability), `${capability} is missing from 00244`).toBe(true);
     }
   });
 
@@ -306,10 +336,10 @@ describe('the migrations and the vocabulary', () => {
     // missing function rather than on a real disagreement, and following the
     // vocabulary assertion back to 00093 would check a list that is no longer
     // the live one. The vocabulary pointer moves with every migration that
-    // re-adds the CHECK (00097, 00098, 00105, 00223, 00232, 00238, now 00243)
+    // re-adds the CHECK (00097, 00098, 00105, 00223, 00232, 00238, 00243, now 00244)
     // while the guard pointer stays where the function is defined.
     const baselineGuardSql = migration('00093_');
-    const baselineSql = migration('00243_');
+    const baselineSql = migration('00244_');
 
     it('pins the same vocabulary the players columns pin', () => {
       const stored = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');

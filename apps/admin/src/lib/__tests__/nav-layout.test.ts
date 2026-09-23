@@ -59,6 +59,10 @@ describe('the console top bar layout', () => {
     expect(visibleFor('admin', UNRESTRICTED)).toEqual(NAV_LAYOUT);
   });
 
+  it('puts club events beside tournaments in the Events menu of an admin', () => {
+    expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({ events: ['/tournaments', '/events'] });
+  });
+
   // The same ten links nav-drift.test.ts pins for an unrestricted exec, now in
   // menus. System holds only admin-only sections, so it is gone entirely.
   it('shows an unrestricted exec these menus', () => {
@@ -135,6 +139,11 @@ describe('the console top bar with a feature switched off', () => {
     const visible = shape(visibleWith(off('tournaments')));
     expect(visible).not.toContainEqual({ events: ['/tournaments'] });
     expect(flattenEntries(visibleWith(off('tournaments'))).map((i) => i.href)).not.toContain('/tournaments');
+  });
+
+  // /events is admin-only, so an exec never had it to lose.
+  it('leaves an exec their Events menu when club events are off', () => {
+    expect(shape(visibleWith(off('events')))).toContainEqual({ events: ['/tournaments'] });
   });
 
   it('drops only Sessions from Play when sessions are off', () => {

@@ -292,8 +292,9 @@ describe('what may go in a baseline', () => {
     // would make it sixty-seven entries and this assertion would stop naming the
     // five capabilities somebody actually enumerated, which is its whole job.
     //
-    // TWELVE NOW: the seven `page.access.*` keys to switched-off features joined
-    // the ceiling, one per club feature switch. They are enumerated below for
+    // THIRTEEN NOW: the eight `page.access.*` keys to switched-off features
+    // joined the ceiling, one per club feature switch (`page.access.events`
+    // arrived with club events in 00244). They are enumerated below for
     // the same reason the five are, even though the ceiling spreads them from
     // the feature registry: a new feature's key should be a line somebody reads.
     const beyond = [...composed].filter(
@@ -306,6 +307,7 @@ describe('what may go in a baseline', () => {
       'fees.reinstatements.read',
       'page.access.announcements',
       'page.access.challenges',
+      'page.access.events',
       'page.access.fees',
       'page.access.leaderboard',
       'page.access.my_stats',

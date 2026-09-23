@@ -6,6 +6,7 @@ import {
   type ExpenseCategory,
   type OtherIncomeCategory,
 } from '../utils/finance-categories';
+import { CLUB_EVENT_KINDS, CLUB_WALL_CLOCK_PATTERN } from '../utils/club-events';
 
 // Empty optional strings come from form fields where the user left the input blank.
 // Coerce them to undefined so downstream code doesn't have to discriminate "" vs unset.
@@ -321,6 +322,53 @@ export const tournamentCreateSchema = z.object({
   // than dangerous, and nothing here loops over it.
   max_events_per_player: z.number().int().min(1).max(100).nullable().optional(),
 });
+
+// A club event as the console form posts it (00244). Mirrors the table's
+// CHECKs so a bad field is a sentence rather than a constraint name. Times are
+// club wall-clock strings, converted to instants by the action; cost is in
+// dollars here and stored as integer cents. No status and no created_by: the
+// action decides both.
+const clubWallClockSchema = z.string().regex(CLUB_WALL_CLOCK_PATTERN, 'Invalid date and time');
+const optionalClubWallClock = z.preprocess(
+  (val) => (val === '' || val === undefined ? null : val),
+  clubWallClockSchema.nullable(),
+);
+const optionalText = (max: number) =>
+  z.preprocess(
+    (val) => (typeof val === 'string' && val.trim() === '' ? null : val),
+    z.string().trim().max(max).nullable().optional(),
+  );
+
+export const clubEventSchema = z
+  .object({
+    title: z.string().trim().min(1, 'Title is required').max(120),
+    kind: z.enum(CLUB_EVENT_KINDS),
+    description: optionalText(4000),
+    location: optionalText(200),
+    starts_at: clubWallClockSchema,
+    ends_at: optionalClubWallClock,
+    signup_opens_at: optionalClubWallClock,
+    signup_closes_at: optionalClubWallClock,
+    capacity: z.number().int().min(1).nullable(),
+    cost_dollars: z.number().min(0).max(1000).nullable(),
+    publish: z.boolean(),
+  })
+  .strict()
+  // Zero-padded YYYY-MM-DDTHH:MM strings compare correctly lexicographically.
+  .refine((d) => !d.ends_at || d.ends_at > d.starts_at, {
+    message: 'The end must be after the start',
+    path: ['ends_at'],
+  })
+  .refine((d) => !d.signup_opens_at || !d.signup_closes_at || d.signup_closes_at > d.signup_opens_at, {
+    message: 'Sign-ups must close after they open',
+    path: ['signup_closes_at'],
+  })
+  .transform(({ cost_dollars, ...rest }) => ({
+    ...rest,
+    cost_cents: cost_dollars === null ? null : Math.round(cost_dollars * 100),
+  }));
+
+export type ClubEventInput = z.input<typeof clubEventSchema>;
 
 export const tournamentSuspendSchema = z.object({
   tournament_id: z.string().uuid(),

@@ -112,6 +112,7 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   '/announcements': 'announcements.page',
   '/matches': 'matches.page',
   '/tournaments': 'tournaments.page',
+  '/events': 'events.page',
   '/sessions': 'sessions.page',
   '/seasons': 'seasons.page',
   // Finances. `fees.page` buys the SECTION and nothing in it: the five ledgers

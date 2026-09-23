@@ -74,6 +74,14 @@ export const FEATURES = [
     adminRoutes: ['/tournaments'],
   },
   {
+    id: 'events',
+    label: 'Club events',
+    description:
+      'Socials, workshops, clinics, outings and the AGM, and signing up for them. Off hides them from members and refuses sign-ups; the console keeps every event and sign-up.',
+    playerRoutes: ['/events'],
+    adminRoutes: ['/events'],
+  },
+  {
     id: 'leaderboard',
     label: 'Leaderboard',
     description:
