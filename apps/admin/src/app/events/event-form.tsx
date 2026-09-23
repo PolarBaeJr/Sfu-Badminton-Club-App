@@ -213,6 +213,7 @@ export function ClubEventControls({
       title: 'Cancel this event?',
       message: 'Everyone signed up is sent a notification. A cancelled event cannot be reopened.',
       confirmLabel: 'Cancel event',
+      cancelLabel: 'Keep event',
       danger: true,
     });
     if (!ok) return;
