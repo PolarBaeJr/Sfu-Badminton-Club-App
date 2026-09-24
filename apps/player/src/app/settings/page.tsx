@@ -787,6 +787,22 @@ export default function SettingsPage() {
           </Section>
 
           <Section icon={MessageSquareWarning} title="Help & Feedback">
+            {/* A replay. The member tour host sees ?tour=member on the feed and
+                opens the tour whether or not it has been seen, and a replay
+                never records anything. */}
+            <Link
+              href="/feed?tour=member"
+              className="settings-row settings-row-nav"
+              style={{ textDecoration: 'none', color: 'inherit' }}
+            >
+              <div>
+                <div className="settings-row-label">Take the app tour</div>
+                <div className="settings-row-hint">A one-minute look at where everything is.</div>
+              </div>
+              <div className="settings-row-control">
+                <ChevronRight size={16} className="text-[var(--mute)]" />
+              </div>
+            </Link>
             <Link
               href="/feedback"
               className="settings-row settings-row-nav"

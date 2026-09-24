@@ -705,6 +705,32 @@ export async function getSkillTiers(): Promise<SkillTierOption[]> {
 }
 
 /**
+ * Whether the club approves new signups by itself (00220,
+ * signup_settings.auto_approve_enabled), so onboarding can say what happens
+ * after "Enter the club" rather than promising a wait that may not come.
+ *
+ * Same reader as getSkillTiers: platform_settings is readable by any
+ * authenticated member. Read the way platform_setting_bool() reads it, and a
+ * failed or absent read is FALSE, the trigger's own default, so the screen
+ * never promises an instant approval the database will not give.
+ */
+export async function getSignupApprovalMode(): Promise<boolean> {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'signup_settings')
+      .maybeSingle();
+    if (error) return false;
+    const raw = (data?.value as Record<string, unknown> | null)?.auto_approve_enabled;
+    return raw === true || raw === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Record that the member enrolled a passkey, after the fact.
  *
  * Onboarding cannot enrol before completeOnboarding runs: the register route

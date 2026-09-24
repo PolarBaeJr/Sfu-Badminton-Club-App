@@ -14,6 +14,7 @@ import { SentryUserInit } from '@/components/sentry-user-init';
 import { StandingProvider } from '@/components/standing-provider';
 import { StandingBanner } from '@/components/standing-banner';
 import { LegalFooter } from '@/components/legal-footer';
+import { MemberTourHost } from '@/components/member-tour-host';
 import { cookies } from 'next/headers';
 import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, featureAccessFor, getAccountStanding, type AccountStanding, type FeatureId } from '@badminton/shared';
 import { evaluateLegalGate, type LegalAcceptance } from '../lib/legal-gate';
@@ -353,6 +354,17 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   <LegalFooter />
                 </main>
                 <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} featureAccess={featureAccess} />
+                {/* Signed-in members only. Held back while either gate above
+                    owns the screen, so the tour never sits on top of it. */}
+                {player && (
+                  <MemberTourHost
+                    toursSeen={player.tours_seen ?? {}}
+                    features={features}
+                    featureAccess={featureAccess}
+                    approved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'}
+                    blocked={missingLegalDocs.length > 0 || !!deletionRequestedAt}
+                  />
+                )}
               </StandingProvider>
             </ConfirmProvider>
           </ToastProvider>

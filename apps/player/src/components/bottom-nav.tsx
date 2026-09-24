@@ -259,6 +259,7 @@ export function BottomNav({
                 className={cn('press', active && 'active')}
                 aria-haspopup="dialog"
                 aria-expanded={openGroupId === group.id}
+                data-tour-nav={`group:${group.id}`}
                 onClick={() => setOpenGroupId(group.id)}
               >
                 {GroupIcon && <GroupIcon size={20} />}
@@ -276,6 +277,7 @@ export function BottomNav({
               href={item.href}
               className={cn('press', active && 'active')}
               aria-current={active ? 'page' : undefined}
+              data-tour-nav={item.href}
             >
               <item.icon
                 size={20}

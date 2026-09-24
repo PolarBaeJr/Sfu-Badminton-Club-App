@@ -923,13 +923,13 @@ export default async function FeedPage() {
       <div className={scheduleOn ? 'home-grid' : 'home-grid is-single'}>
         {scheduleOn && (
           <section className="home-main" aria-label="Schedule">
-            <div className="home-week">
+            <div className="home-week" data-tour="week-strip">
               <WeekStrip days={week} linkedDates={agendaDates} />
             </div>
 
             {/* Desktop only; the week strip stands in for it on a phone. Above
                 Up next so the calendar is the first thing on the page. */}
-            <section className="home-month" aria-label="Month calendar">
+            <section className="home-month" aria-label="Month calendar" data-tour="month-calendar">
               <MonthCalendar
                 months={months}
                 initialIndex={initialMonthIndex(monthKeys, todayKey)}
@@ -938,13 +938,17 @@ export default async function FeedPage() {
               />
             </section>
 
-            <section>
+            <section data-tour="up-next">
               <div className="card-head">
                 <div>
                   <h2 className="card-title">Up next</h2>
                   <div className="card-sub">{upNextSub ? `${upNextSub}.` : 'Nothing on the calendar.'}</div>
                 </div>
-                {(sessionsOn || eventsOn) && <SubscribeAllButton />}
+                {(sessionsOn || eventsOn) && (
+                  <div data-tour="calendar-subscribe">
+                    <SubscribeAllButton />
+                  </div>
+                )}
               </div>
 
               {scheduleError ? (
@@ -1032,7 +1036,7 @@ export default async function FeedPage() {
               loads, plus the streak. Deliberately not here: ladder position,
               which needs the whole club's get_leaderboard() and returns nothing
               for a member who has set hide_from_leaderboard. */}
-          <div className="card-base">
+          <div className="card-base" data-tour="you-card">
             <div className="wide-cap">You</div>
             <div className="wide-figures">
               {sessionsOn && (

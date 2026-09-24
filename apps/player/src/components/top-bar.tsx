@@ -106,6 +106,7 @@ export function TopBar({
                     href={item.href}
                     className={cn('nav-item', active && 'active')}
                     aria-current={active ? 'page' : undefined}
+                    data-tour-nav={item.href}
                   >
                     {item.label}
                   </Link>
@@ -204,7 +205,7 @@ export function TopBar({
                   />
                 )}
               </Link>
-              <Link href="/settings" className="me-chip" aria-label="Profile and settings">
+              <Link href="/settings" className="me-chip" aria-label="Profile and settings" data-tour="settings-chip">
                 <span className="avatar" data-size="sm" data-tone="4" style={{ overflow: 'hidden' }}>
                   {avatarUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
