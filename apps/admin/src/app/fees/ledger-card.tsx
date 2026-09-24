@@ -162,6 +162,7 @@ export async function LedgerCard({
           .eq('direction', direction)
           .order('paid_at', { ascending: false, nullsFirst: true })
           .order('created_at', { ascending: false }),
+        'FEE-101',
       ) as unknown as LedgerRow[])
     : [];
 
@@ -183,6 +184,7 @@ export async function LedgerCard({
       await selectInChunks(peopleIds, (ids) =>
         supabase.from('players').select('id, full_name').in('id', ids) as never,
       ),
+      'FEE-101',
     ) as unknown as { id: string; full_name: string }[];
     for (const p of people) nameById.set(p.id, p.full_name);
   }
@@ -218,6 +220,7 @@ export async function LedgerCard({
             .select('id, full_name')
             .or('role.eq.admin,is_exec.eq.true')
             .order('full_name'),
+          'FEE-101',
         ) as unknown as { id: string; full_name: string }[];
         if (execs.length > 0) return execs;
         return unwrap(
@@ -226,6 +229,7 @@ export async function LedgerCard({
             .select('id, full_name')
             .eq('is_banned', false)
             .order('full_name'),
+          'FEE-101',
         ) as unknown as { id: string; full_name: string }[];
       })();
 

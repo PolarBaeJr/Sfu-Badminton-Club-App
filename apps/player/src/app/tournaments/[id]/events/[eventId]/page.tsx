@@ -73,7 +73,7 @@ export default async function EventDetailPage({
     .select('*')
     .eq('id', tournamentId)
     .maybeSingle();
-  const tournament = unwrapMaybe(tournamentRes);
+  const tournament = unwrapMaybe(tournamentRes, 'TRN-101');
   // Never a draft's events: see the same guard on /tournaments/[id].
   if (!tournament || tournament.status === 'draft') notFound();
 
@@ -82,7 +82,7 @@ export default async function EventDetailPage({
     .select('*')
     .eq('id', eventId)
     .maybeSingle();
-  const event = unwrapMaybe(eventRes);
+  const event = unwrapMaybe(eventRes, 'TRN-101');
   if (!event) notFound();
 
   const eventType   = event.event_type as TournamentEventType;
@@ -133,7 +133,8 @@ export default async function EventDetailPage({
         // has always had its own narrow select.
         .select('id, seed_number, status, final_position, points, pair_name, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
         .eq('event_id', eventId)
-        .order('seed_number')
+        .order('seed_number'),
+      'TRN-101',
     );
     pairs = data as Array<Record<string, unknown>>;
   } else {
@@ -146,7 +147,8 @@ export default async function EventDetailPage({
         // relationship, not a selected column, so player_id itself stays out.
         .select('id, seed_number, status, final_position, points, elo_change, player:players!player_id(full_name, avatar_url)')
         .eq('event_id', eventId)
-        .order('seed_number')
+        .order('seed_number'),
+      'TRN-101',
     );
     participants = data as Array<Record<string, unknown>>;
   }
@@ -173,7 +175,8 @@ export default async function EventDetailPage({
       .select('id, round_number, bracket_position, round_name, court, status, scores, is_bye, is_third_place, phase, participant_a_id, participant_b_id, pair_a_id, pair_b_id, winner_participant_id, winner_pair_id, ready_player_ids')
       .eq('event_id', eventId)
       .order('round_number')
-      .order('bracket_position')
+      .order('bracket_position'),
+    'TRN-101',
   );
 
   const allMatches = matches as Array<Record<string, unknown>>;
@@ -211,7 +214,7 @@ export default async function EventDetailPage({
       .eq('event_id', eventId)
       .eq('player_id', currentPlayer.id)
       .maybeSingle();
-    const reg = unwrapMaybe(regRes);
+    const reg = unwrapMaybe(regRes, 'TRN-101');
     if (reg) {
       playerRegistration = { status: reg.status, paired: false };
       // Singles only, and now for a reason that is stated rather than assumed: a

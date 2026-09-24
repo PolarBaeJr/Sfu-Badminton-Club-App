@@ -92,7 +92,7 @@ export async function ReinstatementsCard({
 
   const results = await Promise.all(queries);
   const rows = results
-    .flatMap((r) => unwrap(r))
+    .flatMap((r) => unwrap(r, 'FEE-101'))
     .filter((row, i, all) => all.findIndex((r) => r.id === row.id) === i)
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 
@@ -105,7 +105,8 @@ export async function ReinstatementsCard({
       playerIds,
       (ids) =>
         supabase.from('players').select('id, full_name, email, avatar_url').in('id', ids) as never
-    )
+    ),
+    'FEE-101',
   );
   const personById = new Map(people.map((p) => [p.id, p]));
 

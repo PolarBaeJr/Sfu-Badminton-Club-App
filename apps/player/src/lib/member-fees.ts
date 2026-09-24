@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   paymentPrompt,
+  raise,
   type FeePayer,
   type FeeType,
   type PayableFeeLine,
@@ -48,7 +49,7 @@ export async function readOwnFees(supabase: SupabaseClient, playerId: string): P
     .select(OWN_FEE_COLUMNS)
     .eq('player_id', playerId)
     .order('created_at', { ascending: false });
-  if (error) throw new Error(`Could not read your fees: ${error.message}`);
+  if (error) throw raise('MEM-101', error, `Could not read your fees: ${error.message}`);
   return (data ?? []) as unknown as OwnFeeRow[];
 }
 

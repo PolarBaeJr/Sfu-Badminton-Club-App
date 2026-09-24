@@ -8,6 +8,7 @@ import {
   routeErrorMessage,
 } from '@badminton/ui/src/route-error';
 import { RouteError } from '@badminton/ui/src/components/RouteError';
+import { ERROR_CODES } from '@badminton/shared/src/utils/error-codes';
 
 const GENERIC =
   'An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details.';
@@ -65,6 +66,26 @@ describe('RouteError', () => {
     expect(html).toContain('2299239490');
     expect(html).toContain('Copy');
     expect(html).not.toContain('Server Components render');
+  });
+
+  it("names a numeric digest after the boundary's area and keeps the digest as the ref", () => {
+    const html = renderToStaticMarkup(
+      <RouteError area="FEE" title="Fees Error" error={withDigest(GENERIC, '931992559')} reset={() => {}} />,
+    );
+    expect(html).toContain('FEE-000');
+    expect(html).toContain('931992559');
+    expect(html).toContain(ERROR_CODES['FEE-000'].meaning);
+  });
+
+  it("shows a coded digest's own code and meaning, whatever the area", () => {
+    const html = renderToStaticMarkup(
+      <RouteError area="FEE" title="Fees Error" error={withDigest(GENERIC, 'DB-101.k3x9q2ab')} reset={() => {}} />,
+    );
+    expect(html).toContain('DB-101');
+    expect(html).toContain('k3x9q2ab');
+    expect(html).toContain(ERROR_CODES['DB-101'].title);
+    expect(html).toContain(ERROR_CODES['DB-101'].meaning);
+    expect(html).not.toContain('FEE-000');
   });
 
   it('shows no code line without a digest, and renders children', () => {

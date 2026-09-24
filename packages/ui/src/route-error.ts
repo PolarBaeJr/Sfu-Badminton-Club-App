@@ -1,12 +1,13 @@
-export const ROUTE_ERROR_FALLBACK =
-  'Something went wrong loading this page. Try again, and if it keeps happening, send the error code below to an exec.';
+// Deep import, not the barrel: this module reaches client bundles, and the
+// barrel pulls server-only modules (resend, node crypto) in with it.
+import {
+  ERROR_FALLBACK_MESSAGE,
+  isGenericServerMessage,
+} from '@badminton/shared/src/utils/error-codes';
 
-const GENERIC_SERVER_PREFIX = 'An error occurred in the Server Components render';
+export { isGenericServerMessage };
 
-/** Next replaces a server error's message with this text in production builds. */
-export function isGenericServerMessage(message: string | undefined | null): boolean {
-  return typeof message === 'string' && message.startsWith(GENERIC_SERVER_PREFIX);
-}
+export const ROUTE_ERROR_FALLBACK = ERROR_FALLBACK_MESSAGE;
 
 /**
  * A digest means the error came from the server, where the real message is

@@ -61,6 +61,7 @@ export async function loadPendingSubmissions(
       .select('id, club_fee_id, player_id, reference, screenshot_path, submitted_at')
       .eq('status', 'submitted')
       .order('submitted_at', { ascending: true }),
+    'FEE-102',
   ) as { id: string; club_fee_id: string; player_id: string; reference: string; screenshot_path: string | null; submitted_at: string }[];
   if (subs.length === 0) return [];
 
@@ -75,6 +76,7 @@ export async function loadPendingSubmissions(
   };
   const fees = unwrap(
     await selectInChunks([...new Set(subs.map((s) => s.club_fee_id))], (ids) => feeQuery(ids) as never),
+    'FEE-102',
   ) as { id: string; fee_type: FeeType; amount_cents: number | null; season_id: string | null; club_event_id: string | null; tournament_id: string | null }[];
   const feeById = new Map(fees.map((f) => [f.id, f]));
   const mine = subs.filter((s) => feeById.has(s.club_fee_id));
@@ -101,16 +103,16 @@ export async function loadPendingSubmissions(
       : Promise.resolve({ data: [], error: null }),
   ]);
   const playerById = new Map(
-    (unwrap(players) as { id: string; full_name: string; email: string | null }[]).map((p) => [p.id, p]),
+    (unwrap(players, 'FEE-102') as { id: string; full_name: string; email: string | null }[]).map((p) => [p.id, p]),
   );
   const eventById = new Map(
-    (unwrap(events) as { id: string; title: string; status: string }[]).map((e) => [e.id, e]),
+    (unwrap(events, 'FEE-102') as { id: string; title: string; status: string }[]).map((e) => [e.id, e]),
   );
   const signedUp = new Set(
-    (unwrap(signups) as { event_id: string; player_id: string }[]).map((s) => `${s.event_id}:${s.player_id}`),
+    (unwrap(signups, 'FEE-102') as { event_id: string; player_id: string }[]).map((s) => `${s.event_id}:${s.player_id}`),
   );
-  const seasonName = new Map((unwrap(seasons) as { id: string; name: string }[]).map((s) => [s.id, s.name]));
-  const tournamentName = new Map((unwrap(tournaments) as { id: string; name: string }[]).map((t) => [t.id, t.name]));
+  const seasonName = new Map((unwrap(seasons, 'FEE-102') as { id: string; name: string }[]).map((s) => [s.id, s.name]));
+  const tournamentName = new Map((unwrap(tournaments, 'FEE-102') as { id: string; name: string }[]).map((t) => [t.id, t.name]));
 
   return mine.map((s) => {
     const fee = feeById.get(s.club_fee_id)!;
@@ -204,9 +206,9 @@ export async function loadOutstandingMembers(admin: AdminClient, season: Season,
   ]);
   type Player = { id: string; full_name: string; email: string | null; avatar_url: string | null; status: string; is_exec: boolean; fee_exempt: boolean };
   type Fee = { id: string; player_id: string; amount_cents: number | null; paid_at: string | null; payment_reminded_at: string | null; club_event_id?: string | null };
-  const rosterRows = unwrap(roster) as Player[];
-  const duesRows = unwrap(dues) as Fee[];
-  const eventFees = unwrap(eventFeesRaw) as Fee[];
+  const rosterRows = unwrap(roster, 'FEE-102') as Player[];
+  const duesRows = unwrap(dues, 'FEE-102') as Fee[];
+  const eventFees = unwrap(eventFeesRaw, 'FEE-102') as Fee[];
 
   // Event lines can belong to members outside the roster (a pending member
   // who signed up, say). Exec and fee-exempt members are filed no event fee,
@@ -220,6 +222,7 @@ export async function loadOutstandingMembers(admin: AdminClient, season: Season,
         await selectInChunks(extraIds, (ids) =>
           admin.from('players').select('id, full_name, email, avatar_url, status, is_exec, fee_exempt').in('id', ids) as never,
         ),
+        'FEE-102',
       ) as Player[])
     : [];
 
@@ -235,8 +238,8 @@ export async function loadOutstandingMembers(admin: AdminClient, season: Season,
       ? admin.from('club_events').select('id, title').in('id', eventIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
-  const pending = new Set((unwrap(pendingRaw) as { club_fee_id: string }[]).map((s) => s.club_fee_id));
-  const eventTitle = new Map((unwrap(eventsRaw) as { id: string; title: string }[]).map((e) => [e.id, e.title]));
+  const pending = new Set((unwrap(pendingRaw, 'FEE-102') as { club_fee_id: string }[]).map((s) => s.club_fee_id));
+  const eventTitle = new Map((unwrap(eventsRaw, 'FEE-102') as { id: string; title: string }[]).map((e) => [e.id, e.title]));
   const duesByPlayer = new Map(duesRows.map((f) => [f.player_id, f]));
 
   const members: OutstandingMember[] = [];

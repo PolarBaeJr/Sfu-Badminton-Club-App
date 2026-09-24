@@ -56,14 +56,16 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
       .from('tournament_fee_tiers')
       .select('id, tournament_id, name, amount_cents, is_default, sort_order, applies_to, created_at')
       .eq('tournament_id', id)
-      .order('sort_order')
+      .order('sort_order'),
+    'TRN-104',
   ) as TournamentFeeTier[];
   const tierById = new Map(tiers.map((t) => [t.id, t]));
 
   // Owed list: every player entered in any of this tournament's events, from
   // both singles participants and doubles pairs, excluding withdrawn entries.
   const events = unwrap(
-    await supabase.from('tournament_events').select('id').eq('tournament_id', id)
+    await supabase.from('tournament_events').select('id').eq('tournament_id', id),
+    'TRN-104',
   );
   const eventIds = events.map((e) => e.id);
 
@@ -100,7 +102,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
       .from('club_fees')
       .select('player_id, tier_id, amount_cents, paid_at, method')
       .eq('tournament_id', id)
-      .eq('fee_type', 'tournament')
+      .eq('fee_type', 'tournament'),
+    'TRN-104',
   ) as Pick<ClubFee, 'player_id' | 'tier_id' | 'amount_cents' | 'paid_at' | 'method'>[];
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
   const submissionByPlayer = new Map(
@@ -148,7 +151,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         .select('id, full_name, email, avatar_url, is_exec, fee_exempt, membership_type')
         .in('id', ids)
         .order('full_name') as never
-    )
+    ),
+    'TRN-104',
   ) as (Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'> & {
     is_exec: boolean; fee_exempt: boolean; membership_type: MembershipType | null;
   })[]).sort((a, b) => a.full_name.localeCompare(b.full_name));

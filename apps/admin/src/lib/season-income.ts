@@ -203,7 +203,7 @@ export function foldLedgerRows(rows: readonly LedgerAmountRow[]): LedgerRead {
  */
 const readLedger = (result: { data: LedgerAmountRow[] | null; error: unknown }): LedgerRead =>
   foldLedgerRows(
-    unwrap(result as { data: LedgerAmountRow[] | null; error: { message: string } | null }),
+    unwrap(result as { data: LedgerAmountRow[] | null; error: { message: string } | null }, 'FEE-103'),
   );
 
 /**

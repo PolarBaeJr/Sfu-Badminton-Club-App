@@ -10,7 +10,7 @@ export default function TournamentError({
   reset: () => void;
 }) {
   return (
-    <RouteError title="Tournament Error" error={error} reset={reset} fallback="Failed to load tournament details.">
+    <RouteError area="TRN" title="Tournament Error" error={error} reset={reset} fallback="Failed to load tournament details.">
       <Button variant="secondary" onClick={() => window.history.back()}>
         Go Back
       </Button>

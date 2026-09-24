@@ -10,6 +10,6 @@ export default function TournamentsError({
   reset: () => void;
 }) {
   return (
-    <RouteError title="Tournaments Error" error={error} reset={reset} fallback="Failed to load tournaments." />
+    <RouteError area="TRN" title="Tournaments Error" error={error} reset={reset} fallback="Failed to load tournaments." />
   );
 }

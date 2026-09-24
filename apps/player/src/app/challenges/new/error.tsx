@@ -15,5 +15,5 @@ export default function Error({
     Sentry.captureException(error);
   }, [error]);
 
-  return <RouteError title="Something went wrong" error={error} reset={reset} />;
+  return <RouteError area="CHL" title="Something went wrong" error={error} reset={reset} />;
 }

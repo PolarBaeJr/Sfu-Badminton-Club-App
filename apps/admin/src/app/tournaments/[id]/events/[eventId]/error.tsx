@@ -10,7 +10,7 @@ export default function EventError({
   reset: () => void;
 }) {
   return (
-    <RouteError title="Event Error" error={error} reset={reset} fallback="Failed to load event details.">
+    <RouteError area="TRN" title="Event Error" error={error} reset={reset} fallback="Failed to load event details.">
       <Button variant="secondary" onClick={() => window.history.back()}>
         Go Back
       </Button>

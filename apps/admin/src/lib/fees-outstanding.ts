@@ -117,8 +117,8 @@ export async function getOutstandingClubFees(
   // "nobody owes anything", which is the most dangerous possible failure for a
   // money figure — it produces a plausible number that is short by whatever the
   // failed query held.
-  const roster = unwrap(rosterResult as { data: { id: string; status: string }[] | null; error: { message: string } | null });
-  const fees = unwrap(feesResult as { data: { player_id: string | null; paid_at: string | null; method: string | null }[] | null; error: { message: string } | null });
+  const roster = unwrap(rosterResult as { data: { id: string; status: string }[] | null; error: { message: string } | null }, 'FEE-104');
+  const fees = unwrap(feesResult as { data: { player_id: string | null; paid_at: string | null; method: string | null }[] | null; error: { message: string } | null }, 'FEE-104');
 
   const feeByPlayer = new Map(
     fees.filter((f) => f.player_id != null).map((f) => [f.player_id as string, f]),

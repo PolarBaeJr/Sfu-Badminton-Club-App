@@ -68,22 +68,22 @@ export async function requirePlayer() {
     // Clear any Sentry user context left over from a previous request handler
     // sharing this Node process — avoids misattributing the next error.
     Sentry.setUser(null);
-    throw new ExpectedError('Not authenticated');
+    throw new ExpectedError('Not authenticated', 'AUTH-101');
   }
   if (player.status === 'pending_approval') {
     Sentry.setUser(null);
-    throw new ExpectedError('Account pending approval');
+    throw new ExpectedError('Account pending approval', 'ACC-101');
   }
   if (player.status === 'suspended') {
     Sentry.setUser(null);
-    throw new ExpectedError('Account suspended');
+    throw new ExpectedError('Account suspended', 'ACC-102');
   }
   // is_banned is an independent column, not folded into status — without this
   // a banned player could still create/accept challenges, check into sessions
   // and submit rated results (tournament register/check-in already re-check it).
   if (player.is_banned) {
     Sentry.setUser(null);
-    throw new ExpectedError('Account suspended pending reinstatement');
+    throw new ExpectedError('Account suspended pending reinstatement', 'ACC-103');
   }
   // active_flag, last, and the ordering above is doing real work. By the time
   // we get here the pending / suspended / banned rows have already thrown, so
@@ -104,7 +104,7 @@ export async function requirePlayer() {
   if (player.active_flag === false) {
     if (!isSelfReactivatable(player)) {
       Sentry.setUser(null);
-      throw new ExpectedError('Account scheduled for deletion');
+      throw new ExpectedError('Account scheduled for deletion', 'ACC-104');
     }
     // getCurrentPlayer() already returned this row, so hand the caller the
     // state it now has rather than the stale copy it was fetched with.

@@ -296,7 +296,8 @@ export default async function FeesPage({
           .in('status', ['competitive', 'recreational'])
           .eq('is_exec', false)
           .eq('fee_exempt', false)
-          .order('full_name')
+          .order('full_name'),
+        'FEE-101',
       )
     : [];
 
@@ -322,7 +323,8 @@ export default async function FeesPage({
           // exemption rules, presented as a count of members who have paid
           // their dues. Entry fees and reinstatements have their own screens
           // with their own totals, and that is where they are counted.
-          .eq('fee_type', 'dues')
+          .eq('fee_type', 'dues'),
+        'FEE-101',
       )
     : [];
   const feeByPlayer = new Map(

@@ -10,6 +10,6 @@ export default function FeesError({
   reset: () => void;
 }) {
   return (
-    <RouteError title="Fees Error" error={error} reset={reset} fallback="Failed to load fees." />
+    <RouteError area="FEE" title="Fees Error" error={error} reset={reset} fallback="Failed to load fees." />
   );
 }
