@@ -56,5 +56,6 @@ export {
   type TourRect,
   type TourPlacement,
 } from './tour';
+export { ROUTE_ERROR_FALLBACK, isGenericServerMessage, routeErrorMessage } from './route-error';
 export { useLiveChannel, type RecoverableChannel } from './use-live-channel';
 export { cn } from './utils';

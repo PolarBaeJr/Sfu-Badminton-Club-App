@@ -1,81 +1,80 @@
 'use client';
 
-import React, { useEffect } from 'react';
-import * as Sentry from '@sentry/nextjs';
-import { AlertTriangle, RotateCw } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Button } from './Button';
+import { Card } from './Card';
+import { routeErrorMessage } from '../route-error';
 
 interface RouteErrorProps {
+  title: string;
   error: Error & { digest?: string };
   reset: () => void;
+  fallback?: string;
+  children?: React.ReactNode;
 }
 
-/** Default error.tsx component for app routes. Renders a centred column — a
- * red-wash exclamation disc, the error message, the digest and a reset button.
- * No card: every style below is inline and there is no surface, border or
- * .card-base anywhere in it. (The docstring used to claim a card-base, which
- * is why this says so explicitly.) Auto-logs digest to console for triage;
- * Sentry already auto-captures server component errors. */
-export function RouteError({ error, reset }: RouteErrorProps) {
+/** The body of every route error.tsx. Server errors show the fallback and
+ * the digest, which Next prints next to the real error in the server log, so
+ * an exec can report the code and it can be grepped. Reporting to Sentry is
+ * left to each boundary. */
+export function RouteError({ title, error, reset, fallback, children }: RouteErrorProps) {
+  const digest = error?.digest;
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    Sentry.captureException(error);
-    if (error?.digest) {
+    if (digest) {
       // eslint-disable-next-line no-console
-      console.error('Route error:', error.digest, error);
+      console.error('Route error:', digest, error);
     }
-  }, [error]);
+  }, [digest, error]);
+
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  async function copy() {
+    if (!digest) return;
+    try {
+      await navigator.clipboard.writeText(digest);
+      setCopied(true);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // No clipboard over plain http; the code is still selectable.
+    }
+  }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '64px 24px',
-        textAlign: 'center',
-        gap: 16,
-      }}
-    >
-      <div
-        style={{
-          width: 56,
-          height: 56,
-          borderRadius: 999,
-          background: 'var(--red-wash)',
-          display: 'grid',
-          placeItems: 'center',
-        }}
-      >
-        <AlertTriangle size={26} style={{ color: 'var(--red)' }} />
-      </div>
-      <div>
-        <h2
-          style={{
-            fontFamily: 'var(--display)',
-            fontSize: 24,
-            fontWeight: 700,
-            letterSpacing: '-.02em',
-            margin: 0,
-          }}
-        >
-          Something went wrong
-        </h2>
-        <p
-          className="muted"
-          style={{ fontSize: 14, margin: '8px 0 0', maxWidth: 480, lineHeight: 1.5 }}
-        >
-          {error?.message || 'This page failed to load.'}
+    <div className="min-h-[60vh] flex items-center justify-center p-4">
+      <Card className="max-w-md w-full text-center">
+        <div className="w-16 h-16 rounded-full bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)] flex items-center justify-center mx-auto mb-4">
+          <span className="text-2xl text-[var(--color-danger)]">!</span>
+        </div>
+        <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">{title}</h2>
+        <p className={`text-[var(--text-muted)] text-sm ${digest ? 'mb-3' : 'mb-6'}`}>
+          {routeErrorMessage(error, fallback)}
         </p>
-        {error?.digest && (
-          <p className="mono muted" style={{ fontSize: 11, marginTop: 8 }}>
-            Reference: {error.digest}
+        {digest && (
+          <p className="text-[var(--text-muted)] text-xs mb-6 flex items-center justify-center gap-2">
+            <span>Error code</span>
+            <span className="font-mono select-all text-[var(--text-primary)]">{digest}</span>
+            <button
+              type="button"
+              onClick={copy}
+              className="underline underline-offset-2 hover:text-[var(--text-primary)]"
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
           </p>
         )}
-      </div>
-      <button type="button" onClick={reset} className="btn btn-primary">
-        <RotateCw size={14} />
-        Try again
-      </button>
+        <div className="flex gap-3 justify-center">
+          <Button onClick={reset}>Try Again</Button>
+          {children}
+        </div>
+      </Card>
     </div>
   );
 }
