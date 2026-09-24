@@ -11,6 +11,10 @@ export function DeepLinkScroll() {
     if (!id) return;
     const el = document.getElementById(`session-${id}`);
     if (!el) return;
+    // Later dates on /feed fold into a <details>; a card inside a closed one
+    // has no box to scroll to until it opens.
+    const fold = el.closest('details');
+    if (fold) fold.open = true;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.classList.add('session-deeplink-flash');
     const timer = setTimeout(() => el.classList.remove('session-deeplink-flash'), 1500);

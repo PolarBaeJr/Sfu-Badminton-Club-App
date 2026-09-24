@@ -4277,6 +4277,23 @@ a.cal-ev:hover { filter: brightness(1.15); }
 .home-row-title { font-weight: 600; font-size: 15px; min-width: 0; overflow-wrap: anywhere; }
 .home-row-meta { font-family: var(--mono); font-size: 11px; color: var(--mute); margin-top: 4px; }
 .home-row .is-cancelled { text-decoration: line-through; color: var(--mute); }
+/* The folded rest of the term under Up next. The summary reads as a quiet
+   full-width button; the rows inside keep the .sched-day rhythm. */
+.home-more { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.home-more > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  text-align: center;
+  font-size: 13px;
+  color: var(--mute);
+}
+.home-more > summary::-webkit-details-marker { display: none; }
+.home-more > summary:hover { color: var(--ink); border-color: color-mix(in oklab, var(--ink) 30%, transparent); }
+.home-more > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.home-more[open] > summary { margin-bottom: 22px; }
 .home-note { font-size: 13px; color: var(--mute); margin: 12px 0 0; }
 
 .home-notice {

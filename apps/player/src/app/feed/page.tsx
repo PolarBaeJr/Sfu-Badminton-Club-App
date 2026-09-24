@@ -634,6 +634,15 @@ export default async function FeedPage() {
     checkinSettings,
     liveTournamentIds: new Set(liveTournaments.map((t) => t.id)),
   });
+  // Up next shows the next two weeks; later dates fold under Show more. The
+  // cut is by date, not count, so the week strip's #day- anchors (this week
+  // only) always land on an open row.
+  const agendaCutoff = addDaysISO(todayKey, 14);
+  const agendaSoonAll = agenda.filter((day) => day.dateISO < agendaCutoff);
+  // Never fold everything: a quiet fortnight still shows the next three dates.
+  const agendaSoon = agendaSoonAll.length >= 3 ? agendaSoonAll : agenda.slice(0, 3);
+  const agendaLater = agenda.slice(agendaSoon.length);
+  const laterCount = agendaLater.length;
   const upcoming = agenda.flatMap((day) =>
     day.sessions.flatMap((entry) => (entry.kind === 'session' ? [entry.session] : [])),
   );
@@ -716,6 +725,69 @@ export default async function FeedPage() {
     (rating?.singles_losses ?? 0) +
     (rating?.doubles_wins ?? 0) +
     (rating?.doubles_losses ?? 0);
+
+  // One day of the agenda. Shared by the first fortnight and the folded
+  // remainder so both render identically.
+  const renderAgendaDay = (day: (typeof agenda)[number]) => (
+    <div
+      key={day.dateISO}
+      id={`day-${day.dateISO}`}
+      className={`sched-day${day.isToday ? ' is-today' : ''}`}
+    >
+      <div className="sched-day-rail">
+        <div className="sched-day-label">{day.label}</div>
+        <div className="sched-day-date">{day.dateLabel}</div>
+      </div>
+      <div className="sched-day-list">
+        {day.sessions.map((entry) => {
+          if (entry.kind === 'club_event') {
+            return (
+              <ClubEventAgendaRow
+                key={entry.key}
+                event={entry.event}
+                going={mySignedUp.has(entry.event.id)}
+              />
+            );
+          }
+          if (entry.kind === 'tournament') {
+            return <TournamentAgendaRow key={entry.key} tournament={entry.tournament} todayISO={todayKey} />;
+          }
+          const session = entry.session;
+          const canCheckIn = isCheckinOpen(session, now, checkinSettings);
+          const { opensAt } = getCheckinWindow(session, checkinSettings);
+          let windowLabel: string | undefined;
+          // Only for nights still ahead, as on /sessions.
+          if (!canCheckIn && session.date >= todayKey) {
+            if (opensAt && now < opensAt) {
+              const opensLocal = opensAt.toLocaleTimeString('en-GB', {
+                timeZone: CLUB_TIMEZONE,
+                hourCycle: 'h23',
+                hour: '2-digit',
+                minute: '2-digit',
+              });
+              windowLabel = `Opens at ${formatTime(opensLocal)}`;
+            } else {
+              windowLabel = 'Check-in closed';
+            }
+          }
+          return (
+            <SessionCard
+              key={entry.key}
+              session={session}
+              myStatus={myStatusBySession.get(session.id) ?? null}
+              myIntent={myIntentBySession.get(session.id) ?? null}
+              checkedInCount={checkedInBySession[session.id] ?? 0}
+              goingCount={goingBySession[session.id] ?? 0}
+              canCheckIn={canCheckIn}
+              windowLabel={windowLabel}
+              isNext={session.id === nextSessionId}
+              standingOk={isApproved}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
 
   return (
     <div data-screen-label="Feed" className="wide-page">
@@ -855,6 +927,17 @@ export default async function FeedPage() {
               <WeekStrip days={week} linkedDates={agendaDates} />
             </div>
 
+            {/* Desktop only; the week strip stands in for it on a phone. Above
+                Up next so the calendar is the first thing on the page. */}
+            <section className="home-month" aria-label="Month calendar">
+              <MonthCalendar
+                months={months}
+                initialIndex={initialMonthIndex(monthKeys, todayKey)}
+                weekdays={CALENDAR_WEEKDAYS}
+                legend={legend}
+              />
+            </section>
+
             <section>
               <div className="card-head">
                 <div>
@@ -895,66 +978,18 @@ export default async function FeedPage() {
                 </div>
               ) : (
                 <div>
-                  {agenda.map((day) => (
-                    <div
-                      key={day.dateISO}
-                      id={`day-${day.dateISO}`}
-                      className={`sched-day${day.isToday ? ' is-today' : ''}`}
-                    >
-                      <div className="sched-day-rail">
-                        <div className="sched-day-label">{day.label}</div>
-                        <div className="sched-day-date">{day.dateLabel}</div>
-                      </div>
-                      <div className="sched-day-list">
-                        {day.sessions.map((entry) => {
-                          if (entry.kind === 'club_event') {
-                            return (
-                              <ClubEventAgendaRow
-                                key={entry.key}
-                                event={entry.event}
-                                going={mySignedUp.has(entry.event.id)}
-                              />
-                            );
-                          }
-                          if (entry.kind === 'tournament') {
-                            return <TournamentAgendaRow key={entry.key} tournament={entry.tournament} todayISO={todayKey} />;
-                          }
-                          const session = entry.session;
-                          const canCheckIn = isCheckinOpen(session, now, checkinSettings);
-                          const { opensAt } = getCheckinWindow(session, checkinSettings);
-                          let windowLabel: string | undefined;
-                          // Only for nights still ahead, as on /sessions.
-                          if (!canCheckIn && session.date >= todayKey) {
-                            if (opensAt && now < opensAt) {
-                              const opensLocal = opensAt.toLocaleTimeString('en-GB', {
-                                timeZone: CLUB_TIMEZONE,
-                                hourCycle: 'h23',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              });
-                              windowLabel = `Opens at ${formatTime(opensLocal)}`;
-                            } else {
-                              windowLabel = 'Check-in closed';
-                            }
-                          }
-                          return (
-                            <SessionCard
-                              key={entry.key}
-                              session={session}
-                              myStatus={myStatusBySession.get(session.id) ?? null}
-                              myIntent={myIntentBySession.get(session.id) ?? null}
-                              checkedInCount={checkedInBySession[session.id] ?? 0}
-                              goingCount={goingBySession[session.id] ?? 0}
-                              canCheckIn={canCheckIn}
-                              windowLabel={windowLabel}
-                              isNext={session.id === nextSessionId}
-                              standingOk={isApproved}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
+                  {agendaSoon.map(renderAgendaDay)}
+                  {agendaLater.length > 0 && (
+                    // The rest of the term folds away so the list does not bury
+                    // the side column and the calendar. DeepLinkScroll opens it
+                    // when a /feed?s= link targets a card inside.
+                    <details className="home-more">
+                      <summary>
+                        Show {laterCount} more {laterCount === 1 ? 'date' : 'dates'}
+                      </summary>
+                      {agendaLater.map(renderAgendaDay)}
+                    </details>
+                  )}
                 </div>
               )}
 
@@ -966,14 +1001,6 @@ export default async function FeedPage() {
               )}
             </section>
 
-            <section className="home-month" aria-label="Month calendar">
-              <MonthCalendar
-                months={months}
-                initialIndex={initialMonthIndex(monthKeys, todayKey)}
-                weekdays={CALENDAR_WEEKDAYS}
-                legend={legend}
-              />
-            </section>
           </section>
         )}
 
