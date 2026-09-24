@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { selectSteps } from '@badminton/ui/src/tour';
 import { ALL_FEATURES_ENABLED, FEATURES, type FeatureFlags } from '@badminton/shared/src/utils/features';
 import { NAV_LAYOUT } from '../../components/nav-sections';
@@ -109,6 +111,14 @@ describe('the exec tour stays tied to the console', () => {
     const named = all.flatMap((s) => s.targets).flatMap((t) => [...t.matchAll(/data-nav-group="([^"]+)"/g)].map((m) => m[1]!));
     expect(named.length).toBeGreaterThan(0);
     for (const id of named) expect(groups, id).toContain(id);
+  });
+
+  // The member tour no longer targets data-nav-group, so this tour is its only
+  // reader and the attribute would look dead to anyone tidying NavMenu.
+  it('NavMenu still carries data-nav-group', () => {
+    expect(
+      readFileSync(join(__dirname, '../../../../../packages/ui/src/components/NavMenu.tsx'), 'utf8'),
+    ).toContain('data-nav-group={id}');
   });
 
   it('names only features that exist', () => {

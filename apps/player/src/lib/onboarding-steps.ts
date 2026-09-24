@@ -11,17 +11,19 @@
 //               asked must never hold the door shut.
 //   agreements  the four legal documents and their checkboxes
 //   signin      the passkey question (00121). Always a step: when a passkey is
-//               impossible it says so and asks nothing.
-//   review      a read-only summary with an Edit button per answer
+//               impossible it says so and asks nothing. It is the last step,
+//               and its "Enter the club" button submits.
+//
+// Budget: setup plus the member tour must fit in 3 minutes on a phone
+// (onboarding-budget.test.ts). Do not add a step without cutting one.
 
-export type OnboardingStepId = 'about' | 'level' | 'agreements' | 'signin' | 'review';
+export type OnboardingStepId = 'about' | 'level' | 'agreements' | 'signin';
 
 export const ONBOARDING_STEP_ORDER: readonly OnboardingStepId[] = [
   'about',
   'level',
   'agreements',
   'signin',
-  'review',
 ];
 
 export const ONBOARDING_STEP_TITLES: Record<OnboardingStepId, string> = {
@@ -29,7 +31,25 @@ export const ONBOARDING_STEP_TITLES: Record<OnboardingStepId, string> = {
   level: 'Your level',
   agreements: 'Agreements',
   signin: 'How you sign in',
-  review: 'Review',
+};
+
+export const ONBOARDING_STEP_COPY: Record<OnboardingStepId, { heading: string; subheading: string }> = {
+  about: {
+    heading: 'Set up your profile',
+    subheading: 'This is how other players will see you. Display name and phone are optional.',
+  },
+  level: {
+    heading: 'How do you play?',
+    subheading: 'This sets where you start on the ladder. Your rating adjusts quickly, so pick the closest fit.',
+  },
+  agreements: {
+    heading: 'Waiver & club policies',
+    subheading: 'Read and accept the terms of use, privacy policy, liability waiver, and code of conduct to play.',
+  },
+  signin: {
+    heading: 'How you sign in',
+    subheading: 'Choose how you sign in from now on, then enter the club.',
+  },
 };
 
 /** `tiersAvailable` is null while the tiers are loading. */

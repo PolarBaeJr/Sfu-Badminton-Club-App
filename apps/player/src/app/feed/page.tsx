@@ -945,7 +945,7 @@ export default async function FeedPage() {
                   <div className="card-sub">{upNextSub ? `${upNextSub}.` : 'Nothing on the calendar.'}</div>
                 </div>
                 {(sessionsOn || eventsOn) && (
-                  <div data-tour="calendar-subscribe">
+                  <div>
                     <SubscribeAllButton />
                   </div>
                 )}
@@ -1036,7 +1036,7 @@ export default async function FeedPage() {
               loads, plus the streak. Deliberately not here: ladder position,
               which needs the whole club's get_leaderboard() and returns nothing
               for a member who has set hide_from_leaderboard. */}
-          <div className="card-base" data-tour="you-card">
+          <div className="card-base">
             <div className="wide-cap">You</div>
             <div className="wide-figures">
               {sessionsOn && (

@@ -44,6 +44,7 @@ export {
 export {
   selectSteps,
   stepAllowed,
+  requirementsMet,
   resolveTarget,
   placePopover,
   shouldAutoStart,

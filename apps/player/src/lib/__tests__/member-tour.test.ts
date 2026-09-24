@@ -2,10 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { selectSteps, resolveTarget, shouldAutoStart, type TourContext } from '@badminton/ui/src/tour';
-import { flattenEntries } from '@badminton/ui/src/nav-groups';
 import { ALL_FEATURES_ENABLED, type FeatureFlags } from '@badminton/shared/src/utils/features';
-import { MEMBER_TOUR_KEY, MEMBER_TOUR_STEPS } from '../tours/member-tour';
-import { DESKTOP_ENTRIES, MOBILE_SLOTS } from '../nav-entries';
+import { MEMBER_TOUR_KEY, memberTourSteps } from '../tours/member-tour';
 
 // WHO GETS WHICH STEP, and whether every selector the tour points at is still
 // on the element it names. The tour is never mounted here (no DOM); the render
@@ -30,55 +28,54 @@ const off = (...ids: (keyof FeatureFlags)[]): FeatureFlags => {
   return flags;
 };
 
-const ids = (c: TourContext) => selectSteps(MEMBER_TOUR_STEPS, c).map((s) => s.id);
-// Steps by position in the full list, 1-based, the way the plan numbers them.
-const numbers = (c: TourContext) =>
-  selectSteps(MEMBER_TOUR_STEPS, c).map((s) => MEMBER_TOUR_STEPS.indexOf(s) + 1);
+const selected = (c: TourContext) => selectSteps(memberTourSteps(c), c);
+const ids = (c: TourContext) => selected(c).map((s) => s.id);
+const body = (c: TourContext, id: string) => selected(c).find((s) => s.id === id)?.body ?? '';
 
 describe('the member tour steps', () => {
-  it('has eleven steps with every feature on', () => {
-    expect(MEMBER_TOUR_STEPS).toHaveLength(11);
-    expect(numbers(ctx())).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  it('has five steps with every feature on', () => {
+    expect(ids(ctx())).toEqual(['welcome', 'calendar', 'next-session', 'tabs', 'settings']);
   });
 
-  it('drops the session step with sessions off, keeping the calendar and the subscribe button for events', () => {
-    const got = numbers(ctx({ features: off('sessions') }));
-    expect(got).not.toContain(3);
-    expect(got).toContain(2);
-    expect(got).toContain(4);
-    // Step 4 is sessions OR events; with both off it goes too.
-    expect(numbers(ctx({ features: off('sessions', 'events') }))).not.toContain(4);
+  it('drops the session step with sessions off', () => {
+    expect(ids(ctx({ features: off('sessions') }))).toEqual(['welcome', 'calendar', 'tabs', 'settings']);
   });
 
   it('drops the calendar only when sessions, events and tournaments are all off', () => {
-    expect(numbers(ctx({ features: off('sessions', 'events') }))).toContain(2);
-    expect(numbers(ctx({ features: off('sessions', 'events', 'tournaments') }))).not.toContain(2);
+    expect(ids(ctx({ features: off('sessions', 'events') }))).toContain('calendar');
+    expect(ids(ctx({ features: off('sessions', 'events', 'tournaments') }))).not.toContain('calendar');
   });
 
-  it('drops challenges with challenges off', () => {
-    expect(ids(ctx({ features: off('challenges') }))).not.toContain('challenges');
+  it('gives a pending signup no session step, only the Ranks tab, and no calendar feed', () => {
+    const pending = ctx({ approved: false });
+    expect(ids(pending)).toEqual(['welcome', 'calendar', 'tabs', 'settings']);
+    expect(body(pending, 'tabs')).toBe('Ranks: your singles and doubles ladder.');
+    expect(body(pending, 'settings')).not.toContain('calendar feed');
   });
 
-  it('gives a pending signup no session, challenges or events step', () => {
-    const got = numbers(ctx({ approved: false }));
-    expect(got).not.toContain(3);
-    expect(got).not.toContain(6);
-    expect(got).not.toContain(8);
-    expect(got).toEqual([1, 2, 4, 5, 7, 9, 10, 11]);
+  it('drops the tabs step for a pending signup with the leaderboard off', () => {
+    expect(ids(ctx({ approved: false, features: off('leaderboard') }))).not.toContain('tabs');
   });
 
-  it('keeps a switched-off feature for somebody who holds its key', () => {
-    expect(ids(ctx({ features: off('challenges'), featureAccess: ['challenges'] }))).toContain('challenges');
-    expect(ids(ctx({ features: off('leaderboard'), featureAccess: ['leaderboard'] }))).toContain('ranks');
+  it('names only the tabs this member can see', () => {
+    expect(body(ctx({ features: off('challenges') }), 'tabs')).not.toContain('Challenges');
+    expect(body(ctx({ features: off('tournaments', 'events') }), 'tabs')).not.toContain('Events');
+    expect(body(ctx({ features: off('tournaments') }), 'tabs')).toContain('Events');
   });
 
-  it('always keeps the three cards', () => {
+  it('drops the tabs step when all four tab features are off', () => {
+    expect(ids(ctx({ features: off('challenges', 'leaderboard', 'tournaments', 'events') }))).not.toContain('tabs');
+  });
+
+  it('keeps a switched-off tab for somebody who holds its key', () => {
+    expect(body(ctx({ features: off('challenges'), featureAccess: ['challenges'] }), 'tabs')).toContain('Challenges:');
+  });
+
+  it('always keeps the two cards', () => {
     const everythingOff = off(
       'sessions', 'challenges', 'tournaments', 'events', 'leaderboard', 'my_stats', 'announcements', 'fees',
     );
-    expect(ids(ctx({ features: everythingOff, approved: false }))).toEqual([
-      'welcome', 'activity', 'settings', 'done',
-    ]);
+    expect(ids(ctx({ features: everythingOff, approved: false }))).toEqual(['welcome', 'settings']);
   });
 
   it('uses the member key', () => {
@@ -149,51 +146,19 @@ describe('shouldAutoStart', () => {
 // attributes they name. Rename an attribute and the step silently skips.
 describe('the tour selectors still match the markup', () => {
   const src = (rel: string) => readFileSync(join(__dirname, '..', '..', rel), 'utf8');
-  const targets = MEMBER_TOUR_STEPS.flatMap((s) => s.targets);
-
-  it('every data-tour-nav href is a real nav destination', () => {
-    const hrefs = new Set(
-      [...flattenEntries(DESKTOP_ENTRIES), ...flattenEntries(MOBILE_SLOTS)].map((item) => item.href),
-    );
-    const groups = new Set(
-      [...DESKTOP_ENTRIES, ...MOBILE_SLOTS].flatMap((e) => (e.kind === 'group' ? [e.group.id] : [])),
-    );
-    const named = targets.flatMap((t) => [...t.matchAll(/data-tour-nav="([^"]+)"/g)].map((m) => m[1]!));
-    expect(named.length).toBeGreaterThan(0);
-    for (const value of named) {
-      if (value.startsWith('group:')) expect(groups, value).toContain(value.slice('group:'.length));
-      else expect(hrefs, value).toContain(value);
-    }
-  });
-
-  it('every data-nav-group id is a real desktop group', () => {
-    const groups = new Set(DESKTOP_ENTRIES.flatMap((e) => (e.kind === 'group' ? [e.group.id] : [])));
-    const named = targets.flatMap((t) => [...t.matchAll(/data-nav-group="([^"]+)"/g)].map((m) => m[1]!));
-    expect(named.length).toBeGreaterThan(0);
-    for (const id of named) expect(groups, id).toContain(id);
-  });
-
-  it('the components still carry the nav attributes', () => {
-    expect(src('components/top-bar.tsx')).toContain('data-tour-nav={item.href}');
-    expect(src('components/bottom-nav.tsx')).toContain('data-tour-nav={item.href}');
-    expect(src('components/bottom-nav.tsx')).toContain('data-tour-nav={`group:${group.id}`}');
-    expect(
-      readFileSync(join(__dirname, '../../../../../packages/ui/src/components/NavMenu.tsx'), 'utf8'),
-    ).toContain('data-nav-group={id}');
-  });
+  const targets = memberTourSteps(ctx()).flatMap((s) => s.targets);
+  const named = targets.flatMap((t) => [...t.matchAll(/data-tour="([^"]+)"/g)].map((m) => m[1]!));
+  const carriers: Record<string, string> = {
+    'week-strip': 'app/feed/page.tsx',
+    'month-calendar': 'app/feed/page.tsx',
+    'up-next': 'app/feed/page.tsx',
+    'next-session': 'app/sessions/session-card.tsx',
+    'settings-chip': 'components/top-bar.tsx',
+    'top-nav': 'components/top-bar.tsx',
+    'tab-bar': 'components/bottom-nav.tsx',
+  };
 
   it('every data-tour value is on the element expected to carry it', () => {
-    const carriers: Record<string, string> = {
-      'week-strip': 'app/feed/page.tsx',
-      'month-calendar': 'app/feed/page.tsx',
-      'up-next': 'app/feed/page.tsx',
-      'calendar-subscribe': 'app/feed/page.tsx',
-      'you-card': 'app/feed/page.tsx',
-      activity: 'app/feed/activity-panel.tsx',
-      'next-session': 'app/sessions/session-card.tsx',
-      'settings-chip': 'components/top-bar.tsx',
-    };
-    const named = targets.flatMap((t) => [...t.matchAll(/data-tour="([^"]+)"/g)].map((m) => m[1]!));
     for (const value of named) {
       const file = carriers[value];
       expect(file, `no carrier recorded for data-tour="${value}"`).toBeDefined();
@@ -201,5 +166,18 @@ describe('the tour selectors still match the markup', () => {
         new RegExp(`data-tour=(?:"${value}"|\\{[^}]*'${value}')`),
       );
     }
+  });
+
+  // The other direction: an anchor no step points at is dead markup, and the
+  // next reader will assume something depends on it.
+  it('every data-tour anchor in these files is targeted by a step', () => {
+    const files = [...new Set(Object.values(carriers)), 'app/feed/activity-panel.tsx'];
+    for (const file of files) {
+      for (const m of src(file).matchAll(/data-tour="([^"]+)"/g)) {
+        expect(named, `${file} carries data-tour="${m[1]}" and no step targets it`).toContain(m[1]);
+      }
+    }
+    expect(src('components/top-bar.tsx')).not.toContain('data-tour-nav');
+    expect(src('components/bottom-nav.tsx')).not.toContain('data-tour-nav');
   });
 });

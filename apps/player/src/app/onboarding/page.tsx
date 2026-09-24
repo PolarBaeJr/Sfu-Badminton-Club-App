@@ -8,7 +8,7 @@ import { useToast } from '@/components/toast-provider';
 import { LegalMarkdown } from '@badminton/ui';
 import { LEGAL_DOCUMENT_LABELS, sortLegalDocuments, CHECKIN_TOKEN_REGEX, type SkillTier } from '@badminton/shared';
 import type { SkillTierOption } from '@/lib/rating-tiers';
-import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket, KeyRound, Check, Mail } from 'lucide-react';
+import { User, Phone, Sparkles, ChevronRight, ChevronLeft, Loader2, Rocket, KeyRound, Check, Mail } from 'lucide-react';
 import { enrollPasskey, supportsPasskeys } from '@/lib/passkey-client';
 import { passkeysConfigured } from '@/lib/actions/passkeys';
 import type { PasskeySetupOutcome } from '@/lib/actions/profile';
@@ -16,6 +16,7 @@ import { PASSKEY_DECLINED_THIS_SESSION_KEY } from '@/components/passkey-nudge';
 import {
   activeOnboardingStep,
   onboardingSteps,
+  ONBOARDING_STEP_COPY,
   ONBOARDING_STEP_TITLES,
   type OnboardingStepId,
 } from '@/lib/onboarding-steps';
@@ -363,7 +364,6 @@ export default function OnboardingPage() {
   const steps = onboardingSteps({ tiersAvailable: tiers === null ? null : tiers.length > 0 });
   const activeId = activeOnboardingStep(stepId, steps);
   const stepNumber = steps.indexOf(activeId) + 1;
-  const goTo = (id: OnboardingStepId) => setStepId(id);
   const goNext = () => {
     const next = steps[steps.indexOf(activeId) + 1];
     if (next) setStepId(next);
@@ -384,21 +384,6 @@ export default function OnboardingPage() {
     }
     headingRef.current?.focus();
   }, [activeId]);
-
-  const tierLabel = tiers?.find((t) => t.tier === skillTier)?.label ?? null;
-  // What the member chose about signing in, in words, for the review step.
-  const signInSummary = passkeyAdded
-    ? 'Passkey'
-    : passkeyWanted
-    ? 'Passkey, set up when you enter the club'
-    : passkeyImpossible
-    ? 'Emailed code each time (passkeys are not available here)'
-    : 'Emailed code each time';
-  // What the last step prints in the STARTING ELO tile. The chosen tier's live
-  // value, not a hardcoded 400 — that tile said "400" for every member
-  // regardless of tier until 00127, which would have made the confirm screen
-  // contradict the choice made two steps earlier.
-  const startingElo = tiers?.find((t) => t.tier === skillTier)?.elo ?? null;
 
   async function handleComplete() {
     setLoading(true);
@@ -443,56 +428,13 @@ export default function OnboardingPage() {
     setLoading(false);
   }
 
-  const heading =
-    activeId === 'about'
-      ? 'Set up your profile'
-      : activeId === 'level'
-      ? 'How do you play?'
-      : activeId === 'agreements'
-      ? 'Waiver & club policies'
-      : activeId === 'signin'
-      ? 'How you sign in'
-      : `You're ready, ${displayName || firstName}!`;
-  const subheading =
-    activeId === 'about'
-      ? 'This is how other players will see you. Display name and phone are optional.'
-      : activeId === 'level'
-      ? 'This sets where you start on the ladder. Your rating adjusts quickly over your first few matches, so pick the closest fit. You do not need to get it exactly right.'
-      : activeId === 'agreements'
-      ? 'Read and accept the terms of use, privacy policy, liability waiver, and code of conduct to play.'
-      : activeId === 'signin'
-      ? 'Choose how you get into your account from now on.'
-      : 'Check your details, then enter the club.';
+  const { heading, subheading } = ONBOARDING_STEP_COPY[activeId];
 
   // The Back button every step but the first shares.
   const backButton = (
     <button type="button" onClick={goBack} className="btn btn-ghost" style={{ height: 48 }}>
       <ChevronLeft size={14} /> Back
     </button>
-  );
-
-  // One row of the review summary, with a way back to the step that asked it.
-  const reviewRow = (label: string, value: string, edit: OnboardingStepId) => (
-    <div
-      key={edit + label}
-      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderTop: '1px solid var(--line)' }}
-    >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="mono muted" style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase' }}>
-          {label}
-        </div>
-        <div style={{ fontSize: 14, marginTop: 2 }}>{value}</div>
-      </div>
-      <button
-        type="button"
-        onClick={() => goTo(edit)}
-        className="btn btn-ghost btn-sm"
-        style={{ minHeight: 44 }}
-        aria-label={`Edit ${label.toLowerCase()}`}
-      >
-        Edit
-      </button>
-    </div>
   );
 
   return (
@@ -684,7 +626,7 @@ export default function OnboardingPage() {
               </button>
             </div>
           </>
-        ) : activeId === 'signin' ? (
+        ) : (
           <>
             {/* The passkey question. Its own step, because it is the thing
                 standing between the member and entering the club. */}
@@ -767,7 +709,7 @@ export default function OnboardingPage() {
             )}
 
             {/* Nothing is ASKED of a member who cannot do this: they are told
-                what will happen instead, and Continue stays live. They are
+                what will happen instead, and "Enter the club" stays live. They are
                 still recorded, as 'unsupported' or 'unavailable' rather than
                 as a refusal, because that column exists to tell "would not"
                 from "could not". */}
@@ -796,95 +738,6 @@ export default function OnboardingPage() {
                 {backButton}
                 <button
                   type="button"
-                  onClick={() => { if (passkeyAnswered) goNext(); }}
-                  disabled={!passkeyAnswered}
-                  className="btn btn-primary btn-lg"
-                  style={{
-                    flex: 1,
-                    justifyContent: 'center',
-                    height: 48,
-                    opacity: passkeyAnswered ? 1 : 0.4,
-                  }}
-                >
-                  Continue <ChevronRight size={14} />
-                </button>
-              </div>
-              {/* Say WHY it is disabled. A dimmed button with no explanation is
-                  how a member ends up stuck believing the app is broken. */}
-              {!passkeyAnswered && (
-                <div className="muted" style={{ fontSize: 12, marginTop: 8, textAlign: 'center' }}>
-                  Set up a passkey above, or choose to keep emailed codes, to continue.
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="grid grid-3" style={{ gap: 12 }}>
-              {/* The tier chosen earlier, at the club's live configured value.
-                  "None" when no tier was asked for, rather than a number nobody
-                  chose. */}
-              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
-                <div className="stat-label">STARTING ELO</div>
-                <div className="stat-value" style={{ marginTop: 4 }}>
-                  {startingElo ?? 'None'}
-                </div>
-              </div>
-              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
-                <div className="stat-label">DIVISIONS</div>
-                <div className="stat-value" style={{ marginTop: 4, fontSize: 18 }}>S + D</div>
-              </div>
-              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
-                <div className="stat-label">RANK</div>
-                <div className="stat-value" style={{ marginTop: 4, fontSize: 18 }}>None</div>
-              </div>
-            </div>
-
-            {/* What will be saved, read-only, each with a way back to change it.
-                Nothing is written until "Enter the club". */}
-            <div style={{ borderBottom: '1px solid var(--line)' }}>
-              {reviewRow(
-                'Name',
-                [joinFirstLast(firstName, lastName), displayName.trim() ? `shown as ${displayName.trim()}` : null]
-                  .filter(Boolean)
-                  .join(', '),
-                'about',
-              )}
-              {phone.trim() && reviewRow('Phone', phone.trim(), 'about')}
-              {steps.includes('level') && reviewRow('Level', tierLabel ?? 'None', 'level')}
-              {reviewRow(
-                'Agreements',
-                allAccepted ? 'All four accepted' : 'Not all accepted yet',
-                'agreements',
-              )}
-              {reviewRow('Sign in', signInSummary, 'signin')}
-            </div>
-
-            <div
-              style={{
-                background: '#FBF1DA',
-                border: '1px solid rgba(201, 154, 60, 0.3)',
-                borderRadius: 10,
-                padding: '12px 14px',
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 10,
-                fontSize: 13,
-                lineHeight: 1.5,
-                color: '#6E4F1A',
-              }}
-            >
-              <Trophy size={16} style={{ marginTop: 2, flexShrink: 0 }} />
-              <span>
-                <strong>Pro tip:</strong> challenge players near your ELO. Closer matchups give bigger ELO swings, and the climb is faster.
-              </span>
-            </div>
-
-            <div>
-              <div className="row" style={{ gap: 10 }}>
-                {backButton}
-                <button
-                  type="button"
                   onClick={handleComplete}
                   disabled={loading || !canEnter}
                   className="btn btn-primary btn-lg"
@@ -899,11 +752,17 @@ export default function OnboardingPage() {
                   Enter the club
                 </button>
               </div>
-              {!canEnter && (
+              {/* Say WHY it is disabled. A dimmed button with no explanation is
+                  how a member ends up stuck believing the app is broken. */}
+              {!passkeyAnswered ? (
                 <div className="muted" style={{ fontSize: 12, marginTop: 8, textAlign: 'center' }}>
-                  Something above still needs an answer. Use Edit to finish it.
+                  Set up a passkey above, or choose to keep emailed codes, to enter the club.
                 </div>
-              )}
+              ) : !canEnter ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+                  Go Back to finish an earlier step.
+                </div>
+              ) : null}
             </div>
           </>
         )}
@@ -920,8 +779,4 @@ export default function OnboardingPage() {
       </div>
     </div>
   );
-}
-
-function joinFirstLast(first: string, last: string): string {
-  return [first.trim(), last.trim()].filter(Boolean).join(' ');
 }

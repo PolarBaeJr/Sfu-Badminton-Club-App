@@ -6,7 +6,7 @@ import * as Sentry from '@sentry/nextjs';
 import { Tour, selectSteps, shouldAutoStart, type TourFinishReason } from '@badminton/ui';
 import { tourSeenStorageKey } from '@badminton/shared/src/utils/tours';
 import type { FeatureFlags, FeatureId } from '@badminton/shared/src/utils/features';
-import { MEMBER_TOUR_KEY, MEMBER_TOUR_STEPS } from '@/lib/tours/member-tour';
+import { MEMBER_TOUR_KEY, memberTourSteps } from '@/lib/tours/member-tour';
 import { markMemberTourSeen } from '@/lib/actions/tour';
 
 // Starts the member tour the first time an approved member lands on the feed,
@@ -61,7 +61,10 @@ export function MemberTourHost({
   const featuresKey = JSON.stringify(features);
   const accessKey = featureAccess.join(',');
   const steps = useMemo(
-    () => selectSteps(MEMBER_TOUR_STEPS, { features, featureAccess, approved, held: NO_CAPABILITIES }),
+    () => {
+      const ctx = { features, featureAccess, approved, held: NO_CAPABILITIES };
+      return selectSteps(memberTourSteps(ctx), ctx);
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [featuresKey, accessKey, approved],
   );

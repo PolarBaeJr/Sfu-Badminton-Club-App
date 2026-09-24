@@ -94,7 +94,7 @@ export function TopBar({
           </div>
         </Link>
 
-        <nav className="nav" aria-label="Main navigation">
+        <nav className="nav" aria-label="Main navigation" data-tour="top-nav">
           {isAuthenticated ? (
             navEntries.map((entry) => {
               if (entry.kind === 'link') {
@@ -106,7 +106,6 @@ export function TopBar({
                     href={item.href}
                     className={cn('nav-item', active && 'active')}
                     aria-current={active ? 'page' : undefined}
-                    data-tour-nav={item.href}
                   >
                     {item.label}
                   </Link>

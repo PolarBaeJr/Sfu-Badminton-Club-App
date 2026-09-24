@@ -68,7 +68,7 @@ export function ActivityPanel({
   announcementsOn: boolean;
 }) {
   return (
-    <section className="card-base home-activity" aria-labelledby="activity-title" data-tour="activity">
+    <section className="card-base home-activity" aria-labelledby="activity-title">
       <div className="card-head">
         <div>
           <h2 className="card-title" id="activity-title">Club activity</h2>

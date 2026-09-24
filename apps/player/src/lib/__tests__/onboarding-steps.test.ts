@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { activeOnboardingStep, onboardingSteps } from '../onboarding-steps';
+import { activeOnboardingStep, onboardingSteps, ONBOARDING_STEP_COPY, ONBOARDING_STEP_ORDER } from '../onboarding-steps';
 
 describe('onboardingSteps', () => {
-  it('is five steps when the club has tiers', () => {
+  it('is four steps when the club has tiers', () => {
     expect(onboardingSteps({ tiersAvailable: true })).toEqual([
-      'about', 'level', 'agreements', 'signin', 'review',
+      'about', 'level', 'agreements', 'signin',
     ]);
   });
 
@@ -14,8 +14,15 @@ describe('onboardingSteps', () => {
 
   it('drops the level step when the tiers could not be loaded', () => {
     expect(onboardingSteps({ tiersAvailable: false })).toEqual([
-      'about', 'agreements', 'signin', 'review',
+      'about', 'agreements', 'signin',
     ]);
+  });
+
+  it('has a heading and subheading for every step', () => {
+    for (const id of ONBOARDING_STEP_ORDER) {
+      expect(ONBOARDING_STEP_COPY[id].heading, id).not.toBe('');
+      expect(ONBOARDING_STEP_COPY[id].subheading, id).not.toBe('');
+    }
   });
 });
 

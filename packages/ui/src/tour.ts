@@ -53,14 +53,17 @@ function featureOn(ctx: TourContext, id: string): boolean {
   return ctx.features[id] === true || ctx.featureAccess.includes(id);
 }
 
-export function stepAllowed(step: TourStep, ctx: TourContext): boolean {
-  const r = step.requires;
+export function requirementsMet(r: TourStepRequires | undefined, ctx: TourContext): boolean {
   if (!r) return true;
   if (r.featuresAny && !r.featuresAny.some((f) => featureOn(ctx, f))) return false;
   if (r.approved && !ctx.approved) return false;
   if (r.capabilitiesAll && !r.capabilitiesAll.every((c) => ctx.held.has(c))) return false;
   if (r.capabilitiesAny && !r.capabilitiesAny.some((c) => ctx.held.has(c))) return false;
   return true;
+}
+
+export function stepAllowed(step: TourStep, ctx: TourContext): boolean {
+  return requirementsMet(step.requires, ctx);
 }
 
 /** The steps this person is shown, in order. */
