@@ -723,6 +723,11 @@ fi
 # going in through psql genuinely behaves differently from going in through the
 # app, and here that is the point.
 #
+# active_flag too: admin_access_level() returns NULL for an inactive row no
+# matter the role, so a prod-side "Inactive" (set on this account 2026-09-16)
+# rendered staging's console as "Admin Access Required" despite the grant.
+# inactive_since is cleared with it so the purge clock never sees the row.
+#
 # Comma-separated and overridable, so the next person who needs an account on
 # staging edits an env var and not this file.
 STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca}"
@@ -737,7 +742,7 @@ WITH t AS (
    WHERE btrim(e) <> ''
 ), upd AS (
   UPDATE public.players p
-     SET role = 'admin', is_exec = TRUE
+     SET role = 'admin', is_exec = TRUE, active_flag = TRUE, inactive_since = NULL
     FROM t
    WHERE p.email = t.email
   RETURNING p.email
