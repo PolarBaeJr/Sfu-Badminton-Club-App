@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import Link from 'next/link';
 import { PageHeader } from '@badminton/ui';
 import { PasskeySection } from './passkey-section';
 
@@ -83,6 +84,21 @@ export default async function SettingsPage() {
                 <div className="settings-row-hint">Controls which admin sections you can reach.</div>
               </div>
               <div className="settings-row-control text-sm text-[var(--text-primary)] capitalize">{player?.role}</div>
+            </div>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-label">Console tour</div>
+                <div className="settings-row-hint">A short look at where everything is. Replaying it records nothing.</div>
+              </div>
+              {/* next/link applies the base path itself, so no withBase here. */}
+              <div className="settings-row-control">
+                <Link
+                  href="/dashboard?tour=exec"
+                  className="inline-flex items-center min-h-[44px] text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                >
+                  Take the console tour
+                </Link>
+              </div>
             </div>
           </section>
 

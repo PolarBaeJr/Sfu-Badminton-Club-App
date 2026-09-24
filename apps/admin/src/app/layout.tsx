@@ -7,6 +7,8 @@ import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-s
 import { ALL_FEATURES_ENABLED, readFeatureFlags } from '@badminton/shared';
 import {
   accessLevelFor,
+  effectiveCapabilities,
+  permissionsOf,
   permissionTripleOf,
   type AccessLevel,
   type PermissionsInput,
@@ -14,6 +16,7 @@ import {
 import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
+import { ExecTourHost } from '@/components/exec-tour-host';
 import localFont from 'next/font/local';
 import { cn, ConfirmProvider, StaleBuildBanner } from '@badminton/ui';
 import { withBase } from '@/lib/base-path';
@@ -169,6 +172,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // which is exactly when the sidebar renders nothing anyway.
   let initialAccessLevel: AccessLevel | null = null;
   let initialPermissions: PermissionsInput | null = null;
+  // For the console tour: what this officer holds, and which tours they have
+  // already been through (00246).
+  let heldCapabilities: string[] = [];
+  let toursSeen: Record<string, unknown> = {};
   // Started before the viewer read and awaited after it, so the two overlap.
   // Never throws: a failed read is every feature on.
   const featuresRead = (async () => readFeatureFlags(createAdminClient()))()
@@ -177,6 +184,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     const viewer = await getAuthenticatedConsoleUser({ skipPasskey: true });
     initialAccessLevel = accessLevelFor(viewer);
     initialPermissions = permissionTripleOf(viewer);
+    heldCapabilities = [...effectiveCapabilities(initialAccessLevel, permissionsOf(initialAccessLevel, viewer))];
+    toursSeen = (viewer.tours_seen as Record<string, unknown> | null) ?? {};
   } catch {
     initialAccessLevel = null;
   }
@@ -218,6 +227,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Sidebar
               initialAccessLevel={initialAccessLevel}
               initialPermissions={initialPermissions}
+              features={features}
+            />
+            <ExecTourHost
+              level={initialAccessLevel}
+              held={heldCapabilities}
+              toursSeen={toursSeen}
               features={features}
             />
             <MainContent>

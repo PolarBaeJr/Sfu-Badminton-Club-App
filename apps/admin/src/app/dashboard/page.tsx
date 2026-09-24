@@ -871,6 +871,7 @@ export default async function DashboardPage({
                   see" are different states, and a panel that vanishes on a
                   quiet day makes the second unreadable. */}
               {canApprove && (
+                <div data-tour="pending-approvals">
                 <Card padding={false}>
                   <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
                     <h2 className={SECTION}>Pending approvals</h2>
@@ -962,6 +963,7 @@ export default async function DashboardPage({
                     </div>
                   )}
                 </Card>
+                </div>
               )}
 
               {/* AWAITING CONFIRMATION — results the club has not agreed on
