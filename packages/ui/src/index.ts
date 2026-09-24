@@ -21,6 +21,16 @@ export {
   toggleValue,
   type MultiSelectOption,
 } from './multi-select';
+// Select's keyboard and placement rules, the same arrangement again. The
+// SelectOption type comes through './components' with the component.
+export {
+  indexOfValue,
+  nextEnabledIndex,
+  typeaheadMatch,
+  initialActiveIndex,
+  resolvePlacement,
+  shouldEmitChange,
+} from './select';
 export {
   visibleEntries,
   isRouteActive,

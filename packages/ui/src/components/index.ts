@@ -2,7 +2,7 @@ export { Button } from './Button';
 export { Input } from './Input';
 export { DatePicker } from './DatePicker';
 export { Textarea } from './Textarea';
-export { Select } from './Select';
+export { Select, type SelectProps, type SelectOption } from './Select';
 export {
   PlayerPicker,
   type PlayerOption,

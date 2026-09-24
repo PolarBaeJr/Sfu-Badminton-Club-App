@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Input, Textarea } from '@badminton/ui';
+import { Button, Input, Select, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { updatePlatformSettings } from '@/lib/actions';
 // IMPORTED, NOT REDECLARED. /ratings and /seasons each copied this number into
@@ -265,17 +265,17 @@ export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[]
                 // pick their way out of it.
                 const known = fm.options.some((o) => o.value === current);
                 control = (
-                  <select
+                  <Select
+                    variant="bare"
                     value={current}
                     onChange={(e) => handleFieldChange(s.key, field, e.target.value, original)}
                     aria-label={fm.label}
+                    options={[
+                      ...(!known ? [{ value: current, label: current || 'not set' }] : []),
+                      ...fm.options,
+                    ]}
                     className="settings-input w-56"
-                  >
-                    {!known && <option value={current}>{current || '— not set —'}</option>}
-                    {fm.options.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
+                  />
                 );
               } else {
                 const original = raw == null ? '' : String(raw);

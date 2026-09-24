@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Atomic, AvatarChip, Badge, Card, EmptyState, ResponsiveTable, SearchFilter, Tabs, TableCard } from '@badminton/ui';
+import { Atomic, AvatarChip, Badge, Card, EmptyState, ResponsiveTable, SearchFilter, Select, Tabs, TableCard } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
 import { AUDIT_PAYLOAD_DROPPED_NOTE } from '@/lib/audit-policy';
 import {
@@ -195,23 +195,19 @@ export function AuditList({
 
         {controls}
 
-        <label className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
             Sort
           </span>
-          <select
+          <Select
+            variant="bare"
             aria-label="Sort audit entries"
             value={sort}
             onChange={(e) => setSort(e.target.value as SortOrder)}
+            options={SORT_OPTIONS}
             className="settings-input text-xs"
-          >
-            {SORT_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          />
+        </div>
 
         <div className="w-full min-w-0 lg:w-auto">
           <Tabs tabs={tabs} activeTab={activeTab} onChange={setTab} />

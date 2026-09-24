@@ -11,8 +11,12 @@ interface DialogProps {
 
 // Anything the browser will stop on with Tab. :not([disabled]) matters because a
 // disabled submit button is common in these dialogs while a form is saving.
+// :not([tabindex="-1"]) on every selector because an element with tabindex -1 is
+// not in the Tab order, so it must not be a trap end or the initial-focus target.
+// Select relies on this: its desktop form mirror and its hidden touch-mode
+// trigger both carry tabindex -1.
 const FOCUSABLE =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
 export function Dialog({ open, onClose, title, children }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);

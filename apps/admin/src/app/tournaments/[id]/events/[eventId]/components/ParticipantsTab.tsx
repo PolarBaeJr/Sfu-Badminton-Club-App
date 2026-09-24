@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Button, Dialog, PlayerPicker, AvatarChip, useConfirm } from '@badminton/ui';
+import { Button, Dialog, PlayerPicker, AvatarChip, Select, useConfirm } from '@badminton/ui';
 import {
   addParticipantsToEvent,
   removeParticipantFromEvent,
@@ -200,10 +200,12 @@ function GroupCell({
   }
 
   return (
-    <select
-      value={groupNumber ?? ''}
+    <Select
+      variant="bare"
+      value={groupNumber == null ? '' : String(groupNumber)}
       disabled={saving}
       aria-label="Group"
+      placeholder="Unset"
       onChange={async (e) => {
         const next = Number(e.target.value);
         if (!next || next === groupNumber) return;
@@ -211,13 +213,12 @@ function GroupCell({
         await onSave(entryId, next);
         setSaving(false);
       }}
+      options={Array.from({ length: groupCount }, (_, i) => ({
+        value: String(i + 1),
+        label: groupLabel(i + 1),
+      }))}
       className="text-sm font-mono bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[6px] px-1.5 py-0.5 text-[var(--text-primary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50"
-    >
-      {groupNumber == null && <option value="">—</option>}
-      {Array.from({ length: groupCount }, (_, i) => i + 1).map((g) => (
-        <option key={g} value={g}>{groupLabel(g)}</option>
-      ))}
-    </select>
+    />
   );
 }
 
