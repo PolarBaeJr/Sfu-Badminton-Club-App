@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
-import { SIGNIN_OTP_TYPES, friendlyAuthError, isUnknownAccountError } from '@badminton/shared';
+import {
+  SIGNIN_OTP_TYPES,
+  authErrorCode,
+  friendlyAuthError,
+  isUnknownAccountError,
+  withErrorCode,
+} from '@badminton/shared';
 // Deep import, not the '@badminton/shared' barrel: see the player middleware.
 import { signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { Mail, Loader2, KeyRound } from 'lucide-react';
@@ -93,7 +99,7 @@ export default function LoginPage() {
     }
     // An empty message means the user dismissed the system prompt. That is a
     // deliberate action, not a failure to report back at them.
-    if (result.error) setError(result.error);
+    if (result.error) setError(withErrorCode(result.error, 'AUTH-208'));
     setPasskeyLoading(false);
   }
 
@@ -125,7 +131,7 @@ export default function LoginPage() {
     });
     if (authError) {
       document.cookie = clearLoginIntentCookieString(secure);
-      setError(friendlyAuthError(authError.message));
+      setError(withErrorCode(friendlyAuthError(authError.message), 'AUTH-209'));
       setGoogleLoading(false);
     }
   }
@@ -138,7 +144,7 @@ export default function LoginPage() {
       return false;
     }
     if (sendError) {
-      setError(friendlyAuthError(sendError.message));
+      setError(withErrorCode(friendlyAuthError(sendError.message), authErrorCode(sendError)));
       return false;
     }
     setCode('');
@@ -169,7 +175,7 @@ export default function LoginPage() {
     setError('');
     const result = await verifyEmailCode(email, code.trim(), SIGNIN_OTP_TYPES);
     if (!result.ok) {
-      setError(friendlyAuthError(result.message));
+      setError(withErrorCode(friendlyAuthError(result.message), authErrorCode(result)));
       setLoading(false);
       return;
     }
@@ -228,7 +234,9 @@ export default function LoginPage() {
           </div>
 
           {authFailed && (
-            <div className="alert-danger" role="alert">That sign-in did not go through. Please try again.</div>
+            <div className="alert-danger" role="alert">
+              {withErrorCode('That sign-in did not go through. Please try again.', 'AUTH-206')}
+            </div>
           )}
 
           {noAccount && (

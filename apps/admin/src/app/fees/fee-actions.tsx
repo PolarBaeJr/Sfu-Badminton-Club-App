@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { UserPlus } from 'lucide-react';
 import { Button, Dialog, Input, useConfirm } from '@badminton/ui';
-import { resolvePaymentMethod } from '@badminton/shared';
+import { errorToastText, resolvePaymentMethod } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee, recordReinstatementPayment } from '@/lib/actions';
 import {
@@ -49,7 +49,7 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
         setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to mark fee paid', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to mark fee paid'), 'error');
       }
     });
   }
@@ -61,7 +61,7 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
         toast(successMessage, 'success');
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to mark fee unpaid', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to mark fee unpaid'), 'error');
       }
     });
   }
@@ -74,7 +74,7 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
         toast('Fee waived', 'success');
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to waive fee', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to waive fee'), 'error');
       }
     });
   }
@@ -150,7 +150,7 @@ export function AddManualFee({ seasonId, seasonName }: { seasonId: string; seaso
         setName(''); setEmail(''); setAmount(''); setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to add name', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to add name'), 'error');
       }
     });
   }
@@ -238,7 +238,7 @@ export function RecordReinstatementPayment({ feeId, playerName }: { feeId: strin
         setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to record payment', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to record payment'), 'error');
       }
     });
   }
@@ -278,7 +278,7 @@ export function RemoveManualFee({ id, name }: { id: string; name: string }) {
         toast(`Removed ${name}`, 'success');
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to remove', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to remove'), 'error');
       }
     });
   }

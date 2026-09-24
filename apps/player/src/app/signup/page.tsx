@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
-import { SIGNUP_OTP_TYPES, friendlyAuthError } from '@badminton/shared';
+import { SIGNUP_OTP_TYPES, authErrorCode, friendlyAuthError, withErrorCode } from '@badminton/shared';
 import { Mail, Loader2 } from 'lucide-react';
 import { authSuffix, clearLoginIntentCookieString, parseSignupNotice } from '@/lib/auth-intent';
 import { sendEmailCode, verifyEmailCode } from '@/lib/email-code-client';
@@ -70,7 +70,7 @@ export default function SignupPage() {
       options: { redirectTo: `${window.location.origin}/auth/callback${authSuffix(window.location.search)}` },
     });
     if (authError) {
-      setError(friendlyAuthError(authError.message));
+      setError(withErrorCode(friendlyAuthError(authError.message), 'AUTH-209'));
       setGoogleLoading(false);
     }
   }
@@ -78,7 +78,7 @@ export default function SignupPage() {
   async function sendCode() {
     const { error: sendError } = await sendEmailCode(email, { createUser: true });
     if (sendError) {
-      setError(friendlyAuthError(sendError.message));
+      setError(withErrorCode(friendlyAuthError(sendError.message), authErrorCode(sendError)));
       return false;
     }
     setCode('');
@@ -108,7 +108,7 @@ export default function SignupPage() {
     setError('');
     const result = await verifyEmailCode(email, code.trim(), SIGNUP_OTP_TYPES);
     if (!result.ok) {
-      setError(friendlyAuthError(result.message));
+      setError(withErrorCode(friendlyAuthError(result.message), authErrorCode(result)));
       setLoading(false);
       return;
     }

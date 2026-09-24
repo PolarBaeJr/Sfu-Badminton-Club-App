@@ -5,6 +5,7 @@ import { supabaseIntegration } from '@supabase/sentry-js-integration';
 // reaches node 'crypto' through email/unsubscribe, and a Sentry init file is
 // loaded from places that will not tolerate that.
 import { dropExpectedEvent } from '@badminton/shared/src/utils/expected-error';
+import { tagErrorCode } from '@badminton/shared/src/utils/app-error';
 
 // CPU profiling is a native add-on. Load defensively so a missing/incompatible
 // prebuilt binary (ARM Pi, gated install scripts) degrades to "no profiling"
@@ -67,8 +68,12 @@ Sentry.init({
   ignoreErrors: ['NEXT_NOT_FOUND'],
   // Backstop under instrumentation.ts's onRequestError wrapper: any other
   // automatic server-side capture path still funnels through beforeSend. Drops
-  // only errors explicitly marked ExpectedError; everything else is untouched.
-  beforeSend: dropExpectedEvent,
+  // only errors explicitly marked ExpectedError. A coded error that is kept is
+  // tagged error_code / error_ref, so the code a member reports finds the event.
+  beforeSend: (event, hint) => {
+    const kept = dropExpectedEvent(event, hint);
+    return kept && tagErrorCode(kept, hint);
+  },
   integrations: [
     supabaseIntegration(SupabaseClient, Sentry, {
       tracing: true,

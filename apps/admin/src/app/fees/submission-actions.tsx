@@ -47,7 +47,7 @@ export function SubmissionActions({
     startTransition(async () => {
       const result = await confirmFeeSubmission(submissionId);
       if (!result.ok) {
-        toast(result.error, 'error');
+        toast(result.code ? `${result.error} (${result.code}.${result.ref})` : result.error, 'error');
         return;
       }
       toast('Payment confirmed', 'success');
@@ -59,7 +59,7 @@ export function SubmissionActions({
     startTransition(async () => {
       const result = await rejectFeeSubmission(submissionId, reason);
       if (!result.ok) {
-        toast(result.error, 'error');
+        toast(result.code ? `${result.error} (${result.code}.${result.ref})` : result.error, 'error');
         return;
       }
       toast('Receipt rejected', 'success');
@@ -151,7 +151,7 @@ export function RemindButton({
     startTransition(async () => {
       const result = await remindUnpaidMembers(playerIds);
       if (!result.ok) {
-        toast(result.error, 'error');
+        toast(result.code ? `${result.error} (${result.code}.${result.ref})` : result.error, 'error');
         return;
       }
       const { sent, skipped } = result.data;

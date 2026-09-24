@@ -5,7 +5,7 @@
 import * as Sentry from '@sentry/nextjs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PostHog } from 'posthog-node';
-import { getMissingLegalDocuments, isPushCategoryEnabled, isSelfReactivatable, ExpectedError, isExpectedFailure, type NotificationCategory } from '@badminton/shared';
+import { getMissingLegalDocuments, isPushCategoryEnabled, isSelfReactivatable, ExpectedError, isAppError, isExpectedFailure, type NotificationCategory } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 import { reactivateLapsedMember } from '../reactivate';
@@ -13,7 +13,7 @@ import { evaluateLegalGate } from '../legal-gate';
 
 export type ActionResult<T = void> =
   | { ok: true; data: T }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: string; ref?: string };
 
 // Next.js control-flow errors (redirect/notFound) throw and MUST propagate.
 const NEXT_CONTROL_FLOW = /^NEXT_(REDIRECT|NOT_FOUND|HTTP_ERROR_FALLBACK)/;
@@ -35,7 +35,14 @@ export async function runAction<T>(fn: () => Promise<T>): Promise<ActionResult<T
     // isExpectedFailure also matches an allowlisted guard message arriving as a
     // plain Error, which is how score-format rejections were reaching Sentry.
     if (!isExpectedFailure(err)) Sentry.captureException(err);
-    return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
+    // A coded error also hands back its code and ref, so the toast can show
+    // what to report. Next never logs an error returned as a value, so a coded
+    // fault is logged here, under the same CODE.ref the member sees.
+    if (!isAppError(err)) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
+    }
+    if (!isExpectedFailure(err)) console.error('[action]', err.digest, err);
+    return { ok: false, error: err.message, code: err.code, ref: err.ref };
   }
 }
 

@@ -51,14 +51,18 @@ export async function verifyEmailCode(
   email: string,
   token: string,
   order: readonly OtpType[]
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | ({ ok: false } & SendCodeError)> {
   const supabase = createClient();
   let message = '';
+  let code: string | undefined;
+  let status: number | undefined;
   for (const type of order) {
     const { error } = await supabase.auth.verifyOtp({ email, token, type });
     if (!error) return { ok: true };
     message = error.message ?? '';
+    code = error.code;
+    status = error.status;
     if (!shouldTryNextOtpType(message)) break;
   }
-  return { ok: false, message: message || 'That code did not work. Request a new one.' };
+  return { ok: false, message: message || 'That code did not work. Request a new one.', code, status };
 }
