@@ -21,6 +21,10 @@ import { cn } from '../utils';
 // element through renderLink.
 
 const PANEL_WIDTH = 208;
+// How long the pointer may be outside both the trigger and the panel before a
+// hover-opened menu shuts: long enough to cross the 4px gap between them, or to
+// clip a corner on the way down, without the menu flickering.
+const HOVER_CLOSE_MS = 150;
 
 export interface NavMenuItem {
   href: string;
@@ -68,6 +72,11 @@ export function NavMenu({
   // Set when the menu was opened from the keyboard. Consumed once the panel has
   // actually rendered, which is not until the position below is known.
   const focusFirstRef = React.useRef(false);
+  // A MOUSE opens the menu on hover. A menu opened that way also closes when the
+  // pointer leaves; one opened by click, tap or keyboard stays until dismissed.
+  // Touch never hovers (pointerType is checked), so phones keep tap-to-open.
+  const openedByHoverRef = React.useRef(false);
+  const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const panelId = `nav-menu-${id}`;
 
   const links = () => Array.from(panelRef.current?.querySelectorAll<HTMLElement>('a[href]') ?? []);
@@ -82,6 +91,38 @@ export function NavMenu({
   React.useEffect(() => {
     setOpen(false);
   }, [pathname]);
+
+  const cancelHoverClose = React.useCallback(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  // However it closed, the next open starts from scratch.
+  React.useEffect(() => {
+    if (!open) {
+      openedByHoverRef.current = false;
+      cancelHoverClose();
+    }
+  }, [open, cancelHoverClose]);
+
+  React.useEffect(() => cancelHoverClose, [cancelHoverClose]);
+
+  function handlePointerEnter(event: React.PointerEvent) {
+    if (event.pointerType !== 'mouse') return;
+    cancelHoverClose();
+    if (!open) {
+      openedByHoverRef.current = true;
+      setOpen(true);
+    }
+  }
+
+  function handlePointerLeave(event: React.PointerEvent) {
+    if (event.pointerType !== 'mouse' || !openedByHoverRef.current) return;
+    cancelHoverClose();
+    closeTimerRef.current = setTimeout(() => setOpen(false), HOVER_CLOSE_MS);
+  }
 
   React.useEffect(() => {
     if (!open || !triggerRef.current) return;
@@ -143,6 +184,8 @@ export function NavMenu({
     // detail is 0 when Enter or Space activated the button, so a keyboard user
     // lands on the first link and a mouse user does not get a focus ring.
     if (!open && event.detail === 0) focusFirstRef.current = true;
+    // Hover already opened it, so the click that follows must not shut it again.
+    if (open && openedByHoverRef.current && event.detail !== 0) return;
     setOpen((v) => !v);
   }
 
@@ -187,6 +230,8 @@ export function NavMenu({
             id={panelId}
             onKeyDown={handlePanelKeyDown}
             onBlur={handleBlur}
+            onPointerEnter={handlePointerEnter}
+            onPointerLeave={handlePointerLeave}
             style={{ position: 'fixed', top: pos.top, left: pos.left, width: PANEL_WIDTH, zIndex: 100 }}
             className={panelClassName}
           >
@@ -225,6 +270,8 @@ export function NavMenu({
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
         onBlur={handleBlur}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
         className={triggerClassName}
       >
         {Icon && <Icon className="w-4 h-4" />}
