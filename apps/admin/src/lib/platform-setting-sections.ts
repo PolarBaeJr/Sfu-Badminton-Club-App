@@ -11,7 +11,9 @@
 // It is imported by two server pages and by the permissions test; keeping it a
 // plain module means nothing here can ever follow an import into the edge
 // middleware bundle.
-export type PlatformSettingsSection = 'ratings' | 'accounts';
+// 'club' is drawn on /accounts too, as its own "Club links" card: they are
+// links the club publishes, not rules about what an account may do.
+export type PlatformSettingsSection = 'ratings' | 'accounts' | 'club';
 
 // Declaration order is also RENDER order within each page, so the reading order
 // is decided here too rather than by the database's alphabetical `order('key')`.
@@ -34,6 +36,10 @@ export const SETTING_SECTION: Record<string, PlatformSettingsSection> = {
   walkover_rules: 'accounts',
   inactivity_rules: 'accounts',
   session_attendance: 'accounts',
+
+  // Club links. Neither row is seeded by a migration; see SEEDABLE_SETTINGS.
+  membership_payments: 'club',
+  club_socials: 'club',
 };
 
 // A platform_settings row added later without a line above must still be

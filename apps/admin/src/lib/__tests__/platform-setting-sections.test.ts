@@ -12,12 +12,15 @@ import { defaultFeaturesValue } from '@badminton/shared/src/utils/features';
 // 2026-08-06; signup_settings added by migration 00220 on 2026-09-09). Pinned
 // here so splitting them across two pages can never lose one: a key that is
 // neither in SETTING_SECTION nor caught by the default would simply stop
-// rendering, with no error anywhere. `features` is the exception: no migration
-// seeds it, and the console inserts it on the first save.
+// rendering, with no error anywhere. `features`, `club_socials` and
+// `membership_payments` are the exceptions: no migration seeds them, and the
+// console inserts each on its first save.
 const PRODUCTION_KEYS = [
   'challenge_rules',
+  'club_socials',
   'features',
   'inactivity_rules',
+  'membership_payments',
   'rating_defaults',
   'repeat_opponent_caps',
   'season_settings',
@@ -68,8 +71,17 @@ describe('platform settings section map', () => {
     const rows = PRODUCTION_KEYS.map((key) => ({ key }));
     const ratings = settingsForSection(rows, 'ratings');
     const accounts = settingsForSection(rows, 'accounts');
-    expect(ratings.length + accounts.length).toBe(rows.length);
-    expect(ratings.some((r) => accounts.includes(r))).toBe(false);
+    const club = settingsForSection(rows, 'club');
+    expect(ratings.length + accounts.length + club.length).toBe(rows.length);
+    expect(ratings.some((r) => accounts.includes(r) || club.includes(r))).toBe(false);
+    expect(accounts.some((r) => club.includes(r))).toBe(false);
+  });
+
+  // The links the club publishes get their own card, not a place among the
+  // account rules.
+  it('puts the club links in their own section', () => {
+    expect(sectionForSettingKey('club_socials')).toBe('club');
+    expect(sectionForSettingKey('membership_payments')).toBe('club');
   });
 
   it('renders in map order, not the database’s alphabetical order', () => {

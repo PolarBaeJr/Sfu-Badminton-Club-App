@@ -939,6 +939,19 @@ export async function writeServerRoleCatalog(payload: {
   }
 }
 
+/**
+ * The club's links for /socials: the socials switch, show_discord and the
+ * Instagram URL, each already checked by the app. The invite URL is not in it;
+ * the bot has its own constant.
+ */
+export function fetchClubSocials(): Promise<{
+  enabled: boolean;
+  showDiscord: boolean;
+  instagramUrl: string | null;
+}> {
+  return get('/api/discord/socials');
+}
+
 // ---- RUNTIME SETTINGS ------------------------------------------------------
 //
 // The key/value rows every relay reads to decide where it posts. Separate from

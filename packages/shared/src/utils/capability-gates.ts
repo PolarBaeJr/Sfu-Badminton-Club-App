@@ -784,6 +784,17 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     label: 'Fees while switched off', area: 'page', group: null, mode: 'read',
     gate: 'player app/fees/layout.tsx FeatureGate',
   },
+  'page.access.membership': {
+    label: 'Membership page while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/membership/layout.tsx FeatureGate',
+  },
+  // The page only. The footer row, the nav's Discord links and the bot's reply
+  // ask the same question for everybody at once, so, like the nav filters, they
+  // are not listed as sites.
+  'page.access.socials': {
+    label: 'Social links while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/socials/layout.tsx FeatureGate',
+  },
 };
 
 /**

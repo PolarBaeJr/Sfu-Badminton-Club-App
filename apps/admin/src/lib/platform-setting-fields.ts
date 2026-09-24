@@ -15,6 +15,11 @@ import {
   defaultFeaturesValue,
   featureField,
 } from '@badminton/shared/src/utils/features';
+import { CLUB_SOCIALS_SETTING_KEY, defaultClubSocialsValue } from '@badminton/shared/src/utils/club-socials';
+import {
+  MEMBERSHIP_PAYMENTS_SETTING_KEY,
+  defaultMembershipPaymentsValue,
+} from '@badminton/shared/src/utils/membership-settings';
 
 export interface PlatformSetting {
   key: string;
@@ -35,6 +40,8 @@ export const SETTING_LABELS: Record<string, string> = {
   session_attendance: 'Session Attendance',
   signup_settings: 'Signup Approval',
   features: 'Club Features',
+  club_socials: 'Instagram and Discord',
+  membership_payments: 'Buying a membership',
 };
 
 export const SETTING_DESCRIPTIONS: Record<string, string> = {
@@ -49,6 +56,8 @@ export const SETTING_DESCRIPTIONS: Record<string, string> = {
   session_attendance: 'Check-in window and default session duration',
   signup_settings: 'Whether a new signup is approved automatically or waits for an exec',
   features: 'Which member-facing features are running',
+  club_socials: 'The Instagram and Discord links on the site and in the bot',
+  membership_payments: 'Where the membership page sends people to buy a membership',
 };
 
 export interface FieldMeta {
@@ -452,6 +461,32 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       ],
     },
   },
+  // Both read by the player app and the bot, which re-check every value; the
+  // console refuses a bad one on save (updatePlatformSettings).
+  [CLUB_SOCIALS_SETTING_KEY]: {
+    instagram_url: {
+      label: 'Instagram',
+      hint: 'The club Instagram profile, as https://www.instagram.com/<name>/. Shown in the page footer, on the socials page and in the bot. Leave empty to hide Instagram everywhere.',
+      type: 'text',
+    },
+    show_discord: {
+      label: 'Show Discord',
+      hint: 'Off hides every link to the club Discord: the nav, the page footer, the socials page and the bot\'s /socials reply. Linking a Discord account still works. The Social links switch under Club Features hides all of the links at once.',
+      type: 'boolean',
+    },
+  },
+  [MEMBERSHIP_PAYMENTS_SETTING_KEY]: {
+    sfss_purchase_url: {
+      label: 'Buy membership link',
+      hint: 'The SFU Recreation page where a membership is bought. It must start with https://. The membership page shows a "Buy membership on SFU Recreation" button while this is set; leave it empty to hide the button.',
+      type: 'text',
+    },
+    etransfer_email: {
+      label: 'E-transfer email',
+      hint: 'Where members send an Interac e-Transfer for club fees. Not shown anywhere yet. Leave empty until the club has one.',
+      type: 'text',
+    },
+  },
   // One switch per entry in the shared feature registry, so a feature added
   // there appears here with no second list to keep in step.
   [FEATURES_SETTING_KEY]: Object.fromEntries(
@@ -472,10 +507,15 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
  * updatePlatformSettings refuses one that is absent.
  *
  * `features` is here so the switches need no migration: until somebody saves
- * one, the absent row already means "everything on".
+ * one, the absent row already means "everything on". `club_socials` and
+ * `membership_payments` are here for the same reason.
  */
 export const SEEDABLE_SETTINGS: Record<string, () => Record<string, unknown>> = {
   [FEATURES_SETTING_KEY]: defaultFeaturesValue,
+  // The same defaults the player app and the bot read an absent row as, so the
+  // form shows what the site is already showing.
+  [CLUB_SOCIALS_SETTING_KEY]: defaultClubSocialsValue,
+  [MEMBERSHIP_PAYMENTS_SETTING_KEY]: defaultMembershipPaymentsValue,
 };
 
 /**

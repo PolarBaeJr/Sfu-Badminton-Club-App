@@ -94,9 +94,12 @@ describe('the capability vocabulary', () => {
   // 131 BECAME 139 with club events (00244): the seven admin-only `events.*`
   // strings in the new `events` area, and `page.access.events`, which the
   // registry mints for the new feature switch.
-  it('is exactly 139 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(139);
-    expect(new Set(CAPABILITIES).size).toBe(139);
+  //
+  // 139 BECAME 141 with two more feature switches (00247), `membership` and
+  // `socials`, each of which mints its `page.access.<id>` key.
+  it('is exactly 141 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(141);
+    expect(new Set(CAPABILITIES).size).toBe(141);
   });
 
   // 16 BECAME 17 with `page`, the keys to switched-off features, and 17
@@ -305,16 +308,21 @@ describe('CAPABILITY_GATES', () => {
   // 168 BECAME 178 with club events: seven `events.*` capabilities with one
   // site each, and `page.access.events`, whose FeatureGate on /events is joined
   // by the sign-up and the withdrawal, merged as SWITCHED_OFF like the rest.
-  it('names 178 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 178 BECAME 180 with `page.access.membership` and `page.access.socials`:
+  // one FeatureGate each, on /membership and /socials. The footer row, the
+  // nav's Discord links and the bot's /socials reply ask the socials question
+  // for everybody at once, like the nav filters, so they are not sites.
+  it('names 180 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(178);
-    expect(new Set(sites).size).toBe(178);
-    expect(ENFORCEMENT_POINTS).toBe(178);
+    expect(sites.length).toBe(180);
+    expect(new Set(sites).size).toBe(180);
+    expect(ENFORCEMENT_POINTS).toBe(180);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -1029,16 +1037,17 @@ describe('EDITOR_OFFERABLE', () => {
 describe('permits', () => {
   // 121 BECAME 124 with the data API's three key capabilities, and 124 BECAME
   // 131 with the seven keys to switched-off features, and 131 BECAME 139 with
-  // club events. This number
+  // club events, and 139 BECAME 141 with the membership and socials switches.
+  // This number
   // tracks CAPABILITIES.length by construction (admin is a superuser BY LEVEL,
   // so every capability added is automatically theirs), and it is written as a
   // literal anyway, because a count derived from the list it is checking would
   // pass for an empty list.
-  it('makes an admin a superuser BY LEVEL, holding all 139', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 141', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(139);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(141);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

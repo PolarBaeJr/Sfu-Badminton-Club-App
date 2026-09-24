@@ -15,6 +15,13 @@ import { ExpectedError, FEATURES_SETTING_KEY } from '@badminton/shared';
 import { REASON_MIN } from '../audit-reason';
 import { MIN_REASON_LENGTH } from '../legal-reason';
 import { SEEDABLE_SETTINGS } from '../platform-setting-fields';
+import {
+  CLUB_SOCIALS_SETTING_KEY,
+  MEMBERSHIP_PAYMENTS_SETTING_KEY,
+  safeEtransferEmail,
+  safeInstagramUrl,
+  safePurchaseUrl,
+} from '@badminton/shared';
 import { clubToday } from '@badminton/shared';
 
 // Platform configuration. Admin-only, and this is the boundary that matters:
@@ -114,6 +121,9 @@ export async function updatePlatformSettings(
       );
     }
 
+    const invalid = invalidClubLink(update.key, update.value);
+    if (invalid) throw new ExpectedError(invalid);
+
     checked.push({
       key: update.key,
       value: update.value,
@@ -167,6 +177,32 @@ export async function updatePlatformSettings(
   // The feature switches decide the console's nav, which the root layout
   // draws, so the whole tree re-renders rather than one page.
   if (checked.some((update) => update.key === FEATURES_SETTING_KEY)) revalidatePath('/', 'layout');
+}
+
+// THE TWO ROWS THE SITE PRINTS AS LINKS. The player app and the bot re-check
+// every value on read and hide one that fails, so a bad save here would not be
+// dangerous; it would be a link that silently vanishes. Refusing it at save
+// time is what tells the officer why. '' is always allowed: it hides the link.
+function invalidClubLink(key: string, value: Record<string, unknown>): string | null {
+  const blankOr = (raw: unknown, ok: (v: string) => boolean) =>
+    typeof raw === 'string' && (raw.trim() === '' || ok(raw));
+  if (key === CLUB_SOCIALS_SETTING_KEY) {
+    if (!blankOr(value.instagram_url, (v) => safeInstagramUrl(v) !== null)) {
+      return 'The Instagram link has to be an https://www.instagram.com/ address, or empty to hide it.';
+    }
+    if (typeof value.show_discord !== 'boolean') {
+      return 'Show Discord has to be on or off.';
+    }
+  }
+  if (key === MEMBERSHIP_PAYMENTS_SETTING_KEY) {
+    if (!blankOr(value.sfss_purchase_url, (v) => safePurchaseUrl(v) !== null)) {
+      return 'The buy membership link has to start with https://, or be empty to hide the button.';
+    }
+    if (!blankOr(value.etransfer_email, (v) => safeEtransferEmail(v) !== null)) {
+      return 'The e-transfer email does not look like an email address.';
+    }
+  }
+  return null;
 }
 
 // Bumping re-requires acceptance from every member (the player app compares

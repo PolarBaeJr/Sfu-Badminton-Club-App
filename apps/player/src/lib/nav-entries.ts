@@ -1,4 +1,4 @@
-import { Home, Trophy, Crosshair, CalendarHeart, Award, Sparkles, type LucideIcon } from 'lucide-react';
+import { Home, Trophy, Crosshair, CalendarHeart, Award, Sparkles, CreditCard, type LucideIcon } from 'lucide-react';
 // Deep, NOT the '@badminton/ui' barrel: that loads every component in the
 // package, and this module is imported by a test that has no DOM.
 import { visibleEntries, type NavEntry, type NavGroup } from '@badminton/ui/src/nav-groups';
@@ -33,6 +33,9 @@ const CHALLENGES: PlayerNavItem = { href: '/challenges', label: 'Challenges', ic
 const TOURNAMENTS: PlayerNavItem = { href: '/tournaments', label: 'Tournaments', icon: Award, gated: true };
 const CLUB_EVENTS: PlayerNavItem = { href: '/events', label: 'Club events', icon: CalendarHeart, gated: true };
 const MY_STATS: PlayerNavItem = { href: '/my-stats', label: 'My stats', icon: Sparkles, gated: false };
+// Not gated: the page's public half (prices, where to buy) is for everybody,
+// and a pending member sees a line saying their account is waiting.
+const MEMBERSHIP: PlayerNavItem = { href: '/membership', label: 'Membership', icon: CreditCard, gated: false };
 
 // A new kind of club event is one more item here.
 const EVENTS: NavGroup<PlayerNavItem, LucideIcon> = {
@@ -56,10 +59,13 @@ export const DESKTOP_ENTRIES: PlayerNavEntry[] = [
   { kind: 'link', item: CHALLENGES },
   { kind: 'group', group: EVENTS },
   { kind: 'group', group: STATS },
+  { kind: 'link', item: MEMBERSHIP },
 ];
 
 // Five slots is what fits under a thumb. Ranks and Me stay direct links, with
-// the short labels the tab bar has always used; Events opens a sheet.
+// the short labels the tab bar has always used; Events opens a sheet. There is
+// no sixth slot for Membership: a member reaches it from the top bar and from
+// Settings.
 export const MOBILE_SLOTS: PlayerNavEntry[] = [
   { kind: 'link', item: FEED },
   { kind: 'link', item: { ...LEADERBOARD, label: 'Ranks' } },

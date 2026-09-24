@@ -26,6 +26,7 @@ export function TopBar({
   isApproved = true,
   features = ALL_FEATURES_ENABLED,
   featureAccess = [],
+  showDiscord = true,
 }: {
   playerName: string;
   avatarUrl?: string | null;
@@ -41,6 +42,11 @@ export function TopBar({
   features?: FeatureFlags;
   /** Switched-off features whose `page.access.<id>` key the viewer holds. */
   featureAccess?: readonly FeatureId[];
+  /**
+   * Whether to link the club Discord: the socials switch and club_socials'
+   * show_discord, decided once by the layout.
+   */
+  showDiscord?: boolean;
 }) {
   const pathname = usePathname();
   // This chrome renders above every page, and a LAYOUT never receives
@@ -159,9 +165,20 @@ export function TopBar({
               >
                 Execs
               </Link>
-              <a href={DISCORD_INVITE_URL} className="nav-item" target="_blank" rel="noopener noreferrer">
-                Discord
-              </a>
+              {features.membership && (
+                <Link
+                  href="/membership"
+                  className={cn('nav-item', pathname.startsWith('/membership') && 'active')}
+                  aria-current={pathname.startsWith('/membership') ? 'page' : undefined}
+                >
+                  Membership
+                </Link>
+              )}
+              {showDiscord && (
+                <a href={DISCORD_INVITE_URL} className="nav-item" target="_blank" rel="noopener noreferrer">
+                  Discord
+                </a>
+              )}
             </>
           )}
         </nav>
@@ -190,16 +207,18 @@ export function TopBar({
               {/* A new tab on purpose, unlike the console link above: Discord is
                   another site (or the Discord app), and the member should land
                   back here when they close it. */}
-              <a
-                href={DISCORD_INVITE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="icon-btn"
-                aria-label="Join the club Discord"
-                title="Club Discord"
-              >
-                <DiscordMark size={16} />
-              </a>
+              {showDiscord && (
+                <a
+                  href={DISCORD_INVITE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="icon-btn"
+                  aria-label="Join the club Discord"
+                  title="Club Discord"
+                >
+                  <DiscordMark size={16} />
+                </a>
+              )}
               <Link
                 href="/notifications"
                 aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}

@@ -310,8 +310,10 @@ describe('what may go in a baseline', () => {
       'page.access.events',
       'page.access.fees',
       'page.access.leaderboard',
+      'page.access.membership',
       'page.access.my_stats',
       'page.access.sessions',
+      'page.access.socials',
       'page.access.tournaments',
       'players.consoleaccess.write',
     ]);

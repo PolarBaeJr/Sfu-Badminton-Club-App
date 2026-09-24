@@ -13,7 +13,8 @@
  *
  * Two kinds of entry live here and they are worth telling apart:
  *
- *  - PAGES anyone may read (`/`, `/legal`, `/leaderboard`).
+ *  - PAGES anyone may read (`/`, `/legal`, `/leaderboard`, `/membership`,
+ *    `/socials`).
  *  - ROUTES THAT CARRY THEIR OWN CREDENTIAL — a signed token, a bearer secret,
  *    a passkey challenge. These are not "public" in the sense of unprotected;
  *    they are protected by something the session gate cannot see, and putting
@@ -57,6 +58,12 @@ export function isPublicPath(pathname: string): boolean {
     // nothing logged. The matcher in middleware.ts excludes it too; this is the
     // second of the two independent guards, and the testable one.
     pathname.startsWith('/qr/') ||
-    pathname === '/leaderboard'
+    pathname === '/leaderboard' ||
+    // Prices and where to buy a membership, for somebody deciding whether to
+    // join. Exact: the page has no subroutes. The statement a member owes is
+    // /fees, which stays gated.
+    pathname === '/membership' ||
+    // The club's social links. Exact, same reason.
+    pathname === '/socials'
   );
 }

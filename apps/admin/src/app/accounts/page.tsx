@@ -538,6 +538,20 @@ export default async function AccountsPage() {
             </section>
           )}
 
+          {showPlatformSettings && (
+            <section id="club-links" className="scroll-mt-32">
+              <Card>
+                <CardHeading
+                  title="Club links"
+                  sub="The links the club publishes: Instagram, Discord, and where to buy a membership."
+                />
+                <div className="mt-4">
+                  <PlatformSettingsForm settings={settingsForSection(withSeededSettings(settings ?? []), 'club')} />
+                </div>
+              </Card>
+            </section>
+          )}
+
           {showDataApiKeys ? (
             // The anchor lives on a wrapper for the same reason the officers
             // one does: Card takes no id and packages/ui is not this change's

@@ -112,6 +112,22 @@ export const FEATURES = [
     playerRoutes: ['/fees'],
     adminRoutes: [],
   },
+  {
+    id: 'membership',
+    label: 'Membership page',
+    description:
+      'The public membership page: this season\'s prices and where to buy a membership, for visitors and members alike. Off hides the page and its nav item. Fees are still owed and recorded; a member\'s own statement is the separate Fees switch.',
+    playerRoutes: ['/membership'],
+    adminRoutes: [],
+  },
+  {
+    id: 'socials',
+    label: 'Social links',
+    description:
+      "The club's social links: the socials page, the links in the page footer and on the membership page, the Discord links in the nav, and the Discord bot's /socials command. Off hides every one of them. Linking a Discord account still works. Instagram and Discord can also be hidden one at a time under Club links.",
+    playerRoutes: ['/socials'],
+    adminRoutes: [],
+  },
 ] as const satisfies readonly FeatureDefinition[];
 
 export type FeatureId = (typeof FEATURES)[number]['id'];

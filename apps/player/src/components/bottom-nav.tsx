@@ -18,14 +18,16 @@ import {
   type FeatureFlags,
   type FeatureId,
 } from '@badminton/shared/src/utils/features';
-import { Home, Trophy, LogIn } from 'lucide-react';
+import { Home, Trophy, LogIn, CreditCard } from 'lucide-react';
 import { DISCORD_INVITE_URL } from '@badminton/shared';
 import { DiscordMark } from './discord-mark';
 
+// Four slots plus the Discord anchor below: five, which is what fits.
 const publicSlots: PlayerNavEntry[] = [
-  { kind: 'link', item: { href: '/',            label: 'Home',    icon: Home,   gated: false } },
-  { kind: 'link', item: { href: '/leaderboard', label: 'Ranks',   icon: Trophy, gated: false } },
-  { kind: 'link', item: { href: '/login',       label: 'Sign in', icon: LogIn,  gated: false } },
+  { kind: 'link', item: { href: '/',            label: 'Home',       icon: Home,       gated: false } },
+  { kind: 'link', item: { href: '/leaderboard', label: 'Ranks',      icon: Trophy,     gated: false } },
+  { kind: 'link', item: { href: '/membership',  label: 'Membership', icon: CreditCard, gated: false } },
+  { kind: 'link', item: { href: '/login',       label: 'Sign in',    icon: LogIn,      gated: false } },
 ];
 
 export function BottomNav({
@@ -33,6 +35,7 @@ export function BottomNav({
   isApproved = true,
   features = ALL_FEATURES_ENABLED,
   featureAccess = [],
+  showDiscord = true,
 }: {
   isAuthenticated: boolean;
   /** False while the account is pending approval or suspended. */
@@ -41,6 +44,8 @@ export function BottomNav({
   features?: FeatureFlags;
   /** Switched-off features whose `page.access.<id>` key the viewer holds, so they stay in the nav. */
   featureAccess?: readonly FeatureId[];
+  /** Whether to link the club Discord, decided once by the layout. */
+  showDiscord?: boolean;
 }) {
   const pathname = usePathname();
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
@@ -236,7 +241,7 @@ export function BottomNav({
 
   // Gated slots are filtered on isApproved inside, and a group left empty
   // (Events, for a pending member) is dropped with them.
-  // A signed-out visitor's Ranks slot follows the leaderboard switch as well.
+  // A signed-out visitor's Ranks and Membership slots follow their switches as well.
   const slots = isAuthenticated
     ? mobileSlots(isApproved, features, featureAccess)
     : publicSlots.filter(
@@ -315,7 +320,7 @@ export function BottomNav({
         {/* Signed out only: a member reaches Discord from the top bar, and their
             five slots are full. An anchor rather than a slot entry because it
             leaves the app, so it has no route to be active on. */}
-        {!isAuthenticated && (
+        {!isAuthenticated && showDiscord && (
           <a href={DISCORD_INVITE_URL} target="_blank" rel="noopener noreferrer" className="press">
             <DiscordMark size={20} />
             <span>Discord</span>

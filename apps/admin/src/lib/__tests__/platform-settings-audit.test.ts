@@ -283,3 +283,53 @@ describe('updatePlatformSettings: a seedable key with no row yet', () => {
     expect(audits()).toHaveLength(0);
   });
 });
+
+// THE CLUB LINKS ARE PRINTED ON EVERY PAGE, so a value the site would refuse to
+// show is refused here, with a message, rather than saved and silently hidden.
+describe('updatePlatformSettings: the club links', () => {
+  const socials = (value: Record<string, unknown>) => ({
+    key: 'club_socials',
+    value: { ...SEEDABLE_SETTINGS.club_socials!(), ...value },
+  });
+  const payments = (value: Record<string, unknown>) => ({
+    key: 'membership_payments',
+    value: { ...SEEDABLE_SETTINGS.membership_payments!(), ...value },
+  });
+
+  it('seeds both rows on first save', async () => {
+    await updatePlatformSettings([socials({}), payments({})], WHY);
+    expect(settings().map((s) => s.key)).toEqual(expect.arrayContaining(['club_socials', 'membership_payments']));
+  });
+
+  it.each([
+    'javascript:alert(1)',
+    'http://www.instagram.com/sfu_badmintonclub/',
+    'https://evil.com/sfu_badmintonclub',
+  ])('refuses the Instagram link %s and writes nothing', async (instagram_url) => {
+    await expect(updatePlatformSettings([socials({ instagram_url })], WHY)).rejects.toThrow(/Instagram/);
+    expect(settings().some((s) => s.key === 'club_socials')).toBe(false);
+    expect(audits()).toHaveLength(0);
+  });
+
+  it('allows an empty Instagram link, which hides it', async () => {
+    await updatePlatformSettings([socials({ instagram_url: '' })], WHY);
+    expect(settings().find((s) => s.key === 'club_socials')?.value).toHaveProperty('instagram_url', '');
+  });
+
+  it('refuses a show_discord that is not a boolean', async () => {
+    await expect(updatePlatformSettings([socials({ show_discord: 'false' })], WHY)).rejects.toThrow(/Discord/);
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,hi', 'http://go.sfss.ca/'])(
+    'refuses the purchase link %s',
+    async (sfss_purchase_url) => {
+      await expect(updatePlatformSettings([payments({ sfss_purchase_url })], WHY)).rejects.toThrow(/https/);
+    },
+  );
+
+  it('refuses an e-transfer address that is not one, and allows an empty one', async () => {
+    await expect(updatePlatformSettings([payments({ etransfer_email: 'treasurer' })], WHY)).rejects.toThrow(/email/);
+    await updatePlatformSettings([payments({ etransfer_email: '' })], WHY);
+    expect(settings().find((s) => s.key === 'membership_payments')?.value).toHaveProperty('etransfer_email', '');
+  });
+});
