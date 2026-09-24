@@ -24,7 +24,6 @@ import { RosterTable, type RosterRow } from './roster-table';
 import { RowLink } from '@/components/row-link';
 import { RowSelectCheckbox, SelectAllCheckbox } from '@/components/selection';
 import { BulkPlayerActions } from './bulk-player-actions';
-import { RosterCharts } from './roster-charts';
 import { toRoleValue } from '@/lib/console-access';
 import { memberIdentifier } from '@/lib/member-identifier';
 import { rosterActionsFor, rosterActionKey, type RosterAction } from '@/lib/roster-actions';
@@ -56,8 +55,8 @@ function standingOf(
   return { label: 'Active', variant: 'success' };
 }
 
-/** Radius 0 everywhere on this screen but a dialog; Badge ships rounded-full. */
-const BADGE = 'rounded-none';
+/** The roster's status badges are pills, as Badge ships them. */
+const BADGE = 'rounded-full';
 /** The console's column-header voice: 9px mono, wide tracking, muted. */
 const TH = 'px-4 py-3 font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]';
 /** An unrated player, an unplayed record. An em-dash, never a blank cell. */
@@ -262,17 +261,11 @@ export default async function PlayersPage({
   // Behind players.read like the list itself: it is every member's name, email
   // and avatar, which is the roster by another route. The counts it feeds all
   // collapse to 0 on an empty list, and nothing renders them without the read.
-  //
-  // `created_at` rides along for the growth curve. One more column on a query
-  // that already runs, rather than a second round trip: the chart asks the same
-  // question of the same rows this fetch exists to count, and gating it on
-  // anything but `players.read` would be a second answer to who may see the
-  // roster.
   const { data: countRows } = canRead
     ? await supabase
         .from('players')
         .select(
-          'id, full_name, handle, email, avatar_url, user_id, status, is_banned, active_flag, created_at, onboarding_completed, privilege_claim_review',
+          'id, full_name, handle, email, avatar_url, user_id, status, is_banned, active_flag, onboarding_completed, privilege_claim_review',
         )
         .order('full_name')
         .limit(5000)
@@ -336,12 +329,6 @@ export default async function PlayersPage({
   // which is the whole point: an officer checking members in at the door is
   // holding a phone, and eight columns in a sideways-scrolling box is not a
   // roster they can read.
-  // The tab's standings, counted AS THE ROWS ARE BUILT rather than by a second
-  // pass over the same players. standingOf() needs the waiver arithmetic that
-  // happens inside this map, and computing it twice is how a chart and the
-  // badges beside it end up disagreeing about one member.
-  const standingCounts = new Map<string, number>();
-
   const rows: RosterRow[] = (players ?? []).map((player) => {
     const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
     const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string; accepted_at: string }[];
@@ -349,7 +336,6 @@ export default async function PlayersPage({
       (legalDocs?.length ?? 0) > 0 &&
       getMissingLegalDocuments(legalDocs ?? [], acceptances, new Date(), player.waiver_reset_at).length === 0;
     const standing = standingOf(player, waiverCurrent);
-    standingCounts.set(standing.label, (standingCounts.get(standing.label) ?? 0) + 1);
     const claimReview = parsePrivilegeClaimReview(player.privilege_claim_review);
     // The other "a human still has to look at this" flag, from 00163. Same
     // shape of decision as the claim review beside it, so it is read the same
@@ -669,34 +655,6 @@ export default async function PlayersPage({
         </Card>
       ) : (
         <>
-        {/* Above the roster, not below it: five hundred rows is not a scroll
-            anybody makes on the way to a summary. Both cards fold rows the page
-            has already fetched, and neither is rendered at all without
-            players.read — they sit inside this branch for that reason. */}
-        <RosterCharts
-          standings={[...standingCounts].map(([label, value]) => ({ label, value }))}
-          tabLabel={tabs.find((t) => t.id === tab)?.label ?? tab}
-          tabTotal={tabs.find((t) => t.id === tab)?.count ?? rows.length}
-          // `members`, not `countRows`. A signup that was never finished is not
-          // a join: plotting it would put a step on the growth curve for
-          // somebody who never became a member, and — because the headline
-          // figure below is the same set — the two numbers on this one card
-          // would have to agree about which rows count. They do, by using the
-          // same list.
-          joins={members
-            // `players.created_at` is NOT NULL DEFAULT now(), so this drops
-            // nothing today and is kept only so a schema change cannot put an
-            // undated member on a time axis. It matters that it is dead: the
-            // headline figure below is the CLUB's size and the chart's own axis
-            // counts the members plotted, and a filter that bit would print two
-            // different numbers on one card.
-            .filter((p) => p.created_at)
-            // One member, valued at one — see the note in roster-charts.tsx on
-            // why the field is called `cents`.
-            .map((p) => ({ at: p.created_at as string, cents: 1 }))}
-          totalMembers={members.length}
-          capped={forCount.length >= 5000}
-        />
         {/* Remounted per tab (key) so a query typed on one tab cannot carry over
             and silently hide rows on the next. */}
         <RosterTable

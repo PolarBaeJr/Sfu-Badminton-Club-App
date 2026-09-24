@@ -12,12 +12,45 @@ export interface SelectOption {
   value: string;
   label: string;
   disabled?: boolean;
+  /** A short pill drawn at the end of the row, such as "Now" on the active season. */
+  badge?: string;
+  /** Extra words the search box matches on without showing them, such as a season's dates. */
+  keywords?: string;
 }
 
 type Options = readonly SelectOption[];
 
 /** How long a pause ends a type-ahead run, matching the native control. */
 export const TYPEAHEAD_RESET_MS = 500;
+
+/**
+ * Above this many options a Select left on searchable="auto" grows a search
+ * box. Eight fits on screen without scrolling, so a list that short is quicker
+ * to read than to type into.
+ */
+export const SEARCH_THRESHOLD = 8;
+
+/**
+ * The indices, into the ORIGINAL options, of the rows a search query keeps, in
+ * their original order. Every whitespace-separated word has to appear somewhere
+ * in the label, badge or keywords, so "fall 27" narrows rather than widening
+ * the way an OR would. An empty query keeps everything. Disabled rows are kept:
+ * hiding them would make a search look like it found nothing when the row is
+ * there and merely unavailable.
+ */
+export function filterOptions(options: Options, query: string): number[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const out: number[] = [];
+  options.forEach((o, i) => {
+    if (words.length === 0) {
+      out.push(i);
+      return;
+    }
+    const hay = `${o.label} ${o.badge ?? ''} ${o.keywords ?? ''}`.toLowerCase();
+    if (words.every((w) => hay.includes(w))) out.push(i);
+  });
+  return out;
+}
 
 /**
  * The index of the option holding `value`, or -1. An empty string is NOT a

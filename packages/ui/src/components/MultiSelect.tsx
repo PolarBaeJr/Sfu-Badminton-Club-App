@@ -252,14 +252,13 @@ export function MultiSelect({
       // Keep focus, and therefore aria-activedescendant, on the input when an
       // option is clicked.
       onMouseDown={(e) => e.preventDefault()}
-      className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-[8px] overflow-y-auto py-1"
+      className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl shadow-lg overflow-y-auto py-1"
       style={{
         position: 'fixed',
         left: coords.left,
         width: coords.width,
         maxHeight: coords.maxHeight,
         zIndex: 60,
-        boxShadow: '0 10px 40px -12px rgba(0,0,0,0.45)',
         ...(coords.top !== undefined ? { top: coords.top } : { bottom: coords.bottom }),
       }}
     >

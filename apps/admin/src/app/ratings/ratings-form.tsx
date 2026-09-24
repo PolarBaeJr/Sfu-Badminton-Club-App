@@ -176,7 +176,7 @@ function SectionRail({ sections, active }: { sections: RatingsSectionDef[]; acti
     // display, or the sticky rail renders on phones over the content beneath.
     <nav
       aria-label="Sections"
-      className="settings-rail hidden border-l border-[var(--line)] md:flex md:flex-col md:sticky md:top-5 md:self-start"
+      className="settings-rail hidden border-l border-[var(--line)] md:flex md:flex-col md:sticky md:self-start"
     >
       {sections.map((s) => (
         <a
@@ -247,14 +247,19 @@ export function RatingsForm({
 
   const sectionIds = useMemo(() => railSections.map((s) => s.id), [railSections]);
 
-  // Scroll-spy for the rail. rootMargin pins the "current" line near the top of
-  // the viewport so a section counts as active once its heading reaches it,
-  // rather than when it is centred.
+  // Scroll-spy for the rail. rootMargin pins the "current" line just under the
+  // sticky console header, where a rail link's scroll-mt lands a section, so a
+  // section counts as active once its heading reaches it rather than when it is
+  // centred. Read from the same two CSS variables, so the line cannot drift.
   useEffect(() => {
     const nodes = sectionIds
       .map((id) => document.getElementById(id))
       .filter((n): n is HTMLElement => n !== null);
     if (nodes.length === 0) return;
+    const css = getComputedStyle(document.documentElement);
+    const line =
+      (parseFloat(css.getPropertyValue('--console-header-h')) || 0) +
+      (parseFloat(css.getPropertyValue('--sticky-gap')) || 0);
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -263,7 +268,7 @@ export function RatingsForm({
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
         if (visible?.target.id) setActive(visible.target.id);
       },
-      { rootMargin: '-96px 0px -70% 0px', threshold: 0 }
+      { rootMargin: `-${line}px 0px -70% 0px`, threshold: 0 }
     );
     nodes.forEach((n) => observer.observe(n));
     return () => observer.disconnect();
@@ -391,9 +396,7 @@ export function RatingsForm({
         disabled={!canWrite}
         aria-label={meta?.label ?? field}
         onChange={(e) => setField(key, field, e.target.value, original)}
-        // rounded-none: the console has no rounded corners outside dialogs, and
-        // the shared Input carries an 8px radius for the members' app.
-        className="rounded-none font-mono sm:text-right"
+        className="font-mono sm:text-right"
       />
     );
   }
@@ -419,7 +422,7 @@ export function RatingsForm({
 
         <div className="flex min-w-0 flex-col gap-5">
           {!canWrite && (
-            <p className="border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-[13px] text-[var(--mute)]">
+            <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-[13px] text-[var(--mute)]">
               You can read these settings but not change them.
             </p>
           )}
@@ -428,7 +431,7 @@ export function RatingsForm({
             <section
               key={section.id}
               id={section.id}
-              className="scroll-mt-32 border border-[var(--line)] bg-[var(--surface)]"
+              className="scroll-mt-[calc(var(--console-header-h)+var(--sticky-gap))] overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]"
             >
               <h2 className={`${MONO_LABEL} px-4 pt-4 pb-3`}>{section.label}</h2>
               {section.reference ? (
@@ -444,7 +447,7 @@ export function RatingsForm({
           {(leftovers.fields.length > 0 || leftovers.rawKeys.length > 0) && (
             <section
               id="other"
-              className="scroll-mt-32 border border-[var(--line)] bg-[var(--surface)]"
+              className="scroll-mt-[calc(var(--console-header-h)+var(--sticky-gap))] overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]"
             >
               <h2 className={`${MONO_LABEL} px-4 pt-4 pb-3`}>Other settings</h2>
               {/* A key or field added by a later migration that nobody wired
@@ -470,7 +473,7 @@ export function RatingsForm({
                         setJsonEdits((prev) => ({ ...prev, [key]: e.target.value }))
                       }
                       rows={Math.min(Object.keys(row.value).length + 2, 8)}
-                      className="rounded-none font-mono text-xs"
+                      className="font-mono text-xs"
                     />
                   </SettingRow>
                 );
@@ -495,7 +498,6 @@ export function RatingsForm({
                 onChange={(e) => setReason(e.target.value)}
                 aria-label="Reason (required)"
                 placeholder="Reason (required) — every rating change is logged with your name."
-                className="rounded-none"
               />
             </div>
             {hasChanges && (

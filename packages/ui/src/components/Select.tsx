@@ -2,10 +2,12 @@
 
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '../utils';
 import {
+  SEARCH_THRESHOLD,
   TYPEAHEAD_RESET_MS,
+  filterOptions,
   firstEnabledIndex,
   indexOfValue,
   initialActiveIndex,
@@ -47,9 +49,22 @@ export interface SelectProps {
    * compact inline controls whose `className` owns the whole look.
    */
   variant?: 'field' | 'bare';
+  /**
+   * A search box pinned above the rows. 'auto' turns it on once there are more
+   * than SEARCH_THRESHOLD options. Desktop only: a phone gets the OS picker.
+   */
+  searchable?: boolean | 'auto';
+  searchPlaceholder?: string;
+  /** Draws the closed trigger's content instead of the chosen label. */
+  renderValue?: (selected: SelectOption | undefined) => React.ReactNode;
+  /** The list's minimum width in px, for a compact trigger whose rows need more room. */
+  listMinWidth?: number;
 }
 
 const COARSE_POINTER = '(hover: none) and (pointer: coarse)';
+
+const BADGE_CLASSES =
+  'ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-success)] bg-[color-mix(in_oklab,var(--color-success)_14%,transparent)]';
 
 const FIELD_CLASSES =
   'w-full px-3 min-h-[48px] bg-[var(--bg-surface)] border border-[var(--border)] rounded-[8px] text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed';
@@ -70,6 +85,11 @@ const FIELD_CLASSES =
  * `<select>` is laid over the same trigger, so the closed control looks the same
  * everywhere while phones keep the OS picker wheel, which is better on a phone
  * than any list drawn here.
+ *
+ * WHY THE SEARCH BOX TAKES FOCUS. Typing into a long list needs a real input,
+ * so when searchable the input inside the portal holds focus instead of the
+ * trigger, and carries the combobox role and aria-activedescendant itself.
+ * Dialog's trap only acts on Tab, and the input handles Tab before it can.
  *
  * WHY NO CHANGE ON A RE-PICK. A native select fires no change event when the
  * current option is picked again, and callers rely on it: the session location
@@ -93,6 +113,10 @@ export function Select({
   'aria-describedby': ariaDescribedBy,
   native,
   variant = 'field',
+  searchable = 'auto',
+  searchPlaceholder = 'Search…',
+  renderValue,
+  listMinWidth,
 }: SelectProps) {
   const reactId = useId();
   // The label-derived fallback is kept so existing htmlFor and id behaviour is
@@ -107,6 +131,7 @@ export function Select({
 
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  const [query, setQuery] = useState('');
   const [invalid, setInvalid] = useState(false);
   const [coords, setCoords] = useState<SelectPlacement | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -124,6 +149,7 @@ export function Select({
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const typeBuffer = useRef('');
   const lastKeyAt = useRef(0);
 
@@ -134,7 +160,7 @@ export function Select({
       if (!r) return;
       setCoords(
         resolvePlacement(
-          { top: r.top, bottom: r.bottom, left: r.left, width: r.width },
+          { top: r.top, bottom: r.bottom, left: r.left, width: Math.max(r.width, listMinWidth ?? 0) },
           { width: window.innerWidth, height: window.innerHeight },
           { gap: 6, maxHeight: 288, minHeight: 120, margin: 8 },
         ),
@@ -147,6 +173,10 @@ export function Select({
       window.removeEventListener('scroll', reposition, true);
       window.removeEventListener('resize', reposition);
     };
+  }, [open, listMinWidth]);
+
+  useEffect(() => {
+    if (!open) setQuery('');
   }, [open]);
 
   useEffect(() => {
@@ -169,6 +199,16 @@ export function Select({
 
   const selectedIndex = indexOfValue(options, value);
   const selected = selectedIndex >= 0 ? options[selectedIndex] : undefined;
+  const searching = !coarse && (searchable === 'auto' ? options.length > SEARCH_THRESHOLD : searchable);
+  // While searching, `active` and every row index below count through the
+  // filtered rows, not the full options, so the keyboard helpers get the list
+  // that is actually on screen.
+  const visibleOpts = searching ? filterOptions(options, query).map((i) => options[i]!) : options;
+  const listShown = Boolean(open && mounted && coords);
+
+  useEffect(() => {
+    if (listShown && searching) searchRef.current?.focus();
+  }, [listShown, searching]);
   // The bare variant draws no error line, so it must not point at one.
   const shownError =
     variant === 'bare' ? undefined : error ?? (invalid ? 'Choose an option.' : undefined);
@@ -222,7 +262,7 @@ export function Select({
   }
 
   function commit(i: number) {
-    const opt = options[i];
+    const opt = visibleOpts[i];
     if (!opt || opt.disabled) return;
     emit(opt.value);
     setOpen(false);
@@ -313,6 +353,60 @@ export function Select({
     }
   }
 
+  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const next = e.target.value;
+    setQuery(next);
+    const kept = filterOptions(options, next).map((i) => options[i]!);
+    setActive(initialActiveIndex(kept, value));
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    switch (e.key) {
+      case 'ArrowDown':
+      case 'ArrowUp':
+        e.preventDefault();
+        setActive((a) => nextEnabledIndex(visibleOpts, a, e.key === 'ArrowDown' ? 1 : -1));
+        return;
+      case 'Home':
+        e.preventDefault();
+        setActive(firstEnabledIndex(visibleOpts));
+        return;
+      case 'End':
+        e.preventDefault();
+        setActive(lastEnabledIndex(visibleOpts));
+        return;
+      case 'Enter':
+        e.preventDefault();
+        commit(active);
+        return;
+      case 'Escape':
+        // The trigger's three stops, for the same Dialog reason, then focus
+        // goes back to the trigger the list was opened from.
+        e.preventDefault();
+        e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+        return;
+      case 'Tab': {
+        // Commit and land back on the trigger. Dialog's trap would otherwise
+        // see focus outside its panel and throw it to the first field.
+        e.preventDefault();
+        e.nativeEvent.stopImmediatePropagation();
+        const opt = visibleOpts[active];
+        if (opt && !opt.disabled) emit(opt.value);
+        setOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
+    }
+  }
+
+  function handleSearchBlur(e: React.FocusEvent<HTMLInputElement>) {
+    const next = e.relatedTarget as Node | null;
+    if (next && next !== triggerRef.current && !listRef.current?.contains(next)) setOpen(false);
+  }
+
   // Firefox fires a button's click from the Space KEYUP, after the keydown above
   // has already opened or committed, which would toggle the list straight back.
   // Needs a manual Firefox check.
@@ -339,7 +433,7 @@ export function Select({
       aria-haspopup="listbox"
       aria-expanded={open}
       aria-controls={open ? listboxId : undefined}
-      aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
+      aria-activedescendant={open && !searching && active >= 0 ? optionId(active) : undefined}
       aria-labelledby={hasName ? `${labelId} ${valueId}` : undefined}
       aria-invalid={Boolean(error) || invalid || undefined}
       aria-required={required || undefined}
@@ -366,9 +460,15 @@ export function Select({
           {ariaLabel}
         </span>
       )}
-      <span id={valueId} className={cn('truncate', !selected && 'text-[var(--text-muted)]')}>
-        {selected ? selected.label : placeholder ?? ' '}
-      </span>
+      {renderValue ? (
+        <span id={valueId} className="flex min-w-0 items-center gap-2">
+          {renderValue(selected)}
+        </span>
+      ) : (
+        <span id={valueId} className={cn('truncate', !selected && 'text-[var(--text-muted)]')}>
+          {selected ? selected.label : placeholder ?? ' '}
+        </span>
+      )}
       <ChevronDown
         aria-hidden
         className={cn('w-4 h-4 shrink-0 text-[var(--text-muted)] transition-transform', open && 'rotate-180')}
@@ -418,18 +518,45 @@ export function Select({
     />
   );
 
+  const rows = visibleOpts.map((opt, i) => {
+    const isSelected = opt.value === value;
+    return (
+      <div
+        key={opt.value}
+        id={optionId(i)}
+        data-idx={i}
+        role="option"
+        aria-selected={isSelected}
+        aria-disabled={opt.disabled || undefined}
+        onClick={() => commit(i)}
+        onPointerMove={() => !opt.disabled && setActive(i)}
+        className={cn(
+          'flex items-center gap-2 px-3 py-2 min-h-[40px] text-sm cursor-pointer select-none',
+          i === active && 'bg-[var(--bg-elevated)]',
+          opt.disabled && 'opacity-50 cursor-not-allowed',
+        )}
+      >
+        <Check
+          aria-hidden
+          className={cn('w-4 h-4 shrink-0 text-[var(--color-accent)]', !isSelected && 'invisible')}
+        />
+        <span className="truncate">{opt.label}</span>
+        {opt.badge && <span className={BADGE_CLASSES}>{opt.badge}</span>}
+      </div>
+    );
+  });
+
   const list = open && mounted && coords && (
     <div
       ref={listRef}
-      id={listboxId}
-      role="listbox"
-      aria-labelledby={hasName ? labelId : undefined}
-      tabIndex={-1}
-      onMouseDown={(e) => e.preventDefault()}
+      // The search input is the one place a mouse down may move focus to.
+      onMouseDown={(e) => {
+        if (e.target !== searchRef.current) e.preventDefault();
+      }}
       // The portal still bubbles React events through the React tree, so a pick
       // would otherwise reach any row or card click handler above the Select.
       onClick={(e) => e.stopPropagation()}
-      className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-[8px] overflow-y-auto py-1 text-[var(--text-primary)]"
+      className="flex flex-col overflow-hidden rounded-xl bg-[var(--bg-surface)] border border-[var(--border)] shadow-lg text-[var(--text-primary)]"
       style={{
         position: 'fixed',
         left: coords.left,
@@ -437,36 +564,45 @@ export function Select({
         maxWidth: 'calc(100vw - 16px)',
         maxHeight: coords.maxHeight,
         zIndex: 60,
-        boxShadow: '0 10px 40px -12px rgba(0,0,0,0.45)',
         ...(coords.top !== undefined ? { top: coords.top } : { bottom: coords.bottom }),
       }}
     >
-      {options.map((opt, i) => {
-        const isSelected = opt.value === value;
-        return (
-          <div
-            key={opt.value}
-            id={optionId(i)}
-            data-idx={i}
-            role="option"
-            aria-selected={isSelected}
-            aria-disabled={opt.disabled || undefined}
-            onClick={() => commit(i)}
-            onPointerMove={() => !opt.disabled && setActive(i)}
-            className={cn(
-              'flex items-center gap-2 px-3 py-2 min-h-[40px] text-sm cursor-pointer select-none',
-              i === active && 'bg-[color-mix(in_oklab,var(--text-primary)_8%,transparent)]',
-              opt.disabled && 'opacity-50 cursor-not-allowed',
-            )}
-          >
-            <Check
-              aria-hidden
-              className={cn('w-4 h-4 shrink-0 text-[var(--color-accent)]', !isSelected && 'invisible')}
-            />
-            <span className="truncate">{opt.label}</span>
-          </div>
-        );
-      })}
+      {searching && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 py-2">
+          <Search aria-hidden className="w-4 h-4 shrink-0 text-[var(--text-muted)]" />
+          <input
+            ref={searchRef}
+            type="text"
+            role="combobox"
+            aria-expanded
+            aria-controls={listboxId}
+            aria-autocomplete="list"
+            aria-activedescendant={active >= 0 && rows.length > 0 ? optionId(active) : undefined}
+            aria-label={searchPlaceholder.replace(/…$/, '')}
+            autoComplete="off"
+            spellCheck={false}
+            value={query}
+            onChange={handleSearchChange}
+            onKeyDown={handleSearchKeyDown}
+            onBlur={handleSearchBlur}
+            placeholder={searchPlaceholder}
+            className="w-full bg-transparent text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
+          />
+        </div>
+      )}
+      <div
+        id={listboxId}
+        role="listbox"
+        aria-labelledby={hasName ? labelId : undefined}
+        tabIndex={-1}
+        className="min-h-0 flex-1 overflow-y-auto py-1"
+      >
+        {rows.length === 0 ? (
+          <p className="px-3 py-2 text-sm text-[var(--text-muted)]">No match.</p>
+        ) : (
+          rows
+        )}
+      </div>
     </div>
   );
 

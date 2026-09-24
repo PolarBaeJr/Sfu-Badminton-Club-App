@@ -113,7 +113,7 @@ const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
  * the Edit and Delete beside it.
  */
 const RECEIPT_LINK_CLASS =
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-none border border-[var(--line)] bg-transparent px-3 min-h-[32px] text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ink-2)] transition-all duration-150 hover:bg-[var(--surface-2)] hover:text-[var(--ink)]';
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-[var(--line)] bg-transparent px-3 min-h-[32px] text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ink-2)] transition-all duration-150 hover:bg-[var(--surface-2)] hover:text-[var(--ink)]';
 
 /** Local date only — the time of day a shuttle order was paid is noise. */
 const day = (iso: string | null) =>

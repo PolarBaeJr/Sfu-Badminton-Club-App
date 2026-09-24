@@ -40,7 +40,7 @@ export default async function SettingsPage() {
 
       <div className="grid md:grid-cols-[210px_1fr] gap-10 items-start">
         {/* Section rail */}
-        <nav className="settings-rail hidden md:flex md:flex-col md:sticky md:top-6 md:self-start">
+        <nav className="settings-rail hidden md:flex md:flex-col md:sticky md:self-start">
           <a href="#general" className="active">
             <span className="rail-label block">General</span>
             <span className="rail-sub block">Your profile</span>

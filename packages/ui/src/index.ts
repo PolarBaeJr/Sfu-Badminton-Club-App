@@ -30,6 +30,8 @@ export {
   initialActiveIndex,
   resolvePlacement,
   shouldEmitChange,
+  filterOptions,
+  SEARCH_THRESHOLD,
 } from './select';
 export {
   visibleEntries,

@@ -67,7 +67,7 @@ export function Dropdown({ trigger, items }: DropdownProps) {
             ref={menuRef}
             role="menu"
             style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 100 }}
-            className="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg shadow-xl py-1"
+            className="bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl shadow-lg overflow-hidden py-1"
           >
             {items.map((item, i) => (
               <button
@@ -79,7 +79,7 @@ export function Dropdown({ trigger, items }: DropdownProps) {
                   setOpen(false);
                 }}
                 className={cn(
-                  'w-full text-left px-4 min-h-[40px] text-sm hover:bg-[var(--border-hover)] transition-colors flex items-center',
+                  'w-full text-left px-3 py-2 min-h-[40px] text-sm hover:bg-[var(--bg-elevated)] transition-colors flex items-center',
                   'disabled:opacity-50 disabled:pointer-events-none',
                   item.danger ? 'text-[var(--color-danger)]' : 'text-[var(--text-secondary)]'
                 )}

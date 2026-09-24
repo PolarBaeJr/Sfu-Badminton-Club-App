@@ -334,7 +334,7 @@ export default async function AccountsPage() {
             capability gets no sections at all, and an empty bordered nav is the
             blank panel that reads as broken. */}
         <nav
-          className={`settings-rail lg:flex-col lg:sticky lg:top-6 lg:self-start ${
+          className={`settings-rail lg:flex-col lg:sticky lg:self-start ${
             sections.length > 0 ? 'hidden lg:flex' : 'hidden'
           }`}
         >
@@ -590,7 +590,7 @@ export default async function AccountsPage() {
 
         {/* RIGHT */}
         {showOfficers && (
-          <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
+          <div className="flex flex-col gap-5 lg:sticky lg:top-[calc(var(--console-header-h)+var(--sticky-gap))] lg:self-start">
             {/* ACCESS RIGHT NOW. Every figure is the size of the set of people
                 whose effectiveCapabilities() contains ONE named capability —
                 never a count of `is_exec`, which stopped answering this question

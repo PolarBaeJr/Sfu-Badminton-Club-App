@@ -132,24 +132,25 @@ input, textarea, select, button, a {
   --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
   --mono: var(--font-mono), ui-monospace, monospace;
 
-  /* Corner radius on shared form controls — Input, Textarea and the
-     SearchFilter field, which all carry rounded-[var(--r-control,8px)].
-     0 here, because this console is radius 0 outside dialog panels.
+  /* Corner radius on shared form controls: Input, Textarea and the
+     SearchFilter field carry rounded-[var(--r-control,8px)], and Switch's
+     focus ring does too. 8px, the same as the rounded-md scale step in
+     tailwind.config.ts: the console was square until the owner asked for
+     rounded boxes on 2026-09-17, and this token was the last place still
+     holding the old 0. It stays a token because an arbitrary rounded-[8px]
+     bypasses the scale, and SearchFilter's field takes no className, so this
+     is the only way to reach those three controls from the console.
 
-     Why a token and not tailwind.config.ts: that config already zeroes the
-     whole NAMED radius scale (rounded-md, rounded-lg, rounded-xl … all
-     compile to 0 in both apps), but an ARBITRARY value like rounded-[8px]
-     bypasses the scale entirely, so those three controls were the last 8px
-     corners in the console and could not be reached from here at all.
-     SearchFilter's field in particular takes no className, so a caller could
-     not override it either.
+     The player app does not define it and gets the same 8px from the
+     fallback baked into the class. */
+  --r-control: 8px;
 
-     The player app deliberately does NOT define this: it falls through to the
-     8px fallback baked into the class, which is exactly what it renders today.
-     Its own --r-sm/md/lg/xl are all 0, so those controls are arguably a
-     leftover there too — but flattening them is a player-side design decision
-     and not this token's business. */
-  --r-control: 0;
+  /* The sticky console header (components/sidebar.tsx): one 52px row plus its
+     1px bottom border, measured at 768 and 1440 wide on /ratings, /settings,
+     /accounts and /permissions. Sticky rails and asides sit --sticky-gap below
+     it, so they stop under the header instead of scrolling beneath it. */
+  --console-header-h: 53px;
+  --sticky-gap: 16px;
 }
 [data-theme="light"] { --surface-3: #eee; }
 
@@ -227,8 +228,9 @@ input, textarea, select, button, a {
    casualty: fourteen loading.tsx routes.
 
    Not a copy of the player's rules. The contract each class provides is the
-   same, but the console is flat and sharp: hairline border, radius 0, no
-   shadow, depth from the --surface step over --bg. The dimensions are chosen
+   same, but the console is flat: hairline border, a 16px corner (rounded-xl,
+   the card radius since 2026-09-17), no shadow, depth from the --surface step
+   over --bg. The dimensions are chosen
    to land exactly on the hand-rolled card chrome already shipped on /legal
    and /fees (`border border-[var(--line)] bg-[var(--surface)] p-5`), so a
    Section and a hand-rolled panel are indistinguishable side by side.
@@ -236,7 +238,7 @@ input, textarea, select, button, a {
 .card-base {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: 16px;
   padding: 20px;
   position: relative;
 }
@@ -275,7 +277,7 @@ input, textarea, select, button, a {
    alike, and they are the tone this console already draws its edges in. */
 .skeleton {
   background: var(--line);
-  border-radius: 0;
+  border-radius: 6px;
   animation: admin-skeleton-pulse 1.6s ease-in-out infinite;
 }
 @keyframes admin-skeleton-pulse {
@@ -323,6 +325,7 @@ input, textarea, select, button, a {
 /* Danger zone — red-hairline box, red heading, row-per-action */
 .danger-zone {
   border: 1px solid var(--red-border);
+  border-radius: 16px;
   padding: 20px;
 }
 .danger-zone .danger-title {
@@ -336,6 +339,7 @@ input, textarea, select, button, a {
 /* Dialog inset group panel — hairline border + uppercase micro-label */
 .dialog-group {
   border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 14px;
 }
 .dialog-group-label {
@@ -348,11 +352,12 @@ input, textarea, select, button, a {
   margin-bottom: 10px;
 }
 
-/* Square hairline −/+ stepper buttons */
+/* Hairline −/+ stepper buttons */
 .stepper-btn {
   width: 32px; height: 32px;
   display: inline-grid; place-items: center;
   border: 1px solid var(--line);
+  border-radius: 8px;
   background: transparent;
   color: var(--ink-2);
   font-size: 15px;
@@ -411,6 +416,7 @@ input, textarea, select, button, a {
 .settings-input {
   background: var(--bg-primary);
   border: 1px solid var(--line);
+  border-radius: 8px;
   color: var(--ink);
   font-size: 13px;
   padding: 8px 12px;
@@ -428,7 +434,7 @@ input, textarea, select, button, a {
    profile content beneath its sticky position. */
 .settings-rail {
   position: sticky;
-  top: 120px;
+  top: calc(var(--console-header-h) + var(--sticky-gap));
   align-self: start;
 }
 .settings-rail a {

@@ -56,6 +56,8 @@ export function SeasonPicker({ seasons, selectedId }: { seasons: SeasonOption[];
       />
       <Select
         label="Year"
+        searchable
+        searchPlaceholder="Search years…"
         value={selected ? String(selected.year) : ''}
         options={years.map((y) => ({ value: String(y), label: String(y) }))}
         onChange={(e) => selected && go(selected.term, Number(e.target.value))}

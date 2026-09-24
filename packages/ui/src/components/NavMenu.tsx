@@ -26,6 +26,17 @@ const PANEL_WIDTH = 208;
 // clip a corner on the way down, without the menu flickering.
 const HOVER_CLOSE_MS = 150;
 
+// Only one menu is ever open. Each menu keeps its own state, so without this a
+// pointer sliding from one trigger to the next opened the second at once while
+// the first sat out its HOVER_CLOSE_MS, and the two panels overlapped; a
+// click-opened menu never closed on hover at all. Opening a menu now shuts
+// every other one immediately.
+const openMenus = new Map<string, () => void>();
+
+function claimOpen(id: string) {
+  for (const [otherId, shut] of openMenus) if (otherId !== id) shut();
+}
+
 export interface NavMenuItem {
   href: string;
   label: string;
@@ -108,6 +119,15 @@ export function NavMenu({
   }, [open, cancelHoverClose]);
 
   React.useEffect(() => cancelHoverClose, [cancelHoverClose]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    claimOpen(id);
+    openMenus.set(id, () => setOpen(false));
+    return () => {
+      openMenus.delete(id);
+    };
+  }, [open, id]);
 
   function handlePointerEnter(event: React.PointerEvent) {
     if (event.pointerType !== 'mouse') return;

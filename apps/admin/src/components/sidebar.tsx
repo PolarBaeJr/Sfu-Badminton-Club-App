@@ -239,7 +239,7 @@ export function Sidebar({
                   isActive &&
                     "after:content-[''] after:absolute after:left-3 after:right-3 after:bottom-0 after:h-[2px] after:bg-[var(--color-accent)]"
                 )}
-                panelClassName="bg-[var(--bg-elevated)] border border-[var(--border)] shadow-xl py-1"
+                panelClassName="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl overflow-hidden shadow-xl py-1"
                 linkClassName="flex items-center gap-2.5 px-4 min-h-[40px] text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] focus-visible:outline-none focus-visible:bg-[var(--border-hover)] aria-[current=page]:text-[var(--text-primary)] aria-[current=page]:shadow-[inset_2px_0_0_var(--color-accent)] transition-colors"
               />
             );

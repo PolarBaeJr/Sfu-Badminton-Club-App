@@ -6,6 +6,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 // multi-select.test.tsx gives: the barrel pulls in every component in the
 // package, and most of this file is checking index arithmetic.
 import {
+  SEARCH_THRESHOLD,
+  filterOptions,
   indexOfValue,
   initialActiveIndex,
   nextEnabledIndex,
@@ -121,6 +123,43 @@ describe('typeaheadMatch', () => {
   });
 });
 
+describe('filterOptions', () => {
+  const SEASONS: SelectOption[] = [
+    { value: 's26', label: 'Spring 2026', keywords: '2026-01-05 2026-04-20' },
+    { value: 'f26', label: 'Fall 2026', badge: 'Now', keywords: '2026-09-02 2026-12-15' },
+    { value: 'sp27', label: 'Spring 2027', disabled: true, keywords: '2027-01-04 2027-04-19' },
+    { value: 'f27', label: 'Fall 2027', keywords: '2027-09-01 2027-12-14' },
+  ];
+
+  it('keeps every row for an empty or blank query', () => {
+    expect(filterOptions(SEASONS, '')).toEqual([0, 1, 2, 3]);
+    expect(filterOptions(SEASONS, '   ')).toEqual([0, 1, 2, 3]);
+  });
+
+  it('requires every word to match, so a second word narrows', () => {
+    expect(filterOptions(SEASONS, 'fall')).toEqual([1, 3]);
+    expect(filterOptions(SEASONS, 'fall 27')).toEqual([3]);
+    expect(filterOptions(SEASONS, 'fall winter')).toEqual([]);
+  });
+
+  it('answers with indices into the original options, in order', () => {
+    expect(filterOptions(SEASONS, '2027')).toEqual([2, 3]);
+  });
+
+  it('matches keywords and the badge, case-insensitively', () => {
+    expect(filterOptions(SEASONS, '2026-09')).toEqual([1]);
+    expect(filterOptions(SEASONS, 'NOW')).toEqual([1]);
+  });
+
+  it('keeps disabled rows, so a search does not pretend a row is missing', () => {
+    expect(filterOptions(SEASONS, 'spring 2027')).toEqual([2]);
+  });
+
+  it('turns search on above eight options', () => {
+    expect(SEARCH_THRESHOLD).toBe(8);
+  });
+});
+
 describe('shouldEmitChange', () => {
   it('stays silent on a re-pick, so re-choosing Custom does not wipe a typed location', () => {
     // LocationField calls onChange('') when Custom is picked, which clears the
@@ -209,6 +248,14 @@ describe('Select render', () => {
     expect(html).toMatch(/<input[^>]*required/);
     expect(html).not.toMatch(/<input[^>]*type="hidden"/);
   });
+
+  it('still mirrors name into the form when searchable', () => {
+    const html = renderToStaticMarkup(
+      <Select label="Location" name="location" searchable value="west" options={GYMS} onChange={() => {}} />,
+    );
+    expect(html).toMatch(/<input[^>]*name="location"/);
+    expect(html).toMatch(/<input[^>]*value="west"/);
+  });
 });
 
 describe('Select source tripwires', () => {
@@ -228,6 +275,15 @@ describe('Select source tripwires', () => {
 
   it('stops Escape reaching the Dialog listener on document', () => {
     expect(source).toContain('nativeEvent.stopImmediatePropagation()');
+  });
+
+  it('stops Escape in the search box reaching the Dialog listener too', () => {
+    const start = source.indexOf('function handleSearchKeyDown');
+    expect(start).toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf('function handleSearchBlur'));
+    const escape = body.slice(body.indexOf("case 'Escape':"), body.indexOf("case 'Tab':"));
+    expect(escape).toContain('nativeEvent.stopImmediatePropagation()');
+    expect(escape).toContain('triggerRef.current?.focus()');
   });
 
   it('keeps focus on the trigger and points at the active row', () => {
