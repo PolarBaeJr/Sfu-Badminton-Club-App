@@ -701,6 +701,71 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# REFUSE PROD'S DISCORD CONFIG EVEN WHEN IT CAME BACK AS "STAGING'S OWN".
+#
+# The capture above keeps whatever staging holds, and it cannot tell staging's
+# values from prod's. Once prod's rows got onto staging (the 2026-09-22 window
+# is the likely entry), every night faithfully captured and restored them:
+# found 2026-09-23 with staging's pg_cron driving the PROD bot at
+# bot.sfubadminton.com, staging bound to the club's real guild, and prod's
+# service secret sitting in staging's cron_config. So the restored rows are now
+# checked against prod's LIVE values, and any that match are deleted.
+#
+# Compared by md5 fingerprint, computed inside each database, so no secret ever
+# passes through this shell, a log, or a variable. The values reach staging's
+# psql as set_config, not :'var', because psql does not expand variables inside
+# a dollar-quoted DO body (see the staging admin grant below).
+#
+# A deleted bot url or secret leaves the jobs' WHERE EXISTS guard false, so the
+# staging jobs simply stop firing until the owner sets staging's own values.
+# That is the intended failure: silent to members, loud in this log.
+echo "[$(date -u +%FT%TZ)] refusing any Discord config that matches prod's..."
+PROD_DISCORD_FP=$(docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -qAt -v ON_ERROR_STOP=1 <<'SQL'
+SELECT concat_ws('|',
+  (SELECT coalesce(string_agg(md5(guild_id), ','), '') FROM public.discord_guilds),
+  (SELECT coalesce(string_agg(md5(value), ','), '') FROM public.cron_config
+     WHERE key IN ('discord_bot_url', 'discord_service_secret')),
+  (SELECT coalesce(string_agg(md5(player_id::text || ':' || discord_user_id), ','), '')
+     FROM public.player_discord_links));
+SQL
+)
+docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -qAt -v ON_ERROR_STOP=1 \
+  -v fp="$PROD_DISCORD_FP" <<'SQL'
+SELECT set_config('snap.prod_discord_fp', :'fp', false) AS _ \gset
+DO $refuse$
+DECLARE
+  parts  text[] := string_to_array(current_setting('snap.prod_discord_fp'), '|');
+  guilds text[] := string_to_array(coalesce(parts[1], ''), ',');
+  cron   text[] := string_to_array(coalesce(parts[2], ''), ',');
+  links  text[] := string_to_array(coalesce(parts[3], ''), ',');
+  n      int;
+BEGIN
+  IF to_regclass('public.discord_guild_roles') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.discord_guild_roles WHERE md5(guild_id) = ANY ($1)' USING guilds;
+  END IF;
+  IF to_regclass('public.discord_guilds') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.discord_guilds WHERE md5(guild_id) = ANY ($1)' USING guilds;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n > 0 THEN RAISE WARNING 'staging held % of PROD''s Discord guild(s); removed', n; END IF;
+  END IF;
+  IF to_regclass('public.cron_config') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.cron_config
+              WHERE key IN (''discord_bot_url'', ''discord_service_secret'')
+                AND md5(value) = ANY ($1)' USING cron;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n > 0 THEN RAISE WARNING 'staging held % of PROD''s bot url/secret; removed, staging Discord jobs are off until staging''s own are set', n; END IF;
+  END IF;
+  IF to_regclass('public.player_discord_links') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.player_discord_links
+              WHERE md5(player_id::text || '':'' || discord_user_id) = ANY ($1)' USING links;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n > 0 THEN RAISE WARNING 'staging held % of PROD''s member Discord links; removed', n; END IF;
+  END IF;
+END
+$refuse$;
+SQL
+
+# ---------------------------------------------------------------------------
 # RE-GRANT THE STAGING-ONLY ADMIN.
 #
 # The restore above put PROD's players table on staging, so staging roles ARE
