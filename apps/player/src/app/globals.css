@@ -785,8 +785,11 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   /* The page renders inside the layout's .page (max-width, padding) with the
      legal footer below it, so the backdrop cannot be this box's background: it
      would paint as a panel. It is a fixed full-screen layer behind the content
-     instead, and this box only centres the card. */
+     instead, and this box only centres the card. position + z-index make this a
+     stacking context, so the layers' z-index: -1 lands above body's own
+     background (which would otherwise cover them) and below the card. */
   min-height: calc(100dvh - 200px); display: grid; place-items: center; padding-block: 24px;
+  position: relative; z-index: 0;
 }
 .signin-shell::before {
   content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
