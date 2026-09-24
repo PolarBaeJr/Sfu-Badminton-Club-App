@@ -8,9 +8,10 @@ networks:
 
 services:
   player:
-    # CI builds this image (see .github/workflows/build-images.yml);
-    # deploy with `docker compose pull && up -d`. The build: block remains
-    # as a fallback for building on the Pi (`--build`).
+    # CI builds this image (see .github/workflows/build-images.yml). This
+    # file is NOT how prod runs: since 2026-09-24 the proxy dashboard owns
+    # the prod player and admin containers and their env, and the prod
+    # compose files on the Pi are retired. Never `compose pull/up` them.
     image: ghcr.io/polarbaejr/badminton-player:${IMAGE_TAG:-latest}
     build:
       context: .
