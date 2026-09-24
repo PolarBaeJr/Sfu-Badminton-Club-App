@@ -549,6 +549,22 @@ describe('manualFeeSchema', () => {
   it('rejects an empty name', () => {
     expect(manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: '' }).success).toBe(false);
   });
+  it('normalises an optional email to the trimmed lowercase form the column requires', () => {
+    const r = manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe', email: '  Jane.Doe@SFU.ca ' });
+    expect(r.success && r.data.email).toBe('jane.doe@sfu.ca');
+  });
+  it('treats a blank email as absent rather than invalid', () => {
+    for (const email of ['', '   ']) {
+      const r = manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe', email });
+      expect(r.success).toBe(true);
+      expect(r.success && r.data.email).toBeUndefined();
+    }
+  });
+  it('rejects a malformed or oversized email', () => {
+    expect(manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe', email: 'jane' }).success).toBe(false);
+    const long = `${'a'.repeat(250)}@x.ca`;
+    expect(manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe', email: long }).success).toBe(false);
+  });
   it('rejects a name longer than 80 chars', () => {
     expect(
       manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'x'.repeat(81) }).success,

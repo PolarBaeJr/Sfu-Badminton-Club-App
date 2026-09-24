@@ -412,15 +412,41 @@ export async function markFeeUnpaid(playerId: string, seasonId: string) {
 // Manual entry: record a club-fee payment for someone who paid without an
 // account (a name, no player row). Inserted already-paid against the season.
 export async function addManualFee(input: ManualFeeInput) {
-  parseOrThrow(manualFeeSchema, input);
+  // The parsed email, not input.email: the column CHECK in 00252 refuses
+  // anything but the trimmed lowercase form, and the schema is what makes it so.
+  const { email } = parseOrThrow(manualFeeSchema, input);
   const admin = await requireCapability('fees.clubfees.addmanual.write');
   const adminClient = createAdminClient();
+
+  // The row goes in already paid, and club_fees_settled_has_amount refuses a
+  // paid row without an amount; say so instead of surfacing the constraint.
+  if (input.amount_cents == null) {
+    throw new ExpectedError('Enter the amount they paid.');
+  }
+
+  // A named payment waits for a signup that has not happened yet. If the
+  // address already has an account, the claim trigger would never fire for it
+  // and the payment would sit as a stranger's row beside the member's own.
+  if (email) {
+    const { data: existing, error: lookupError } = await adminClient
+      .from('players')
+      .select('id, full_name')
+      .eq('email', email)
+      .maybeSingle();
+    if (lookupError) throw new Error(lookupError.message);
+    if (existing) {
+      throw new ExpectedError(
+        `That email already belongs to ${existing.full_name || 'a member'}. Record their payment on their own profile instead.`,
+      );
+    }
+  }
 
   const { data: fee, error } = await adminClient
     .from('club_fees')
     .insert({
       player_id: null,
       manual_name: input.manual_name,
+      manual_email: email ?? null,
       season_id: input.season_id,
       // A manual entry is somebody paying their SEASON FEE without an account.
       // Entry fees and reinstatements always have a real player row — the shape
@@ -439,6 +465,11 @@ export async function addManualFee(input: ManualFeeInput) {
   // club_fees_player_id_season_id_key because player_id is NULL there, so until
   // that index existed a double-submit filed the same payment twice and the
   // season income figure — a plain SUM over paid rows — counted it twice.
+  // club_fees_manual_email_season_key (00252) is the other unique index a
+  // named payment can hit.
+  if (error?.code === '23505' && error.message.includes('club_fees_manual_email_season_key')) {
+    throw new ExpectedError('A named payment for that email is already recorded for this season.');
+  }
   if (error?.code === '23505') {
     throw new ExpectedError(
       `A manual fee for "${input.manual_name}" is already recorded for this season. ` +
@@ -454,6 +485,7 @@ export async function addManualFee(input: ManualFeeInput) {
     target_id: fee.id,
     new_value: {
       manual_name: input.manual_name,
+      manual_email: email ?? null,
       season_id: input.season_id,
       amount_cents: input.amount_cents ?? null,
       method: input.method ?? null,
