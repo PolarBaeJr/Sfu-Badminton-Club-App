@@ -20,7 +20,7 @@ const ADMIN_APP = join(__dirname, '../../../../admin/src/app');
 
 // Account, legal and safety paths. None may ever belong to a feature.
 const PROTECTED = [
-  '/', '/feed', '/settings', '/legal', '/login', '/auth', '/onboarding', '/link',
+  '/', '/feed', '/settings', '/legal', '/login', '/signup', '/auth', '/onboarding', '/link',
   '/notifications', '/email', '/unsubscribe', '/exec', '/feedback',
 ];
 

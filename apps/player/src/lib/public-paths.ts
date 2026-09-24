@@ -23,6 +23,8 @@ export function isPublicPath(pathname: string): boolean {
   return (
     pathname === '/' ||
     pathname.startsWith('/login') ||
+    // Creating an account happens without one, by definition. Exact: no subroutes.
+    pathname === '/signup' ||
     pathname.startsWith('/auth') ||
     pathname.startsWith('/exec') ||
     // Legal documents (terms, privacy, waiver, conduct) are public reading.

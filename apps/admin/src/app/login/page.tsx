@@ -121,7 +121,7 @@ export default function LoginPage() {
     if (authError) {
       setError(
         isUnknownAccountError(authError.message)
-          ? 'No account uses that email. The console cannot create one — sign up in the player app first, then ask an admin for access.'
+          ? 'No account uses that email. The console cannot create one: sign up in the player app first, then ask an admin for access.'
           : friendlyAuthError(authError.message)
       );
     } else {

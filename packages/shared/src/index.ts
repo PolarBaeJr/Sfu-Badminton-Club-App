@@ -15,6 +15,7 @@ export * from './utils/tags';
 export * from './utils/notifications';
 export * from './utils/access-level';
 export * from './utils/auth-errors';
+export * from './utils/auth-otp';
 export * from './utils/capability-gates';
 export * from './utils/expected-error';
 export * from './utils/stale-build';

@@ -66,7 +66,7 @@ export function TopBar({
   const navEntries = isAuthenticated ? desktopEntries(isApproved, features, featureAccess) : [];
   // Auth, onboarding and the Discord consent screen render their own
   // full-screen layout — no app chrome.
-  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
+  if (pathname === '/login' || pathname === '/signup' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
     return null;
   }
   const initials = (playerName || 'You')

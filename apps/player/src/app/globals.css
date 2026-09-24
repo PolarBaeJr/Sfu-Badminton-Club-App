@@ -780,6 +780,71 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   padding: 6px 0;
 }
 
+/* SIGN-IN SCREENS (/login, /signup). Page-scoped; .auth and .auth-card stay onboarding's. */
+.signin-shell {
+  /* The page renders inside the layout's .page (max-width, padding) with the
+     legal footer below it, so the backdrop cannot be this box's background: it
+     would paint as a panel. It is a fixed full-screen layer behind the content
+     instead, and this box only centres the card. */
+  min-height: calc(100dvh - 200px); display: grid; place-items: center; padding-block: 24px;
+}
+.signin-shell::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(ellipse at top, color-mix(in oklab, var(--red) 9%, transparent) 0%, transparent 55%),
+    radial-gradient(ellipse at bottom right, color-mix(in oklab, var(--ink) 5%, transparent) 0%, transparent 50%);
+}
+.signin-grid {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .6;
+  background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
+}
+.signin-wrap { position: relative; z-index: 1; width: 100%; max-width: 400px; }
+.signin-glow {
+  position: absolute; inset: -16px; border-radius: var(--r-xl); pointer-events: none; filter: blur(32px); opacity: .45;
+  background: linear-gradient(135deg, color-mix(in oklab, var(--red) 40%, transparent), transparent 60%);
+}
+.signin-card {
+  position: relative; display: flex; flex-direction: column; gap: 22px; padding: 28px 24px;
+  background: var(--surface); border: 1px solid color-mix(in oklab, var(--red) 18%, var(--line));
+  border-radius: var(--r-xl);
+  box-shadow: 0 0 40px color-mix(in oklab, var(--red) 7%, transparent), 0 8px 32px color-mix(in oklab, var(--ink) 10%, transparent);
+}
+.signin-head { text-align: center; padding-top: 4px; }
+/* Used WITH .brand-mark, which it resizes. */
+.signin-mark { width: 56px; height: 56px; border-radius: var(--r-lg); margin: 0 auto 16px; }
+.signin-title {
+  font-family: var(--display); font-weight: 700; font-size: 30px; line-height: 1; letter-spacing: .2em;
+  text-transform: uppercase; color: var(--red); margin: 0;
+}
+.signin-sub { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--mute); margin-top: 8px; }
+.signin-heading { text-align: center; }
+.signin-heading h2 { font-family: var(--display); font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 6px 0 0; }
+.signin-heading .page-eyebrow { justify-content: center; }
+.signin-icon {
+  width: 64px; height: 64px; border-radius: 999px; margin: 0 auto 14px; display: grid; place-items: center;
+  color: var(--red); background: var(--red-wash); border: 1px solid var(--red-border);
+}
+.signin-cta { width: 100%; justify-content: center; height: 48px; box-shadow: 0 4px 16px color-mix(in oklab, var(--red) 25%, transparent); }
+.signin-alt { width: 100%; justify-content: center; height: 48px; gap: 10px; }
+.signin-code { font-family: var(--mono); font-size: 24px; letter-spacing: .4em; text-align: center; }
+.signin-links { display: flex; justify-content: center; align-items: center; gap: 10px; font-size: 12px; color: var(--mute); flex-wrap: wrap; }
+.signin-links button, .signin-links a {
+  background: none; border: 0; padding: 0; color: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 4px;
+}
+.signin-links button:disabled { opacity: .55; cursor: not-allowed; }
+.signin-switch { text-align: center; font-size: 13px; color: var(--mute); }
+.signin-switch a { color: var(--red); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.signin-notice {
+  font-size: 13px; color: var(--ink-2); background: var(--red-wash); border: 1px solid var(--red-border);
+  padding: 10px 12px; border-radius: var(--r-md);
+}
+.signin-notice a { color: var(--red); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.signin-legal { font-size: 12px; text-align: center; color: var(--mute); }
+.signin-legal a { color: inherit; text-decoration: underline; }
+
 /* Auth split-screen */
 @media (max-width: 980px) {
   .auth { grid-template-columns: 1fr !important; }
