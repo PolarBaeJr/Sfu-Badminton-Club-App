@@ -15,7 +15,7 @@ interface DialogProps {
 // not in the Tab order, so it must not be a trap end or the initial-focus target.
 // Select relies on this: its desktop form mirror and its hidden touch-mode
 // trigger both carry tabindex -1.
-const FOCUSABLE =
+export const FOCUSABLE =
   'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
 export function Dialog({ open, onClose, title, children }: DialogProps) {

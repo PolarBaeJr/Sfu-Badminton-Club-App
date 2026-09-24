@@ -267,6 +267,7 @@ export function NavMenu({
         aria-controls={open ? panelId : undefined}
         aria-haspopup="true"
         data-active={active || undefined}
+        data-nav-group={id}
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
         onBlur={handleBlur}

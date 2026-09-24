@@ -29,6 +29,7 @@ export {
 export { Dialog } from './Dialog';
 export { Dropdown } from './Dropdown';
 export { NavMenu, type NavMenuItem, type NavMenuLinkProps } from './NavMenu';
+export { Tour, type TourProps, type TourLabels, type TourFinishReason } from './Tour';
 export { Spinner } from './Spinner';
 export { EmptyState } from './EmptyState';
 export { DataTable } from './DataTable';
