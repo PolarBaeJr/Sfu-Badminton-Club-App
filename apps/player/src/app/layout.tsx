@@ -3,6 +3,7 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { BottomNav } from '@/components/bottom-nav';
+import { GroupSwitch } from '@/components/group-switch';
 import { TopBar } from '@/components/top-bar';
 import { ToastProvider } from '@/components/toast-provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
@@ -362,6 +363,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                     pages to stay reachable. */}
                 <StandingBanner />
                 <main className="page pb-safe-nav">
+                  {isAuthenticated && (
+                    <GroupSwitch isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} featureAccess={featureAccess} />
+                  )}
                   {children}
                   <LegalFooter socials={footerSocials} />
                 </main>

@@ -410,15 +410,22 @@ body {
 .nav-menu a:hover, .nav-menu a:focus-visible { color: var(--ink); background: var(--surface-2); outline: none; }
 .nav-menu a[aria-current="page"] { color: var(--ink); box-shadow: inset 2px 0 0 var(--red); }
 
-/* The mobile tab bar's Play and Events sheets. */
-.nav-sheet { display: flex; flex-direction: column; gap: 6px; }
-.nav-sheet-link {
-  display: flex; align-items: center; gap: 12px;
-  min-height: 48px; padding: 0 14px;
-  border: 1px solid var(--line); border-radius: var(--r-md);
-  color: var(--ink); font-weight: 600; font-size: 14px;
+/* Phone only, like the tab bar it stands in for: the pages behind a grouped
+   tab (Events) as a segmented switch. The desktop nav has its own menu. */
+.group-switch {
+  display: none;
+  margin-bottom: 18px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-md);
 }
-.nav-sheet-link[aria-current="page"] { color: var(--red); border-color: var(--red); }
+.group-switch > a {
+  flex: 1; min-height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: calc(var(--r-md) - 3px);
+  color: var(--mute); font-weight: 600; font-size: 13px;
+}
+.group-switch > a.active { background: var(--bg); color: var(--ink); box-shadow: inset 0 -2px 0 var(--red); }
+@media (max-width: 980px) { .group-switch { display: flex; } }
 
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 

@@ -343,7 +343,7 @@ export default async function TournamentsPage({
             <h1 className="ptourn-title">
               Tournaments<span className="ptourn-stop">.</span>
             </h1>
-            <p className="ptourn-sub">Club events and the entries you are in.</p>
+            <p className="ptourn-sub">Draws and the entries you are in.</p>
           </div>
           {/* THE PICKER MOVES THE CALENDAR AND NOTHING ELSE. "You are in" and
               "Past results" below read the member's own entries unscoped, on

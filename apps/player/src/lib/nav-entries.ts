@@ -63,7 +63,8 @@ export const DESKTOP_ENTRIES: PlayerNavEntry[] = [
 ];
 
 // Five slots is what fits under a thumb. Ranks and Me stay direct links, with
-// the short labels the tab bar has always used; Events opens a sheet. There is
+// the short labels the tab bar has always used; Events goes to its first page,
+// with a GroupSwitch there to cross to the rest. There is
 // no sixth slot for Membership: a member reaches it from the top bar and from
 // Settings.
 export const MOBILE_SLOTS: PlayerNavEntry[] = [

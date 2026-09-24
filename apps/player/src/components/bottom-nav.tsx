@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { cn, useLiveChannel, Dialog, isRouteActive, isGroupActive } from '@badminton/ui';
+import { cn, useLiveChannel, isRouteActive, isGroupActive } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import {
   ANNOUNCEMENT_VISIBILITY_COLUMNS,
@@ -51,14 +51,6 @@ export function BottomNav({
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
   /** The viewer's players.id, once resolved. Null while signed out. */
   const [playerId, setPlayerId] = useState<string | null>(null);
-  /** The id of the group whose sheet is open (Events), or null. */
-  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
-
-  // A navigation from anywhere, the back button included, shuts the sheet.
-  useEffect(() => {
-    setOpenGroupId(null);
-  }, [pathname]);
-
   // ONE CLIENT FOR THE LIFE OF THE NAV. This component sits in the layout and
   // never unmounts, and the count is re-read on every navigation now — a client
   // built inside that effect would be a new one per route change, each with its
@@ -247,30 +239,30 @@ export function BottomNav({
     : publicSlots.filter(
         (slot) => slot.kind !== 'link' || playerPathVisible(slot.item.href, features, []),
       );
-  const openGroup = slots.flatMap((slot) =>
-    slot.kind === 'group' && slot.group.id === openGroupId ? [slot.group] : [],
-  )[0];
 
   return (
     <>
       <nav className="mobile-tabbar" aria-label="Mobile navigation" data-tour="tab-bar">
         {slots.map((slot) => {
           if (slot.kind === 'group') {
+            // Straight to the group's first page, like a native tab. The
+            // others are one tap away in the GroupSwitch at the top of it.
             const { group } = slot;
             const active = isGroupActive(pathname, group);
             const GroupIcon = group.icon;
+            // visibleEntries drops an emptied group, so this only narrows the type.
+            const first = group.items[0];
+            if (!first) return null;
             return (
-              <button
+              <Link
                 key={group.id}
-                type="button"
+                href={first.href}
                 className={cn('press', active && 'active')}
-                aria-haspopup="dialog"
-                aria-expanded={openGroupId === group.id}
-                onClick={() => setOpenGroupId(group.id)}
+                aria-current={active ? 'page' : undefined}
               >
                 {GroupIcon && <GroupIcon size={20} />}
                 <span>{group.label}</span>
-              </button>
+              </Link>
             );
           }
           const { item } = slot;
@@ -327,32 +319,6 @@ export function BottomNav({
           </a>
         )}
       </nav>
-      {/* ONE dialog, outside the tab bar. Outside because the bar is fixed at
-          z-index 40, which would cap anything inside it; one because Dialog
-          names its heading with a fixed id, so two would collide. */}
-      <Dialog
-        open={openGroup !== undefined}
-        onClose={() => setOpenGroupId(null)}
-        title={openGroup?.label ?? ''}
-      >
-        <div className="nav-sheet">
-          {openGroup?.items.map((item) => {
-            const current = isRouteActive(pathname, item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="nav-sheet-link"
-                aria-current={current ? 'page' : undefined}
-                onClick={() => setOpenGroupId(null)}
-              >
-                <item.icon size={18} />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </div>
-      </Dialog>
     </>
   );
 }
