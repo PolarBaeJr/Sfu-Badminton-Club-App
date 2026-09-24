@@ -13,7 +13,7 @@
 // middleware bundle.
 // 'club' is drawn on /accounts too, as its own "Club links" card: they are
 // links the club publishes, not rules about what an account may do.
-export type PlatformSettingsSection = 'ratings' | 'accounts' | 'club';
+export type PlatformSettingsSection = 'ratings' | 'accounts' | 'club' | 'pages';
 
 // Declaration order is also RENDER order within each page, so the reading order
 // is decided here too rather than by the database's alphabetical `order('key')`.
@@ -27,9 +27,10 @@ export const SETTING_SECTION: Record<string, PlatformSettingsSection> = {
   // Signup approval leads the section: it is the switch that decides whether
   // there is an approval queue at all, and declaration order is render order.
   signup_settings: 'accounts',
-  // The member-facing feature switches. No migration seeds this row; see
-  // SEEDABLE_SETTINGS in platform-setting-fields.ts.
-  features: 'accounts',
+  // The member-facing page switches have their own card at the top of
+  // /accounts: filed among the account rules, nobody found them. No migration
+  // seeds this row; see SEEDABLE_SETTINGS in platform-setting-fields.ts.
+  features: 'pages',
   challenge_rules: 'accounts',
   repeat_opponent_caps: 'accounts',
   session_caps: 'accounts',

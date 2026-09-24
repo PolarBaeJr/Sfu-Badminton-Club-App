@@ -53,7 +53,6 @@ describe('platform settings section map', () => {
       'walkover_rules',
       'inactivity_rules',
       'session_attendance',
-      'features',
     ]) {
       expect(sectionForSettingKey(key)).toBe('accounts');
     }
@@ -72,7 +71,8 @@ describe('platform settings section map', () => {
     const ratings = settingsForSection(rows, 'ratings');
     const accounts = settingsForSection(rows, 'accounts');
     const club = settingsForSection(rows, 'club');
-    expect(ratings.length + accounts.length + club.length).toBe(rows.length);
+    const pages = settingsForSection(rows, 'pages');
+    expect(ratings.length + accounts.length + club.length + pages.length).toBe(rows.length);
     expect(ratings.some((r) => accounts.includes(r) || club.includes(r))).toBe(false);
     expect(accounts.some((r) => club.includes(r))).toBe(false);
   });
@@ -82,6 +82,10 @@ describe('platform settings section map', () => {
   it('puts the club links in their own section', () => {
     expect(sectionForSettingKey('club_socials')).toBe('club');
     expect(sectionForSettingKey('membership_payments')).toBe('club');
+  });
+
+  it('puts the page switches in their own section', () => {
+    expect(sectionForSettingKey('features')).toBe('pages');
   });
 
   it('renders in map order, not the database’s alphabetical order', () => {

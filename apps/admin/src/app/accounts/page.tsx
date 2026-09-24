@@ -284,6 +284,9 @@ export default async function AccountsPage() {
   // The rail lists what is actually on the page, so a withheld section never
   // leaves a link to nothing.
   const sections = [
+    ...(showPlatformSettings
+      ? [{ id: 'member-pages', label: 'Member pages', sub: 'Switch pages on or off' }]
+      : []),
     ...(showOfficers
       ? [
           { id: 'officers', label: 'Officers', sub: 'Who holds the console' },
@@ -291,7 +294,10 @@ export default async function AccountsPage() {
         ]
       : []),
     ...(showPlatformSettings
-      ? [{ id: 'account-rules', label: 'Account rules', sub: "What a membership may do" }]
+      ? [
+          { id: 'account-rules', label: 'Account rules', sub: 'What a membership may do' },
+          { id: 'club-links', label: 'Club links', sub: 'Instagram, Discord, membership' },
+        ]
       : []),
     ...(showDataApiKeys
       ? [{ id: 'data-api-keys', label: 'Data API keys', sub: 'Who reads the data from outside' }]
@@ -348,6 +354,20 @@ export default async function AccountsPage() {
 
         {/* MIDDLE */}
         <div className="flex min-w-0 flex-col gap-5">
+          {showPlatformSettings && (
+            <section id="member-pages" className="scroll-mt-32">
+              <Card>
+                <CardHeading
+                  title="Member pages"
+                  sub="Which pages members can open. A page switched off shows members a short notice instead."
+                />
+                <div className="mt-4">
+                  <PlatformSettingsForm settings={settingsForSection(withSeededSettings(settings ?? []), 'pages')} />
+                </div>
+              </Card>
+            </section>
+          )}
+
           {showOfficers ? (
             <>
               {/* The anchor lives on a wrapper because Card takes no id, and
@@ -529,7 +549,7 @@ export default async function AccountsPage() {
               <Card>
                 <CardHeading
                   title="Account rules"
-                  sub="What a member's account may do — challenges, match caps, no-shows, inactivity, check-in."
+                  sub="What a member's account may do: challenges, match caps, no-shows, inactivity, check-in."
                 />
                 <div className="mt-4">
                   <PlatformSettingsForm settings={settingsForSection(withSeededSettings(settings ?? []), 'accounts')} />
