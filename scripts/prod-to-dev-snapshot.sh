@@ -736,6 +736,54 @@ if [ -n "$STAGING_ADMIN_EMAILS" ]; then
   echo "[$(date -u +%FT%TZ)] re-granting staging admin: $STAGING_ADMIN_EMAILS"
   grant_result=$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
       -Atq -v ON_ERROR_STOP=1 -v emails="$STAGING_ADMIN_EMAILS" <<'SQL'
+BEGIN;
+-- CREATE THE ACCOUNT WHEN PROD NO LONGER HAS IT. Once the owner account is
+-- deleted on prod, the restore brings over only a deleted+...@deleted.invalid
+-- tombstone, and the grant below would match nothing. So a listed address with
+-- no players row gets one here, linked to a staging-only login: the existing
+-- auth user for that address if one survived, otherwise a new confirmed one
+-- that the email-code sign-in finds by address. The token columns are '' and
+-- not NULL because GoTrue fails to scan a NULL into them.
+--
+-- :'emails' is not expanded inside a $do$ body, hence set_config
+-- (see reference: psql dollar quoting). \gset swallows the row so nothing
+-- extra lands in grant_result.
+SELECT set_config('grant.emails', :'emails', true) AS _ \gset
+CREATE TEMP TABLE created_now (email text) ON COMMIT DROP;
+DO $create$
+DECLARE
+  e   text;
+  uid uuid;
+BEGIN
+  FOR e IN
+    SELECT btrim(x) FROM unnest(string_to_array(current_setting('grant.emails'), ',')) x
+     WHERE btrim(x) <> ''
+  LOOP
+    CONTINUE WHEN EXISTS (SELECT 1 FROM public.players WHERE email = e);
+    SELECT id INTO uid FROM auth.users WHERE lower(email) = lower(e);
+    IF uid IS NULL THEN
+      uid := gen_random_uuid();
+      INSERT INTO auth.users (instance_id, id, aud, role, email, email_confirmed_at,
+                              raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                              confirmation_token, recovery_token, email_change_token_new,
+                              email_change, email_change_token_current, phone_change,
+                              phone_change_token, reauthentication_token)
+      VALUES ('00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated', e, now(),
+              '{"provider":"email","providers":["email"]}', '{}', now(), now(),
+              '', '', '', '', '', '', '', '');
+      INSERT INTO auth.identities (provider_id, user_id, identity_data, provider,
+                                   last_sign_in_at, created_at, updated_at)
+      VALUES (uid::text, uid,
+              jsonb_build_object('sub', uid::text, 'email', e, 'email_verified', true),
+              'email', now(), now(), now());
+    END IF;
+    INSERT INTO public.players (email, first_name, last_name, user_id, onboarding_completed, status)
+    VALUES (e, 'Staging', 'Admin', uid, TRUE, 'recreational');
+    INSERT INTO created_now VALUES (e);
+  END LOOP;
+END
+$create$;
+
 WITH t AS (
   SELECT btrim(e) AS email
     FROM unnest(string_to_array(:'emails', ',')) AS e
@@ -750,9 +798,12 @@ WITH t AS (
 -- Reported per requested address rather than as a count, because the failure
 -- worth seeing is "that email is not in prod at all" (a typo, or an account
 -- that was never created), and a count of 0 does not say which one.
-SELECT CASE WHEN u.email IS NULL THEN 'MISSING ' ELSE 'granted ' END || t.email
+SELECT CASE WHEN u.email IS NULL THEN 'MISSING '
+            WHEN t.email IN (SELECT email FROM created_now) THEN 'created '
+            ELSE 'granted ' END || t.email
   FROM t LEFT JOIN upd u ON u.email = t.email
  ORDER BY 1;
+COMMIT;
 SQL
   )
   echo "$grant_result" | sed 's/^/  /'
