@@ -694,7 +694,7 @@ export default async function FeedPage() {
 
   const upNextSub = [
     upcomingCount > 0
-      ? `${upcomingCount} session${upcomingCount === 1 ? '' : 's'} accepting check-ins`
+      ? `${upcomingCount} session${upcomingCount === 1 ? '' : 's'} coming up`
       : null,
     myUpcomingCount > 0 ? `you're in for ${myUpcomingCount}` : null,
     upcomingEventCount > 0 ? `${upcomingEventCount} club event${upcomingEventCount === 1 ? '' : 's'}` : null,
