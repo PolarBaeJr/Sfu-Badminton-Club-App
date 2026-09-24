@@ -221,15 +221,17 @@ export function TopBar({
               </Link>
             </>
           ) : (
-            <Link href="/login" className="me-chip" aria-label="Sign in">
-              <span className="avatar" data-size="sm" data-tone="4" aria-hidden>
-                <LogIn className="w-4 h-4" />
-              </span>
-              <div>
-                <div className="name">Sign in</div>
-                <div className="sub">to your account</div>
-              </div>
-            </Link>
+            // Both doors, as text: a newcomer must not have to find sign-up
+            // behind the sign-in page, and the old icon chip lost its words on
+            // a phone.
+            <div className="row" style={{ gap: 8 }}>
+              <Link href="/login" className="btn btn-ghost btn-sm">
+                <LogIn className="w-4 h-4" aria-hidden /> Sign in
+              </Link>
+              <Link href="/signup" className="btn btn-primary btn-sm">
+                Join the club
+              </Link>
+            </div>
           )}
         </div>
       </div>

@@ -242,8 +242,10 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
             {/* Kept alongside the QR — on desktop nobody scans their own screen.
                 The QR stays either way: it is how someone ELSE challenges this
-                profile, so the viewer's own standing has no bearing on it. */}
-            {standing.ok ? (
+                profile, so the viewer's own standing has no bearing on it.
+                A signed-out visitor has good standing but no account to
+                challenge from, so they get no button at all. */}
+            {!viewer ? null : standing.ok ? (
               <Link href={`/challenges/new?opponent=${playerId}`} className="btn btn-primary">
                 <Crosshair size={14} /> Challenge
               </Link>
