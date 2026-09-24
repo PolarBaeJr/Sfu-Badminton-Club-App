@@ -6,6 +6,8 @@ import { cn, NavMenu, isRouteActive, isGroupActive } from '@badminton/ui';
 import { desktopEntries } from '@/lib/nav-entries';
 import { ALL_FEATURES_ENABLED, type FeatureFlags, type FeatureId } from '@badminton/shared/src/utils/features';
 import { ShuttleMark } from './shuttle-mark';
+import { DiscordMark } from './discord-mark';
+import { DISCORD_INVITE_URL } from '@badminton/shared';
 import {
   Bell,
   Settings,
@@ -157,6 +159,9 @@ export function TopBar({
               >
                 Execs
               </Link>
+              <a href={DISCORD_INVITE_URL} className="nav-item" target="_blank" rel="noopener noreferrer">
+                Discord
+              </a>
             </>
           )}
         </nav>
@@ -182,6 +187,19 @@ export function TopBar({
                   <span className="hidden md:inline" style={{ fontSize: 13, fontWeight: 600 }}>Exec Panel</span>
                 </a>
               )}
+              {/* A new tab on purpose, unlike the console link above: Discord is
+                  another site (or the Discord app), and the member should land
+                  back here when they close it. */}
+              <a
+                href={DISCORD_INVITE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="icon-btn"
+                aria-label="Join the club Discord"
+                title="Club Discord"
+              >
+                <DiscordMark size={16} />
+              </a>
               <Link
                 href="/notifications"
                 aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}

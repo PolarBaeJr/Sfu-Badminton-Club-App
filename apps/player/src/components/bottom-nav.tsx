@@ -19,6 +19,8 @@ import {
   type FeatureId,
 } from '@badminton/shared/src/utils/features';
 import { Home, Trophy, LogIn } from 'lucide-react';
+import { DISCORD_INVITE_URL } from '@badminton/shared';
+import { DiscordMark } from './discord-mark';
 
 const publicSlots: PlayerNavEntry[] = [
   { kind: 'link', item: { href: '/',            label: 'Home',    icon: Home,   gated: false } },
@@ -310,6 +312,15 @@ export function BottomNav({
             </Link>
           );
         })}
+        {/* Signed out only: a member reaches Discord from the top bar, and their
+            five slots are full. An anchor rather than a slot entry because it
+            leaves the app, so it has no route to be active on. */}
+        {!isAuthenticated && (
+          <a href={DISCORD_INVITE_URL} target="_blank" rel="noopener noreferrer" className="press">
+            <DiscordMark size={20} />
+            <span>Discord</span>
+          </a>
+        )}
       </nav>
       {/* ONE dialog, outside the tab bar. Outside because the bar is fixed at
           z-index 40, which would cap anything inside it; one because Dialog
