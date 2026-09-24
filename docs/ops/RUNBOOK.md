@@ -43,19 +43,15 @@ Step-by-step procedures for running the app in production. Written for whoever h
 >   invocation therefore targets the wrong thing, which is how production went
 >   down on 2026-08-06.
 
-> ⚠️ **A new runtime variable has no settled procedure. Do not improvise one
-> during a deploy.** Three things are known and they do not yet add up to an
-> instruction:
->
-> - The dashboard's **"Replace"** clones the old environment, so a genuinely new
->   variable is missing from the clone.
-> - A plain **restart does not re-read `.env`**, so it cannot pick one up either.
-> - **`compose up -d` reads `.env` fresh but is forbidden above**, for the three
->   reasons given.
->
-> So settle this before it is next needed rather than in the middle of needing
-> it. Until it is settled, treat adding a new runtime variable to player or admin
-> as a change that needs a plan, not a step in this list.
+> **Runtime variables (settled 2026-09-24).** The prod player and admin
+> containers are centrally managed by the proxy dashboard (central env, with
+> the Mac dashboard as origin), and the prod compose files in
+> `/mnt/ssd/Deploy/badminton` on the Pi are retired
+> (`*.retired-centralenv-20260924`). To add or change a variable on player or
+> admin, use the dashboard's **Add env** or the MCP `set_service_env`, and pass
+> secrets as `ref:NAME`, never as a literal. The dashboard rolls the containers
+> itself. `.env` in that directory no longer feeds player or admin (it still
+> serves the bot and staging).
 
 ### Verify a deploy landed (read-only)
 
@@ -314,7 +310,7 @@ cd /mnt/ssd/Deploy/supabase-prod && docker compose down && docker compose up -d
 - ✅ Deploys via `deploy/docker-prod` → CI builds and pushes the image → **the proxy rolls the containers itself**. Verify by image; never recreate player/admin by hand.
 - ✅ Migrations manual, additive, forward-only, backup first.
 - ✅ Verify deploys by inspecting the running image against `latest`.
-- ❌ Never `docker compose up -d` or `pull` the **player/admin** containers: it detaches them from auto-update, drops replicas to 1, and the service names are not the container names. A new runtime var on those two has no settled procedure yet.
+- ❌ Never `docker compose up -d` or `pull` the **player/admin** containers: the dashboard owns them, their prod compose files are retired, and a recreate would fight it. Runtime vars go through the dashboard (`set_service_env`, secrets as `ref:NAME`).
 - ✅ Restart Supabase as a full stack.
 - ❌ Never `docker compose --build` on the server (CI builds images; the server pulls).
 - ❌ Never commit real secrets to this public repo.

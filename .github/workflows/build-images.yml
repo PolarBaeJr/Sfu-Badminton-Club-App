@@ -1,8 +1,9 @@
 name: Build & push app images
 
 # Builds the player and admin images natively on arm64 (free runners for
-# public repos) and pushes them to GHCR. The Pi then deploys with
-# `docker compose pull && docker compose up -d` instead of building locally.
+# public repos) and pushes them to GHCR. Nothing on the hosts builds or
+# pulls by hand: the proxy dashboard owns the prod player and admin
+# containers and rolls them when it sees the new digest (docs/ops/RUNBOOK.md).
 #
 # NEXT_PUBLIC_* values are baked into the client bundle at build time, so
 # they are build args here. They are public-by-design (URLs + Supabase anon
