@@ -6,6 +6,10 @@ import type { ClubEventSignupState } from '@badminton/shared';
 export const CLUB_EVENT_COLUMNS =
   'id, title, kind, description, location, starts_at, ends_at, capacity, cost_cents, signup_opens_at, signup_closes_at, status, cancelled_reason';
 
+// What the schedule on /feed needs to place an event on a day and link to it.
+// Narrower again: no description, and never created_by.
+export const CLUB_EVENT_CALENDAR_COLUMNS = 'id, title, kind, location, starts_at, ends_at, status';
+
 export type ClubEventRow = {
   id: string;
   title: string;

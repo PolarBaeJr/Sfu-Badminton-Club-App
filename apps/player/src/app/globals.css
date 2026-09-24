@@ -2060,37 +2060,6 @@ html, body { overflow-x: clip; }
 .session-stats > * { padding-left: 14px; border-left: 1px solid var(--line); }
 .session-stats > *:first-child { padding-left: 0; border-left: 0; }
 
-/* Check-in is the most time-critical action in the product — it is used while a
-   queue forms behind you — so it is pinned under the thumb rather than left at
-   the end of a scroll.
-   `sticky`, not `fixed`: a sticky element stays in the document, so it cannot
-   cover the last row of the river and needs no compensating page padding. The
-   bottom offset clears .mobile-tabbar (6px + a 48px min-height + 6px + the safe
-   area, see the .mobile-tabbar rules above) and the z-index stays BELOW the tab
-   bar's 40, so if the two ever meet the navigation wins. */
-.feed-checkin-bar {
-  position: sticky;
-  bottom: 24px;
-  z-index: 30;
-  padding-top: 14px;
-  /* Opaque, because a sticky element floats over whatever it is currently
-     covering and a translucent primary button over a list of match results is
-     unreadable. The page background rather than the card surface: this is a
-     bar attached to the viewport, not a card. */
-  background: var(--bg);
-}
-/* The bar is the width of the page on a phone, which is what a bottom bar
-   should be; on a desktop a full-width red slab is a shout, so cap it and let
-   it sit under the sidebar it belongs to. */
-@media (min-width: 981px) {
-  .feed-checkin-bar { max-width: 320px; margin-left: auto; }
-}
-@media (max-width: 980px) {
-  .feed-checkin-bar {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 4.75rem);
-  }
-}
-
 /* The mockup's header has a hairline under it — it separates the identity
    block from the river, which is otherwise also hairline-ruled rows. */
 .feed-header {
@@ -2526,24 +2495,12 @@ html, body { overflow-x: clip; }
    whose whole rule is fewer, bigger things. Nothing the phone
    already had is hidden by it.
 
-   The one exception is the check-in button, which is not extra:
-   it exists twice in the document because it cannot simply MOVE
-   into the rail. .feed-checkin-bar is `position: sticky`, and a
-   sticky element only pins while its containing block is on
-   screen — nested in the rail it would appear on a phone only
-   after you had scrolled past the entire river, which is the
-   opposite of the point. So the phone keeps its thumb-reachable
-   bar, the desktop gets the card, and exactly one is displayed.
-
    `display: block` on the shown state, so anything using this
    must not also set display inline — an inline style would beat
    the `none` and leak the card onto the phone. */
 .wide-desktop-only { display: none; }
 @media (min-width: 1101px) {
   .wide-desktop-only { display: block; }
-  /* There is no thumb to reach on a laptop, so the floating bar
-     retires in favour of the rail card above. */
-  .feed-checkin-bar { display: none; }
 }
 
 /* /sessions: with no closed sessions yet, Upcoming used to be the
@@ -4239,6 +4196,115 @@ a.cal-ev:hover { filter: brightness(1.15); }
 @media (min-width: 1101px) {
   .sched-rail-hidden-phone { display: flex; }
 }
+
+/* ════════════════════════════════════════════════════════════
+   HOME (/feed): SCHEDULE FIRST, ACTIVITY BESIDE
+   The schedule is the main column and the club's activity the
+   side column from 1101px up; below that the DOM order is the
+   phone's order and nothing is repositioned. Phones get the week
+   strip, 761px and up the month grid: the grid's 620px floor and
+   88px cells would make it a sideways scroll about 500px tall on
+   a phone.
+   ════════════════════════════════════════════════════════════ */
+
+/* `min-width: 0` on every child is load-bearing: .cal-grid's 620px
+   floor would otherwise widen the page, the same bug documented
+   at .sched-wide > *. */
+.home-grid { display: grid; gap: 20px; }
+.home-grid > * { min-width: 0; }
+@media (max-width: 980px) { .home-grid { gap: 14px; } }
+@media (min-width: 1101px) {
+  .home-grid {
+    grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+.home-grid.is-single { grid-template-columns: minmax(0, 1fr); max-width: 760px; }
+
+.home-main, .home-side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.home-banners { margin-bottom: 20px; }
+
+.home-week { display: block; }
+.home-month { display: none; }
+@media (min-width: 761px) {
+  .home-week { display: none; }
+  .home-month { display: block; }
+}
+
+.week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.week-cell { min-width: 0; }
+.week-day {
+  min-height: 64px; height: 100%;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: inherit;
+  text-decoration: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.week-day.has-items { background: var(--surface); }
+.week-day.is-today { box-shadow: inset 0 0 0 2px var(--red); }
+.week-dow {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+}
+.week-num { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; }
+.week-day.is-today .week-num { color: var(--red); font-weight: 700; }
+.week-marks { display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%; }
+.week-mark { height: 4px; width: 100%; border-radius: 2px; }
+.week-more { font-family: var(--mono); font-size: 9px; color: var(--mute); text-align: center; line-height: 1; }
+
+/* One colour per tone, shared by the strip's marks and the month
+   grid's legend swatches. Solid tokens only. */
+.week-mark.is-open, .cal-swatch.is-open { background: var(--win); }
+.week-mark.is-closed, .cal-swatch.is-closed { background: var(--line-2); }
+.week-mark.is-club, .cal-swatch.is-club { background: var(--gold); }
+.week-mark.is-tournament, .cal-swatch.is-tournament { background: var(--ink-2); }
+.week-mark.is-cancelled, .cal-swatch.is-cancelled { background: var(--line-2); }
+
+/* A club event or tournament in the agenda: a compact row, not a
+   session card, because its controls live on its own page. */
+.home-row {
+  display: flex; gap: 12px; align-items: center;
+  padding: 14px 16px; min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+.home-row-title { font-weight: 600; font-size: 15px; min-width: 0; overflow-wrap: anywhere; }
+.home-row-meta { font-family: var(--mono); font-size: 11px; color: var(--mute); margin-top: 4px; }
+.home-row .is-cancelled { text-decoration: line-through; color: var(--mute); }
+.home-note { font-size: 13px; color: var(--mute); margin: 12px 0 0; }
+
+.home-notice {
+  display: block;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+  border-left: 3px solid var(--gold);
+  color: inherit;
+  text-decoration: none;
+}
+.home-activity-foot {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 16px; padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.cal-ev-cancelled { color: var(--mute); }
+.cal-ev-cancelled .cal-ev-name { text-decoration: line-through; }
+.cal-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  margin: 8px 0 0;
+}
+.cal-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.cal-swatch { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
 
 /* ── ≥1101px: the only place this screen states a placement ── */
 @media (min-width: 1101px) {

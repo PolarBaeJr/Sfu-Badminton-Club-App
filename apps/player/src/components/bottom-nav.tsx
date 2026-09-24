@@ -44,7 +44,7 @@ export function BottomNav({
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
   /** The viewer's players.id, once resolved. Null while signed out. */
   const [playerId, setPlayerId] = useState<string | null>(null);
-  /** The id of the group whose sheet is open (Play, Events), or null. */
+  /** The id of the group whose sheet is open (Events), or null. */
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
 
   // A navigation from anywhere, the back button included, shuts the sheet.
@@ -233,7 +233,7 @@ export function BottomNav({
   }
 
   // Gated slots are filtered on isApproved inside, and a group left empty
-  // (Play and Events, for a pending member) is dropped with them.
+  // (Events, for a pending member) is dropped with them.
   // A signed-out visitor's Ranks slot follows the leaderboard switch as well.
   const slots = isAuthenticated
     ? mobileSlots(isApproved, features, featureAccess)

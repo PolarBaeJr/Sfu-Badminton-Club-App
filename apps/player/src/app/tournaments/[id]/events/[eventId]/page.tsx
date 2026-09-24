@@ -74,7 +74,8 @@ export default async function EventDetailPage({
     .eq('id', tournamentId)
     .maybeSingle();
   const tournament = unwrapMaybe(tournamentRes);
-  if (!tournament) notFound();
+  // Never a draft's events: see the same guard on /tournaments/[id].
+  if (!tournament || tournament.status === 'draft') notFound();
 
   const eventRes = await supabase
     .from('tournament_events')

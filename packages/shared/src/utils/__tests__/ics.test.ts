@@ -4,7 +4,9 @@ import {
   foldICSLine,
   formatICSDates,
   sessionToVEvent,
+  clubEventToVEvent,
   buildICSCalendar,
+  type ICSClubEventFields,
   type ICSSessionFields,
 } from '../ics';
 import { SESSION_DEFAULT_DURATION_MINUTES } from '../constants';
@@ -122,7 +124,7 @@ describe('sessionToVEvent', () => {
 
   it('emits a URL line pointing at the session when a baseUrl is given', () => {
     const lines = sessionToVEvent(makeSession(), 'https://x.test');
-    expect(lines).toContain('URL:https://x.test/sessions?s=abc-123');
+    expect(lines).toContain('URL:https://x.test/feed?s=abc-123');
   });
 
   it('omits the URL line when no baseUrl is given', () => {
@@ -146,6 +148,84 @@ describe('buildICSCalendar', () => {
 
   it('threads a baseUrl through to each event when provided', () => {
     const ics = buildICSCalendar([makeSession()], { baseUrl: 'https://x.test' });
-    expect(ics).toContain('URL:https://x.test/sessions?s=abc-123\r\n');
+    expect(ics).toContain('URL:https://x.test/feed?s=abc-123\r\n');
+  });
+});
+
+function makeClubEvent(overrides: Partial<ICSClubEventFields> = {}): ICSClubEventFields {
+  return {
+    id: 'ev-1',
+    title: 'Club Social',
+    kind: 'social',
+    description: null,
+    location: 'Student Union',
+    starts_at: '2026-10-15T02:30:00Z',
+    ends_at: '2026-10-15T05:00:00Z',
+    status: 'published',
+    cancelled_reason: null,
+    updated_at: '2026-10-01T12:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('clubEventToVEvent', () => {
+  it('uses its own UID namespace, distinct from a session with the same id', () => {
+    const lines = clubEventToVEvent(makeClubEvent({ id: 'abc-123' }));
+    expect(lines).toContain('UID:club-event-abc-123@sfu-badminton');
+    expect(sessionToVEvent(makeSession({ id: 'abc-123' }))).toContain('UID:abc-123@sfu-badminton');
+  });
+
+  it('stamps DTSTART and DTEND straight from the stored instants', () => {
+    const lines = clubEventToVEvent(makeClubEvent());
+    expect(lines).toContain('DTSTART:20261015T023000Z');
+    expect(lines).toContain('DTEND:20261015T050000Z');
+  });
+
+  it('ends a default duration after the start when there is no end time', () => {
+    const lines = clubEventToVEvent(makeClubEvent({ ends_at: null }));
+    expect(lines).toContain('DTEND:20261015T043000Z');
+  });
+
+  it('marks a published event CONFIRMED with a plain summary', () => {
+    const lines = clubEventToVEvent(makeClubEvent());
+    expect(lines).toContain('STATUS:CONFIRMED');
+    expect(lines).toContain('SUMMARY:Club Social');
+    expect(lines.some((l) => l.includes('Cancelled'))).toBe(false);
+  });
+
+  it('marks a cancelled event CANCELLED, says so in the summary and gives the reason', () => {
+    const lines = clubEventToVEvent(makeClubEvent({ status: 'cancelled', cancelled_reason: 'Hall closed' }));
+    expect(lines).toContain('STATUS:CANCELLED');
+    expect(lines).toContain('SUMMARY:Cancelled: Club Social');
+    expect(lines).toContain('DESCRIPTION:Social\\nCancelled: Hall closed');
+  });
+
+  it('omits LOCATION when there is none', () => {
+    const lines = clubEventToVEvent(makeClubEvent({ location: null }));
+    expect(lines.some((l) => l.startsWith('LOCATION:'))).toBe(false);
+  });
+
+  it('links to the event page when a baseUrl is given', () => {
+    expect(clubEventToVEvent(makeClubEvent(), 'https://x.test')).toContain('URL:https://x.test/events/ev-1');
+    expect(clubEventToVEvent(makeClubEvent()).some((l) => l.startsWith('URL:'))).toBe(false);
+  });
+
+  it('escapes commas and semicolons in the title', () => {
+    const lines = clubEventToVEvent(makeClubEvent({ title: 'Food, drinks; games' }));
+    expect(lines).toContain('SUMMARY:Food\\, drinks\\; games');
+  });
+});
+
+describe('buildICSCalendar with club events', () => {
+  it('includes club events passed alongside the sessions', () => {
+    const ics = buildICSCalendar([], { clubEvents: [makeClubEvent()] });
+    expect(ics).toContain('UID:club-event-ev-1@sfu-badminton\r\n');
+    expect(ics).toContain('SUMMARY:Club Social\r\n');
+  });
+
+  it('is unchanged for a sessions-only caller', () => {
+    const session = makeSession();
+    expect(buildICSCalendar([session], { clubEvents: [] })).toBe(buildICSCalendar([session]));
+    expect(buildICSCalendar([session])).not.toContain('club-event-');
   });
 });

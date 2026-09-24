@@ -78,4 +78,6 @@ function settle(action: string, data: unknown, error: unknown): void {
 function revalidateClubEventPaths(eventId: string) {
   revalidatePath('/events');
   revalidatePath(`/events/${eventId}`);
+  // The schedule on /feed shows "Going" beside the event.
+  revalidatePath('/feed');
 }

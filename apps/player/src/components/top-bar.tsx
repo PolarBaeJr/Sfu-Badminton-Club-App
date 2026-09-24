@@ -60,7 +60,7 @@ export function TopBar({
   // The only job here is to stop claiming a season the viewer is not looking at.
   const viewingPastSeason = viewedSeasonId !== '' && viewedSeasonId !== activeSeasonId;
   // Gated destinations are filtered on isApproved inside, and a group left
-  // empty (Play and Events, for a pending member) is dropped with them.
+  // empty (Events, for a pending member) is dropped with them.
   // A switched-off feature is dropped the same way, except for a holder of its
   // key, who can still open its pages.
   const navEntries = isAuthenticated ? desktopEntries(isApproved, features, featureAccess) : [];

@@ -19,9 +19,11 @@ export default async function CheckInPage({
 
   const { data: tournament } = await supabase
     .from('tournaments')
-    .select('suspended_at')
+    .select('suspended_at, status')
     .eq('id', tournamentId)
     .single();
+  // Never a draft's check-in: see the same guard on /tournaments/[id].
+  if (tournament?.status === 'draft') notFound();
 
   const { player } = await getViewer();
   if (!player) redirect('/login');

@@ -67,7 +67,7 @@ export function SessionCard({
 
   return (
     <article
-      // Calendar entries deep-link to /sessions?s=<id>, and deep-link-scroll.tsx
+      // Calendar entries deep-link to /feed?s=<id>, and deep-link-scroll.tsx
       // finds the card by this exact id. It must not change shape.
       id={`session-${session.id}`}
       className={`session-card${isNext ? ' is-next' : ''}`}

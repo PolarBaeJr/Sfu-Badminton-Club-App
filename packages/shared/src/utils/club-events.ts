@@ -21,6 +21,10 @@ export type ClubEventStatus = 'draft' | 'published' | 'cancelled';
 // How far back the past list reaches. Nothing reads further than this.
 export const PAST_CLUB_EVENTS_SHOWN = 50;
 
+// How long an event with no end time is taken to run: the ICS DTEND and the
+// feed's "has it finished yet" both read this.
+export const CLUB_EVENT_DEFAULT_DURATION_MINUTES = 120;
+
 /** Upcoming soonest first; past most recent first, capped. */
 export function partitionClubEvents<T extends { starts_at: string }>(
   events: readonly T[],
@@ -129,6 +133,17 @@ export function utcToClubWallClock(iso: string): string {
     parts[p.type] = p.value;
   }
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/**
+ * The club date and time a stored instant falls on, e.g. `{ date: '2026-11-02',
+ * time: '00:30' }`. The only way a club event is placed on a calendar day: never
+ * the `Date` parts of the instant (the host's timezone) and never Intl alone
+ * (tzdata on the host may predate 2026-11-01).
+ */
+export function clubEventWallClock(iso: string): { date: string; time: string } {
+  const wall = utcToClubWallClock(iso);
+  return { date: wall.slice(0, 10), time: wall.slice(11, 16) };
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   PAST_CLUB_EVENTS_SHOWN,
   clubEventSignupState,
+  clubEventWallClock,
   clubWallClockToUtc,
   formatClubEventCost,
   formatClubEventTime,
@@ -129,5 +130,16 @@ describe('formatClubEventTime', () => {
     const shown = formatClubEventTime('2026-07-02T02:00:00Z');
     expect(shown).toContain('Jul 1');
     expect(shown).toContain('7:00');
+  });
+});
+
+describe('clubEventWallClock', () => {
+  it('reads past the 2026-11-01 cutover at a fixed UTC-7, whatever tzdata says', () => {
+    // Old tzdata would put this at 2026-11-01 23:30 (UTC-8).
+    expect(clubEventWallClock('2026-11-02T07:30:00Z')).toEqual({ date: '2026-11-02', time: '00:30' });
+  });
+
+  it('puts an evening event on its club date, not its UTC date', () => {
+    expect(clubEventWallClock('2026-10-15T02:30:00Z')).toEqual({ date: '2026-10-14', time: '19:30' });
   });
 });

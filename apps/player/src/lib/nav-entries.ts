@@ -1,4 +1,4 @@
-import { Home, Trophy, Crosshair, Calendar, CalendarHeart, Award, Sparkles, type LucideIcon } from 'lucide-react';
+import { Home, Trophy, Crosshair, CalendarHeart, Award, Sparkles, type LucideIcon } from 'lucide-react';
 // Deep, NOT the '@badminton/ui' barrel: that loads every component in the
 // package, and this module is imported by a test that has no DOM.
 import { visibleEntries, type NavEntry, type NavGroup } from '@badminton/ui/src/nav-groups';
@@ -29,18 +29,10 @@ export type PlayerNavEntry = NavEntry<PlayerNavItem, LucideIcon>;
 
 const FEED: PlayerNavItem = { href: '/feed', label: 'Feed', icon: Home, gated: false };
 const LEADERBOARD: PlayerNavItem = { href: '/leaderboard', label: 'Leaderboard', icon: Trophy, gated: false };
-const SCHEDULE: PlayerNavItem = { href: '/sessions', label: 'Schedule', icon: Calendar, gated: true };
 const CHALLENGES: PlayerNavItem = { href: '/challenges', label: 'Challenges', icon: Crosshair, gated: true };
 const TOURNAMENTS: PlayerNavItem = { href: '/tournaments', label: 'Tournaments', icon: Award, gated: true };
 const CLUB_EVENTS: PlayerNavItem = { href: '/events', label: 'Club events', icon: CalendarHeart, gated: true };
 const MY_STATS: PlayerNavItem = { href: '/my-stats', label: 'My stats', icon: Sparkles, gated: false };
-
-const PLAY: NavGroup<PlayerNavItem, LucideIcon> = {
-  id: 'play',
-  label: 'Play',
-  icon: Calendar,
-  items: [SCHEDULE, CHALLENGES],
-};
 
 // A new kind of club event is one more item here.
 const EVENTS: NavGroup<PlayerNavItem, LucideIcon> = {
@@ -57,19 +49,21 @@ const STATS: NavGroup<PlayerNavItem, LucideIcon> = {
   items: [LEADERBOARD, MY_STATS],
 };
 
+// No Schedule entry: the schedule is the feed, and /sessions only redirects
+// there. Challenges is a direct link now that it has no group to share.
 export const DESKTOP_ENTRIES: PlayerNavEntry[] = [
   { kind: 'link', item: FEED },
-  { kind: 'group', group: PLAY },
+  { kind: 'link', item: CHALLENGES },
   { kind: 'group', group: EVENTS },
   { kind: 'group', group: STATS },
 ];
 
 // Five slots is what fits under a thumb. Ranks and Me stay direct links, with
-// the short labels the tab bar has always used; Play and Events open a sheet.
+// the short labels the tab bar has always used; Events opens a sheet.
 export const MOBILE_SLOTS: PlayerNavEntry[] = [
   { kind: 'link', item: FEED },
   { kind: 'link', item: { ...LEADERBOARD, label: 'Ranks' } },
-  { kind: 'group', group: PLAY },
+  { kind: 'link', item: CHALLENGES },
   { kind: 'group', group: EVENTS },
   { kind: 'link', item: { ...MY_STATS, label: 'Me' } },
 ];

@@ -1,42 +1,87 @@
 import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
+import { getCheckinSettings } from '@/lib/checkin-settings';
 import {
   CLUB_TIMEZONE,
   MATCH_FORMAT_LABELS,
+  clubToday,
   formatRelativeTime,
   formatTime,
   getAccountStanding,
+  getCheckinWindow,
+  isCheckinOpen,
   pickOne,
   featureGate,
   featureAccessFor,
   scopeToActiveSeason,
+  selectAllInChunks,
+  wallClockToUtc,
+  type AttendanceStatus,
   type FeatureId,
+  type SessionIntent,
 } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { Fragment } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ChevronRight, QrCode } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
 import { PasskeyNudge } from '@/components/passkey-nudge';
 import { LiveRating } from '@/components/live-rating';
 import { LiveFeed } from '@/components/live-matches';
 import { LiveTournament } from '../tournaments/live-tournament';
 import { ActiveTournamentCard, type ActiveEntry } from './active-tournament';
+import { ActivityPanel, type RiverItem } from './activity-panel';
+import { ClubEventAgendaRow, TournamentAgendaRow } from './agenda-rows';
+import { WeekStrip } from './week-strip';
+import { SessionCard, type SessionCardSession } from '../sessions/session-card';
+import { SubscribeAllButton } from '../sessions/subscribe-all';
+import { DeepLinkScroll } from '../sessions/deep-link-scroll';
+import { MonthCalendar } from '../sessions/month-calendar';
 import {
   attendanceStreak,
-  clubDayKey,
   describeMatch,
   groupByDay,
   seasonWeek,
-  sessionDayLabel,
   type RiverPerson,
 } from '@/lib/feed-activity';
 import { isUnderWay, runningEvents, type FeedTournament } from '@/lib/feed-tournament';
 import { countEnteredPlayers, occupiesAPlace } from '@/lib/tournament-index';
-import { AnnouncementMarkdown } from '@/lib/announcement-markdown';
 import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
 import { onVisibleTracks } from '@/lib/session-track-filter';
 import { getFeatureFlags } from '@/lib/feature-gate';
+import { attendeeCountsBySession } from '@/lib/session-attendee-counts';
+import {
+  CALENDAR_WEEKDAYS,
+  addDaysISO,
+  buildCalendarMonth,
+  calendarMonthKeys,
+  describeMyState,
+  initialMonthIndex,
+  isStillUpcoming,
+  tallyBySession,
+  wasPresent,
+} from '@/lib/schedule';
+import {
+  buildAgenda,
+  buildWeekStrip,
+  clubEventCalendarItem,
+  compareCalendarItems,
+  sessionCalendarItem,
+  tournamentCalendarItems,
+  type AgendaSession,
+  type CalendarClubEventRow,
+  type CalendarItem,
+  type CalendarSessionRow,
+  type CalendarTone,
+  type CalendarTournamentRow,
+} from '@/lib/calendar-items';
+import {
+  calendarSessionsQuery,
+  calendarTournamentsQuery,
+  clubEventsCalendarQuery,
+  mySignupsQuery,
+  openSessionsQuery,
+} from '@/lib/home-schedule-queries';
 
 type PlayerEmbed = { id: string; full_name: string | null; handle: string | null; avatar_url: string | null };
 type MatchParticipantRow = {
@@ -54,14 +99,8 @@ type MatchRow = {
   score_summary: string | null;
   match_participants: MatchParticipantRow[] | null;
 };
-type SessionRow = {
-  id: string;
-  name: string | null;
-  date: string;
-  location: string;
-  start_time: string | null;
-  end_time: string | null;
-};
+type OpenSessionRow = SessionCardSession & AgendaSession;
+type CalendarSessionWithSeason = CalendarSessionRow & { season_id: string | null };
 type AnnouncementRow = {
   id: string;
   title: string;
@@ -70,32 +109,6 @@ type AnnouncementRow = {
   target_audience: 'all' | 'competitive' | 'recreational' | 'eligible_only';
   author: { full_name: string | null } | { full_name: string | null }[] | null;
 };
-
-/** A row in the river. Both kinds carry `at`, which is the only field the day
- *  grouping needs to know about. */
-type RiverItem =
-  | {
-      kind: 'match';
-      id: string;
-      at: string;
-      mine: boolean;
-      sentence: string;
-      meta: string;
-      face: RiverPerson;
-      delta: number | null;
-      rating: number | null;
-      href: string;
-    }
-  | {
-      kind: 'challenge';
-      id: string;
-      at: string;
-      mine: true;
-      sentence: string;
-      meta: string;
-      face: RiverPerson;
-      href: string;
-    };
 
 function toPerson(raw: PlayerEmbed | null): RiverPerson | null {
   if (!raw) return null;
@@ -107,33 +120,30 @@ function toPerson(raw: PlayerEmbed | null): RiverPerson | null {
   };
 }
 
-/** A name with the handle 00092 gave the member beside it — beside, never
- *  instead of, and nothing at all when they have not chosen one. */
-function Handle({ handle }: { handle: string | null }) {
-  if (!handle) return null;
-  return (
-    <span className="mono muted" style={{ fontSize: 11, marginLeft: 6 }}>
-      @{handle}
-    </span>
-  );
-}
-
 export default async function FeedPage() {
   const { player } = await getViewer();
   if (!player) redirect('/login');
 
   // THE CLUB FEATURE SWITCHES. A card belonging to a switched-off feature is
   // dropped, the same as its nav item, unless the viewer holds its
-  // `page.access.<id>` key and can still open its pages. The reads still run;
-  // this only decides what is drawn, and nothing here is personal to anyone but
-  // the viewer.
+  // `page.access.<id>` key and can still open its pages. The older reads still
+  // run and this only decides what is drawn; the schedule's own reads are
+  // skipped outright while their switch is off.
   const features = await getFeatureFlags();
   const access = featureAccessFor(player);
   const on = (id: FeatureId) => featureGate(features[id], access.includes(id)) !== 'redirect';
+  const sessionsOn = on('sessions');
+  const eventsOn = on('events');
+  const tournamentsOn = on('tournaments');
+  const scheduleOn = sessionsOn || eventsOn || tournamentsOn;
 
   const supabase = await createServerSupabaseClient();
+  // ONE clock reading per render, and a PINNED club date from it. clubToday
+  // applies the fixed UTC-7 from 2026-11-01 whatever tzdata the host carries,
+  // so the agenda, the week strip, the month grid and the tournament banner all
+  // agree about what today is.
   const now = new Date();
-  const todayKey = clubDayKey(now.toISOString(), CLUB_TIMEZONE);
+  const todayKey = clubToday(now);
   const nowIso = now.toISOString();
 
   // The active season scopes the header eyebrow, the schedule and the notice,
@@ -141,7 +151,7 @@ export default async function FeedPage() {
   // first because three of the queries below need its id.
   const { data: activeSeason } = await supabase
     .from('seasons')
-    .select('id, name, start_date')
+    .select('id, name, start_date, end_date')
     .eq('active_flag', true)
     .maybeSingle();
 
@@ -183,30 +193,31 @@ export default async function FeedPage() {
     .order('played_at', { ascending: false })
     .limit(15);
 
+  // The club events window: from the start of the active term, or 60 days
+  // back with no term running. Through wallClockToUtc, never a Date built from
+  // the host's clock, for the same 2026-11-01 reason as todayKey.
+  const eventsFrom = (activeSeason?.start_date as string | undefined) ?? addDaysISO(todayKey, -60);
+  const [efY, efM, efD] = eventsFrom.split('-').map(Number) as [number, number, number];
+  const eventsLowerBound = wallClockToUtc(efY, efM, efD, 0, 0).toISOString();
+
+  // A read whose feature is off is not sent at all.
+  const skipped = Promise.resolve({ data: [] as never[], error: null });
+
   const [
-    nextSessionRes,
     pastSessionsRes,
     myAttendanceRes,
     announcementsRes,
     recentMatchesRes,
     pendingChallengesRes,
     liveTournamentsRes,
+    openSessionsRes,
+    calendarSessionsRes,
+    myRsvpRes,
+    clubEventsRes,
+    mySignupsRes,
+    calendarTournamentsRes,
+    checkinSettings,
   ] = await Promise.all([
-    // The one session a member turning up tonight needs. Same track filter the
-    // schedule uses — a session aimed at the other division is not "next" for
-    // this member.
-    onVisibleTracks(
-      inActiveSeason(
-        supabase
-          .from('sessions')
-          .select('id, name, date, location, start_time, end_time')
-          .eq('status', 'open')
-          .gte('date', todayKey),
-      ),
-      player.status,
-    )
-      .order('date', { ascending: true })
-      .limit(1),
     // The sessions the streak counts down through: already happened, and ones
     // this member was eligible for. Being ineligible for a session is not the
     // same as not turning up to it, so the track filter is what keeps the
@@ -222,11 +233,13 @@ export default async function FeedPage() {
     )
       .order('date', { ascending: false })
       .limit(20),
+    // Every status, not only the present ones: the session cards need
+    // `no_show` and `excused` to retire their RSVP controls. The streak filters
+    // to present below.
     supabase
       .from('session_attendance')
       .select('session_id, status')
-      .eq('player_id', player.id)
-      .in('status', ['checked_in', 'present']),
+      .eq('player_id', player.id),
     // Three rather than one, because target_audience cannot be filtered in the
     // query (it is matched against the viewer's own division below) and the
     // newest row might not be for them.
@@ -311,6 +324,20 @@ export default async function FeedPage() {
         .is('suspended_at', null),
       activeSeason?.id,
     ).order('start_date', { ascending: true }),
+    // ---- THE SCHEDULE -------------------------------------------------------
+    // Built in lib/home-schedule-queries.ts, where home-schedule-query.test.ts
+    // pins every select string and filter.
+    sessionsOn ? openSessionsQuery(supabase, activeSeason?.id, player.status) : skipped,
+    sessionsOn ? calendarSessionsQuery(supabase, activeSeason?.id, player.status) : skipped,
+    sessionsOn
+      ? supabase.from('session_rsvp').select('session_id, intent').eq('player_id', player.id)
+      : skipped,
+    eventsOn ? clubEventsCalendarQuery(supabase, eventsLowerBound) : skipped,
+    eventsOn ? mySignupsQuery(supabase, player.id) : skipped,
+    tournamentsOn ? calendarTournamentsQuery(supabase, activeSeason?.id) : skipped,
+    // The live window tunables, so a card's Check In button and "Opens at"
+    // agree with session_checkin_open(). Never throws; falls back itself.
+    getCheckinSettings(),
   ]);
 
   // THE SAME TREATMENT THE TOURNAMENT READ GETS BELOW, AND FOR THE SAME REASON
@@ -320,9 +347,21 @@ export default async function FeedPage() {
   // and a broken attendance streak for months, because the track filter sent a
   // `player_status` value into a `session_group` column and PostgREST answered
   // 400. Report it, degrade to no card, and let somebody find out.
+  //
+  // The schedule's reads follow the same rule with one difference: a failed
+  // SESSIONS read is said on screen, because "No sessions yet" over twelve open
+  // sessions is a confident lie. A failed events or tournaments read drops
+  // those rows and says so in one line; a failed attendance, RSVP or sign-up
+  // read costs a chip, as it always did on /sessions.
   for (const [action, res] of [
-    ['feed:nextSession', nextSessionRes],
     ['feed:pastSessions', pastSessionsRes],
+    ['feed:myAttendance', myAttendanceRes],
+    ['feed:openSessions', openSessionsRes],
+    ['feed:calendarSessions', calendarSessionsRes],
+    ['feed:myRsvp', myRsvpRes],
+    ['feed:clubEvents', clubEventsRes],
+    ['feed:mySignups', mySignupsRes],
+    ['feed:calendarTournaments', calendarTournamentsRes],
   ] as const) {
     if (res.error) {
       Sentry.captureException(new Error(res.error.message), {
@@ -330,20 +369,29 @@ export default async function FeedPage() {
       });
     }
   }
-  const nextSession = on('sessions') ? ((nextSessionRes.data ?? [])[0] as SessionRow | undefined) : undefined;
-  const pastSessions = (pastSessionsRes.data ?? []) as { id: string }[];
-  const attendedIds = new Set((myAttendanceRes.data ?? []).map((r) => r.session_id as string));
-  const streak = attendanceStreak(pastSessions, attendedIds);
+  const scheduleError = Boolean(openSessionsRes.error || calendarSessionsRes.error);
+  const clubEventsError = Boolean(clubEventsRes.error);
+  const tournamentsError = Boolean(calendarTournamentsRes.error);
 
-  // Going is an RSVP, not a check-in: it is what the member is asking when they
-  // look at tonight's session, and it is the number /sessions already shows.
-  const { count: goingCount } = nextSession
-    ? await supabase
-        .from('session_rsvp')
-        .select('session_id', { count: 'exact', head: true })
-        .eq('session_id', nextSession.id)
-        .eq('intent', 'going')
-    : { count: null };
+  const pastSessions = (pastSessionsRes.data ?? []) as { id: string }[];
+  const myAttendance = (myAttendanceRes.data ?? []) as { session_id: string; status: string }[];
+  const attendedIds = new Set(myAttendance.filter((r) => wasPresent(r.status)).map((r) => r.session_id));
+  const streak = attendanceStreak(pastSessions, attendedIds);
+  const myStatusBySession = new Map<string, AttendanceStatus>(
+    myAttendance.map((r) => [r.session_id, r.status as AttendanceStatus]),
+  );
+  const myIntentBySession = new Map<string, SessionIntent>(
+    ((myRsvpRes.data ?? []) as { session_id: string; intent: string }[]).map((r) => [
+      r.session_id,
+      r.intent as SessionIntent,
+    ]),
+  );
+  const mySignedUp = new Set(((mySignupsRes.data ?? []) as { event_id: string }[]).map((r) => r.event_id));
+
+  const openSessions = (openSessionsRes.data ?? []) as unknown as OpenSessionRow[];
+  const calendarSessions = (calendarSessionsRes.data ?? []) as unknown as CalendarSessionWithSeason[];
+  const clubEvents = (clubEventsRes.data ?? []) as unknown as CalendarClubEventRow[];
+  const calendarTournaments = (calendarTournamentsRes.data ?? []) as unknown as CalendarTournamentRow[];
 
   // ---- IS THE CLUB PLAYING A TOURNAMENT RIGHT NOW (wave 2 of 2) ------------
   //
@@ -392,17 +440,53 @@ export default async function FeedPage() {
 
   let tournamentEntryRows: Array<{ event_id: string; player_id: string; status: string }> = [];
   let tournamentPairRows: Array<{ event_id: string; player1_id: string; player2_id: string; status: string }> = [];
-  if (runningEventIds.length > 0) {
-    const [pRes, prRes] = await Promise.all([
+
+  // The upcoming open sessions, by the same rule the agenda applies below
+  // (buildAgenda): kept until their check-in window closes. Only these carry
+  // a card, so only these need a count.
+  const upcomingIds = openSessions
+    .filter((s) => isStillUpcoming(getCheckinWindow(s, checkinSettings).closesAt, now))
+    .map((s) => s.id);
+
+  // WAVE 2 SHARES ITS ROUND TRIP with the cards' counts, so the page is still
+  // three rounds deep: seasons, the batch above, and this.
+  //
+  // The counts are scoped to the cards and paged, exactly as /sessions did it:
+  // an unscoped read of either table truncates silently at PGRST_DB_MAX_ROWS.
+  // `as never` is the cast /sessions carries for the same TS2589.
+  const [entryResults, checkedInBySession, goingRes] = await Promise.all([
+    runningEventIds.length > 0
+      ? Promise.all([
+          supabase
+            .from('tournament_participants')
+            .select('event_id, player_id, status')
+            .in('event_id', runningEventIds),
+          supabase
+            .from('tournament_pairs')
+            .select('event_id, player1_id, player2_id, status')
+            .in('event_id', runningEventIds),
+        ])
+      : Promise.resolve(null),
+    attendeeCountsBySession(supabase as never, upcomingIds),
+    selectAllInChunks<{ session_id: string }>(upcomingIds, (batch, from, to) =>
       supabase
-        .from('tournament_participants')
-        .select('event_id, player_id, status')
-        .in('event_id', runningEventIds),
-      supabase
-        .from('tournament_pairs')
-        .select('event_id, player1_id, player2_id, status')
-        .in('event_id', runningEventIds),
-    ]);
+        .from('session_rsvp')
+        .select('session_id')
+        .in('session_id', batch)
+        .eq('intent', 'going')
+        .order('session_id')
+        .range(from, to) as never,
+    ),
+  ]);
+  if (goingRes.error) {
+    Sentry.captureException(new Error(goingRes.error.message), {
+      extra: { action: 'feed:goingCounts' },
+    });
+  }
+  const goingBySession = tallyBySession(goingRes.data);
+
+  if (entryResults) {
+    const [pRes, prRes] = entryResults;
     // Same explicit-error rule as above, for the same reason — but the DEGRADED
     // STATE IS DIFFERENT, and that is the point of handling the two waves
     // separately. Wave 1 failing means "we do not know whether a tournament is
@@ -537,16 +621,77 @@ export default async function FeedPage() {
     .filter((i): i is RiverItem => i !== null);
 
   const sections = groupByDay<RiverItem>([...matchItems, ...challengeItems], now, CLUB_TIMEZONE);
-  const week = activeSeason?.start_date ? seasonWeek(activeSeason.start_date, now, CLUB_TIMEZONE) : null;
-  const eyebrow = [activeSeason?.name, week ? `Week ${week}` : null].filter(Boolean).join(' · ') || 'The club';
+  const seasonWeekNo = activeSeason?.start_date ? seasonWeek(activeSeason.start_date, now, CLUB_TIMEZONE) : null;
+  const eyebrow = [activeSeason?.name, seasonWeekNo ? `Week ${seasonWeekNo}` : null].filter(Boolean).join(' · ') || 'The club';
 
-  const sessionWhen = nextSession ? sessionDayLabel(nextSession.date, todayKey) : null;
-  const sessionHours =
-    nextSession?.start_time && nextSession?.end_time
-      ? `${formatTime(nextSession.start_time)} – ${formatTime(nextSession.end_time)}`
-      : nextSession?.start_time
-        ? `From ${formatTime(nextSession.start_time)}`
-        : null;
+  // ---- the schedule ----------------------------------------------------
+  const agenda = buildAgenda({
+    sessions: openSessions,
+    clubEvents,
+    tournaments: calendarTournaments,
+    now,
+    todayISO: todayKey,
+    checkinSettings,
+    liveTournamentIds: new Set(liveTournaments.map((t) => t.id)),
+  });
+  const upcoming = agenda.flatMap((day) =>
+    day.sessions.flatMap((entry) => (entry.kind === 'session' ? [entry.session] : [])),
+  );
+  const upcomingCount = upcoming.length;
+  const hasCard = new Set(upcoming.map((s) => s.id));
+  const isMineState = (id: string) => {
+    const state = describeMyState(myStatusBySession.get(id), myIntentBySession.get(id));
+    return state === 'going' || state === 'checked_in' || state === 'attended';
+  };
+  const myUpcomingCount = upcoming.filter((s) => isMineState(s.id)).length;
+  const upcomingEventCount = agenda.reduce(
+    (n, day) => n + day.sessions.filter((entry) => entry.kind === 'club_event').length,
+    0,
+  );
+  // The accent goes on the soonest night dated today or later, as on /sessions.
+  const nextSessionId = (upcoming.find((s) => s.date >= todayKey) ?? upcoming[0])?.id;
+
+  const calendarItems: CalendarItem[] = [
+    ...calendarSessions.map((s) => sessionCalendarItem(s, { mine: isMineState(s.id), hasCard: hasCard.has(s.id) })),
+    ...clubEvents.map((e) => clubEventCalendarItem(e, { mine: mySignedUp.has(e.id) })),
+    ...calendarTournaments.flatMap((t) => tournamentCalendarItems(t)),
+  ].sort(compareCalendarItems);
+
+  // The month nav is bounded to what was loaded: the active term end to end,
+  // plus a month of its own for anything outside it (calendarMonthKeys).
+  const seasonSessionDates = activeSeason
+    ? calendarSessions.filter((s) => s.season_id === activeSeason.id).map((s) => s.date)
+    : [];
+  const looseDates = [
+    ...calendarSessions.filter((s) => !activeSeason || s.season_id !== activeSeason.id).map((s) => s.date),
+    ...calendarItems.filter((i) => i.kind !== 'session').map((i) => i.date),
+  ];
+  const monthKeys = calendarMonthKeys(
+    activeSeason?.start_date
+      ? { startISO: activeSeason.start_date as string, endISO: (activeSeason.end_date as string | null) ?? null }
+      : null,
+    seasonSessionDates,
+    looseDates,
+    todayKey,
+  );
+  const months = monthKeys.map((key) => buildCalendarMonth(key, calendarItems, todayKey));
+  const week = buildWeekStrip(calendarItems, todayKey);
+  const agendaDates = new Set(agenda.map((day) => day.dateISO));
+  const legend: CalendarTone[] = [
+    ...(sessionsOn ? (['open', 'closed'] as const) : []),
+    ...(eventsOn ? (['club'] as const) : []),
+    ...(tournamentsOn ? (['tournament'] as const) : []),
+  ];
+
+  const upNextSub = [
+    upcomingCount > 0
+      ? `${upcomingCount} session${upcomingCount === 1 ? '' : 's'} accepting check-ins`
+      : null,
+    myUpcomingCount > 0 ? `you're in for ${myUpcomingCount}` : null,
+    upcomingEventCount > 0 ? `${upcomingEventCount} club event${upcomingEventCount === 1 ? '' : 's'}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   // The reader's own aggregate record. getViewer() already selects
   // `ratings(*)`, so this is free — no extra round trip, and no whole-club
@@ -574,28 +719,26 @@ export default async function FeedPage() {
 
   return (
     <div data-screen-label="Feed" className="wide-page">
-      {/* The "Your record" card below reads the member's own `ratings` row, and
-          a confirm entered on somebody else's phone left it stale.
-
-          MOUNTED UNCONDITIONALLY although that card is .wide-desktop-only, so on
-          a phone this listens for a card that is not on screen. Deliberate, and
-          cheap: it is a filter on ONE row, it fires only when this member's own
-          rating moves, and when it does the river above is stale for the same
-          reason — a rating only ever moves because a match of theirs was
-          confirmed, which is a row the river prints. Gating it on a CSS
-          breakpoint would cost a media query in JavaScript to save nothing. */}
+      {/* The You card below reads the member's own `ratings` row, and a
+          confirm entered on somebody else's phone left it stale. Mounted
+          unconditionally: it is a filter on ONE row, it fires only when this
+          member's own rating moves, and when it does the activity river is
+          stale for the same reason. */}
       <LiveRating playerId={player.id} />
-      {/* The river itself, and the pending-challenges block under it. This is
-          the ONE page in the app that revalidatePath never reaches — see
-          lib/actions/matches.ts, which revalidates /challenges,
-          /challenges/[id], /leaderboard and /my-stats and not this — so
-          without this listener the feed is stale for everybody including the
-          member who just submitted the result that belongs in it.
+      {/* The river itself, and the pending-challenges block in it. This is
+          the ONE page in the app that revalidatePath never reaches for a
+          result (lib/actions/matches.ts revalidates /challenges,
+          /challenges/[id], /leaderboard and /my-stats and not this), so
+          without this listener the activity is stale for everybody including
+          the member who just submitted the result that belongs in it.
 
           Unfiltered on `matches`, deliberately: a feed of the club's last
           fifteen results is a screen about everybody, and `matches` has no
           player column to filter on in any case. See live-matches.tsx. */}
       <LiveFeed playerId={player.id} />
+      {/* Calendar links, pushes and old /sessions?s= URLs arrive here as
+          /feed?s=<id>; this scrolls to that session's card. */}
+      <DeepLinkScroll />
       <PageHeader
         eyebrow={eyebrow.toUpperCase()}
         title="Feed"
@@ -605,59 +748,27 @@ export default async function FeedPage() {
         className="feed-header"
       />
 
-      {/* Renders nothing unless this account has no passkey yet and the device
-          supports them, so it self-retires once everyone is enrolled. Kept
-          although the mockup omits it: it is the only route by which members
-          who predate passkeys are ever asked. */}
-      <PasskeyNudge />
-
-      {/* Also kept against the mockup. Hiding the gated features without saying
-          why leaves a member staring at a half-empty app wondering what they
-          did wrong — and it is what stops a suspended account being offered a
-          control requirePlayer() is certain to refuse. */}
+      {/* Kept against the mockup. Hiding the gated controls without saying
+          why leaves a member staring at a schedule they cannot act on, and it
+          is what stops a suspended account being offered a control
+          requirePlayer() is certain to refuse. */}
       {!isApproved && (
         <div className="card-base" style={{ marginBottom: 20, borderLeft: '3px solid var(--gold)' }}>
           <h3 className="card-title" style={{ marginBottom: 6 }}>
             {standing.block === 'pending_approval' ? 'Waiting on approval' : 'Account suspended'}
           </h3>
           <p className="muted" style={{ fontSize: 14, lineHeight: 1.55, margin: 0 }}>
-            {standing.detail} You can still read the feed and the leaderboard.
+            {standing.detail} You can still see the schedule and the feed. RSVP and check-in open once
+            your account is in good standing.
           </p>
         </div>
       )}
 
-      {/* River left, supporting cards right. One column until 1101px, and the
-          DOM order is unchanged, so the phone still reads exactly as before:
-          river, next session, notice, record, then the sticky check-in bar.
-
-          .wide-grid rather than the old 8/4 .grid-12 because .grid-12 halves to
-          six columns at 1100px, so "span 8" quietly meant two thirds of the
-          page on a laptop and the whole width on a tablet — two grids
-          disagreeing about how many columns the page has. */}
-      <div className="wide-grid">
-        <div className="feed-col">
-          {/* ── A TOURNAMENT IS ON ────────────────────────────────────
-              FIRST IN THE COLUMN, above the river. See ./active-tournament for
-              why this is a banner here rather than a RiverItem or a rail card —
-              the short version is that `.wide-grid` collapses to one column
-              below 1101px, so `.wide-rail` unstacks BELOW this column, and a
-              member standing in the gym would have had to scroll past fifteen
-              river rows to learn that the tournament they are standing in is
-              running.
-
-              ONE CARD PER RUNNING TOURNAMENT, uncapped, with no "and N more"
-              line. The bound is already real and narrow — the ACTIVE SEASON's
-              tournaments whose status is 'active', which are not suspended, whose
-              last day has not passed, and which have an event past registration
-              and short of completed. Production has one. Machinery for a case
-              that cannot occur is machinery that will be wrong when it does.
-
-              `.feed-col` is `display: flex; flex-direction: column; gap: 20px`,
-              so two cards space themselves like every other pair of blocks on
-              the page, and `.feed-col > * { min-width: 0 }` (globals.css:1577) is
-              what stops a long tournament name from widening the column and
-              taking the whole document sideways. That rule is why this card sets
-              no width of its own. */}
+      {/* ── A TOURNAMENT IS ON ────────────────────────────────────
+          Full width, above the schedule, so a member standing in the gym
+          sees it first at every width. */}
+      {liveTournaments.length > 0 && (
+        <div className="feed-col home-banners">
           {liveTournaments.map((t) => {
             const running = runningEvents(t);
             const eventIds = running.map((e) => e.id);
@@ -728,211 +839,190 @@ export default async function FeedPage() {
               </Fragment>
             );
           })}
+        </div>
+      )}
 
-          {/* THE RIVER ------------------------------------------------ */}
-          {sections.length === 0 ? (
-            <div className="card-base">
-              <div className="empty">
-                <div className="empty-title">Nothing has happened yet</div>
-                <div className="empty-hint">
-                  Results and challenges land here as the club plays. Issue a challenge to
-                  put the first one on the board.
-                </div>
-                {isApproved && on('challenges') && (
-                  <Link href="/challenges/new" className="btn btn-ghost">
-                    Issue a challenge <ChevronRight size={12} />
-                  </Link>
-                )}
-              </div>
+      {/* THE SHAPE OF THIS SCREEN. The schedule is the main column and the
+          club's activity sits beside it from 1101px up. Below that the DOM
+          order is the phone's order: the week strip, then Up next with
+          tonight's card and its check-in first, then activity. Nothing
+          reorders, so check-in near the top on a phone follows from the
+          markup rather than from a media query. */}
+      <div className={scheduleOn ? 'home-grid' : 'home-grid is-single'}>
+        {scheduleOn && (
+          <section className="home-main" aria-label="Schedule">
+            <div className="home-week">
+              <WeekStrip days={week} linkedDates={agendaDates} />
             </div>
-          ) : (
-            <div>
-              {sections.map((section) => (
-                <div key={section.key}>
-                  <div className="river-day">{section.label}</div>
-                  {section.items.map((item) => (
-                    <Link
-                      key={`${item.kind}-${item.id}`}
-                      href={item.href}
-                      className={`river-row press${item.mine ? ' mine' : ''}`}
+
+            <section>
+              <div className="card-head">
+                <div>
+                  <h2 className="card-title">Up next</h2>
+                  <div className="card-sub">{upNextSub ? `${upNextSub}.` : 'Nothing on the calendar.'}</div>
+                </div>
+                {(sessionsOn || eventsOn) && <SubscribeAllButton />}
+              </div>
+
+              {scheduleError ? (
+                // A refused sessions read, said as such. The empty state below
+                // would tell a member there is nothing on when there may be
+                // twelve open nights.
+                <div className="card-base">
+                  <div className="empty">
+                    <div className="empty-title">We could not load the schedule</div>
+                    <div className="empty-hint">Refresh the page to try again.</div>
+                  </div>
+                </div>
+              ) : agenda.length === 0 ? (
+                <div className="card-base" style={{ padding: 0 }}>
+                  <div className="empty">
+                    <div className="empty-icon"><Calendar size={20} /></div>
+                    {/* An empty schedule has different causes and a member
+                        cannot tell them apart from a blank card, so each says
+                        which one it is. */}
+                    <div className="empty-title">
+                      {!sessionsOn ? 'Nothing coming up' : activeSeason ? 'No sessions yet' : 'No season is running'}
+                    </div>
+                    <div className="empty-hint">
+                      {!sessionsOn
+                        ? 'Club events and tournaments show up here when the exec posts them.'
+                        : activeSeason
+                          ? `Nothing has been posted for ${activeSeason.name} yet. New practices show up here as soon as the exec adds them. Watch announcements.`
+                          : 'Sessions appear here once the exec opens a new term. Watch announcements for the start date.'}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  {agenda.map((day) => (
+                    <div
+                      key={day.dateISO}
+                      id={`day-${day.dateISO}`}
+                      className={`sched-day${day.isToday ? ' is-today' : ''}`}
                     >
-                      <AvatarChip
-                        name={item.face.name}
-                        id={item.face.id}
-                        src={item.face.avatarUrl}
-                        size="sm"
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="river-sentence">
-                          {item.sentence}
-                          <Handle handle={item.face.handle} />
-                        </div>
-                        <div className="river-meta">{item.meta}</div>
+                      <div className="sched-day-rail">
+                        <div className="sched-day-label">{day.label}</div>
+                        <div className="sched-day-date">{day.dateLabel}</div>
                       </div>
-                      {item.kind === 'challenge' ? (
-                        <span className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
-                          Reply
-                        </span>
-                      ) : (
-                        <div className="river-value">
-                          {typeof item.delta === 'number' && (
-                            <div
-                              className="river-delta"
-                              style={{ color: item.delta >= 0 ? 'var(--win)' : 'var(--loss)' }}
-                            >
-                              {item.delta >= 0 ? '+' : ''}
-                              {item.delta}
-                            </div>
-                          )}
-                          {typeof item.rating === 'number' && (
-                            <div className="river-rating">{item.rating}</div>
-                          )}
-                        </div>
-                      )}
-                    </Link>
+                      <div className="sched-day-list">
+                        {day.sessions.map((entry) => {
+                          if (entry.kind === 'club_event') {
+                            return (
+                              <ClubEventAgendaRow
+                                key={entry.key}
+                                event={entry.event}
+                                going={mySignedUp.has(entry.event.id)}
+                              />
+                            );
+                          }
+                          if (entry.kind === 'tournament') {
+                            return <TournamentAgendaRow key={entry.key} tournament={entry.tournament} todayISO={todayKey} />;
+                          }
+                          const session = entry.session;
+                          const canCheckIn = isCheckinOpen(session, now, checkinSettings);
+                          const { opensAt } = getCheckinWindow(session, checkinSettings);
+                          let windowLabel: string | undefined;
+                          // Only for nights still ahead, as on /sessions.
+                          if (!canCheckIn && session.date >= todayKey) {
+                            if (opensAt && now < opensAt) {
+                              const opensLocal = opensAt.toLocaleTimeString('en-GB', {
+                                timeZone: CLUB_TIMEZONE,
+                                hourCycle: 'h23',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              });
+                              windowLabel = `Opens at ${formatTime(opensLocal)}`;
+                            } else {
+                              windowLabel = 'Check-in closed';
+                            }
+                          }
+                          return (
+                            <SessionCard
+                              key={entry.key}
+                              session={session}
+                              myStatus={myStatusBySession.get(session.id) ?? null}
+                              myIntent={myIntentBySession.get(session.id) ?? null}
+                              checkedInCount={checkedInBySession[session.id] ?? 0}
+                              goingCount={goingBySession[session.id] ?? 0}
+                              canCheckIn={canCheckIn}
+                              windowLabel={windowLabel}
+                              isNext={session.id === nextSessionId}
+                              standingOk={isApproved}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
                   ))}
                 </div>
-              ))}
-              <div className="river-end">
-                {week ? `End of week ${week}` : 'End of the feed'}
-              </div>
-            </div>
-          )}
-        </div>
+              )}
 
-        <aside className="wide-rail">
-          {/* NEXT SESSION --------------------------------------------- */}
-          {on('sessions') && (
-            <div className="card-base">
-              <div className="wide-cap">Next session</div>
-              {nextSession ? (
-                <>
-                  <div
-                    style={{
-                      fontFamily: 'var(--display)',
-                      fontSize: 30,
-                      fontWeight: 700,
-                      letterSpacing: '-.02em',
-                      lineHeight: 1.05,
-                      margin: '8px 0 6px',
-                    }}
-                  >
-                    {sessionWhen} · {nextSession.location}
-                  </div>
-                  <div className="mono muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em' }}>
-                    {/* The mockup also printed "COURTS 1–6". There is no court
-                        column on `sessions`, so it is left out rather than
-                        guessed at. The session's own name is shown instead when
-                        it has one. */}
-                    {[sessionHours, nextSession.name].filter(Boolean).join(' · ') || 'Time to be confirmed'}
-                  </div>
-                  <div className="session-stats">
-                    {/* "Spots left" is drawn in the mockup and is NOT built:
-                        `sessions` has no capacity column and there is no waitlist
-                        table, so any number here would be invented. */}
-                    <div className="stat">
-                      <div className="stat-label">Going</div>
-                      <div className="stat-value mono" style={{ fontSize: 24 }}>{goingCount ?? 0}</div>
-                    </div>
-                    <div className="stat">
-                      <div className="stat-label">Your streak</div>
-                      <div className="stat-value mono" style={{ fontSize: 24 }}>{streak}</div>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="muted" style={{ fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
-                  Nothing on the schedule yet. The exec posts sessions a week or two ahead —
-                  check back, or look at what has already been played.
+              {clubEventsError && (
+                <p className="home-note">Club events could not be loaded right now.</p>
+              )}
+              {tournamentsError && (
+                <p className="home-note">Tournaments could not be loaded right now.</p>
+              )}
+            </section>
+
+            <section className="home-month" aria-label="Month calendar">
+              <MonthCalendar
+                months={months}
+                initialIndex={initialMonthIndex(monthKeys, todayKey)}
+                weekdays={CALENDAR_WEEKDAYS}
+                legend={legend}
+              />
+            </section>
+          </section>
+        )}
+
+        <aside className="home-side">
+          {/* Renders nothing unless this account has no passkey yet and the
+              device supports them, so it self-retires once everyone is
+              enrolled. Beside the schedule rather than above it, where it
+              pushed tonight's card down. */}
+          <PasskeyNudge />
+
+          <ActivityPanel
+            sections={sections}
+            notice={
+              notice
+                ? {
+                    title: notice.title,
+                    body: notice.body,
+                    createdAt: notice.created_at,
+                    authorName: noticeAuthor?.full_name ?? null,
+                  }
+                : null
+            }
+            week={seasonWeekNo}
+            showChallengeCta={isApproved && on('challenges')}
+            announcementsOn={on('announcements')}
+          />
+
+          {/* YOU. Every figure comes off the `ratings` row getViewer() already
+              loads, plus the streak. Deliberately not here: ladder position,
+              which needs the whole club's get_leaderboard() and returns nothing
+              for a member who has set hide_from_leaderboard. */}
+          <div className="card-base">
+            <div className="wide-cap">You</div>
+            <div className="wide-figures">
+              {sessionsOn && (
+                <div className="stat">
+                  <div className="stat-label">Streak</div>
+                  <div className="stat-value mono" style={{ fontSize: 24 }}>{streak}</div>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* CHECK IN, on a laptop ------------------------------------ */}
-          {/* The same control as the sticky bar at the foot of the document,
-              rendered a second time so the desktop can have it as a card in the
-              rail instead of a red slab floating over the river. Exactly one of
-              the two is ever displayed (.wide-desktop-only shows this one at
-              >=1101px and hides the bar at the same width), and neither holds
-              state, so there is nothing here that can disagree with itself. */}
-          {isApproved && nextSession && (
-            <div className="card-base wide-desktop-only">
-              <div className="wide-cap">Turning up?</div>
-              <p className="wide-note" style={{ marginBottom: 14 }}>
-                Check in when you arrive to claim your spot. The button opens on
-                the schedule, beside the session itself.
-              </p>
-              <Link
-                href={`/sessions#session-${nextSession.id}`}
-                className="btn btn-primary btn-lg press"
-                style={{ width: '100%', justifyContent: 'center', minHeight: 48 }}
-              >
-                <QrCode size={16} /> Check in
-              </Link>
-            </div>
-          )}
-
-          {/* CLUB NOTICE ---------------------------------------------- */}
-          {notice && (
-            <Link href="/announcements" className="card-base press" style={{ display: 'block' }}>
-              <div className="wide-cap">Club notice</div>
-              <h3 className="card-title" style={{ margin: '8px 0 6px' }}>
-                {notice.title}
-              </h3>
-              <AnnouncementMarkdown
-                text={notice.body}
-                style={{ fontSize: 15, lineHeight: 1.45, margin: 0 }}
-              />
-              <div
-                className="mono muted"
-                style={{ fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', marginTop: 12 }}
-              >
-                {/* The mockup reads "POSTED BY EXEC". The author's own name is
-                    both real and more useful, and it is what the notice is
-                    signed with everywhere else in the app. */}
-                {noticeAuthor?.full_name
-                  ? `Posted by ${noticeAuthor.full_name}`
-                  : 'Posted by the club'}{' '}
-                · {formatRelativeTime(notice.created_at)}
-              </div>
-            </Link>
-          )}
-
-          {/* YOUR RECORD ---------------------------------------------- */}
-          {/* Every figure here comes off the `ratings` row getViewer()
-              already loads. Deliberately NOT on this card:
-              - ladder POSITION. Working it out means get_leaderboard(), which
-                fetches the whole club on a screen that does not otherwise need
-                it, and returns nothing at all for a member who has set
-                hide_from_leaderboard.
-              - anything scoped to "this week". `ratings` is a running total
-                with no history behind it, and the river above is capped at
-                fifteen rows, so a weekly count would either be a guess or a
-                second query. /my-stats is where the history lives, and this
-                card links to it.
-              Desktop only, for the same reason as the rail cards on /sessions:
-              on a phone this is a lift of the top of /my-stats, one tab away,
-              on a screen that is supposed to have one thing to do. */}
-          {on('my_stats') && (
-            <Link href="/my-stats" className="card-base press wide-desktop-only">
-              <div className="wide-cap">Your record</div>
-              {played === 0 ? (
-                <p className="wide-note">
-                  No rated matches yet. Your singles and doubles ratings start
-                  level and move the first time a result is confirmed.
-                </p>
-              ) : (
-                <div className="wide-figures">
+              {played > 0 && (
+                <>
                   <div className="stat">
                     <div className="stat-label">Singles</div>
                     <div className="stat-value mono" style={{ fontSize: 24 }}>
-                      {rating?.singles_elo ?? '—'}
+                      {rating?.singles_elo ?? 'None'}
                     </div>
                     {/* "Provisional" leads the sub-line, the way /my-stats and
-                        the ladder both write it — a rating still settling means
-                        something different from one that has, and the figure
-                        above says nothing about which it is. */}
+                        the ladder both write it. */}
                     <div className="wide-item-sub" style={{ marginTop: 2 }}>
                       {rating?.singles_provisional ? 'Provisional · ' : ''}
                       {rating?.singles_wins ?? 0}W · {rating?.singles_losses ?? 0}L
@@ -941,43 +1031,30 @@ export default async function FeedPage() {
                   <div className="stat">
                     <div className="stat-label">Doubles</div>
                     <div className="stat-value mono" style={{ fontSize: 24 }}>
-                      {rating?.doubles_elo ?? '—'}
+                      {rating?.doubles_elo ?? 'None'}
                     </div>
                     <div className="wide-item-sub" style={{ marginTop: 2 }}>
                       {rating?.doubles_provisional ? 'Provisional · ' : ''}
                       {rating?.doubles_wins ?? 0}W · {rating?.doubles_losses ?? 0}L
                     </div>
                   </div>
-                </div>
+                </>
               )}
-            </Link>
-          )}
+            </div>
+            {played === 0 && (
+              <p className="wide-note">
+                No rated matches yet. Your singles and doubles ratings start level and move the
+                first time a result is confirmed.
+              </p>
+            )}
+            {on('my_stats') && (
+              <Link href="/my-stats" className="btn btn-ghost btn-sm" style={{ marginTop: 12 }}>
+                My stats
+              </Link>
+            )}
+          </div>
         </aside>
       </div>
-
-      {/* THE one primary action ON A PHONE — the desktop renders it as a card
-          in the rail above instead, and .wide-desktop-only makes sure only one
-          of the two is ever on screen.
-          A direct child of the page root rather than of a grid column, because
-          `position: sticky` only pins while its CONTAINING BLOCK is on screen —
-          nested in the sidebar it would appear only once you had scrolled past
-          the whole river, which is the opposite of the point. That is also why
-          the desktop version is a separate element rather than this one moved.
-          Hidden outright for an account checkInToSession() would refuse.
-          It goes to the schedule, not to a scanner: /checkin/[token] is the
-          DESTINATION of a QR scan and the app has no session-scanning screen to
-          send anyone to, so "Scan to check in" as drawn has nowhere to go. */}
-      {isApproved && nextSession && (
-        <div className="feed-checkin-bar">
-          <Link
-            href={`/sessions#session-${nextSession.id}`}
-            className="btn btn-primary btn-lg press"
-            style={{ width: '100%', justifyContent: 'center', minHeight: 48 }}
-          >
-            <QrCode size={16} /> Check in
-          </Link>
-        </div>
-      )}
     </div>
   );
 }

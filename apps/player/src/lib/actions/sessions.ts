@@ -129,6 +129,9 @@ async function performCheckIn(
   trackServerEvent(player.id, 'session_checked_in', { ...getPlayerProps(player), session_id: sessionId });
   revalidatePath('/sessions');
   revalidatePath(`/sessions/${sessionId}`);
+  // The schedule's cards live on /feed, and CheckInButton's direct success
+  // path does no router.refresh() of its own.
+  revalidatePath('/feed');
   return { alreadyCheckedIn: false };
 }
 
@@ -217,4 +220,5 @@ async function setSessionIntentImpl(
 
   trackServerEvent(player.id, 'session_rsvp', { ...getPlayerProps(player), session_id: sessionId, intent });
   revalidatePath('/sessions');
+  revalidatePath('/feed');
 }
