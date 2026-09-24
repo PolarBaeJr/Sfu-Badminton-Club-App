@@ -128,4 +128,16 @@ describe('withSeededSettings', () => {
       expect(FIELD_META.features?.[field]?.type, field).toBe('boolean');
     }
   });
+
+  // The tile layout shows the warning on its own, but the full hint (the rows
+  // layout, and anything else reading it) must still carry it.
+  it('keeps the sessions warning in the hint, and gives every switch a summary', () => {
+    const sessions = FIELD_META.features!.sessions_enabled!;
+    expect(sessions.hint).toContain('WARNING');
+    expect(sessions.warning).toMatch(/^WARNING:/);
+    expect(sessions.detail).not.toContain('WARNING');
+    for (const [field, meta] of Object.entries(FIELD_META.features!)) {
+      expect(meta.summary, field).toBeTruthy();
+    }
+  });
 });

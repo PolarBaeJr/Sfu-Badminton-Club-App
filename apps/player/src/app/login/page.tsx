@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
 import { SIGNIN_OTP_TYPES, friendlyAuthError, isUnknownAccountError } from '@badminton/shared';
 // Deep import, not the '@badminton/shared' barrel: see the player middleware.
-import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
+import { signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { Mail, Loader2, KeyRound } from 'lucide-react';
 import {
   signInWithPasskey,
@@ -181,10 +181,7 @@ export default function LoginPage() {
     const supabase = createClient();
     const { data, error: readError } = await supabase.from('players_self').select('id').maybeSingle();
     if (!readError && !data) {
-      await supabase.auth.signOut();
-      // See clearHostOnlyAuthCookies: signOut alone can leave a pre-migration
-      // host-only cookie behind, which would still read as a live session.
-      clearHostOnlyAuthCookies();
+      await signOutThisDevice(supabase.auth);
       setSent(false);
       setCode('');
       setNoAccount('unfinished');

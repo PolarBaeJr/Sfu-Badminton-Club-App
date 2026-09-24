@@ -28,6 +28,7 @@ import Link from 'next/link';
 import { PlatformSettingsForm } from '@/components/platform-settings-form';
 import { settingsForSection } from '@/lib/platform-setting-sections';
 import { withSeededSettings } from '@/lib/platform-setting-fields';
+import { FEATURES, FEATURES_SETTING_KEY, parseFeatureFlags } from '@badminton/shared/src/utils/features';
 import { DataApiKeysCard } from './DataApiKeysCard';
 
 // TWO QUESTIONS, ONE PAGE, AND THEY ARE BOTH CALLED "ACCOUNTS".
@@ -281,15 +282,28 @@ export default async function AccountsPage() {
           capabilities: ROLE_DEFAULTS[role],
         }));
 
+  // The saved switches, for the rail's count. An absent row reads as every
+  // feature on, exactly as the member app reads it.
+  const featureFlags = parseFeatureFlags(settings?.find((row) => row.key === FEATURES_SETTING_KEY)?.value ?? null);
+  const featuresOn = FEATURES.filter((f) => featureFlags[f.id]).length;
+
   // The rail lists what is actually on the page, so a withheld section never
   // leaves a link to nothing.
-  const sections = [
+  const sections: { id: string; label: string; sub: string; badge?: string; tone?: 'success' | 'warning' }[] = [
     ...(showPlatformSettings
-      ? [{ id: 'member-pages', label: 'Member pages', sub: 'Switch pages on or off' }]
+      ? [
+          {
+            id: 'member-pages',
+            label: 'Member pages',
+            sub: 'Switch pages on or off',
+            badge: `${featuresOn} / ${FEATURES.length} on`,
+            tone: featuresOn === FEATURES.length ? ('success' as const) : ('warning' as const),
+          },
+        ]
       : []),
     ...(showOfficers
       ? [
-          { id: 'officers', label: 'Officers', sub: 'Who holds the console' },
+          { id: 'officers', label: 'Officers', sub: 'Who holds the console', badge: String(officers.length) },
           { id: 'roles', label: 'What roles can do', sub: 'Read-only summary' },
         ]
       : []),
@@ -332,7 +346,7 @@ export default async function AccountsPage() {
         }
       />
 
-      <div className="grid items-start gap-6 lg:grid-cols-[200px_minmax(0,1fr)_300px]">
+      <div className="grid items-start gap-6 lg:grid-cols-[200px_minmax(0,1fr)] xl:grid-cols-[200px_minmax(0,1fr)_300px]">
         {/* LEFT — section rail. The same sticky rail /settings uses; its rule in
             globals.css must not set `display`, so visibility stays on these
             utilities. */}
@@ -340,14 +354,19 @@ export default async function AccountsPage() {
             capability gets no sections at all, and an empty bordered nav is the
             blank panel that reads as broken. */}
         <nav
-          className={`settings-rail lg:flex-col lg:sticky lg:self-start ${
+          className={`settings-rail is-pill gap-1 lg:flex-col lg:sticky lg:self-start ${
             sections.length > 0 ? 'hidden lg:flex' : 'hidden'
           }`}
         >
           {sections.map((section, index) => (
             <a key={section.id} href={`#${section.id}`} className={index === 0 ? 'active' : undefined}>
-              <span className="rail-label block">{section.label}</span>
-              <span className="rail-sub block">{section.sub}</span>
+              <span className="min-w-0">
+                <span className="rail-label block">{section.label}</span>
+                <span className="rail-sub block">{section.sub}</span>
+              </span>
+              {section.badge && (
+                <span className={`rail-badge${section.tone ? ` is-${section.tone}` : ''}`}>{section.badge}</span>
+              )}
             </a>
           ))}
         </nav>
@@ -356,13 +375,17 @@ export default async function AccountsPage() {
         <div className="flex min-w-0 flex-col gap-5">
           {showPlatformSettings && (
             <section id="member-pages" className="scroll-mt-32">
-              <Card>
-                <CardHeading
+              <Card className="overflow-hidden p-0">
+                <SectionCardHeader
                   title="Member pages"
-                  sub="Which pages members can open. A page switched off shows members a short notice instead."
+                  sub="Switch a page off and members see a short notice instead. Admins, and anyone given its access key, can still open it."
+                  aside="Saved with a reason, logged"
                 />
-                <div className="mt-4">
-                  <PlatformSettingsForm settings={settingsForSection(withSeededSettings(settings ?? []), 'pages')} />
+                <div className="px-6 pt-5">
+                  <PlatformSettingsForm
+                    settings={settingsForSection(withSeededSettings(settings ?? []), 'pages')}
+                    layout="tiles"
+                  />
                 </div>
               </Card>
             </section>
@@ -373,14 +396,10 @@ export default async function AccountsPage() {
               {/* The anchor lives on a wrapper because Card takes no id, and
                   packages/ui is not this change's to edit. */}
               <section id="officers" className="scroll-mt-32">
-              <Card className="p-0">
-                <CardHeading
-                  title="Officers"
-                  sub="Everyone who can open this console."
-                  className="px-5 pb-4 pt-5"
-                />
+              <Card className="overflow-hidden p-0">
+                <SectionCardHeader title="Officers" sub="Everyone who can open this console." />
                 {officers.length === 0 ? (
-                  <div className="px-5 pb-5">
+                  <div className="px-6 py-5">
                     <EmptyState
                       title="Nobody holds the console"
                       description="Give somebody console access from Permissions."
@@ -431,7 +450,7 @@ export default async function AccountsPage() {
                       <tbody>
                         {officers.map(({ person, level }) => (
                           <tr key={person.id as string} className="border-b border-[var(--line)] last:border-0">
-                            <td className="px-5 py-3.5">
+                            <td className="px-6 py-3.5">
                               <div className="flex items-center gap-2.5">
                                 <AvatarChip
                                   name={displayName(person)}
@@ -450,15 +469,15 @@ export default async function AccountsPage() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-5 py-3.5">
+                            <td className="px-6 py-3.5">
                               <div className="flex flex-wrap items-center gap-1.5">
                                 <RoleBadges person={person} level={level} />
                               </div>
                             </td>
-                            <td className="px-5 py-3.5 font-mono text-xs text-[var(--ink-2)]">
+                            <td className="px-6 py-3.5 font-mono text-xs text-[var(--ink-2)]">
                               {signInLabel(signIns.get(person.id as string))}
                             </td>
-                            <td className="px-5 py-3.5 text-right">
+                            <td className="px-6 py-3.5 text-right">
                               <Link
                                 href="/permissions"
                                 className="inline-flex min-h-[44px] items-center justify-center border border-[var(--line)] px-4 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ink-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
@@ -487,8 +506,8 @@ export default async function AccountsPage() {
                   than out of a sentence somebody typed, and the one control on
                   it is a link to the screen that really does this. */}
               <section id="roles" className="scroll-mt-32">
-              <Card>
-                <CardHeading
+              <Card className="overflow-hidden p-0">
+                <SectionCardHeader
                   title="What roles can do"
                   sub={
                     <>
@@ -500,7 +519,7 @@ export default async function AccountsPage() {
                     </>
                   }
                 />
-                <dl className="mt-4 flex flex-col">
+                <dl className="flex flex-col px-6 py-5">
                   {namedRoles.map(({ key, label, capabilities }) => {
                     return (
                       <div
@@ -516,7 +535,7 @@ export default async function AccountsPage() {
                             // `custom` rendered — the empty base, which is no
                             // longer listed here because it is not one of the
                             // four named jobs.
-                            'Nothing — every capability would be picked by hand, per person.'
+                            'Nothing: every capability would be picked by hand, per person.'
                           ) : (
                             <>
                               {sectionsOpenedBy(capabilities).join(' · ')}
@@ -546,13 +565,16 @@ export default async function AccountsPage() {
 
           {showPlatformSettings && (
             <section id="account-rules" className="scroll-mt-32">
-              <Card>
-                <CardHeading
+              <Card className="overflow-hidden p-0">
+                <SectionCardHeader
                   title="Account rules"
                   sub="What a member's account may do: challenges, match caps, no-shows, inactivity, check-in."
                 />
-                <div className="mt-4">
-                  <PlatformSettingsForm settings={settingsForSection(withSeededSettings(settings ?? []), 'accounts')} />
+                <div className="px-6 py-5">
+                  <PlatformSettingsForm
+                    settings={settingsForSection(withSeededSettings(settings ?? []), 'accounts')}
+                    layout="grouped"
+                  />
                 </div>
               </Card>
             </section>
@@ -560,13 +582,16 @@ export default async function AccountsPage() {
 
           {showPlatformSettings && (
             <section id="club-links" className="scroll-mt-32">
-              <Card>
-                <CardHeading
+              <Card className="overflow-hidden p-0">
+                <SectionCardHeader
                   title="Club links"
                   sub="The links the club publishes: Instagram, Discord, and where to buy a membership."
                 />
-                <div className="mt-4">
-                  <PlatformSettingsForm settings={settingsForSection(withSeededSettings(settings ?? []), 'club')} />
+                <div className="px-6 py-5">
+                  <PlatformSettingsForm
+                    settings={settingsForSection(withSeededSettings(settings ?? []), 'club')}
+                    layout="links"
+                  />
                 </div>
               </Card>
             </section>
@@ -610,7 +635,7 @@ export default async function AccountsPage() {
 
         {/* RIGHT */}
         {showOfficers && (
-          <div className="flex flex-col gap-5 lg:sticky lg:top-[calc(var(--console-header-h)+var(--sticky-gap))] lg:self-start">
+          <div className="flex flex-col gap-5 lg:col-start-2 xl:col-start-auto xl:sticky xl:top-[calc(var(--console-header-h)+var(--sticky-gap))] xl:self-start">
             {/* ACCESS RIGHT NOW. Every figure is the size of the set of people
                 whose effectiveCapabilities() contains ONE named capability —
                 never a count of `is_exec`, which stopped answering this question
@@ -716,6 +741,35 @@ function embedded<T>(value: unknown): T | null {
   return (value as T | null) ?? null;
 }
 
+/**
+ * The header strip of a full-bleed card in the middle column: display title,
+ * a line under it, and an optional note on the right, above a hairline.
+ */
+function SectionCardHeader({
+  title,
+  sub,
+  aside,
+}: {
+  title: string;
+  sub?: React.ReactNode;
+  aside?: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--line)] px-6 py-5">
+      <div className="flex min-w-0 flex-col gap-1">
+        <h2
+          className="text-[22px] font-bold uppercase leading-tight tracking-[0.04em] text-[var(--ink)]"
+          style={{ fontFamily: 'var(--display)' }}
+        >
+          {title}
+        </h2>
+        {sub && <p className="text-[14px] text-[var(--mute)]">{sub}</p>}
+      </div>
+      {aside && <span className="font-mono text-[12px] text-[var(--mute)]">{aside}</span>}
+    </div>
+  );
+}
+
 function CardHeading({
   title,
   sub,
@@ -741,7 +795,7 @@ function CardHeading({
 function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <th
-      className={`px-5 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--mute)] ${className ?? ''}`}
+      className={`px-6 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--mute)] ${className ?? ''}`}
     >
       {children}
     </th>

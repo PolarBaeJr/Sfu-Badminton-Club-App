@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   ALL_FEATURES_ENABLED,
   FEATURES,
+  type FeatureDefinition,
   defaultFeaturesValue,
   featureField,
   featureGate,
@@ -107,5 +108,21 @@ describe('featureOffMessage', () => {
   it('names the feature in plain words', () => {
     expect(featureOffMessage('tournaments')).toBe('The club has switched tournaments off for now.');
     expect(featureOffMessage('my_stats')).toBe('The club has switched my stats off for now.');
+  });
+});
+
+describe('feature text', () => {
+  const features = FEATURES as readonly FeatureDefinition[];
+
+  it('gives every feature a one-line summary with no em dash', () => {
+    for (const f of features) {
+      expect(f.summary.trim(), f.id).not.toBe('');
+      expect(f.summary, f.id).not.toContain('\u2014');
+    }
+  });
+
+  it('keeps the sessions warning apart from its description', () => {
+    expect(features.find((f) => f.id === 'sessions')?.warning).toMatch(/^WARNING:/);
+    for (const f of features) expect(f.description, f.id).not.toContain('WARNING');
   });
 });

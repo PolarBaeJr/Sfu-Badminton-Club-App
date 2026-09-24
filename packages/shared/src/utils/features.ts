@@ -30,8 +30,12 @@
 export interface FeatureDefinition {
   id: string;
   label: string;
+  /** One line under the switch's label. */
+  summary: string;
   /** Shown beside the switch. Names the knock-on effects of switching it off. */
   description: string;
+  /** A consequence serious enough to stay visible, not tucked behind a disclosure. */
+  warning?: string;
   /**
    * Player app route prefixes this feature owns: hidden from the nav when off,
    * and gated by a FeatureGate in app/<route>/layout.tsx, which redirects
@@ -52,14 +56,18 @@ export const FEATURES = [
   {
     id: 'sessions',
     label: 'Sessions',
+    summary: 'Schedule, RSVPs and check-in',
     description:
-      'The schedule, RSVPs and session check-in, including the door QR code. Off also stops the automatic session reminders and the Discord session pings and list. WARNING: a session check-in is what keeps a membership active. With this off for longer than the inactivity threshold, every member who is not an exec is marked inactive and sent the inactivity notice, and one who then never signs in has their personal details erased on the usual schedule.',
+      'The schedule, RSVPs and session check-in, including the door QR code. Off also stops the automatic session reminders and the Discord session pings and list.',
+    warning:
+      'WARNING: a session check-in is what keeps a membership active. With this off for longer than the inactivity threshold, every member who is not an exec is marked inactive and sent the inactivity notice, and one who then never signs in has their personal details erased on the usual schedule.',
     playerRoutes: ['/sessions', '/checkin'],
     adminRoutes: ['/sessions'],
   },
   {
     id: 'challenges',
     label: 'Challenges',
+    summary: 'Members challenging each other to rated matches',
     description:
       'Members challenging each other to rated matches and reporting the results. Off stops members creating, answering or reporting challenges; matches an exec records are unaffected.',
     playerRoutes: ['/challenges'],
@@ -68,6 +76,7 @@ export const FEATURES = [
   {
     id: 'tournaments',
     label: 'Tournaments',
+    summary: 'Tournament pages, entry and check-in',
     description:
       'Tournament pages, entry, withdrawal and check-in. Off also stops Discord scheduled events being created for tournaments and empties the Discord tournament list. Past tournaments stay in the console.',
     playerRoutes: ['/tournaments'],
@@ -76,6 +85,7 @@ export const FEATURES = [
   {
     id: 'events',
     label: 'Club events',
+    summary: 'Socials, workshops and the AGM',
     description:
       'Socials, workshops, clinics, outings and the AGM, and signing up for them. Off hides them from members and refuses sign-ups, and stops club events being posted to the Discord Events tab; the console keeps every event and sign-up.',
     playerRoutes: ['/events'],
@@ -84,6 +94,7 @@ export const FEATURES = [
   {
     id: 'leaderboard',
     label: 'Leaderboard',
+    summary: 'The ranked ladder',
     description:
       'The ranked ladder, and the Discord leaderboard command. Ratings still move. Member profiles stay reachable, since they are linked from everywhere.',
     playerRoutes: ['/leaderboard'],
@@ -92,6 +103,7 @@ export const FEATURES = [
   {
     id: 'my_stats',
     label: 'My stats',
+    summary: "A member's own stats page",
     description: "A member's own stats page. Their data is untouched.",
     playerRoutes: ['/my-stats'],
     adminRoutes: [],
@@ -99,6 +111,7 @@ export const FEATURES = [
   {
     id: 'announcements',
     label: 'Announcements',
+    summary: 'Club news on the feed and in Discord',
     description:
       'The announcements page and the announcements on the feed. Off also stops announcements being posted to Discord.',
     playerRoutes: ['/announcements'],
@@ -107,6 +120,7 @@ export const FEATURES = [
   {
     id: 'fees',
     label: 'Fees',
+    summary: "A member's statement and e-transfer receipts",
     description:
       "A member's own statement on the membership page, the way to pay it by e-transfer, the unpaid-fees banner and the Paid badge on profiles. Fees are still owed and still recorded in Finances; members just cannot see their statement or send receipts.",
     playerRoutes: ['/fees'],
@@ -115,6 +129,7 @@ export const FEATURES = [
   {
     id: 'membership',
     label: 'Membership page',
+    summary: 'Prices and where to buy a membership',
     description:
       'The public membership page: this season\'s prices and where to buy a membership, for visitors and members alike. Off hides the page and its nav item, and with it a member\'s statement and the way to pay, even while the Fees switch is on. Fees are still owed and recorded.',
     playerRoutes: ['/membership'],
@@ -123,6 +138,7 @@ export const FEATURES = [
   {
     id: 'socials',
     label: 'Social links',
+    summary: 'Instagram and Discord links everywhere',
     description:
       "The club's social links: the socials page, the links in the page footer and on the membership page, the Discord links in the nav, and the Discord bot's /socials command. Off hides every one of them. Linking a Discord account still works. Instagram and Discord can also be hidden one at a time under Club links.",
     playerRoutes: ['/socials'],

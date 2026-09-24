@@ -14,6 +14,8 @@ import {
   FEATURES_SETTING_KEY,
   defaultFeaturesValue,
   featureField,
+  type FeatureDefinition,
+  type FeatureId,
 } from '@badminton/shared/src/utils/features';
 import { CLUB_SOCIALS_SETTING_KEY, defaultClubSocialsValue } from '@badminton/shared/src/utils/club-socials';
 import {
@@ -79,6 +81,17 @@ export interface FieldMeta {
    * able to produce one.
    */
   options?: readonly { value: string; label: string }[];
+  /** One line under the label, for the tile layout. */
+  summary?: string;
+  /** Always shown in the tile layout, never tucked behind the disclosure. */
+  warning?: string;
+  /** The tile layout's disclosure body: the hint without the warning. */
+  detail?: string;
+  /**
+   * A fixed prefix drawn beside the input (see lib/prefixed-url.ts). The stored
+   * value stays the full URL.
+   */
+  adornment?: 'https' | 'instagram';
 }
 
 export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
@@ -468,6 +481,7 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       label: 'Instagram',
       hint: 'The club Instagram profile, as https://www.instagram.com/<name>/. Shown in the page footer, on the socials page and in the bot. Leave empty to hide Instagram everywhere.',
       type: 'text',
+      adornment: 'instagram',
     },
     show_discord: {
       label: 'Show Discord',
@@ -480,6 +494,7 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       label: 'Buy membership link',
       hint: 'The SFU Recreation page where a membership is bought. It must start with https://. The membership page shows a "Buy membership on SFU Recreation" button while this is set; leave it empty to hide the button.',
       type: 'text',
+      adornment: 'https',
     },
     etransfer_email: {
       label: 'E-transfer email',
@@ -489,15 +504,22 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
   },
   // One switch per entry in the shared feature registry, so a feature added
   // there appears here with no second list to keep in step.
+  // FEATURES is `as const`, so `warning` is only readable through the wider type.
   [FEATURES_SETTING_KEY]: Object.fromEntries(
-    FEATURES.map((f): [string, FieldMeta] => [
-      featureField(f.id),
-      {
-        label: f.label,
-        hint: `${f.description} Off hides it from members and sends them to the feed; admins, and anyone given its access key (page.access.${f.id}) under Permissions, can still open it.`,
-        type: 'boolean',
-      },
-    ]),
+    (FEATURES as readonly FeatureDefinition[]).map((f): [string, FieldMeta] => {
+      const offNote = ` Off hides it from members and sends them to the feed; admins, and anyone given its access key (page.access.${f.id}) under Permissions, can still open it.`;
+      return [
+        featureField(f.id as FeatureId),
+        {
+          label: f.label,
+          hint: `${f.description}${f.warning ? ` ${f.warning}` : ''}${offNote}`,
+          type: 'boolean',
+          summary: f.summary,
+          warning: f.warning,
+          detail: `${f.description}${offNote}`,
+        },
+      ];
+    }),
   ),
 };
 

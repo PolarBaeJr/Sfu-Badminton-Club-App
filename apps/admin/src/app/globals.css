@@ -462,6 +462,118 @@ input, textarea, select, button, a {
   margin-top: 2px;
 }
 
+/* The pill variant of the rail (/accounts): rounded items, a count beside the
+   label, and an inset bar instead of the left border. Layout lives here, not in
+   utilities, because `.settings-rail a` above sets `display: block` and would
+   outrank a `flex` class on the anchor. */
+.settings-rail.is-pill a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-left: 0;
+  border-radius: 8px;
+}
+.settings-rail.is-pill a.active {
+  box-shadow: inset 2px 0 0 var(--red);
+  background: var(--surface);
+}
+.settings-rail.is-pill .rail-badge {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+}
+.settings-rail.is-pill .rail-badge.is-success { color: var(--color-success); }
+.settings-rail.is-pill .rail-badge.is-warning { color: var(--color-warning); }
+
+/* A settings row as a two-column grid: label and hint left, a fixed-width
+   control column right. The grouped layout of PlatformSettingsForm. */
+.settings-grid-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 24px;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  max-width: 760px;
+}
+.settings-grid-row:last-child { border-bottom: 0; }
+.settings-grid-row .settings-input { width: 100%; }
+
+/* The redesigned /accounts layouts size themselves by the CARD, not the
+   viewport: at 1024px the middle column is far narrower than the window, and
+   viewport breakpoints squeezed Account rules to one word per line. */
+.settings-cq { container-type: inline-size; }
+@container (max-width: 520px) {
+  .settings-grid-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}
+
+/* Account rules: a sub-nav beside the groups once the card has room for it. */
+.settings-grouped { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); }
+.settings-grouped-nav { display: none; flex-direction: column; gap: 2px; align-self: start; }
+@container (min-width: 760px) {
+  .settings-grouped { grid-template-columns: 200px minmax(0, 1fr); }
+  .settings-grouped-nav { display: flex; }
+}
+
+/* Club links: two columns once each input gets a usable width. */
+.settings-links { display: grid; column-gap: 24px; row-gap: 20px; grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 560px) {
+  .settings-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-links-wide { grid-column: span 2; }
+}
+
+/* The Member pages switches: two columns once the card is 640px wide, one below, each cell
+   drawing its own hairline so an odd count leaves no gap-coloured hole. Bleeds
+   24px either side to reach the edges of a card body padded by px-6, and draws
+   no bottom border so the last row sits flush on the card's own. */
+.setting-tiles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin-inline: -24px;
+}
+.setting-tile {
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+}
+@container (min-width: 640px) {
+  .setting-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .setting-tile:nth-child(odd) { border-right: 1px solid var(--line); }
+}
+
+/* A URL input with its fixed prefix drawn in a cell to the left (Club links).
+   The stored value is still the whole URL; see lib/prefixed-url.ts. */
+.settings-adorned {
+  display: flex;
+  align-items: stretch;
+  min-height: 40px;
+  background: var(--bg-primary);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.settings-adorned:focus-within { border-color: var(--line-2); }
+.settings-adorned-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-right: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--mute);
+}
+.settings-adorned-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.settings-adorned-input:focus { outline: none; }
+
 /* ═══════════════════════════════════════════════════════════
    MOBILE OVERFLOW GUARD
    Any element wider than the viewport inflates the document, and phones

@@ -16,14 +16,17 @@ import {
   FIELD_META,
   SETTING_DESCRIPTIONS,
   SETTING_LABELS,
+  type FieldMeta,
   type PlatformSetting,
 } from '@/lib/platform-setting-fields';
+import { ADORNMENT_PREFIX, joinAdorned, splitAdorned } from '@/lib/prefixed-url';
+import { SettingTile } from '@/components/setting-tile';
 
 function isScalar(v: unknown): boolean {
   return v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
 }
 
-/* Rectangular settings toggle — sharp corners, hairline track;
+/* Pill settings toggle, hairline track;
    ON = red knob on red-tinted track, OFF = gray knob on dark track. */
 function SettingsToggle({
   checked,
@@ -41,14 +44,14 @@ function SettingsToggle({
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 items-center border transition-colors ${
+      className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${
         checked
           ? 'border-[var(--red-border)] bg-[var(--red-wash)]'
           : 'border-[var(--border)] bg-[var(--bg-primary)]'
       }`}
     >
       <span
-        className={`inline-block h-4 w-4 transition-transform ${
+        className={`inline-block h-4 w-4 rounded-full transition-transform ${
           checked
             ? 'translate-x-[22px] bg-[var(--color-accent)]'
             : 'translate-x-1 bg-[var(--text-muted)]'
@@ -60,11 +63,28 @@ function SettingsToggle({
 
 type FieldValue = string | boolean;
 
+/**
+ * How the rows are drawn. Saving is the same in every one: edits batch, and
+ * one reason and one Save cover them all.
+ *
+ *   rows     label and hint left, control right (the default)
+ *   tiles    a grid of switches with a summary each (Member pages)
+ *   grouped  a sub-nav of the groups beside every group's rows (Account rules)
+ *   links    labelled inputs in a two-column grid, URL prefixes drawn (Club links)
+ */
+export type PlatformSettingsLayout = 'rows' | 'tiles' | 'grouped' | 'links';
+
 // Renders whichever platform_settings rows it is handed — the caller decides
 // which section owns which key (see lib/platform-setting-sections.ts). It knows
 // the labels and field metadata for all of them, so the same component serves
 // both Ratings and Accounts.
-export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[] }) {
+export function PlatformSettingsForm({
+  settings,
+  layout = 'rows',
+}: {
+  settings: PlatformSetting[];
+  layout?: PlatformSettingsLayout;
+}) {
   const [fieldEdits, setFieldEdits] = useState<Record<string, Record<string, FieldValue>>>({});
   const [jsonEdits, setJsonEdits] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
@@ -168,6 +188,303 @@ export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[]
 
   const hasChanges = Object.keys(fieldEdits).length > 0 || Object.keys(jsonEdits).length > 0;
 
+  function isStructured(s: PlatformSetting): boolean {
+    const keyMeta = FIELD_META[s.key];
+    return (
+      !!keyMeta && Object.entries(s.value).every(([field, v]) => keyMeta[field] && isScalar(v))
+    );
+  }
+
+  function fieldsOf(s: PlatformSetting): [string, FieldMeta][] {
+    const keyMeta = FIELD_META[s.key] ?? {};
+    return Object.entries(keyMeta).filter(([field]) => field in s.value);
+  }
+
+  function isEdited(key: string, field: string): boolean {
+    return field in (fieldEdits[key] ?? {});
+  }
+
+  function booleanState(
+    s: PlatformSetting,
+    field: string,
+  ): { original: boolean; checked: boolean } {
+    const original = s.value[field] === true;
+    return {
+      original,
+      checked: (fieldEdits[s.key]?.[field] as boolean | undefined) ?? original,
+    };
+  }
+
+  function textState(s: PlatformSetting, field: string): { original: string; current: string } {
+    const raw = s.value[field];
+    const original = raw == null ? '' : String(raw);
+    return {
+      original,
+      current: (fieldEdits[s.key]?.[field] as string | undefined) ?? original,
+    };
+  }
+
+  // `wide` fills the control's column instead of sizing to the value.
+  function renderControl(
+    s: PlatformSetting,
+    field: string,
+    fm: FieldMeta,
+    wide = false,
+  ): React.ReactNode {
+    if (fm.type === 'boolean') {
+      const { original, checked } = booleanState(s, field);
+      return (
+        <SettingsToggle
+          checked={checked}
+          label={fm.label}
+          onChange={(next) => handleFieldChange(s.key, field, next, original)}
+        />
+      );
+    }
+    const { original, current } = textState(s, field);
+    if (fm.type === 'select' && fm.options) {
+      // A VALUE THE OPTIONS DO NOT COVER IS SHOWN, NOT SWALLOWED. A
+      // <select> whose value matches no <option> renders as blank,
+      // which would present a setting the database is actively
+      // warning about as if nothing were set at all. The stored value
+      // gets its own option so an officer can see what is there and
+      // pick their way out of it.
+      const known = fm.options.some((o) => o.value === current);
+      return (
+        <Select
+          variant="bare"
+          value={current}
+          onChange={(e) => handleFieldChange(s.key, field, e.target.value, original)}
+          aria-label={fm.label}
+          options={[
+            ...(!known ? [{ value: current, label: current || 'not set' }] : []),
+            ...fm.options,
+          ]}
+          className={`settings-input ${wide ? 'w-full' : 'w-56'}`}
+        />
+      );
+    }
+    return (
+      <input
+        type={fm.type === 'number' ? 'number' : 'text'}
+        value={current}
+        min={fm.min}
+        max={fm.max}
+        step={fm.step}
+        onChange={(e) => handleFieldChange(s.key, field, e.target.value, original)}
+        aria-label={fm.label}
+        className={`settings-input ${fm.type === 'number' ? 'font-mono' : ''} ${
+          wide ? 'w-full' : fm.type === 'number' ? 'w-28' : 'w-56'
+        }`}
+      />
+    );
+  }
+
+  // A text field with a fixed prefix drawn beside it (lib/prefixed-url.ts).
+  // THE MODE COMES FROM THE SAVED VALUE, not the edited one: deciding it per
+  // keystroke would swap the input for a plain one mid-word (a `/` typed into
+  // the Instagram handle is not canonical), and the swap drops focus.
+  function renderAdornedInput(s: PlatformSetting, field: string, fm: FieldMeta): React.ReactNode {
+    const kind = fm.adornment!;
+    const { original, current } = textState(s, field);
+    if (splitAdorned(kind, original).mode === 'plain') {
+      return renderControl(s, field, fm, true);
+    }
+    const split = splitAdorned(kind, current);
+    const shown =
+      split.mode === 'adorned'
+        ? split.rest
+        : current.replace(/^https?:\/\//i, '').replace(/^(www\.)?instagram\.com\//i, '');
+    return (
+      <div className="settings-adorned">
+        <span className="settings-adorned-prefix">{ADORNMENT_PREFIX[kind]}</span>
+        <input
+          type="text"
+          value={shown}
+          onChange={(e) =>
+            handleFieldChange(s.key, field, joinAdorned(kind, e.target.value), original)
+          }
+          aria-label={fm.label}
+          className="settings-adorned-input"
+        />
+      </div>
+    );
+  }
+
+  function modifiedMarker(edited: boolean) {
+    return edited && <span className="ml-2 text-[var(--color-accent)]">Modified</span>;
+  }
+
+  // Unknown key or non-scalar fields: raw JSON so nothing becomes uneditable.
+  function renderJsonRow(s: PlatformSetting) {
+    const currentValue = jsonEdits[s.key] ?? JSON.stringify(s.value, null, 2);
+    return (
+      <div key={s.key} className="settings-row !items-start">
+        <div className="md:w-[220px] flex-shrink-0">
+          <div className="settings-row-label">
+            {SETTING_LABELS[s.key] || s.key}
+            {modifiedMarker(s.key in jsonEdits)}
+          </div>
+          <div className="settings-row-hint">{SETTING_DESCRIPTIONS[s.key] || ''}</div>
+        </div>
+        <div className="settings-row-control wide">
+          <Textarea
+            value={currentValue}
+            onChange={(e) => setJsonEdits((prev) => ({ ...prev, [s.key]: e.target.value }))}
+            rows={Math.min(Object.keys(s.value).length + 2, 8)}
+            className="font-mono text-xs"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  function renderRows() {
+    return settings.map((s) => {
+      if (!isStructured(s)) return renderJsonRow(s);
+      return (
+        <div key={s.key} className="mt-8">
+          <div className="settings-group-heading">{SETTING_LABELS[s.key] || s.key}</div>
+          {fieldsOf(s).map(([field, fm]) => (
+            <div key={field} className="settings-row">
+              <div>
+                <div className="settings-row-label">
+                  {fm.label}
+                  {modifiedMarker(isEdited(s.key, field))}
+                </div>
+                <div className="settings-row-hint">{fm.hint}</div>
+              </div>
+              <div className="settings-row-control">{renderControl(s, field, fm)}</div>
+            </div>
+          ))}
+        </div>
+      );
+    });
+  }
+
+  function renderTiles() {
+    return settings.map((s) => {
+      if (!isStructured(s)) return renderJsonRow(s);
+      return (
+        <div key={s.key} className="settings-cq">
+          <div className="setting-tiles">
+            {fieldsOf(s).map(([field, fm]) => (
+              <SettingTile
+                key={field}
+                label={fm.label}
+                summary={fm.summary}
+                on={fm.type === 'boolean' ? booleanState(s, field).checked : undefined}
+                modified={isEdited(s.key, field)}
+                control={renderControl(s, field, fm)}
+                warning={fm.warning}
+                detail={fm.detail ?? fm.hint}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    });
+  }
+
+  function renderGrouped() {
+    return (
+      <div className="settings-cq">
+        <div className="settings-grouped">
+          {/* Anchors, not tabs: every group is on the page, so a search or a
+            scroll finds a rule without knowing which group holds it. */}
+          <nav className="settings-grouped-nav">
+            {settings.map((s, index) => (
+              <a
+                key={s.key}
+                href={`#rule-${s.key}`}
+                className={`rounded-[8px] px-3 py-2 text-[14px] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)] ${
+                  index === 0
+                    ? 'bg-[var(--surface-2)] font-semibold text-[var(--ink)]'
+                    : 'text-[var(--ink-2)]'
+                }`}
+              >
+                {SETTING_LABELS[s.key] || s.key}
+              </a>
+            ))}
+          </nav>
+          <div className="flex min-w-0 flex-col gap-8">
+            {settings.map((s) => (
+              <section key={s.key} id={`rule-${s.key}`} className="scroll-mt-32">
+                {isStructured(s) ? (
+                  <>
+                    <div className="settings-group-heading">{SETTING_LABELS[s.key] || s.key}</div>
+                    {fieldsOf(s).map(([field, fm]) => (
+                      <div key={field} className="settings-grid-row">
+                        <div className="min-w-0">
+                          <div className="text-[15px] font-semibold text-[var(--ink)]">
+                            {fm.label}
+                            {modifiedMarker(isEdited(s.key, field))}
+                          </div>
+                          <div className="mt-1 text-[13px] text-[var(--mute)]">{fm.hint}</div>
+                        </div>
+                        <div className={fm.type === 'boolean' ? 'justify-self-end' : undefined}>
+                          {renderControl(s, field, fm, true)}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  renderJsonRow(s)
+                )}
+              </section>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderLinks() {
+    const structured = settings.filter(isStructured);
+    return (
+      <>
+        <div className="settings-cq">
+          <div className="settings-links">
+            {structured.flatMap((s) =>
+              fieldsOf(s).map(([field, fm]) =>
+                fm.type === 'boolean' ? (
+                  <div
+                    key={`${s.key}.${field}`}
+                    className="flex items-center gap-4 rounded-[12px] border border-[var(--line)] bg-[var(--bg-primary)] px-4 py-3.5 settings-links-wide"
+                  >
+                    <div className="flex min-w-0 flex-grow flex-col gap-1">
+                      <span className="text-[14px] font-semibold text-[var(--ink)]">
+                        {fm.label}
+                        {modifiedMarker(isEdited(s.key, field))}
+                      </span>
+                      <span className="text-[12px] text-[var(--mute)]">{fm.hint}</span>
+                    </div>
+                    {renderControl(s, field, fm)}
+                  </div>
+                ) : (
+                  <div
+                    key={`${s.key}.${field}`}
+                    className={`flex min-w-0 flex-col gap-2 ${fm.adornment === 'https' ? 'settings-links-wide' : ''}`}
+                  >
+                    <span className="text-[14px] font-semibold text-[var(--ink)]">
+                      {fm.label}
+                      {modifiedMarker(isEdited(s.key, field))}
+                    </span>
+                    {fm.adornment
+                      ? renderAdornedInput(s, field, fm)
+                      : renderControl(s, field, fm, true)}
+                    <span className="text-[12px] text-[var(--mute)]">{fm.hint}</span>
+                  </div>
+                ),
+              ),
+            )}
+          </div>
+        </div>
+        {settings.filter((s) => !isStructured(s)).map(renderJsonRow)}
+      </>
+    );
+  }
+
   return (
     <div>
       {/* The page title now lives in its PageHeader; this row is just the
@@ -189,7 +506,7 @@ export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[]
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 aria-label="Reason (required)"
-                placeholder="Reason (required) — logged with your name."
+                placeholder="Reason (required), logged with your name."
               />
             </div>
             <Button onClick={handleSave} loading={loading} disabled={!enoughReason}>
@@ -199,119 +516,15 @@ export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[]
         )}
       </div>
 
-      {settings.map((s) => {
-        const keyMeta = FIELD_META[s.key];
-        const structured =
-          keyMeta && Object.entries(s.value).every(([field, v]) => keyMeta[field] && isScalar(v));
-
-        if (!structured) {
-          // Unknown key or non-scalar fields — raw JSON so nothing becomes uneditable.
-          const currentValue = jsonEdits[s.key] ?? JSON.stringify(s.value, null, 2);
-          const isEdited = s.key in jsonEdits;
-
-          return (
-            <div key={s.key} className="settings-row !items-start">
-              <div className="md:w-[220px] flex-shrink-0">
-                <div className="settings-row-label">
-                  {SETTING_LABELS[s.key] || s.key}
-                  {isEdited && (
-                    <span className="ml-2 text-[var(--color-accent)]">Modified</span>
-                  )}
-                </div>
-                <div className="settings-row-hint">{SETTING_DESCRIPTIONS[s.key] || ''}</div>
-              </div>
-              <div className="settings-row-control wide">
-                <Textarea
-                  value={currentValue}
-                  onChange={(e) => setJsonEdits((prev) => ({ ...prev, [s.key]: e.target.value }))}
-                  rows={Math.min(Object.keys(s.value).length + 2, 8)}
-                  className="font-mono text-xs"
-                />
-              </div>
-            </div>
-          );
-        }
-
-        const fields = Object.keys(keyMeta).filter((field) => field in s.value);
-
-        return (
-          <div key={s.key} className="mt-8">
-            <div className="settings-group-heading">{SETTING_LABELS[s.key] || s.key}</div>
-            {fields.map((field) => {
-              const fm = keyMeta[field];
-              if (!fm) return null;
-              const raw = s.value[field];
-              const isEdited = field in (fieldEdits[s.key] ?? {});
-
-              let control: React.ReactNode;
-              if (fm.type === 'boolean') {
-                const original = raw === true;
-                const checked = (fieldEdits[s.key]?.[field] as boolean | undefined) ?? original;
-                control = (
-                  <SettingsToggle
-                    checked={checked}
-                    label={fm.label}
-                    onChange={(next) => handleFieldChange(s.key, field, next, original)}
-                  />
-                );
-              } else if (fm.type === 'select' && fm.options) {
-                const original = raw == null ? '' : String(raw);
-                const current = (fieldEdits[s.key]?.[field] as string | undefined) ?? original;
-                // A VALUE THE OPTIONS DO NOT COVER IS SHOWN, NOT SWALLOWED. A
-                // <select> whose value matches no <option> renders as blank,
-                // which would present a setting the database is actively
-                // warning about as if nothing were set at all. The stored value
-                // gets its own option so an officer can see what is there and
-                // pick their way out of it.
-                const known = fm.options.some((o) => o.value === current);
-                control = (
-                  <Select
-                    variant="bare"
-                    value={current}
-                    onChange={(e) => handleFieldChange(s.key, field, e.target.value, original)}
-                    aria-label={fm.label}
-                    options={[
-                      ...(!known ? [{ value: current, label: current || 'not set' }] : []),
-                      ...fm.options,
-                    ]}
-                    className="settings-input w-56"
-                  />
-                );
-              } else {
-                const original = raw == null ? '' : String(raw);
-                const current = (fieldEdits[s.key]?.[field] as string | undefined) ?? original;
-                control = (
-                  <input
-                    type={fm.type === 'number' ? 'number' : 'text'}
-                    value={current}
-                    min={fm.min}
-                    max={fm.max}
-                    step={fm.step}
-                    onChange={(e) => handleFieldChange(s.key, field, e.target.value, original)}
-                    aria-label={fm.label}
-                    className={`settings-input ${fm.type === 'number' ? 'w-28 font-mono' : 'w-56'}`}
-                  />
-                );
-              }
-
-              return (
-                <div key={field} className="settings-row">
-                  <div>
-                    <div className="settings-row-label">
-                      {fm.label}
-                      {isEdited && (
-                        <span className="ml-2 text-[var(--color-accent)]">Modified</span>
-                      )}
-                    </div>
-                    <div className="settings-row-hint">{fm.hint}</div>
-                  </div>
-                  <div className="settings-row-control">{control}</div>
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
+      <div className={layout === 'rows' ? undefined : 'mt-5'}>
+        {layout === 'tiles'
+          ? renderTiles()
+          : layout === 'grouped'
+            ? renderGrouped()
+            : layout === 'links'
+              ? renderLinks()
+              : renderRows()}
+      </div>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn, NavMenu, visibleEntries, isRouteActive, isGroupActive } from '@badminton/ui';
 // Deep import, not the '@badminton/shared' barrel — see the player middleware.
-import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
+import { signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { withBase } from '@/lib/base-path';
 import { LogOut } from 'lucide-react';
 import { useState, useEffect } from 'react';
@@ -141,12 +141,7 @@ export function Sidebar({
   }, [router]);
 
   async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    // The library's own sign-out only clears the cookie on its configured
-    // scope; a leftover host-only copy from before the switch would still be a
-    // valid session. No-op once no such copy exists.
-    clearHostOnlyAuthCookies();
+    await signOutThisDevice(createClient().auth);
     window.location.href = withBase('/login');
   }
 

@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount, getMyCompetitionCategory } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, COMPETITION_CATEGORY_CHOICES, toCompetitionCategory, type CompetitionCategory, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, COMPETITION_CATEGORY_CHOICES, toCompetitionCategory, type CompetitionCategory, type NotificationCategory } from '@badminton/shared';
+// Deep import, not the '@badminton/shared' barrel: see the player middleware.
+import { signOutEverywhere, signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -13,6 +15,7 @@ import { AvatarUpload } from '@/components/AvatarUpload';
 import { CalendarFeed } from './calendar-feed';
 import { DataExport } from './data-export';
 import { PasskeyManager } from '@/components/passkey-manager';
+import { SignOutOtherDevices } from '@/components/sign-out-other-devices';
 import {
   User,
   Calendar,
@@ -356,12 +359,7 @@ export default function SettingsPage() {
   }
 
   async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    // The library's own sign-out only clears the cookie on its configured
-    // scope; a leftover host-only copy from before the switch would still be a
-    // valid session. No-op once no such copy exists.
-    clearHostOnlyAuthCookies();
+    await signOutThisDevice(createClient().auth);
     router.push('/login');
   }
 
@@ -376,9 +374,7 @@ export default function SettingsPage() {
       }
       // Best-effort sign out, then a hard redirect — router state is stale
       // after the account is scheduled for deletion.
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      clearHostOnlyAuthCookies();
+      await signOutEverywhere(createClient().auth);
       window.location.href = '/';
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to delete account', 'error');
@@ -844,6 +840,7 @@ export default function SettingsPage() {
                 </button>
               </div>
             </div>
+            <SignOutOtherDevices />
           </Section>
 
           <div className="danger-zone">
