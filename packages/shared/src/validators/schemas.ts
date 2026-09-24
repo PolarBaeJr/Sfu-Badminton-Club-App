@@ -526,6 +526,24 @@ export const feeMarkSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 
+// A member's e-transfer receipt (00248). Exactly one of the two ids: feeId for
+// a fee row that exists, duesSeasonId for this season's dues when the member
+// has no dues row yet. The reference is re-checked against the column's CHECK
+// by isPlausibleReference; the path against the member's own folder by the
+// action.
+export const feeSubmissionSchema = z
+  .object({
+    feeId: z.string().uuid().nullable(),
+    duesSeasonId: z.string().uuid().nullable(),
+    reference: z.string().trim().min(6, 'The reference is at least 6 characters').max(32, 'The reference is at most 32 characters'),
+    screenshotPath: z.string().min(1, 'Attach a screenshot of the e-transfer').max(300),
+  })
+  .strict()
+  .refine((v) => (v.feeId === null) !== (v.duesSeasonId === null), {
+    message: 'Say which fee this receipt is for',
+    path: ['feeId'],
+  });
+
 // One-time season-fee waiver: stored as a paid row with amount_cents 0 and
 // method 'waived', so income sums stay correct without a schema migration.
 export const feeWaiveSchema = z.object({
@@ -559,9 +577,18 @@ export const seasonCreateSchema = z.object({
 
 // A manual fee entry: someone who paid the club fee without an account. The
 // admin records just a name against the active season.
+//
+// The email is optional (00252). When given, a later signup with that address
+// claims the payment onto the new account. Normalised here the way the column
+// CHECK demands (trimmed, lowercase), and a blank field means no email rather
+// than an invalid one.
 export const manualFeeSchema = z.object({
   season_id: z.string().uuid(),
   manual_name: z.string().min(1).max(80),
+  email: z.preprocess(
+    (val) => (typeof val === 'string' && val.trim() === '' ? undefined : val),
+    z.string().trim().toLowerCase().email('Invalid email address').max(254).optional(),
+  ),
   amount_cents: z.number().int().positive().optional(),
   method: z.string().max(40).optional(),
   reference: z.string().max(120).optional(),
@@ -820,6 +847,7 @@ export type AdminPlayerCreateInput = z.infer<typeof adminPlayerCreateSchema>;
 export type AdminMatchCreateInput = z.infer<typeof adminMatchCreateSchema>;
 export type AnnouncementInput = z.infer<typeof announcementSchema>;
 export type FeeMarkInput = z.infer<typeof feeMarkSchema>;
+export type FeeSubmissionInput = z.infer<typeof feeSubmissionSchema>;
 export type FeeWaiveInput = z.infer<typeof feeWaiveSchema>;
 export type SeasonFeeInput = z.infer<typeof seasonFeeSchema>;
 export type SeasonCreateInput = z.infer<typeof seasonCreateSchema>;

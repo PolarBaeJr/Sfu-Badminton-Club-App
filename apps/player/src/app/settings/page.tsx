@@ -538,15 +538,15 @@ export default function SettingsPage() {
             </form>
           </Section>
 
-          <Section icon={Receipt} title="Fees & Dues">
+          <Section icon={Receipt} title="Membership & dues">
             <Link
-              href="/fees"
+              href="/membership"
               className="settings-row settings-row-nav"
               style={{ textDecoration: 'none', color: 'inherit' }}
             >
               <div>
                 <div className="settings-row-label">View what I owe</div>
-                <div className="settings-row-hint">Club and tournament fees for the current season.</div>
+                <div className="settings-row-hint">Your membership, club and event fees, and how to pay them.</div>
               </div>
               <div className="settings-row-control">
                 <ChevronRight size={16} className="text-[var(--mute)]" />

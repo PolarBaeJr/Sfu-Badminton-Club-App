@@ -455,7 +455,18 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     playerColumns: ['player_id', 'marked_by'],
     disposition: 'project',
     withheldColumns: ['marked_by'],
-    why: 'Every membership, tournament and reinstatement fee recorded against you, including the ban start and reason a missed fee carries.',
+    // manual_email (00252) never reaches an export. Its CHECK only allows it on
+    // a player_id NULL row, which no requester's row is, and the claim trigger
+    // clears it in the same UPDATE that sets player_id.
+    why: 'Every membership, tournament, club event and reinstatement fee recorded against you, including the ban start and reason a missed fee carries.',
+  },
+  fee_submissions: {
+    // player_id reaches players only through the composite key into club_fees
+    // (00248), so the FK scan finds reviewed_by alone; both are listed.
+    playerColumns: ['player_id', 'reviewed_by'],
+    disposition: 'project',
+    withheldColumns: ['reviewed_by', 'screenshot_path'],
+    why: 'Every e-transfer receipt you sent the club: the reference, when you sent it, and whether an exec confirmed or rejected it, with the reason they gave. Which exec reviewed it is reduced to their role. Receipts you reviewed as an officer are other members\' payments and are not listed.',
   },
   club_ledger: {
     playerColumns: ['paid_by', 'marked_by', 'reimbursed_by'],
@@ -869,7 +880,7 @@ export const DECLARED_GAPS: readonly { gap: string; detail: string }[] = [
   {
     gap: 'Stored files',
     detail:
-      'The export carries the PATHS of your profile photo (players.avatar_url), your officer photo (players.exec_photo_url), any screenshot attached to feedback you filed (feedback_reports.image_path, 00174) and any receipt attached to an expense you paid (club_ledger.receipt_path, 00231). A photograph of you is personal information. The binaries themselves are not embedded in this file, because that would turn kilobytes of JSON into megabytes of base64; they are available on request.',
+      'The export carries the PATHS of your profile photo (players.avatar_url), your officer photo (players.exec_photo_url), any screenshot attached to feedback you filed (feedback_reports.image_path, 00174) and any receipt attached to an expense you paid (club_ledger.receipt_path, 00231), and whether the club holds the screenshot you sent with an e-transfer receipt (fee_submissions.screenshot_path, 00248, shown as screenshot_held). A photograph of you is personal information. The binaries themselves are not embedded in this file, because that would turn kilobytes of JSON into megabytes of base64; they are available on request.',
   },
   {
     gap: 'History under a merged-away account id',

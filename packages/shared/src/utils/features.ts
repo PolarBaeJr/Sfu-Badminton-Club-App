@@ -108,7 +108,7 @@ export const FEATURES = [
     id: 'fees',
     label: 'Fees',
     description:
-      "A member's own fees page. Fees are still owed and still recorded in Finances; members just cannot see their statement.",
+      "A member's own statement on the membership page, the way to pay it by e-transfer, the unpaid-fees banner and the Paid badge on profiles. Fees are still owed and still recorded in Finances; members just cannot see their statement or send receipts.",
     playerRoutes: ['/fees'],
     adminRoutes: [],
   },
@@ -116,7 +116,7 @@ export const FEATURES = [
     id: 'membership',
     label: 'Membership page',
     description:
-      'The public membership page: this season\'s prices and where to buy a membership, for visitors and members alike. Off hides the page and its nav item. Fees are still owed and recorded; a member\'s own statement is the separate Fees switch.',
+      'The public membership page: this season\'s prices and where to buy a membership, for visitors and members alike. Off hides the page and its nav item, and with it a member\'s statement and the way to pay, even while the Fees switch is on. Fees are still owed and recorded.',
     playerRoutes: ['/membership'],
     adminRoutes: [],
   },

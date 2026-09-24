@@ -65,6 +65,9 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'tournament_fee_tier_created',
   'tournament_fee_tier_updated',
   'tournament_fee_tier_deleted',
+  'fee_submission_confirmed',
+  'fee_submission_rejected',
+  'fee_payment_reminders_sent',
 
   // Permissions.
   'player_permissions_changed',

@@ -533,6 +533,12 @@ body {
 .btn-sm      { padding: 6px 10px; font-size: 12px; }
 .btn-lg      { padding: 12px 22px; font-size: 14px; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
+/* Styled file picker: a ghost button label around a visually hidden input. */
+.file-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.file-pick-button { position: relative; }
+.file-pick-button:focus-within { outline: 2px solid var(--red); outline-offset: 2px; }
+.file-pick-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+.file-pick-name { color: var(--ink-3, var(--ink-2)); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
 .btn-ghost-inverse { color: var(--hero-fg); border-color: color-mix(in oklab, var(--hero-fg) 30%, transparent); }
 .btn-ghost-inverse:hover { background: color-mix(in oklab, var(--hero-fg) 8%, transparent); }
 .btn-danger-ghost {

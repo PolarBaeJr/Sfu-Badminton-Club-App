@@ -733,6 +733,21 @@ const FIXTURES: Record<string, StubRow[]> = {
     { id: 'cf-1', player_id: PLAYER_ID, amount_cents: 4000, marked_by: SENTINEL },
     { id: 'cf-2', player_id: SENTINEL, amount_cents: 4000, marked_by: PLAYER_ID },
   ],
+  fee_submissions: [
+    {
+      id: 'fs-1',
+      club_fee_id: 'cf-1',
+      player_id: PLAYER_ID,
+      reference: 'SYNTH0001',
+      screenshot_path: `${AUTH_ID}/synthetic.png`,
+      status: 'rejected',
+      reject_reason: 'Synthetic reason',
+      reviewed_by: SENTINEL,
+    },
+    // Somebody else's receipt that the requester reviewed as an officer. Must
+    // not appear at all.
+    { id: 'fs-2', club_fee_id: 'cf-2', player_id: SENTINEL, reference: 'SYNTH0002', reviewed_by: PLAYER_ID },
+  ],
   club_ledger: [
     {
       id: 'cl-1',
@@ -1080,6 +1095,17 @@ describe('no third party survives into the file', () => {
     const partnership = result.document.data.partnership_stats![0]!;
     expect(partnership.other_member).toMatch(/^member_\d+$/);
     expect(partnership.matches_played).toBe(4);
+  });
+
+  it('lists the requester\'s own e-transfer receipts and not the ones they reviewed', async () => {
+    const result = await assembleMemberExport(stubClient(), PLAYER_ID);
+    if (!result.ok) throw new Error(result.failures.join('; '));
+    const receipts = result.document.data.fee_submissions!;
+    expect(receipts.map((r) => r.id)).toEqual(['fs-1']);
+    expect(receipts[0]).toMatchObject({ reference: 'SYNTH0001', status: 'rejected', screenshot_held: true });
+    expect(receipts[0]).not.toHaveProperty('reviewed_by');
+    expect(receipts[0]).not.toHaveProperty('screenshot_path');
+    expect(JSON.stringify(result.document)).not.toContain('SYNTH0002');
   });
 
   it('filters ready_player_ids down to the requester alone', async () => {

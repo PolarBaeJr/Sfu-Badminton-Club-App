@@ -21,6 +21,8 @@ import { NetPositionChart } from './net-position-chart';
 import { CollectionCharts } from './collection-charts';
 import { CardHeading } from './card-heading';
 import { FeeTable } from './fee-table';
+import { SubmittedCard } from './submitted-card';
+import { OutstandingCard } from './outstanding-card';
 
 // The three sections of the money page. 'fees' is the original table; the other
 // two are the ledgers the club owner asked for ("add other fees", "add another
@@ -44,6 +46,10 @@ import { FeeTable } from './fee-table';
 // the write with a control they cannot navigate to.
 const TABS = [
   { id: 'fees', label: 'Club fees', read: 'fees.clubfees.read', add: 'fees.clubfees.addmanual.write' },
+  // E-transfer receipts (00248). Offered to whoever may settle them, and the
+  // unpaid list to whoever may read the club-fee roster it is drawn from.
+  { id: 'submitted', label: 'Submitted', read: 'fees.clubfees.markpaid.write', add: 'fees.clubfees.markpaid.write' },
+  { id: 'outstanding', label: 'Outstanding', read: 'fees.clubfees.read', add: 'fees.clubfees.read' },
   { id: 'income', label: 'Other income', read: 'fees.otherincome.read', add: 'fees.otherincome.add.write' },
   { id: 'expenses', label: 'Expenses', read: 'fees.expenses.read', add: 'fees.expenses.add.write' },
 ] as const satisfies readonly { id: string; label: string; read: Capability; add: Capability }[];
@@ -298,7 +304,7 @@ export default async function FeesPage({
     ? unwrap(
         await supabase
           .from('club_fees')
-          .select('id, player_id, manual_name, amount_cents, paid_at, method, reference')
+          .select('id, player_id, manual_name, manual_email, amount_cents, paid_at, method, reference')
           .eq('season_id', season.id)
           // DUES ONLY, and this filter is load-bearing twice over.
           //
@@ -493,6 +499,12 @@ export default async function FeesPage({
           </Link>
         ))}
       </div>
+      )}
+
+      {tab === 'submitted' && may('fees.clubfees.markpaid.write') && <SubmittedCard />}
+
+      {tab === 'outstanding' && showClubFees && (
+        <OutstandingCard season={season} canRemind={may('fees.clubfees.markpaid.write')} />
       )}
 
       {(showOtherIncome || incomeWrites.add) && tab === 'income' && (
@@ -733,6 +745,7 @@ export default async function FeesPage({
                 value={<Atomic>{fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}</Atomic>}
                 badges={<Badge variant="success">Paid</Badge>}
                 fields={[
+                  { label: 'Email', value: fee.manual_email ?? '-' },
                   { label: 'Method', value: fee.method ? formatPaymentMethod(fee.method) : '-' },
                   { label: 'Reference', value: fee.reference ? <Atomic className="font-mono text-xs">{fee.reference}</Atomic> : '-' },
                 ]}
@@ -750,7 +763,8 @@ export default async function FeesPage({
                       <AvatarChip name={fee.manual_name} size="sm" />
                       <div>
                         <p className="text-sm font-medium text-[var(--text-primary)]">{fee.manual_name}</p>
-                        <p className="text-xs text-[var(--text-muted)]">Manual entry</p>
+                        {/* The email a later signup would claim this with (00252), when one was given. */}
+                        <p className="text-xs text-[var(--text-muted)]">{fee.manual_email ?? 'Manual entry'}</p>
                       </div>
                     </div>
                   </td>

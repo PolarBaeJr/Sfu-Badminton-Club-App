@@ -665,6 +665,24 @@ export async function assembleMemberExport(
     })),
   ];
 
+  // E-transfer receipts they sent (00248). The screenshot is a stored file,
+  // so the file says whether one is held rather than where; the exec who
+  // reviewed it is a role. Receipts they reviewed as an officer are somebody
+  // else's payment and are not read at all.
+  data.fee_submissions = (await reader.all('fee_submissions', (q) => q.eq('player_id', playerId))).map(
+    (row) => ({
+      id: row.id,
+      club_fee_id: row.club_fee_id,
+      status: row.status,
+      reference: row.reference,
+      reject_reason: row.reject_reason,
+      submitted_at: row.submitted_at,
+      reviewed_at: row.reviewed_at,
+      screenshot_held: row.screenshot_path != null,
+      reviewed_by_role: officerDescriptor(row.reviewed_by as string | null),
+    }),
+  );
+
   // Ledger rows they PAID are their own money out of pocket. Rows where they
   // are only marked_by or reimbursed_by record an official act, so those are
   // reduced to their existence: the club cashbook is not personal information.

@@ -54,6 +54,8 @@ export interface SeasonIncome {
   clubCents: number;
   tournamentCents: number;
   reinstatementCents: number;
+  /** Club-event fees, filed when a member signs up for a priced event (00248). */
+  eventCents: number;
   /** Donations, grants, socials — 00073. */
   otherCents: number;
   /**
@@ -208,8 +210,9 @@ const readLedger = (result: { data: LedgerAmountRow[] | null; error: unknown }):
  * One KIND of fee, summed for one season.
  *
  * `.eq('fee_type', …)` is not a nicety. Since the collapse the same table holds
- * dues, entry fees and reinstatements, and the three figures below have to
- * partition it — a sum without this filter is every fee three times over. It is
+ * dues, entry fees, reinstatements and (00248) club-event fees, and the four
+ * figures below have to partition it: a sum without this filter is every fee
+ * four times over. It is
  * also the permission boundary: fees.clubfees.read and fees.reinstatements.read
  * are separate capabilities, so an unfiltered read hands one holder the other's
  * ledger.
@@ -298,21 +301,24 @@ export async function getSeasonIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
 ): Promise<SeasonIncome> {
-  // THREE DISJOINT SLICES OF ONE TABLE, plus the income half of club_ledger. fee_type is a
-  // single NOT NULL column with a three-value CHECK, so these three filters
-  // cannot overlap and cannot leave a paid fee out: the only way a row escapes
-  // all three is a fourth fee_type, which the CHECK forbids. That is what makes
-  // "counted exactly once" a property of the schema rather than a hope.
+  // FOUR DISJOINT SLICES OF ONE TABLE, plus the income half of club_ledger.
+  // fee_type is a single NOT NULL column with a four-value CHECK (00248 added
+  // 'event'), so these four filters cannot overlap and cannot leave a paid fee
+  // out: the only way a row escapes all four is a fifth fee_type, which the
+  // CHECK forbids until a migration adds one, and that migration has to add
+  // its slice here. That is what makes "counted exactly once" a property of the
+  // schema rather than a hope.
   // THE WHOLE LedgerRead IS KEPT NOW, not just its total. Every one of these
   // reads already returned the dated rows behind its figure and this function
   // dropped them; keeping them is what lets the net position be drawn across
   // the term without a single extra round trip. Nothing about WHAT is fetched
   // changed — see the note on `payments` above for why the four are then merged
   // into one untagged list.
-  const [club, tournament, reinstatement, other] = await Promise.all([
+  const [club, tournament, reinstatement, event, other] = await Promise.all([
     getClubFeeLedger(supabase, season),
     feeLedger(supabase, season, 'tournament'),
     feeLedger(supabase, season, 'reinstatement'),
+    feeLedger(supabase, season, 'event'),
 
     // 00073, now the income half of club_ledger (00159). season_id is NOT NULL
     // here, so unlike fees there is no "attached to no season" row to worry
@@ -324,14 +330,22 @@ export async function getSeasonIncome(
   const clubCents = club.total;
   const tournamentCents = tournament.total;
   const reinstatementCents = reinstatement.total;
+  const eventCents = event.total;
   const otherCents = other.total;
 
   return {
     clubCents,
     tournamentCents,
     reinstatementCents,
+    eventCents,
     otherCents,
-    totalCents: clubCents + tournamentCents + reinstatementCents + otherCents,
-    payments: [...club.payments, ...tournament.payments, ...reinstatement.payments, ...other.payments],
+    totalCents: clubCents + tournamentCents + reinstatementCents + eventCents + otherCents,
+    payments: [
+      ...club.payments,
+      ...tournament.payments,
+      ...reinstatement.payments,
+      ...event.payments,
+      ...other.payments,
+    ],
   };
 }

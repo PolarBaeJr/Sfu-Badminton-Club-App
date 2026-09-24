@@ -35,6 +35,8 @@ export * from './utils/payment-methods';
 export * from './utils/features';
 export * from './utils/club-socials';
 export * from './utils/membership-settings';
+export * from './utils/etransfer-reference';
+export * from './utils/fee-reminders';
 export * from './utils/finance-categories';
 export * from './utils/finance-refs';
 export * from './utils/tournament-window';

@@ -49,6 +49,7 @@ import { countEnteredPlayers, occupiesAPlace } from '@/lib/tournament-index';
 import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
 import { onVisibleTracks } from '@/lib/session-track-filter';
 import { getFeatureFlags } from '@/lib/feature-gate';
+import { PaymentBanner } from '@/components/payment-banner';
 import { attendeeCountsBySession } from '@/lib/session-attendee-counts';
 import {
   CALENDAR_WEEKDAYS,
@@ -835,6 +836,10 @@ export default async function FeedPage() {
           </p>
         </div>
       )}
+
+      {/* Unpaid fees, with the way to pay them. Renders nothing when there is
+          nothing owed, a receipt is already in, or the read fails. */}
+      {isApproved && on('fees') && <PaymentBanner player={player} />}
 
       {/* ── A TOURNAMENT IS ON ────────────────────────────────────
           Full width, above the schedule, so a member standing in the gym

@@ -523,7 +523,7 @@ export interface ReliabilityMetrics {
  * is a column and not a schema — see 00094's header for the club owner's own
  * reason ("just wanted to have less db tables around").
  */
-export type FeeType = 'dues' | 'tournament' | 'reinstatement';
+export type FeeType = 'dues' | 'tournament' | 'reinstatement' | 'event';
 
 /**
  * The club's one fee ledger.
@@ -534,6 +534,7 @@ export type FeeType = 'dues' | 'tournament' | 'reinstatement';
  *   dues           season_id, and the other four NULL
  *   tournament     tournament_id (+ optional tier_id), a real player
  *   reinstatement  ban_started_at (+ ban_reason), a real player
+ *   event          club_event_id, a real player (00248)
  *
  * EVERY QUERY FILTERS ON fee_type. Reading the ledger unfiltered is the leak
  * this type exists to make visible: /admin/fees gates club dues and
@@ -558,6 +559,10 @@ export interface ClubFee {
   /** fee_type 'reinstatement' only — which ban episode this settled (00065). */
   ban_started_at: string | null;
   ban_reason: string | null;
+  /** fee_type 'event' only: which club event it is the cost of (00248). */
+  club_event_id: string | null;
+  /** When an exec last sent a "please pay" reminder for this line (00248). */
+  payment_reminded_at: string | null;
   created_at: string;
 }
 

@@ -248,6 +248,7 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
     digest_deliveries: 'the delivery key that stops a digest sending twice; activity, not identity',
     event_feedback: 'written about a club event, and part of the record of that event',
     event_waiver_acceptances: 'legal evidence, per tournament',
+    fee_submissions: 'the club\'s record of a payment it confirmed or refused; the screenshot is erased by _shared/fee-proofs.ts and its path nulled',
     legacy_tournament_participants: 'shared competitive history',
     match_participants: 'a match has two to four players',
     ratings: 'derived from matches other members played, and their Elo depends on it',
@@ -330,6 +331,19 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
       // lists drifted apart the first time.
       expect(src, `${job} should not name artifact tables inline`).not.toMatch(
         /from\('push_subscriptions'\)/,
+      );
+    }
+  });
+
+  it('erases payment screenshots while the auth folder is still known', () => {
+    // fee-proofs is keyed on the AUTH user id (00248's upload policy), which
+    // is gone once deleteUser runs and the row is anonymised.
+    for (const job of ['purge-deleted-accounts', 'purge-inactive-accounts']) {
+      const src = readFileSync(join(REPO, `supabase/functions/${job}/index.ts`), 'utf8');
+      const erase = src.indexOf('eraseFeeProofs(supabase, player.id, player.user_id)');
+      expect(erase, `${job} should erase fee proofs`).toBeGreaterThan(-1);
+      expect(erase, `${job} erases fee proofs after deleting the auth user`).toBeLessThan(
+        src.indexOf('supabase.auth.admin.deleteUser'),
       );
     }
   });

@@ -6,6 +6,7 @@ import { accessLevelFor, effectiveCapabilities, permissionsOf, permits } from '@
 import { PermissionEditor } from '@/app/permissions/permission-editor';
 import { customBaselinesFrom, personRowFrom } from '@/lib/person-row';
 import { Badge, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
+import { readFeatureFlags, seasonDuesState, type SeasonDuesState } from '@badminton/shared';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode, summarizeSeason } from '@badminton/shared';
 import type { SeasonMatchRow } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -255,6 +256,26 @@ export default async function PlayerDetailPage({
 
   if (!player) notFound();
 
+  // THIS SEASON'S DUES, for the door: Paid, Waived, Exempt or Unpaid. Only a
+  // holder of the capability that records a payment is shown any of it, and
+  // only with the fees switch on; for anyone else nothing is read. Always the
+  // RUNNING season, whatever the picker below is showing.
+  const duesState: SeasonDuesState | null =
+    viewerSet.has('fees.clubfees.markpaid.write') && (await readFeatureFlags(supabase)).fees
+      ? await (async () => {
+          const { data: running } = await supabase.from('seasons').select('id').eq('active_flag', true).maybeSingle();
+          if (!running) return null;
+          const { data: dues } = await supabase
+            .from('club_fees')
+            .select('paid_at, method')
+            .eq('player_id', id)
+            .eq('season_id', running.id)
+            .eq('fee_type', 'dues')
+            .maybeSingle();
+          return seasonDuesState(dues, { isExec: Boolean(player.is_exec), feeExempt: Boolean(player.fee_exempt) });
+        })()
+      : null;
+
   // ratings holds ONE cumulative Elo with no season dimension, so it is only
   // the right answer for the season currently running. For a past season the
   // archived snapshot is what that season actually ended on; showing today's
@@ -407,6 +428,19 @@ export default async function PlayerDetailPage({
               </Badge>
               {player.is_exec && <Badge variant="info">Exec</Badge>}
               {player.is_trainer && <Badge variant="info">Trainer</Badge>}
+              {duesState && (
+                <Badge
+                  variant={duesState === 'paid' ? 'success' : duesState === 'unpaid' ? 'warning' : 'neutral'}
+                >
+                  {duesState === 'paid'
+                    ? 'Dues paid'
+                    : duesState === 'waived'
+                      ? 'Dues waived'
+                      : duesState === 'exempt'
+                        ? 'Dues exempt'
+                        : 'Dues unpaid'}
+                </Badge>
+              )}
             </div>
           </div>
         </div>

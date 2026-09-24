@@ -1,0 +1,171 @@
+'use client';
+
+import { useRef, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { ImagePlus, Loader2 } from 'lucide-react';
+import { createClient } from '@/lib/supabase-browser';
+import { submitFeeSubmission } from '@/lib/actions/fee-submissions';
+
+// One unpaid line's "I have paid" form: the screenshot and the reference, both
+// required. Picking a screenshot runs OCR in the browser (./ocr, loaded only
+// then) and pre-fills the reference; the field stays editable and a failed read
+// leaves it empty.
+//
+// The screenshot is uploaded straight to fee-proofs from the browser, into the
+// member's own folder (the one storage path 00248 allows), the way
+// /feedback does it, and the action is handed the path.
+
+// Mirrors 00248's bucket, so a wrong file is refused at the picker.
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_BYTES = 8 * 1024 * 1024;
+const EXTENSIONS: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+
+export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; duesSeasonId: string | null }) {
+  const router = useRouter();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [reference, setReference] = useState('');
+  const [reading, setReading] = useState(false);
+  const [readHint, setReadHint] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const touched = useRef(false);
+
+  async function pick(e: React.ChangeEvent<HTMLInputElement>) {
+    setError(null);
+    setReadHint(null);
+    const picked = e.target.files?.[0] ?? null;
+    if (!picked) {
+      setFile(null);
+      return;
+    }
+    if (!ALLOWED_TYPES.includes(picked.type)) {
+      setError('That file is not a JPEG, PNG or WebP image.');
+      e.target.value = '';
+      return;
+    }
+    if (picked.size > MAX_BYTES) {
+      setError('That image is over 8 MB. Try a screenshot of just the confirmation.');
+      e.target.value = '';
+      return;
+    }
+    setFile(picked);
+    setReading(true);
+    try {
+      const { readReferenceFromImage } = await import('./ocr');
+      const found = await readReferenceFromImage(picked);
+      if (found && !touched.current) {
+        setReference(found.value);
+        setReadHint('Read from your screenshot, please check it.');
+      }
+    } finally {
+      setReading(false);
+    }
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!file) {
+      setError('Attach a screenshot of the e-transfer.');
+      return;
+    }
+    if (!reference.trim()) {
+      setError('Enter the e-transfer reference number.');
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          setError('Your session expired. Sign in again and resend.');
+          return;
+        }
+        const path = `${user.id}/${crypto.randomUUID()}.${EXTENSIONS[file.type] ?? 'jpg'}`;
+        const { error: uploadError } = await supabase.storage
+          .from('fee-proofs')
+          .upload(path, file, { contentType: file.type, upsert: false });
+        if (uploadError) {
+          setError(`The screenshot could not be uploaded (${uploadError.message}). Try a smaller image.`);
+          return;
+        }
+        const res = await submitFeeSubmission({
+          feeId,
+          duesSeasonId,
+          reference: reference.trim(),
+          screenshotPath: path,
+        });
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        setFile(null);
+        setReference('');
+        setReadHint(null);
+        if (fileInput.current) fileInput.current.value = '';
+        router.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not send that receipt');
+      }
+    });
+  }
+
+  const busy = pending || reading;
+
+  return (
+    <form onSubmit={submit} style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+      <div style={{ display: 'grid', gap: 4, fontSize: 13 }}>
+        <span>Screenshot of the e-transfer</span>
+        {/* The native picker's "Choose file / No file chosen" cannot be styled,
+            so the input is visually hidden inside a button-styled label. */}
+        <div className="file-pick">
+          <label className="btn btn-ghost file-pick-button">
+            <ImagePlus size={14} aria-hidden />
+            {file ? 'Change screenshot' : 'Choose screenshot'}
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={pick}
+              disabled={pending}
+              className="file-pick-input"
+            />
+          </label>
+          <span className="file-pick-name">{file ? file.name : 'No screenshot yet'}</span>
+        </div>
+      </div>
+      <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>
+        <span>Reference number</span>
+        <input
+          type="text"
+          className="input-base"
+          value={reference}
+          onChange={(e) => {
+            touched.current = true;
+            setReadHint(null);
+            setReference(e.target.value);
+          }}
+          placeholder={reading ? 'Reading your screenshot...' : 'e.g. CA1a2B3c4D'}
+          maxLength={32}
+          autoComplete="off"
+          spellCheck={false}
+          disabled={pending}
+          required
+        />
+      </label>
+      {readHint && <p className="fees-note" style={{ margin: 0 }}>{readHint}</p>}
+      {error && (
+        <p role="alert" style={{ color: 'var(--red)', fontSize: 13, margin: 0 }}>
+          {error}
+        </p>
+      )}
+      <div>
+        <button type="submit" className="btn btn-primary" disabled={busy}>
+          {pending ? <Loader2 size={14} className="animate-spin" /> : null}
+          {pending ? 'Sending...' : reading ? 'Reading screenshot...' : 'Send receipt'}
+        </button>
+      </div>
+    </form>
+  );
+}

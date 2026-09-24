@@ -2,8 +2,8 @@
 // the page reads, so they can be tested without a database.
 //
 // The screen answers one question ("what do I owe?") from one ledger holding
-// three kinds of row (00094): dues per season, entry fees per tournament, and
-// reinstatements per ban episode. Flattening them to one FeeLine shape here is
+// four kinds of row (00094, 00248): dues per season, entry fees per tournament,
+// reinstatements per ban episode, and club event costs per sign-up. Flattening them to one FeeLine shape here is
 // what lets the headline figure, the badge and the receipt list agree — they
 // are three readings of the same array rather than three separate sums, which
 // is how the admin side ended up counting fees in one place and people in
@@ -37,7 +37,7 @@ export function money(cents: number | null | undefined): string {
 // ------------------------------------------------------------------
 
 /** Which kind of fee a line came from. Drives the wording, not the arithmetic. */
-export type FeeKind = 'season' | 'tournament' | 'reinstatement';
+export type FeeKind = 'season' | 'tournament' | 'reinstatement' | 'event';
 
 export interface FeeLine {
   /** Stable React key. The row's own uuid where there is one. */
@@ -138,7 +138,8 @@ export function summariseFees(lines: FeeLine[], opts: { exempt: boolean }): Outs
   // Exemption is from DUES, and only from dues. is_exec / fee_exempt take a
   // member out of the club-fee table (apps/admin/src/app/fees/page.tsx filters
   // on exactly those two columns) and out of tournament entry fees —
-  // ensureEntryFees skips them outright, so no row is even filed. They do not
+  // ensureEntryFees skips them outright, so no row is even filed, and the
+  // club event sign-up trigger (00248) skips them the same way. They do not
   // touch reinstatement rows, which have no exemption check anywhere — a
   // reinstatement is not a due, it is the price of lifting a ban. Zeroing one
   // here would tell an exempt member they owe nothing while the club is still

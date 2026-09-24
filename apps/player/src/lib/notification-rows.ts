@@ -216,6 +216,10 @@ export function notificationAction(type: string, metadata: NotificationMetadata)
       // tournament registration, challenge reminders) and only the metadata
       // says which. Read the metadata, not the type.
       if (announcementId) return { href: '/announcements', label: 'Read' };
+      // A rejected e-transfer receipt, or an exec's reminder to pay (00248).
+      if (str(metadata, 'kind') === 'fee_submission_rejected' || str(metadata, 'kind') === 'fee_payment_reminder') {
+        return { href: '/membership', label: 'View' };
+      }
       if (challengeId) return { href: `/challenges/${challengeId}`, label: 'View' };
       if (tournamentId) return event('View');
       if (sessionId) return sessionLink;
