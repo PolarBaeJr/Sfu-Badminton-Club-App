@@ -289,9 +289,11 @@ body {
   background-attachment: fixed;
 }
 
+/* Neutral, not the brand red: a solid red block over a whole card read as an
+   error state. A tint of the text colour works in both themes and keeps the
+   selected text its own colour. */
 ::selection {
-  background: var(--red);
-  color: #fff;
+  background: color-mix(in oklab, var(--ink) 24%, transparent);
 }
 
 /* Scrollbar */
