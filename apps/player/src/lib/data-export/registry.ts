@@ -135,6 +135,7 @@ export const PLAYER_EXPORT_COLUMNS = [
   'show_activity_status',
   'profile_visibility',
   'notification_preferences',
+  'tours_seen',
   'onboarding_completed',
   'joined_at',
   'created_at',
@@ -221,6 +222,7 @@ export const AUDIT_JSONB_ALLOWLIST = [
   'permission_revokes',
   'skill_tier',
   'passkey_setup',
+  'tours_seen',
   'privilege_claim_review',
   'elo_review',
 ] as const;

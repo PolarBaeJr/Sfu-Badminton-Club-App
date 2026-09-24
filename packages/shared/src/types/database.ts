@@ -179,6 +179,8 @@ export interface Player {
   inactivity_notice_sent_at: string | null;
   /** 00062 — when the inactivity clock deactivated this member. Starts the retention countdown; NULL = never purgeable. Cleared on every reactivation. */
   inactive_since: string | null;
+  /** 00246 - which guided tours this member has finished or skipped: tour key to first-seen time. Written only by mark_tour_seen(), service role. */
+  tours_seen: Record<string, string>;
   joined_at: string;
   last_active_at: string;
   created_at: string;

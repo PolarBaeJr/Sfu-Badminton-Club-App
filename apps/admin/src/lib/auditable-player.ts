@@ -80,6 +80,8 @@ export const AUDITABLE_COLUMNS = [
   // credential's existence is not identity. It is account standing, and an
   // admin looking at a locked-out member needs to see it.
   'passkey_setup',
+  // 00246. Which guided tours they have seen. Harmless, and not identity.
+  'tours_seen',
   // The two review flags. Both exist BECAUSE an admin act left something for a
   // human to check — a roster claim that withheld privileges (00132), a merge
   // that discarded rows or found the account playing itself (00163) — so an
