@@ -6,7 +6,7 @@ import { countEligible, type FeeRowState } from '../fee-bulk-eligibility';
 // THE THING THIS PROTECTS is a number in a confirm dialog. One fee page has one
 // selection and three buttons with three different eligible states, so "9
 // members" over an action that will touch 4 of them is a figure the officer
-// cannot check — and a button that looks live over a selection none of it applies
+// cannot check, and a button that looks live over a selection none of it applies
 // to is a click that can only produce a page of refusals.
 //
 // IT IS NOT A FILTER, which is the other half and cannot be tested here because
@@ -30,7 +30,7 @@ describe('counting what an action applies to', () => {
   });
 
   it('counts both the paid and the waived rows for Mark Unpaid', () => {
-    // One control, two reversals — the page renders it as "Mark Unpaid" over a
+    // One control, two reversals: the page renders it as "Mark Unpaid" over a
     // paid row and "Unwaive" over a waived one.
     expect(countEligible(['ada', 'bao', 'kiera'], STATES, 'markUnpaid')).toBe(2);
   });
