@@ -498,7 +498,7 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
     },
     etransfer_email: {
       label: 'E-transfer email',
-      hint: 'Where members send an Interac e-Transfer for club fees. Not shown anywhere yet. Leave empty until the club has one.',
+      hint: 'Where members send an Interac e-Transfer for club fees. While this is empty, members cannot upload payment receipts: the Membership page says e-transfer is not set up.',
       type: 'text',
     },
   },
