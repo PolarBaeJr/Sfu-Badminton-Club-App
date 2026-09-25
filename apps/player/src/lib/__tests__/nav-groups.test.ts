@@ -22,13 +22,13 @@ const groupIds = (entries: PlayerNavEntry[]) =>
 describe('the player top bar', () => {
   it('shows an approved member every entry', () => {
     expect(desktopEntries(true)).toEqual(DESKTOP_ENTRIES);
-    expect(labels(desktopEntries(true))).toEqual(['Feed', 'Challenges', 'Events', 'Stats', 'Membership']);
+    expect(labels(desktopEntries(true))).toEqual(['Feed', 'Challenges', 'Events', 'Leaderboard', 'My stats', 'Membership']);
   });
 
   it('shows a pending member no Challenges and no Events', () => {
     const entries = desktopEntries(false);
-    expect(groupIds(entries)).toEqual(['stats']);
-    expect(labels(entries)).toEqual(['Feed', 'Stats', 'Membership']);
+    expect(groupIds(entries)).toEqual([]);
+    expect(labels(entries)).toEqual(['Feed', 'Leaderboard', 'My stats', 'Membership']);
     expect(flattenEntries(entries).some((item) => item.gated)).toBe(false);
   });
 
@@ -96,25 +96,25 @@ describe('the nav with a feature switched off', () => {
   });
 
   it('drops the Events menu on both bars when tournaments and club events are off', () => {
-    expect(labels(desktopEntries(true, off('tournaments', 'events')))).toEqual(['Feed', 'Challenges', 'Stats', 'Membership']);
+    expect(labels(desktopEntries(true, off('tournaments', 'events')))).toEqual(['Feed', 'Challenges', 'Leaderboard', 'My stats', 'Membership']);
     expect(labels(mobileSlots(true, off('tournaments', 'events')))).toEqual(['Feed', 'Ranks', 'Challenges', 'Me']);
   });
 
   it('keeps Events with only club events in it when tournaments alone are off', () => {
-    expect(labels(desktopEntries(true, off('tournaments')))).toEqual(['Feed', 'Challenges', 'Events', 'Stats', 'Membership']);
+    expect(labels(desktopEntries(true, off('tournaments')))).toEqual(['Feed', 'Challenges', 'Events', 'Leaderboard', 'My stats', 'Membership']);
     expect(hrefs(desktopEntries(true, off('tournaments')))).not.toContain('/tournaments');
     expect(hrefs(desktopEntries(true, off('tournaments')))).toContain('/events');
   });
 
   it('keeps Events for a holder of page.access.tournaments, who can still open the pages', () => {
-    expect(labels(desktopEntries(true, off('tournaments', 'events'), ['tournaments']))).toEqual(['Feed', 'Challenges', 'Events', 'Stats', 'Membership']);
+    expect(labels(desktopEntries(true, off('tournaments', 'events'), ['tournaments']))).toEqual(['Feed', 'Challenges', 'Events', 'Leaderboard', 'My stats', 'Membership']);
     expect(labels(mobileSlots(true, off('tournaments', 'events'), ['tournaments']))).toEqual(['Feed', 'Ranks', 'Challenges', 'Events', 'Me']);
   });
 
   // THE KEY IS PER FEATURE. Holding the one for challenges is not a way into
   // tournaments, which is what "console access" used to be.
   it('drops Events for a holder of a different feature key', () => {
-    expect(labels(desktopEntries(true, off('tournaments', 'events'), ['challenges']))).toEqual(['Feed', 'Challenges', 'Stats', 'Membership']);
+    expect(labels(desktopEntries(true, off('tournaments', 'events'), ['challenges']))).toEqual(['Feed', 'Challenges', 'Leaderboard', 'My stats', 'Membership']);
   });
 
   it('drops a mobile slot whose only destination is off', () => {
@@ -128,13 +128,13 @@ describe('the nav with a feature switched off', () => {
   });
 
   it('drops the Challenges link when challenges are off', () => {
-    expect(labels(desktopEntries(true, off('challenges')))).toEqual(['Feed', 'Events', 'Stats', 'Membership']);
+    expect(labels(desktopEntries(true, off('challenges')))).toEqual(['Feed', 'Events', 'Leaderboard', 'My stats', 'Membership']);
     expect(labels(mobileSlots(true, off('challenges')))).toEqual(['Feed', 'Ranks', 'Events', 'Me']);
   });
 
   it('shrinks a menu rather than dropping it while something in it is still on', () => {
-    expect(hrefs(desktopEntries(true, off('leaderboard')))).not.toContain('/leaderboard');
-    expect(labels(desktopEntries(true, off('leaderboard')))).toEqual(['Feed', 'Challenges', 'Events', 'Stats', 'Membership']);
+    expect(hrefs(desktopEntries(true, off('events')))).not.toContain('/events');
+    expect(labels(desktopEntries(true, off('events')))).toEqual(['Feed', 'Challenges', 'Events', 'Leaderboard', 'My stats', 'Membership']);
   });
 
   it('hides every switchable destination, and only those, when all are off', () => {
@@ -152,6 +152,6 @@ describe('the nav with a feature switched off', () => {
   });
 
   it('still hides gated items from a pending member when a feature is on', () => {
-    expect(groupIds(desktopEntries(false, off('leaderboard')))).toEqual(['stats']);
+    expect(hrefs(desktopEntries(false, off('leaderboard')))).toEqual(['/feed', '/my-stats', '/membership']);
   });
 });
