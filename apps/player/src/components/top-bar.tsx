@@ -114,6 +114,7 @@ export function TopBar({
                     href={item.href}
                     className={cn('nav-item', active && 'active')}
                     aria-current={active ? 'page' : undefined}
+                    data-tour={item.href === '/membership' ? 'membership-link' : undefined}
                   >
                     {item.label}
                   </Link>

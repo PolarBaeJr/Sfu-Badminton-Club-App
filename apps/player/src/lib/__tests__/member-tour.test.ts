@@ -33,12 +33,17 @@ const ids = (c: TourContext) => selected(c).map((s) => s.id);
 const body = (c: TourContext, id: string) => selected(c).find((s) => s.id === id)?.body ?? '';
 
 describe('the member tour steps', () => {
-  it('has five steps with every feature on', () => {
-    expect(ids(ctx())).toEqual(['welcome', 'calendar', 'next-session', 'tabs', 'settings']);
+  it('has six steps with every feature on', () => {
+    expect(ids(ctx())).toEqual(['welcome', 'calendar', 'next-session', 'tabs', 'membership', 'settings']);
   });
 
   it('drops the session step with sessions off', () => {
-    expect(ids(ctx({ features: off('sessions') }))).toEqual(['welcome', 'calendar', 'tabs', 'settings']);
+    expect(ids(ctx({ features: off('sessions') }))).toEqual(['welcome', 'calendar', 'tabs', 'membership', 'settings']);
+  });
+
+  it('shows the membership step only with fees and membership both on', () => {
+    expect(ids(ctx({ features: off('fees') }))).not.toContain('membership');
+    expect(ids(ctx({ features: off('membership') }))).not.toContain('membership');
   });
 
   it('drops the calendar only when sessions, events and tournaments are all off', () => {
@@ -156,6 +161,7 @@ describe('the tour selectors still match the markup', () => {
     'settings-chip': 'components/top-bar.tsx',
     'top-nav': 'components/top-bar.tsx',
     'tab-bar': 'components/bottom-nav.tsx',
+    'membership-link': 'components/top-bar.tsx',
   };
 
   it('every data-tour value is on the element expected to carry it', () => {

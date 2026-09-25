@@ -2,7 +2,7 @@
 // can read it: the host component (components/member-tour-host.tsx) pulls in
 // next/navigation.
 //
-// FIVE STEPS, under 100 words, under a minute. Setup plus this tour must fit
+// SIX STEPS, under 110 words, under a minute. Setup plus this tour must fit
 // in 3 minutes on a phone (onboarding-budget.test.ts), so a new step has to
 // replace one. The tabs step is one card for every tab, and its body is built
 // from the features this member can see, which is why the steps are built from
@@ -40,7 +40,7 @@ const TAB_LINES: readonly { text: string; requires: TourStepRequires }[] = [
 ];
 
 const SETTINGS_APPROVED =
-  'Notifications stay off until you turn them on here. Also here: the calendar feed, passkeys and a tour replay. Link Discord with /link at discord.sfubadminton.com.';
+  'Notifications stay off until you turn them on here. Also here: Membership, the calendar feed, passkeys, the tour replay. Link Discord with /link at discord.sfubadminton.com.';
 const SETTINGS_PENDING =
   'Notifications stay off until you turn them on here. Also here: passkeys and a tour replay. Link Discord with /link at discord.sfubadminton.com.';
 
@@ -82,6 +82,20 @@ export function memberTourSteps(ctx: TourContext): TourStep[] {
       targets: ['[data-tour="tab-bar"]', '[data-tour="top-nav"]'],
       missingTarget: 'skip',
       requires: { featuresAny: ['challenges', 'leaderboard', 'tournaments', 'events'] },
+    });
+  }
+  // Only where the statement is: an approved member, with both the fees and
+  // the membership switches on (membership/page.tsx). requires cannot say
+  // "both", so the membership half is checked here. On a phone there is no
+  // Membership tab, so the step is a card.
+  if (requirementsMet({ featuresAny: ['membership'] }, ctx)) {
+    steps.push({
+      id: 'membership',
+      title: 'Membership and fees',
+      body: 'Pay dues by e-transfer or the SFU Rec site, then upload the receipt on Membership.',
+      targets: ['[data-tour="membership-link"]'],
+      missingTarget: 'center',
+      requires: { featuresAny: ['fees'], approved: true },
     });
   }
   steps.push({
