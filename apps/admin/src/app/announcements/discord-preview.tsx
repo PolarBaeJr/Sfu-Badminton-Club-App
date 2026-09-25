@@ -314,3 +314,57 @@ export function DiscordPreview({
     </div>
   );
 }
+
+/**
+ * A plain message, drawn the way Discord will show it: the text as typed, role
+ * names resolved into chips exactly as `resolveForDiscord` does on the way out,
+ * and the member buttons under it. Whether anybody is pinged is the composer's
+ * switch, so the footer states it rather than guessing.
+ */
+export function DiscordMessagePreview({
+  content,
+  roles,
+  buttonSet,
+  pings,
+}: {
+  content: string;
+  /** Club roles only, for the same reason the embed preview takes them alone. */
+  roles: DiscordRoleOption[];
+  buttonSet: string | null;
+  /** The composer's "Let mentions notify people" switch. */
+  pings: boolean;
+}) {
+  const shown = useMemo(
+    () => resolveRoleMentions(content, guildRoles(roles)).text,
+    [content, roles],
+  );
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className={`${MICRO} text-[var(--mute)]`}>Discord</span>
+        <span className={`${MICRO} text-[var(--mute)]`}>Preview</span>
+      </div>
+      <div className="p-3" style={{ background: DISCORD_BG }} aria-hidden>
+        {shown.trim() ? (
+          <div
+            className="text-[14px] leading-relaxed break-words"
+            style={{ color: DISCORD_TEXT, maxWidth: 520 }}
+          >
+            <DiscordMarkdown text={shown} roles={roles} />
+          </div>
+        ) : (
+          <span className="text-[13px] italic" style={{ color: DISCORD_MUTED }}>
+            Nothing written yet
+          </span>
+        )}
+        <DiscordButtonsPreview set={buttonSet} />
+        <span className="mt-2 block text-[11px]" style={{ color: DISCORD_MUTED }}>
+          {pings
+            ? 'Posted by the bot. Any @everyone or @role in it notifies people.'
+            : 'Posted by the bot. Nobody is pinged.'}
+        </span>
+      </div>
+    </div>
+  );
+}
