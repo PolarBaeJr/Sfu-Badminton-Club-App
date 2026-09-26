@@ -97,9 +97,12 @@ describe('the capability vocabulary', () => {
   //
   // 139 BECAME 141 with two more feature switches (00247), `membership` and
   // `socials`, each of which mints its `page.access.<id>` key.
-  it('is exactly 141 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(141);
-    expect(new Set(CAPABILITIES).size).toBe(141);
+  //
+  // 141 BECAME 142 with the guest waivers switch (00254), whose key is
+  // `page.access.guest_waivers`.
+  it('is exactly 142 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(142);
+    expect(new Set(CAPABILITIES).size).toBe(142);
   });
 
   // 16 BECAME 17 with `page`, the keys to switched-off features, and 17
@@ -313,16 +316,21 @@ describe('CAPABILITY_GATES', () => {
   // one FeatureGate each, on /membership and /socials. The footer row, the
   // nav's Discord links and the bot's /socials reply ask the socials question
   // for everybody at once, like the nav filters, so they are not sites.
-  it('names 180 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 180 BECAME 183 with guest waivers: `page.access.guest_waivers` has the
+  // FeatureGate on /guest-waiver and the signing action, merged as
+  // SWITCHED_OFF, and `legal.page` gains the console's list of guest signings,
+  // its first `also`.
+  it('names 183 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(180);
-    expect(new Set(sites).size).toBe(180);
-    expect(ENFORCEMENT_POINTS).toBe(180);
+    expect(sites.length).toBe(183);
+    expect(new Set(sites).size).toBe(183);
+    expect(ENFORCEMENT_POINTS).toBe(183);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -1037,17 +1045,18 @@ describe('EDITOR_OFFERABLE', () => {
 describe('permits', () => {
   // 121 BECAME 124 with the data API's three key capabilities, and 124 BECAME
   // 131 with the seven keys to switched-off features, and 131 BECAME 139 with
-  // club events, and 139 BECAME 141 with the membership and socials switches.
+  // club events, and 139 BECAME 141 with the membership and socials switches,
+  // and 141 BECAME 142 with the guest waivers switch.
   // This number
   // tracks CAPABILITIES.length by construction (admin is a superuser BY LEVEL,
   // so every capability added is automatically theirs), and it is written as a
   // literal anyway, because a count derived from the list it is checking would
   // pass for an empty list.
-  it('makes an admin a superuser BY LEVEL, holding all 141', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 142', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(141);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(142);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

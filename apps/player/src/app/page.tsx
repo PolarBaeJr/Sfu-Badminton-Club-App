@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient, getViewer, getActiveSeason } from '@/lib/supabase-server';
 import { Landing } from '@/components/landing';
+import { getFeatureFlags } from '@/lib/feature-gate';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,14 @@ export default async function Home() {
     .slice(0, 5)
     .map((r) => ({ name: r.name, elo: r.singles_elo }));
 
-  const season = await getActiveSeason().catch(() => null);
+  const [season, flags] = await Promise.all([getActiveSeason().catch(() => null), getFeatureFlags()]);
 
-  return <Landing top={top} seasonName={season?.name ?? null} isAuthenticated={!!user} />;
+  return (
+    <Landing
+      top={top}
+      seasonName={season?.name ?? null}
+      isAuthenticated={!!user}
+      guestWaiversOn={flags.guest_waivers}
+    />
+  );
 }

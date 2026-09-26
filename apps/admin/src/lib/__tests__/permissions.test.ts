@@ -214,6 +214,9 @@ describe('a page-level capability matches what its route resolves to', () => {
     { path: '/disputes', capability: 'disputes.page' },
     { path: '/walkovers', capability: 'walkovers.page' },
     { path: '/audit', capability: 'audit.page' },
+    // The guest waiver list. Prefix-matched to '/legal', the same way: it is
+    // the Legal section read from another page, not a section of its own.
+    { path: '/legal/guests', capability: 'legal.page' },
   ];
 
   it.each(PAGE_GATES)('$path is $capability at every level', ({ path, capability }) => {

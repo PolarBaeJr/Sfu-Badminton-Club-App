@@ -115,6 +115,7 @@ describe('the console nav', () => {
       '/fees',
       '/players',
       '/legal',
+      '/legal/guests',
       '/settings',
     ]);
   });

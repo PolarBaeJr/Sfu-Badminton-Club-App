@@ -148,7 +148,7 @@ describe('the narrowed dashboard', () => {
   it('opens every section for an officer, whichever role they hold', () => {
     const everything = [
       '/matches', '/tournaments', '/sessions', '/announcements',
-      '/seasons', '/fees', '/players', '/legal', '/settings',
+      '/seasons', '/fees', '/players', '/legal', '/legal/guests', '/settings',
     ];
     for (const role of ['finance', 'external', 'tournaments', 'internal', 'custom', null]) {
       expect(signpost('exec', role), String(role)).toEqual(everything);

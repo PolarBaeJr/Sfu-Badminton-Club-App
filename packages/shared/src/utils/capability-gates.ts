@@ -601,6 +601,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'legal.page': {
     label: 'Open Legal', area: 'legal', group: null, mode: 'page',
     gate: 'app/legal/page.tsx LegalPage',
+    also: ['app/legal/guests/page.tsx GuestWaiversPage'],
+    merged: 'The guest waiver signings are the Legal section read from another page: what non-members signed, beside what members signed.',
   },
   'legal.reacceptance.write': {
     label: 'Require a re-signature', area: 'legal', group: null, mode: 'write',
@@ -794,6 +796,15 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'page.access.socials': {
     label: 'Social links while switched off', area: 'page', group: null, mode: 'read',
     gate: 'player app/socials/layout.tsx FeatureGate',
+  },
+  // The index page only, so a proof link under /guest-waiver/<token> keeps
+  // working after the switch goes off. The action is the same act as the page:
+  // a guest signing while it is off.
+  'page.access.guest_waivers': {
+    label: 'Guest waivers while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/guest-waiver/page.tsx FeatureGate',
+    also: ['player actions/guest-waiver.ts signGuestWaiver'],
+    merged: SWITCHED_OFF,
   },
 };
 

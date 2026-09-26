@@ -1120,6 +1120,13 @@ BEGIN
   IF to_regclass('public.tournament_checkin_tokens') IS NOT NULL THEN DELETE FROM public.tournament_checkin_tokens; END IF;
   IF to_regclass('public.discord_link_tokens')      IS NOT NULL THEN DELETE FROM public.discord_link_tokens; END IF;
 
+  -- GUEST WAIVER SIGNINGS (00254): non-members' names and emails, each with a
+  -- bearer proof token. Nothing to anonymise that would be worth testing
+  -- against, so the rows go. No trigger guards this table and the superuser
+  -- ignores its grants, so a plain DELETE is enough. Guarded because the table
+  -- exists only once production has 00254.
+  IF to_regclass('public.guest_waiver_signings') IS NOT NULL THEN DELETE FROM public.guest_waiver_signings; END IF;
+
   -- Device records. Passkeys are scoped to the hostname they were enrolled on,
   -- so production's cannot work on staging regardless; push endpoints are
   -- per-device URLs that would aim staging's notifications at real phones.
@@ -1279,7 +1286,16 @@ SELECT 'passkey guard disabled ' || count(*) FROM pg_trigger t
   JOIN pg_class c     ON c.oid = t.tgrelid
   JOIN pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname = 'public' AND c.relname = 'passkey_credentials'
-   AND t.tgname = 'trg_guard_last_admin_passkey' AND t.tgenabled = 'D';
+   AND t.tgname = 'trg_guard_last_admin_passkey' AND t.tgenabled = 'D'
+UNION ALL
+-- Counted through query_to_xml because a plain reference to a table that does
+-- not exist fails the whole query at parse time, and the table exists only once
+-- production has 00254. The CASE keeps the count from running without it.
+SELECT 'guest waiver signings  ' || CASE
+         WHEN to_regclass('public.guest_waiver_signings') IS NULL THEN 0
+         ELSE (xpath('/row/n/text()', query_to_xml(
+                'SELECT count(*) AS n FROM public.guest_waiver_signings', false, true, '')))[1]::text::int
+       END;
 SQL
   )
   echo "$leak" | sed 's/^/  remaining /'

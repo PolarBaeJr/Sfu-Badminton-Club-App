@@ -507,7 +507,9 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
   // FEATURES is `as const`, so `warning` is only readable through the wider type.
   [FEATURES_SETTING_KEY]: Object.fromEntries(
     (FEATURES as readonly FeatureDefinition[]).map((f): [string, FieldMeta] => {
-      const offNote = ` Off hides it from members and sends them to the feed; admins, and anyone given its access key (page.access.${f.id}) under Permissions, can still open it.`;
+      const offNote =
+        f.offNote ??
+        ` Off hides it from members and sends them to the feed; admins, and anyone given its access key (page.access.${f.id}) under Permissions, can still open it.`;
       return [
         featureField(f.id as FeatureId),
         {
@@ -529,7 +531,7 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
  * updatePlatformSettings refuses one that is absent.
  *
  * `features` is here so the switches need no migration: until somebody saves
- * one, the absent row already means "everything on". `club_socials` and
+ * one, the absent row already means every feature at its default. `club_socials` and
  * `membership_payments` are here for the same reason.
  */
 export const SEEDABLE_SETTINGS: Record<string, () => Record<string, unknown>> = {

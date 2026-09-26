@@ -1546,6 +1546,15 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 }
 .lp-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
 .lp-sublinks { font-size: 14px; }
+.lp-guest {
+  display: flex; align-items: center; gap: 12px; max-width: 46ch; margin-bottom: 16px;
+  padding: 12px 14px; border: 1px solid var(--red-border); border-radius: var(--r-md);
+  background: var(--red-wash); color: var(--ink); text-decoration: none; font-size: 14px; line-height: 1.35;
+}
+.lp-guest:hover { border-color: var(--red); }
+.lp-guest > span { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.lp-guest-sub { color: var(--ink-2); font-size: 13px; }
+.lp-guest-icon, .lp-guest-arrow { color: var(--red); flex-shrink: 0; }
 .lp-sublinks a { color: var(--mute); text-decoration: none; border-bottom: 1px solid var(--line); padding-bottom: 1px; }
 .lp-sublinks a:hover { color: var(--red); border-color: var(--red); }
 

@@ -18,6 +18,12 @@ import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
 const PLAYER_APP = join(__dirname, '../../app');
 const ADMIN_APP = join(__dirname, '../../../../admin/src/app');
 
+// The features that gate their index page rather than a layout: the
+// leaderboard, so the profiles under it stay open, and the guest waiver, so a
+// proof link under it outlives the switch.
+const PAGE_GATED: readonly FeatureId[] = ['leaderboard', 'guest_waivers'];
+const gateFile = (id: FeatureId) => (PAGE_GATED.includes(id) ? 'page.tsx' : 'layout.tsx');
+
 // Account, legal and safety paths. None may ever belong to a feature.
 const PROTECTED = [
   '/', '/feed', '/settings', '/legal', '/login', '/signup', '/auth', '/onboarding', '/link',
@@ -55,8 +61,7 @@ describe('the feature registry', () => {
   it('gates every player route with a FeatureGate for its own feature', () => {
     for (const f of FEATURES) {
       for (const route of f.playerRoutes) {
-        // The leaderboard gates its index page, so the profiles under it stay open.
-        const file = f.id === 'leaderboard' ? 'page.tsx' : 'layout.tsx';
+        const file = gateFile(f.id);
         const source = readFileSync(join(PLAYER_APP, route, file), 'utf8');
         expect(source, `${route}/${file}`).toContain(`<FeatureGate feature="${f.id}">`);
       }
@@ -78,7 +83,7 @@ describe('the feature registry', () => {
     for (const f of FEATURES) {
       const key = `page.access.${f.id}`;
       expect(isCapability(key), key).toBe(true);
-      const file = f.id === 'leaderboard' ? 'page.tsx' : 'layout.tsx';
+      const file = gateFile(f.id);
       expect(CAPABILITY_GATES[key as keyof typeof CAPABILITY_GATES].gate, key).toBe(
         `player app${f.playerRoutes[0]}/${file} FeatureGate`,
       );

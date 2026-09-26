@@ -57,9 +57,11 @@ describe('the migrations and the vocabulary', () => {
   // three `accounts.apikey.*` keys, reaching 124, and 00243 adds the seven
   // `page.access.*` keys to switched-off features, reaching 131, and 00244
   // adds the club events keys, reaching 139, and 00247 adds the membership and
-  // socials switch keys, reaching 141. THE LIVE LIST IS THE LAST ONE, and only
-  // the last one.
-  const vocabularySql = migration('00247_');
+  // socials switch keys, reaching 141, and 00254 adds the guest waivers switch
+  // key, reaching 142. THE LIVE LIST IS THE LAST ONE, and only the last one.
+  const vocabularySql = migration('00254_');
+  // 00254 again, under a content name, for the same reason 00247 has one.
+  const guestWaiversVocabularySql = migration('00254_');
   // 00247 again, under a content name, for the same reason 00244 has one.
   const membershipSocialsVocabularySql = migration('00247_');
   // 00244 again, under a content name, for the same reason 00243 has one.
@@ -241,7 +243,7 @@ describe('the migrations and the vocabulary', () => {
     }
   });
 
-  // ...nor in 00247, the newest link and the live list.
+  // ...nor in 00247.
   it('removes nothing in 00247 either, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(clubEventsVocabularySql, 'players_permission_vocabulary_check');
     const after = new Set(arrayLiteralAfter(membershipSocialsVocabularySql, 'players_permission_vocabulary_check'));
@@ -256,6 +258,20 @@ describe('the migrations and the vocabulary', () => {
       'page.access.membership',
       'page.access.socials',
     ]);
+  });
+
+  // ...nor in 00254, the newest link and the live list.
+  it('removes nothing going from 00247 to 00254, which is why it needs no rewrite', () => {
+    const before = arrayLiteralAfter(membershipSocialsVocabularySql, 'players_permission_vocabulary_check');
+    const after = new Set(arrayLiteralAfter(guestWaiversVocabularySql, 'players_permission_vocabulary_check'));
+    expect(before.filter((capability) => !after.has(capability))).toEqual([]);
+  });
+
+  // THE ONE KEY 00254 IS FOR, and nothing else.
+  it('admits exactly page.access.guest_waivers, which is what 00254 is for', () => {
+    const before = new Set(arrayLiteralAfter(membershipSocialsVocabularySql, 'players_permission_vocabulary_check'));
+    const after = arrayLiteralAfter(guestWaiversVocabularySql, 'players_permission_vocabulary_check');
+    expect(after.filter((capability) => !before.has(capability))).toEqual(['page.access.guest_waivers']);
   });
 
   // THE THREE STRINGS THIS MIGRATION IS FOR, named rather than left to the
@@ -357,9 +373,10 @@ describe('the migrations and the vocabulary', () => {
     // vocabulary assertion back to 00093 would check a list that is no longer
     // the live one. The vocabulary pointer moves with every migration that
     // re-adds the CHECK (00097, 00098, 00105, 00223, 00232, 00238, 00243, 00244,
-    // now 00247) while the guard pointer stays where the function is defined.
+    // 00247, now 00254) while the guard pointer stays where the function is
+    // defined.
     const baselineGuardSql = migration('00093_');
-    const baselineSql = migration('00247_');
+    const baselineSql = migration('00254_');
 
     it('pins the same vocabulary the players columns pin', () => {
       const stored = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');

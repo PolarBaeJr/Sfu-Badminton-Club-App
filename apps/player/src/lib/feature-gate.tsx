@@ -1,7 +1,7 @@
 import { cache } from 'react';
 import { redirect } from 'next/navigation';
 import {
-  ALL_FEATURES_ENABLED,
+  DEFAULT_FEATURE_FLAGS,
   ExpectedError,
   featureGate,
   featureLabel,
@@ -20,15 +20,15 @@ import { createServiceRoleClient, getViewer } from './supabase-server';
 // Read with the service-role client because two of the gated routes
 // (/checkin/<token> and /tournaments/checkin) are reached signed out, and
 // settings_select is `TO authenticated`. Never throws: a failed read, or a
-// client that cannot be built, is every feature on.
+// client that cannot be built, is every feature at its default.
 
 /** The switches, once per request. */
 export const getFeatureFlags = cache(async (): Promise<FeatureFlags> => {
   try {
     return await readFeatureFlags(createServiceRoleClient());
   } catch (err) {
-    console.error('[features] could not build the settings client, treating all as on:', err);
-    return { ...ALL_FEATURES_ENABLED };
+    console.error('[features] could not build the settings client, using the defaults:', err);
+    return { ...DEFAULT_FEATURE_FLAGS };
   }
 });
 

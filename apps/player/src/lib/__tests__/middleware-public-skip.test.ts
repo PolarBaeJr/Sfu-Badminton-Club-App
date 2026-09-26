@@ -82,6 +82,8 @@ describe('the middleware skips the auth round trip on public paths', () => {
     '/api/passkey/login',
     '/api/discord/handles',
     '/tournaments/checkin',
+    '/guest-waiver',
+    '/guest-waiver/abc',
   ];
 
   it.each(publicPaths)('builds no Supabase client for %s', async (path) => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   ALL_FEATURES_ENABLED,
+  DEFAULT_FEATURE_FLAGS,
   FEATURES,
   type FeatureDefinition,
   defaultFeaturesValue,
@@ -13,32 +14,57 @@ import {
   readFeatureFlags,
 } from '../features';
 
-// EVERY DOUBT RESOLVES TO "ON". Hiding a feature is not a safety property, so
-// only an explicit `false` in the stored row switches one off.
+// EVERY DOUBT RESOLVES TO THE DEFAULT. Hiding a feature is not a safety
+// property, so only an explicit `false` in the stored row switches a default-on
+// feature off. guest_waivers is the one default-off feature, and only an
+// explicit `true` switches it on.
+
+describe('the defaults', () => {
+  it('has guest waivers off and every other feature on', () => {
+    expect(DEFAULT_FEATURE_FLAGS.guest_waivers).toBe(false);
+    for (const f of FEATURES.filter((f) => f.id !== 'guest_waivers')) {
+      expect(DEFAULT_FEATURE_FLAGS[f.id], f.id).toBe(true);
+    }
+  });
+
+  it('leaves ALL_FEATURES_ENABLED meaning literally everything on', () => {
+    for (const f of FEATURES) expect(ALL_FEATURES_ENABLED[f.id], f.id).toBe(true);
+  });
+});
 
 describe('parseFeatureFlags', () => {
-  it('reads an absent row as every feature on', () => {
-    expect(parseFeatureFlags(null)).toEqual(ALL_FEATURES_ENABLED);
-    expect(parseFeatureFlags(undefined)).toEqual(ALL_FEATURES_ENABLED);
-    expect(parseFeatureFlags({})).toEqual(ALL_FEATURES_ENABLED);
+  it('reads an absent row as every feature at its default', () => {
+    expect(parseFeatureFlags(null)).toEqual(DEFAULT_FEATURE_FLAGS);
+    expect(parseFeatureFlags(undefined)).toEqual(DEFAULT_FEATURE_FLAGS);
+    expect(parseFeatureFlags({})).toEqual(DEFAULT_FEATURE_FLAGS);
   });
 
   it('switches off only the feature stored as an explicit false', () => {
     const flags = parseFeatureFlags({ tournaments_enabled: false });
     expect(flags.tournaments).toBe(false);
-    for (const f of FEATURES.filter((f) => f.id !== 'tournaments')) expect(flags[f.id], f.id).toBe(true);
+    for (const f of FEATURES.filter((f) => f.id !== 'tournaments')) {
+      expect(flags[f.id], f.id).toBe(DEFAULT_FEATURE_FLAGS[f.id]);
+    }
   });
 
   it('reads anything malformed as on', () => {
     for (const value of ['false', 0, null, 'no', [], {}]) {
       expect(parseFeatureFlags({ tournaments_enabled: value }).tournaments, JSON.stringify(value)).toBe(true);
     }
-    expect(parseFeatureFlags('tournaments_enabled=false')).toEqual(ALL_FEATURES_ENABLED);
-    expect(parseFeatureFlags([false])).toEqual(ALL_FEATURES_ENABLED);
+    expect(parseFeatureFlags('tournaments_enabled=false')).toEqual(DEFAULT_FEATURE_FLAGS);
+    expect(parseFeatureFlags([false])).toEqual(DEFAULT_FEATURE_FLAGS);
+  });
+
+  it('switches guest waivers on only for a literal true', () => {
+    expect(parseFeatureFlags({ guest_waivers_enabled: true }).guest_waivers).toBe(true);
+    for (const value of ['true', 1, null, 'yes', [], {}, false]) {
+      expect(parseFeatureFlags({ guest_waivers_enabled: value }).guest_waivers, JSON.stringify(value)).toBe(false);
+    }
   });
 
   it('round-trips the default row', () => {
-    expect(parseFeatureFlags(defaultFeaturesValue())).toEqual(ALL_FEATURES_ENABLED);
+    expect(defaultFeaturesValue().guest_waivers_enabled).toBe(false);
+    expect(parseFeatureFlags(defaultFeaturesValue())).toEqual(DEFAULT_FEATURE_FLAGS);
     expect(Object.keys(defaultFeaturesValue())).toEqual(FEATURES.map((f) => featureField(f.id)));
   });
 });
@@ -54,17 +80,17 @@ describe('readFeatureFlags', () => {
     expect(flags.tournaments).toBe(true);
   });
 
-  it('treats no row as every feature on', async () => {
-    expect(await readFeatureFlags(client({ data: null, error: null }))).toEqual(ALL_FEATURES_ENABLED);
+  it('treats no row as every feature at its default', async () => {
+    expect(await readFeatureFlags(client({ data: null, error: null }))).toEqual(DEFAULT_FEATURE_FLAGS);
   });
 
-  it('treats a failed read as every feature on, and says so', async () => {
+  it('treats a failed read as every feature at its default, and says so', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await readFeatureFlags(client({ data: null, error: { message: 'permission denied' } }))).toEqual(
-      ALL_FEATURES_ENABLED,
+      DEFAULT_FEATURE_FLAGS,
     );
     expect(await readFeatureFlags({ from: () => { throw new Error('socket hang up'); } })).toEqual(
-      ALL_FEATURES_ENABLED,
+      DEFAULT_FEATURE_FLAGS,
     );
     expect(log).toHaveBeenCalledTimes(2);
     log.mockRestore();

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ArrowRight, Swords, TrendingUp, CalendarDays, Trophy } from 'lucide-react';
+import { ArrowRight, Swords, TrendingUp, CalendarDays, Trophy, FileSignature } from 'lucide-react';
 
 type TopEntry = { name: string; elo: number };
 
@@ -10,7 +10,17 @@ const FEATURES = [
   { icon: Trophy, title: 'Run real tournaments', body: 'Brackets, seeding, and placement points — the club’s events, tracked end to end.' },
 ];
 
-export function Landing({ top, seasonName, isAuthenticated }: { top: TopEntry[]; seasonName: string | null; isAuthenticated?: boolean }) {
+export function Landing({
+  top,
+  seasonName,
+  isAuthenticated,
+  guestWaiversOn = false,
+}: {
+  top: TopEntry[];
+  seasonName: string | null;
+  isAuthenticated?: boolean;
+  guestWaiversOn?: boolean;
+}) {
   return (
     <div className="lp">
       {/* Hero */}
@@ -41,6 +51,18 @@ export function Landing({ top, seasonName, isAuthenticated }: { top: TopEntry[];
               View the leaderboard
             </Link>
           </div>
+          {/* Right under the buttons, so a guest at the door sees it on the
+              first phone screen without scrolling. */}
+          {guestWaiversOn && !isAuthenticated && (
+            <Link href="/guest-waiver" className="lp-guest">
+              <FileSignature size={18} className="lp-guest-icon" />
+              <span>
+                <strong>Not a member? Sign the guest waiver</strong>
+                <span className="lp-guest-sub">Playing as a guest? Takes a minute, no account needed.</span>
+              </span>
+              <ArrowRight size={16} className="lp-guest-arrow" />
+            </Link>
+          )}
           <div className="lp-sublinks">
             <Link href="/exec">Meet the executives</Link>
           </div>
