@@ -22,6 +22,27 @@ export function supportsPasskeys(): boolean {
 }
 
 /**
+ * True inside another app's built-in browser (Instagram, Facebook, a plain
+ * WKWebView on iOS, an Android WebView).
+ *
+ * Those views report WebAuthn as supported, but the OS only shows a passkey
+ * sheet to an app entitled for this domain, so the call rejects at once with a
+ * NotAllowedError, which is indistinguishable from the member cancelling. The
+ * result was a button that did nothing at all. Safari, SFSafariViewController
+ * and Chrome on iOS all carry "Safari/" in the user agent; the bare webviews
+ * do not, and Android marks its WebView with "; wv)".
+ */
+export function isEmbeddedWebView(
+  ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent
+): boolean {
+  if (/\b(iPhone|iPad|iPod)\b/.test(ua)) return !/Safari\//.test(ua);
+  return /Android/.test(ua) && /; wv\)/.test(ua);
+}
+
+export const EMBEDDED_WEBVIEW_ERROR =
+  "Passkeys don't work in this app's built-in browser. Open this page in Safari, or use an email code.";
+
+/**
  * The `autocomplete` value the sign-in email field MUST carry for conditional
  * UI to run at all.
  *
@@ -75,6 +96,7 @@ export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
   if (!supportsPasskeys()) {
     return { ok: false, error: 'This device does not support passkeys.' };
   }
+  if (isEmbeddedWebView()) return { ok: false, error: EMBEDDED_WEBVIEW_ERROR };
 
   const optionsRes = await fetch('/api/passkey/register/options', { method: 'POST' });
   if (!optionsRes.ok) {
@@ -104,6 +126,7 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
   if (!supportsPasskeys()) {
     return { ok: false, error: 'This device does not support passkeys.' };
   }
+  if (isEmbeddedWebView()) return { ok: false, error: EMBEDDED_WEBVIEW_ERROR };
 
   // The speculative conditional request (below) may still be waiting in the
   // email field's autofill. Kill it BEFORE minting a new challenge, or the
@@ -203,7 +226,7 @@ const browserConditionalSteps: ConditionalSignInSteps = {
   // Wraps PublicKeyCredential.isConditionalMediationAvailable() and answers
   // false — rather than throwing — when PublicKeyCredential itself is absent,
   // so this single call is the whole feature detection.
-  autofillAvailable: () => browserSupportsWebAuthnAutofill(),
+  autofillAvailable: async () => !isEmbeddedWebView() && (await browserSupportsWebAuthnAutofill()),
 
   requestOptions: async () => {
     const res = await fetch('/api/passkey/login/options', { method: 'POST' });

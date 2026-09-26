@@ -25,6 +25,27 @@ export function supportsPasskeys(): boolean {
   }
 }
 
+/**
+ * True inside another app's built-in browser (Instagram, Facebook, a plain
+ * WKWebView on iOS, an Android WebView).
+ *
+ * Those views report WebAuthn as supported, but the OS only shows a passkey
+ * sheet to an app entitled for this domain, so the call rejects at once with a
+ * NotAllowedError, which is indistinguishable from the member cancelling. The
+ * result was a button that did nothing at all. Safari, SFSafariViewController
+ * and Chrome on iOS all carry "Safari/" in the user agent; the bare webviews
+ * do not, and Android marks its WebView with "; wv)".
+ */
+export function isEmbeddedWebView(
+  ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent
+): boolean {
+  if (/\b(iPhone|iPad|iPod)\b/.test(ua)) return !/Safari\//.test(ua);
+  return /Android/.test(ua) && /; wv\)/.test(ua);
+}
+
+export const EMBEDDED_WEBVIEW_ERROR =
+  "Passkeys don't work in this app's built-in browser. Open this page in Safari, or use an email code.";
+
 // See the player app's copy for the full reasoning: the `webauthn` token must
 // be LAST, and both the browser and @simplewebauthn/browser enforce that.
 export const PASSKEY_AUTOFILL_AUTOCOMPLETE = 'username webauthn';
@@ -60,6 +81,7 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
   if (!supportsPasskeys()) {
     return { ok: false, error: 'This device does not support passkeys.' };
   }
+  if (isEmbeddedWebView()) return { ok: false, error: EMBEDDED_WEBVIEW_ERROR };
 
   // Cancel the speculative autofill request before minting a new challenge —
   // the fetch below would otherwise replace the cookie it is waiting on.
@@ -135,7 +157,7 @@ export async function attemptConditionalSignIn(
 }
 
 const browserConditionalSteps: ConditionalSignInSteps = {
-  autofillAvailable: () => browserSupportsWebAuthnAutofill(),
+  autofillAvailable: async () => !isEmbeddedWebView() && (await browserSupportsWebAuthnAutofill()),
   requestOptions: async () => {
     const res = await fetch(withBase('/api/passkey/login/options'), { method: 'POST' });
     return res.ok ? ((await res.json()) as PublicKeyCredentialRequestOptionsJSON) : null;
