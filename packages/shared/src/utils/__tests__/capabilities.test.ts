@@ -321,16 +321,19 @@ describe('CAPABILITY_GATES', () => {
   // FeatureGate on /guest-waiver and the signing action, merged as
   // SWITCHED_OFF, and `legal.page` gains the console's list of guest signings,
   // its first `also`.
-  it('names 183 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 183 BECAME 185 with photo and video consent (00255): `legal.page` gains the
+  // console's consent list, and `players.read` its fetch of the members on it.
+  it('names 185 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(183);
-    expect(new Set(sites).size).toBe(183);
-    expect(ENFORCEMENT_POINTS).toBe(183);
+    expect(sites.length).toBe(185);
+    expect(new Set(sites).size).toBe(185);
+    expect(ENFORCEMENT_POINTS).toBe(185);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

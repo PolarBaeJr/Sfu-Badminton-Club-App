@@ -63,7 +63,7 @@ describe('the console top bar layout', () => {
     expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({ events: ['/tournaments', '/events'] });
   });
 
-  // The same eleven links nav-drift.test.ts pins for an unrestricted exec, now in
+  // The same twelve links nav-drift.test.ts pins for an unrestricted exec, now in
   // menus. System holds only admin-only sections, so it is gone entirely.
   it('shows an unrestricted exec these menus', () => {
     const visible = visibleFor('exec', UNRESTRICTED);
@@ -72,7 +72,7 @@ describe('the console top bar layout', () => {
       { play: ['/sessions', '/matches', '/seasons'] },
       { events: ['/tournaments'] },
       { members: ['/players'] },
-      { club: ['/announcements', '/fees', '/legal', '/legal/guests'] },
+      { club: ['/announcements', '/fees', '/legal', '/legal/guests', '/legal/media-consent'] },
       '/settings',
     ]);
     expect(flattenEntries(visible).map((item) => item.href).sort()).toEqual(
@@ -151,7 +151,7 @@ describe('the console top bar with a feature switched off', () => {
   });
 
   it('drops Announcements from Club when announcements are off', () => {
-    expect(shape(visibleWith(off('announcements')))).toContainEqual({ club: ['/fees', '/legal', '/legal/guests'] });
+    expect(shape(visibleWith(off('announcements')))).toContainEqual({ club: ['/fees', '/legal', '/legal/guests', '/legal/media-consent'] });
   });
 
   it('never hides an item that belongs to no feature', () => {

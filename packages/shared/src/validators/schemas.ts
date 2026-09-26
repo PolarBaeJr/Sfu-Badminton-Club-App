@@ -813,9 +813,27 @@ export const guestWaiverSchema = z.object({
   documents_accepted: z.literal(true, {
     errorMap: () => ({ message: 'Please accept the waiver and privacy policy' }),
   }),
+  // 00255. Optional and off by default, so a form from before it still validates.
+  media_consent: z.boolean().optional().default(false),
 });
 
 export type GuestWaiverInput = z.infer<typeof guestWaiverSchema>;
+
+// A member's own photo and video consent (00255). No player id: the RPC
+// resolves the caller from the session.
+export const mediaConsentSchema = z.object({
+  media_consent: z.boolean(),
+});
+
+export type MediaConsentInput = z.infer<typeof mediaConsentSchema>;
+
+// A guest's photo and video consent, changed from their proof page by token.
+export const guestMediaConsentSchema = z.object({
+  token: z.string().regex(/^[0-9a-f]{48}$/),
+  media_consent: z.boolean(),
+});
+
+export type GuestMediaConsentInput = z.infer<typeof guestMediaConsentSchema>;
 
 // Typing DELETE is an affirmative act — the server rejects anything else.
 export const accountDeletionSchema = z.object({

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { guestWaiverSchema } from '../schemas';
+import { guestMediaConsentSchema, guestWaiverSchema, mediaConsentSchema } from '../schemas';
 
 // A guest's signing is the one form anybody on the internet can submit, so the
 // schema is the first thing between a POST body and the database.
@@ -52,5 +52,46 @@ describe('guestWaiverSchema', () => {
     const parsed = guestWaiverSchema.parse({ ...valid, waiver_version: '1999-01-01', privacy_version: 'x' });
     expect(parsed).not.toHaveProperty('waiver_version');
     expect(parsed).not.toHaveProperty('privacy_version');
+  });
+});
+
+describe('guestWaiverSchema: photo and video consent (00255)', () => {
+  // Off unless ticked, and a form from before the checkbox still validates.
+  it('defaults media_consent to false', () => {
+    expect(guestWaiverSchema.parse(valid).media_consent).toBe(false);
+    expect(guestWaiverSchema.parse({ ...valid, media_consent: true }).media_consent).toBe(true);
+  });
+
+  it('refuses a non-boolean', () => {
+    expect(guestWaiverSchema.safeParse({ ...valid, media_consent: 'yes' }).success).toBe(false);
+    expect(guestWaiverSchema.safeParse({ ...valid, media_consent: 1 }).success).toBe(false);
+  });
+});
+
+describe('guestMediaConsentSchema', () => {
+  const token = 'a1'.repeat(24);
+
+  it('accepts a 48-character lowercase hex token and a boolean', () => {
+    expect(guestMediaConsentSchema.safeParse({ token, media_consent: false }).success).toBe(true);
+    expect(guestMediaConsentSchema.safeParse({ token, media_consent: true }).success).toBe(true);
+  });
+
+  it('refuses a token of the wrong shape', () => {
+    for (const bad of [token.slice(1), `${token}0`, token.toUpperCase(), 'g'.repeat(48), '']) {
+      expect(guestMediaConsentSchema.safeParse({ token: bad, media_consent: true }).success, bad).toBe(false);
+    }
+  });
+
+  it('requires the consent to be a boolean', () => {
+    expect(guestMediaConsentSchema.safeParse({ token }).success).toBe(false);
+    expect(guestMediaConsentSchema.safeParse({ token, media_consent: 'true' }).success).toBe(false);
+  });
+});
+
+describe('mediaConsentSchema', () => {
+  it('takes a boolean and nothing else', () => {
+    expect(mediaConsentSchema.safeParse({ media_consent: true }).success).toBe(true);
+    expect(mediaConsentSchema.safeParse({ media_consent: null }).success).toBe(false);
+    expect(mediaConsentSchema.safeParse({}).success).toBe(false);
   });
 });

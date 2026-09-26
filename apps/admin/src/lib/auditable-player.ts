@@ -82,6 +82,9 @@ export const AUDITABLE_COLUMNS = [
   'passkey_setup',
   // 00246. Which guided tours they have seen. Harmless, and not identity.
   'tours_seen',
+  // 00255. A member's own photo and video choice. Standing, not identity.
+  'media_consent',
+  'media_consent_changed_at',
   // The two review flags. Both exist BECAUSE an admin act left something for a
   // human to check — a roster claim that withheld privileges (00132), a merge
   // that discarded rows or found the account playing itself (00163) — so an

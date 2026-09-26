@@ -181,6 +181,10 @@ export interface Player {
   inactive_since: string | null;
   /** 00246 - which guided tours this member has finished or skipped: tour key to first-seen time. Written only by mark_tour_seen(), service role. */
   tours_seen: Record<string, string>;
+  /** 00255 - photo and video consent for club promotion. Off by default; written only by set_my_media_consent(). No member grant, so read it through a server action. */
+  media_consent: boolean;
+  /** 00255 - when media_consent last changed, stamped by the database. NULL means never chosen. */
+  media_consent_changed_at: string | null;
   joined_at: string;
   last_active_at: string;
   created_at: string;

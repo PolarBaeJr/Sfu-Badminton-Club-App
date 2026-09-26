@@ -134,6 +134,8 @@ export const PLAYER_EXPORT_COLUMNS = [
   'hide_from_leaderboard',
   'show_activity_status',
   'profile_visibility',
+  'media_consent',
+  'media_consent_changed_at',
   'notification_preferences',
   'tours_seen',
   'onboarding_completed',
@@ -208,6 +210,8 @@ export const AUDIT_JSONB_ALLOWLIST = [
   'hide_from_leaderboard',
   'show_activity_status',
   'profile_visibility',
+  'media_consent',
+  'media_consent_changed_at',
   'onboarding_completed',
   'joined_at',
   'created_at',
@@ -253,7 +257,7 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     // Settings switch for that column because it governed nothing, and handing
     // the stored value back without saying so would recreate exactly the
     // confidence the switch manufactured.
-    why: 'Your own membership record: who you are, your standing with the club, your settings and the permissions your account holds. Two notes on the settings in it: show_activity_status is a stored value that governs nothing in the app today, which is why there is no longer a switch for it, and last_active_at is visible to club officers but to no other member.',
+    why: 'Your own membership record: who you are, your standing with the club, your settings and the permissions your account holds. Two notes on the settings in it: show_activity_status is a stored value that governs nothing in the app today, which is why there is no longer a switch for it, and last_active_at is visible to club officers but to no other member. It also records whether you allow photos and video of you, and when you last changed that.',
   },
   ratings: {
     playerColumns: ['player_id'],

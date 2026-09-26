@@ -107,6 +107,9 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   // back into the admin-only group with it — an exec with a link that bounces
   // them is a bug that has shipped before.
   { path: '/fees', admin: true, exec: true, trainer: false },
+  // Who allows photos. Legal, so an exec's and not a trainer's, even though the
+  // members half of it is roster data a trainer can otherwise read.
+  { path: '/legal/media-consent', admin: true, exec: true, trainer: false },
 
   // Admin territory.
   { path: '/audit', admin: true, exec: false, trainer: false },
@@ -217,6 +220,8 @@ describe('a page-level capability matches what its route resolves to', () => {
     // The guest waiver list. Prefix-matched to '/legal', the same way: it is
     // the Legal section read from another page, not a section of its own.
     { path: '/legal/guests', capability: 'legal.page' },
+    // The photo and video consent list, prefix-matched to '/legal' the same way.
+    { path: '/legal/media-consent', capability: 'legal.page' },
   ];
 
   it.each(PAGE_GATES)('$path is $capability at every level', ({ path, capability }) => {

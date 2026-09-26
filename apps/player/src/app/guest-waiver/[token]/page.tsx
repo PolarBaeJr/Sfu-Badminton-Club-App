@@ -3,10 +3,12 @@ import { notFound } from 'next/navigation';
 import { PageHeader } from '@badminton/ui';
 import { clubDate } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { GuestMediaConsent } from './guest-media-consent';
 
 // A guest's proof of signing. The token is a bearer link, like a calendar feed
 // token: whoever holds it sees the name, the date and the two versions, and
-// never the email, the user agent or the IP hash.
+// never the email, the user agent or the IP hash. It is also where the guest
+// changes their photo and video consent (00255).
 //
 // DELIBERATELY NOT BEHIND THE FEATURE SWITCH. A proof already handed out must
 // keep working after the club switches guest waivers off.
@@ -23,6 +25,8 @@ type GuestWaiverProof = {
   accepted_at: string;
   waiver_version: string;
   privacy_version: string;
+  media_consent: boolean;
+  media_consent_changed_at: string | null;
 };
 
 export default async function GuestWaiverProofPage({
@@ -36,7 +40,7 @@ export default async function GuestWaiverProofPage({
   // Service role: it is the only role granted SELECT on this table (00254).
   const { data, error } = await createServiceRoleClient()
     .from('guest_waiver_signings')
-    .select('full_name, accepted_at, waiver_version, privacy_version')
+    .select('full_name, accepted_at, waiver_version, privacy_version, media_consent, media_consent_changed_at')
     .eq('token', token)
     .maybeSingle();
   if (error) throw new Error(`Could not read the guest waiver signing: ${error.message}`);
@@ -53,6 +57,14 @@ export default async function GuestWaiverProofPage({
         <dd style={{ margin: 0 }}>Version {row.waiver_version}</dd>
         <dt className="muted">Privacy Policy</dt>
         <dd style={{ margin: 0 }}>Version {row.privacy_version}</dd>
+        <dt className="muted">Photos and video</dt>
+        <dd style={{ margin: 0 }}>
+          <GuestMediaConsent
+            token={token}
+            initialConsent={row.media_consent}
+            initialChangedAt={row.media_consent_changed_at}
+          />
+        </dd>
       </dl>
     </div>
   );

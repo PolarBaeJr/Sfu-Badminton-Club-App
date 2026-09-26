@@ -1,5 +1,6 @@
 'use server';
 
+import * as Sentry from '@sentry/nextjs';
 import { createHmac, randomBytes } from 'node:crypto';
 import { headers } from 'next/headers';
 import {
@@ -7,6 +8,7 @@ import {
   featureAccessFor,
   featureGate,
   featureOffMessage,
+  guestMediaConsentSchema,
   guestWaiverSchema,
   parseOrThrow,
   raise,
@@ -37,7 +39,15 @@ export type GuestWaiverSigning = {
   waiver_version: string;
   privacy_version: string;
   reused: boolean;
+  // 00255. Set by a second call after the signing; media_consent_saved is
+  // false when that call failed and the signing stands without it.
+  media_consent: boolean;
+  media_consent_saved: boolean;
 };
+
+// Stands in for the generated return type of set_guest_media_consent, absent
+// from database.gen.ts like the rest of 00254's objects.
+type GuestMediaConsentRow = { media_consent: boolean; media_consent_changed_at: string | null };
 
 // The HINTs sign_guest_waiver raises with, in words a guest can act on.
 const REFUSALS: Record<string, string> = {
@@ -104,7 +114,51 @@ async function signGuestWaiverImpl(input: unknown): Promise<GuestWaiverSigning> 
     if (refusal) throw new ExpectedError(refusal);
     throw raise('DB-000', error, 'Your signing could not be saved. Please try again.');
   }
-  const row = (data as GuestWaiverSigning[] | null)?.[0];
+  const row = (data as Omit<GuestWaiverSigning, 'media_consent' | 'media_consent_saved'>[] | null)?.[0];
   if (!row) throw raise('DB-000', new Error('sign_guest_waiver returned no row'));
-  return row;
+
+  // ALWAYS, not only when ticked. A repeat signing within ten minutes returns
+  // the existing row, so an untick on the repeat has to turn consent off.
+  // A failure here never undoes the signing: the guest is told, and can set
+  // it from the proof page.
+  const consent = await guestMediaConsentRpc(row.token, parsed.media_consent);
+  if (consent.error) {
+    Sentry.captureException(consent.error, { extra: { action: 'signGuestWaiver.media_consent' } });
+    return { ...row, media_consent: false, media_consent_saved: false };
+  }
+  return { ...row, media_consent: consent.row.media_consent, media_consent_saved: true };
+}
+
+async function guestMediaConsentRpc(
+  token: string,
+  consent: boolean,
+): Promise<{ row: GuestMediaConsentRow; error: null } | { row: null; error: { message: string; hint?: string | null } }> {
+  const { data, error } = await createServiceRoleClient().rpc('set_guest_media_consent', {
+    p_token: token,
+    p_consent: consent,
+  });
+  if (error) return { row: null, error };
+  const row = (data as GuestMediaConsentRow[] | null)?.[0];
+  if (!row) return { row: null, error: { message: 'set_guest_media_consent returned no row' } };
+  return { row, error: null };
+}
+
+// A guest changes their photo and video consent from the proof page.
+//
+// NOT BEHIND THE FEATURE SWITCH, like the proof page itself: a proof already
+// handed out must keep working, and so must a withdrawal.
+export async function setGuestMediaConsent(
+  input: unknown,
+): Promise<ActionResult<{ consent: boolean; changedAt: string | null }>> {
+  return runAction(async () => {
+    const parsed = parseOrThrow(guestMediaConsentSchema, input);
+    const { row, error } = await guestMediaConsentRpc(parsed.token, parsed.media_consent);
+    if (error) {
+      if (error.hint === 'guest_media_consent_not_found') {
+        throw new ExpectedError('This proof link is not valid.');
+      }
+      throw raise('DB-000', error, 'Your choice could not be saved. Please try again.');
+    }
+    return { consent: row.media_consent, changedAt: row.media_consent_changed_at ?? null };
+  });
 }

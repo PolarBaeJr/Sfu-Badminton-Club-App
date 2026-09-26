@@ -677,6 +677,18 @@ export async function mergePlayers(
     const admin = await requireCapability('players.merge.write');
     const adminClient = createAdminClient();
 
+    // PHOTO AND VIDEO CONSENT (00255) survives only on the kept row. Read both
+    // before the merge: when they differ, the kept one is turned off below, so
+    // a withdrawal made on the removed account is not lost, and off is the
+    // default the policy promises. A failed read stops the merge rather than
+    // passing for agreement.
+    const { data: consents, error: consentError } = await adminClient
+      .from('players')
+      .select('id, media_consent')
+      .in('id', [keepId, removeId]);
+    if (consentError) throw new Error(consentError.message);
+    const consentDiffers = new Set((consents ?? []).map((c) => c.media_consent)).size > 1;
+
     const { data, error } = await adminClient.rpc('merge_players', {
       p_keep: keepId,
       p_remove: removeId,
@@ -686,6 +698,16 @@ export async function mergePlayers(
     // deletion, same id) — surface it verbatim rather than a generic failure.
     // History no longer raises; since 00163 it comes back in elo_review instead.
     if (error) throw new Error(error.message);
+
+    if (consentDiffers) {
+      const { error: resetError } = await adminClient
+        .from('players')
+        .update({ media_consent: false })
+        .eq('id', keepId);
+      if (resetError) {
+        Sentry.captureException(resetError, { extra: { step: 'merge-media-consent', playerId: keepId } });
+      }
+    }
 
     revalidatePath('/players');
     const row = data as { login_moved?: boolean; elo_review?: unknown } | null;

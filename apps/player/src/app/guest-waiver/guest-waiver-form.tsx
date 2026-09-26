@@ -22,6 +22,7 @@ export function GuestWaiverForm() {
   const [email, setEmail] = useState('');
   const [ofAge, setOfAge] = useState(false);
   const [accepted, setAccepted] = useState(false);
+  const [mediaConsent, setMediaConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [signed, setSigned] = useState<GuestWaiverSigning | null>(null);
@@ -36,6 +37,7 @@ export function GuestWaiverForm() {
         email,
         age_attestation: ofAge,
         documents_accepted: accepted,
+        media_consent: mediaConsent,
       });
       if (res.ok) setSigned(res.data);
       else setError(res.ref ? `${res.error} (reference ${res.code}.${res.ref})` : res.error);
@@ -55,6 +57,13 @@ export function GuestWaiverForm() {
           Signed {clubDate(signed.accepted_at)}. Liability Waiver version {signed.waiver_version}, Privacy Policy
           version {signed.privacy_version}.
         </div>
+        {signed.media_consent_saved === false ? (
+          <div className="alert-danger" role="alert">
+            Your photo and video choice was not saved. You can set it on your proof page.
+          </div>
+        ) : (
+          signed.media_consent && <div style={{ fontSize: 14 }}>Photos and video: allowed.</div>
+        )}
         <div className="signin-notice">
           Your proof of signing has its own page. Open it and bookmark it, or show it at the door:{' '}
           <Link href={proof}>Open your proof page</Link>
@@ -122,6 +131,22 @@ export function GuestWaiverForm() {
           style={CHECK_STYLE}
         />
         <span>I have read and agree to the Liability Waiver and the Privacy Policy above.</span>
+      </label>
+
+      {/* 00255. Optional and separate from the waiver: not required, and off
+          unless the guest ticks it. */}
+      <label htmlFor="guest-media" style={CHECK_ROW_STYLE}>
+        <input
+          id="guest-media"
+          type="checkbox"
+          checked={mediaConsent}
+          onChange={(e) => setMediaConsent(e.target.checked)}
+          style={CHECK_STYLE}
+        />
+        <span>
+          Optional: the club may use photos or video of me from club activities on its website and social media. I
+          can change this later on my proof page.
+        </span>
       </label>
 
       {error && <div className="alert-danger" role="alert">{error}</div>}
