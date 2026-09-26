@@ -17,7 +17,7 @@ import { MemberSection } from './member-section';
 //
 // THE MEMBER HALF, for an approved member while the fees switch is on (or who
 // holds its key): their own statement, which used to be /fees, and the way to
-// pay each unpaid line by e-transfer. See ./member-section.tsx.
+// send a receipt for each unpaid line. See ./member-section.tsx.
 //
 // The page is public (see public-paths.ts); the membership switch is the
 // layout's FeatureGate.
@@ -79,6 +79,7 @@ export default async function MembershipPage() {
               player={player}
               season={statementSeason}
               etransferEmail={payments.etransferEmail}
+              sfssPurchaseUrl={payments.sfssPurchaseUrl}
             />
           )}
 

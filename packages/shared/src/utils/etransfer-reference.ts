@@ -1,9 +1,10 @@
-// READING AN INTERAC E-TRANSFER REFERENCE OUT OF OCR TEXT.
+// READING A PAYMENT REFERENCE OUT OF OCR TEXT.
 //
-// A member uploads a screenshot of their bank's "e-Transfer sent" screen and
-// the browser runs OCR over it. This turns that text into a best guess at the
-// reference number, which pre-fills a field the member can still edit. The
-// guess is a convenience; the field is the answer.
+// A member uploads a screenshot of their bank's "e-Transfer sent" screen, or of
+// the receipt the SFU Rec website gave them, and the browser runs OCR over it.
+// This turns that text into a best guess at the reference or receipt number,
+// which pre-fills a field the member can still edit. The guess is a
+// convenience; the field is the answer.
 //
 // THE FORMAT IS UNVERIFIED. Every bank lays the confirmation out differently
 // and none of the fixtures in the tests is a real screenshot. So this is
@@ -16,9 +17,27 @@
 /** The shape fee_submissions.reference accepts (00248's CHECK). */
 export const ETRANSFER_REFERENCE_PATTERN = /^[A-Za-z0-9-]{6,32}$/;
 
-/** Whether a typed or extracted reference is one the database will accept. */
-export function isPlausibleReference(s: string): boolean {
-  return ETRANSFER_REFERENCE_PATTERN.test(s.trim());
+/**
+ * The shorter one 00253 allows on anything not stored as an e-transfer: an SFU
+ * Rec receipt, or a dues receipt the browser could not place (NULL).
+ */
+export const SFU_REC_REFERENCE_PATTERN = /^[A-Za-z0-9-]{4,32}$/;
+
+/**
+ * Whether a typed or extracted reference is one the database will accept, for
+ * the method the submission will be stored with. Mirrors the CHECK: null (not
+ * detected) takes the short form like 'sfu_rec'. Leaving the method out asks
+ * for the e-transfer shape.
+ */
+export function isPlausibleReference(s: string, method?: string | null): boolean {
+  const strict = method === undefined || method === 'e_transfer';
+  const pattern = strict ? ETRANSFER_REFERENCE_PATTERN : SFU_REC_REFERENCE_PATTERN;
+  return pattern.test(s.trim());
+}
+
+/** Trimmed, with one leading '#' dropped: "#12345678" is how a receipt prints it. */
+export function normaliseReference(s: string): string {
+  return s.trim().replace(/^#\s*/, '');
 }
 
 export interface ExtractedReference {
@@ -30,7 +49,7 @@ export interface ExtractedReference {
 // Case-insensitive. The optional trailing colon, hash or "no." is swallowed so
 // what follows the match is the value.
 const ANCHOR =
-  /(?:reference\s*(?:number|no\.?|#|:)|ref\s*(?:#|:|no\.)|confirmation\s*(?:number|no\.?|#)|transaction\s*(?:id|#|number))\s*[:#.]?/i;
+  /(?:reference\s*(?:number|no\.?|#|:)|ref\s*(?:#|:|no\.)|confirmation\s*(?:number|no\.?|#)|transaction\s*(?:id|#|number)|receipt\s*(?:number|no\.?|#|:)|order\s*(?:number|no\.?|#|id)|invoice\s*(?:number|no\.?|#))\s*[:#.]?/i;
 
 const EMAIL = /\S+@\S+/g;
 const TOKEN = /[A-Za-z0-9-]{6,32}/g;

@@ -3,13 +3,22 @@
 import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ImagePlus, Loader2 } from 'lucide-react';
+import {
+  isPlausibleReference,
+  normaliseReference,
+} from '@badminton/shared/src/utils/etransfer-reference';
+import type { ReceiptMethod } from '@badminton/shared/src/utils/receipt-method';
 import { createClient } from '@/lib/supabase-browser';
 import { submitFeeSubmission } from '@/lib/actions/fee-submissions';
 
 // One unpaid line's "I have paid" form: the screenshot and the reference, both
-// required. Picking a screenshot runs OCR in the browser (./ocr, loaded only
-// then) and pre-fills the reference; the field stays editable and a failed read
-// leaves it empty.
+// required. The member is not asked how they paid. Picking a screenshot runs
+// OCR in the browser (./ocr, loaded only then), which pre-fills the reference
+// and guesses whether it is an e-transfer confirmation or an SFU Rec receipt;
+// the guess goes to the action with the rest, and the exec checks it. The field
+// stays editable and a failed read leaves it empty.
+//
+// The name is from when e-transfer was the only way to pay.
 //
 // The screenshot is uploaded straight to fee-proofs from the browser, into the
 // member's own folder (the one storage path 00248 allows), the way
@@ -20,11 +29,21 @@ const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_BYTES = 8 * 1024 * 1024;
 const EXTENSIONS: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
-export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; duesSeasonId: string | null }) {
+export function EtransferForm({
+  feeId,
+  duesSeasonId,
+  dues,
+}: {
+  feeId: string | null;
+  duesSeasonId: string | null;
+  /** Only dues are sold on the SFU Rec website; every other line is an e-transfer. */
+  dues: boolean;
+}) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [reference, setReference] = useState('');
+  const [detectedMethod, setDetectedMethod] = useState<ReceiptMethod | null>(null);
   const [reading, setReading] = useState(false);
   const [readHint, setReadHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +53,7 @@ export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; d
   async function pick(e: React.ChangeEvent<HTMLInputElement>) {
     setError(null);
     setReadHint(null);
+    setDetectedMethod(null);
     const picked = e.target.files?.[0] ?? null;
     if (!picked) {
       setFile(null);
@@ -52,8 +72,9 @@ export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; d
     setFile(picked);
     setReading(true);
     try {
-      const { readReferenceFromImage } = await import('./ocr');
-      const found = await readReferenceFromImage(picked);
+      const { readReceipt } = await import('./ocr');
+      const { reference: found, method } = await readReceipt(picked);
+      setDetectedMethod(method);
       if (found && !touched.current) {
         setReference(found.value);
         setReadHint('Read from your screenshot, please check it.');
@@ -67,11 +88,20 @@ export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; d
     e.preventDefault();
     setError(null);
     if (!file) {
-      setError('Attach a screenshot of the e-transfer.');
+      setError('Attach a screenshot of your receipt.');
       return;
     }
-    if (!reference.trim()) {
-      setError('Enter the e-transfer reference number.');
+    const cleaned = normaliseReference(reference);
+    if (!cleaned) {
+      setError('Enter the reference or receipt number.');
+      return;
+    }
+    // The action's check, for the method it will store.
+    const storedMethod = dues ? detectedMethod : 'e_transfer';
+    if (!isPlausibleReference(cleaned, storedMethod)) {
+      setError(
+        `The reference is ${storedMethod === 'e_transfer' ? 6 : 4} to 32 letters, digits or hyphens, with no spaces.`,
+      );
       return;
     }
     startTransition(async () => {
@@ -93,8 +123,9 @@ export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; d
         const res = await submitFeeSubmission({
           feeId,
           duesSeasonId,
-          reference: reference.trim(),
+          reference: cleaned,
           screenshotPath: path,
+          detectedMethod,
         });
         if (!res.ok) {
           setError(res.error);
@@ -102,6 +133,7 @@ export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; d
         }
         setFile(null);
         setReference('');
+        setDetectedMethod(null);
         setReadHint(null);
         if (fileInput.current) fileInput.current.value = '';
         router.refresh();
@@ -116,7 +148,7 @@ export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; d
   return (
     <form onSubmit={submit} style={{ display: 'grid', gap: 10, marginTop: 12 }}>
       <div style={{ display: 'grid', gap: 4, fontSize: 13 }}>
-        <span>Screenshot of the e-transfer</span>
+        <span>Screenshot of your receipt</span>
         {/* The native picker's "Choose file / No file chosen" cannot be styled,
             so the input is visually hidden inside a button-styled label. */}
         <div className="file-pick">
@@ -136,7 +168,7 @@ export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; d
         </div>
       </div>
       <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>
-        <span>Reference number</span>
+        <span>Reference or receipt number</span>
         <input
           type="text"
           className="input-base"
@@ -146,7 +178,7 @@ export function EtransferForm({ feeId, duesSeasonId }: { feeId: string | null; d
             setReadHint(null);
             setReference(e.target.value);
           }}
-          placeholder={reading ? 'Reading your screenshot...' : 'e.g. CA1a2B3c4D'}
+          placeholder={reading ? 'Reading your screenshot...' : 'e.g. CA1a2B3c4D or 12345678'}
           maxLength={32}
           autoComplete="off"
           spellCheck={false}

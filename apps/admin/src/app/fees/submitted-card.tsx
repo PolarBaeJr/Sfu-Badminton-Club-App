@@ -1,14 +1,19 @@
+import { formatPaymentMethod } from '@badminton/shared';
 import { Badge, Card, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { createAdminClient } from '@/lib/supabase-server';
 import { loadPendingSubmissions } from '@/lib/fee-submissions';
 import { CardHeading } from './card-heading';
 import { SubmissionActions } from './submission-actions';
 
-// E-TRANSFER RECEIPTS WAITING FOR AN EXEC (00248): dues and club events,
-// oldest first. Rendered only for a holder of fees.clubfees.markpaid.write,
+// PAYMENT RECEIPTS WAITING FOR AN EXEC (00248, 00253): dues and club events,
+// oldest first. "Paid by" is what the member's browser read off the receipt;
+// Unclear when it could not tell, and confirming then asks. Rendered only for a holder of fees.clubfees.markpaid.write,
 // the capability that settles them; tournament entries are on their own page.
 
 const money = (cents: number | null) => (cents != null ? `$${(cents / 100).toFixed(2)}` : 'No amount');
+
+const paidBy = (method: string | null) =>
+  method ? formatPaymentMethod(method) : <Badge variant="warning">Unclear</Badge>;
 
 export async function SubmittedCard() {
   const submissions = await loadPendingSubmissions(createAdminClient(), 'club');
@@ -17,7 +22,7 @@ export async function SubmittedCard() {
     <Card padding={false}>
       <CardHeading
         title="Submitted receipts"
-        sub="E-transfers members say they sent. Check each reached the club account, then confirm or reject it."
+        sub="Receipts members sent for an e-transfer or an SFU Rec purchase. Check each against the club account or SFU Rec, then confirm or reject it."
       />
       {submissions.length === 0 ? (
         <EmptyState title="Nothing waiting" description="No member has a receipt waiting for review." />
@@ -35,6 +40,7 @@ export async function SubmittedCard() {
               value={<Atomic>{money(s.amountCents)}</Atomic>}
               badges={s.withdrawn ? <Badge variant="warning">Withdrawn</Badge> : undefined}
               fields={[
+                { label: 'Paid by', value: paidBy(s.method) },
                 { label: 'Reference', value: <Atomic className="font-mono text-xs">{s.reference}</Atomic> },
                 { label: 'Sent', value: new Date(s.submittedAt).toLocaleDateString('en-CA', { timeZone: 'America/Vancouver' }) },
               ]}
@@ -46,6 +52,8 @@ export async function SubmittedCard() {
                   amount={money(s.amountCents)}
                   reference={s.reference}
                   proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
+                  method={s.method}
+                  feeType={s.feeType}
                 />
               }
             />
@@ -57,6 +65,7 @@ export async function SubmittedCard() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Member</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">For</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Amount</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Paid by</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Reference</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Sent</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Actions</th>
@@ -82,6 +91,7 @@ export async function SubmittedCard() {
                   <td className="px-4 py-3 text-right">
                     <Atomic className="font-mono text-[var(--text-primary)]">{money(s.amountCents)}</Atomic>
                   </td>
+                  <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{paidBy(s.method)}</td>
                   <td className="px-4 py-3">
                     <Atomic className="font-mono text-xs">{s.reference}</Atomic>
                   </td>
@@ -96,6 +106,8 @@ export async function SubmittedCard() {
                       amount={money(s.amountCents)}
                       reference={s.reference}
                       proofHref={s.hasScreenshot ? `/fees/proof/${s.id}` : null}
+                      method={s.method}
+                      feeType={s.feeType}
                     />
                   </td>
                 </tr>

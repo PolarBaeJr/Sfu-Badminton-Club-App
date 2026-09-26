@@ -526,17 +526,20 @@ export const feeMarkSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 
-// A member's e-transfer receipt (00248). Exactly one of the two ids: feeId for
-// a fee row that exists, duesSeasonId for this season's dues when the member
-// has no dues row yet. The reference is re-checked against the column's CHECK
-// by isPlausibleReference; the path against the member's own folder by the
-// action.
+// A member's payment receipt (00248, 00253). Exactly one of the two ids: feeId
+// for a fee row that exists, duesSeasonId for this season's dues when the
+// member has no dues row yet. detectedMethod is what the browser read off the
+// screenshot, a hint the action clamps by the fee's kind. The reference is
+// re-checked against the column's CHECK by isPlausibleReference once the stored
+// method is known (4 characters is only enough for an SFU Rec receipt); the
+// path against the member's own folder by the action.
 export const feeSubmissionSchema = z
   .object({
     feeId: z.string().uuid().nullable(),
     duesSeasonId: z.string().uuid().nullable(),
-    reference: z.string().trim().min(6, 'The reference is at least 6 characters').max(32, 'The reference is at most 32 characters'),
-    screenshotPath: z.string().min(1, 'Attach a screenshot of the e-transfer').max(300),
+    reference: z.string().trim().min(4, 'The reference is at least 4 characters').max(32, 'The reference is at most 32 characters'),
+    screenshotPath: z.string().min(1, 'Attach a screenshot of your receipt').max(300),
+    detectedMethod: z.enum(['e_transfer', 'sfu_rec']).nullable().optional(),
   })
   .strict()
   .refine((v) => (v.feeId === null) !== (v.duesSeasonId === null), {

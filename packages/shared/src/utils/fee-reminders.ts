@@ -31,7 +31,7 @@ export interface FeePayer {
 }
 
 /**
- * The lines a member can pay by e-transfer: unsettled, and not a
+ * The lines a member can pay and send a receipt for: unsettled, and not a
  * reinstatement (those are settled with an exec, never by a receipt). Execs
  * and fee-exempt members are charged none of the rest, so they get nothing.
  */

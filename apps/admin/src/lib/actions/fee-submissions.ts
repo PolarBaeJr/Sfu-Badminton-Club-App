@@ -2,7 +2,15 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { ExpectedError, parseOrThrow, readFeatureFlags } from '@badminton/shared';
+import {
+  ETRANSFER_REFERENCE_PATTERN,
+  ExpectedError,
+  RECEIPT_METHODS,
+  formatPaymentMethod,
+  isReceiptMethod,
+  parseOrThrow,
+  readFeatureFlags,
+} from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { requireCapability } from './_shared';
 import { logAdminAudit } from '../audit';
@@ -10,7 +18,7 @@ import { notifyPlayers } from '../notify';
 import { runAction, type ActionResult } from '../action-result';
 import { duesFor, loadOutstandingMembers, submissionCapability } from '../fee-submissions';
 
-// E-TRANSFER RECEIPTS (00248): an exec confirms or rejects what a member sent,
+// RECEIPTS (00248, 00253): an exec confirms or rejects what a member sent,
 // and reminds members who have not sent one.
 //
 // EVERY EXPORTED PARAMETER IS A CLIENT-CONTROLLED POST FIELD. Ids are
@@ -18,8 +26,19 @@ import { duesFor, loadOutstandingMembers, submissionCapability } from '../fee-su
 // read here, never from anything the browser says about it. The settling
 // itself is one locked RPC (review_fee_submission_confirm), so two execs
 // confirming at once cannot both write.
+//
+// How it was paid is the method stored on the submission, which the member's
+// browser read off the receipt. The exec's pick is read only when none was
+// stored; a wrong stored method is corrected with Mark unpaid, then Mark paid.
 
-type SubmissionRow = { id: string; club_fee_id: string; player_id: string; status: string };
+type SubmissionRow = {
+  id: string;
+  club_fee_id: string;
+  player_id: string;
+  status: string;
+  method: string | null;
+  reference: string;
+};
 type FeeRow = { id: string; fee_type: string; tournament_id: string | null; amount_cents: number | null };
 
 const NOT_FOUND = 'That receipt no longer exists.';
@@ -30,6 +49,9 @@ const REVIEW_REFUSALS: Record<string, string> = {
   already_paid: 'That fee is already settled. The receipt was left as it is.',
   no_amount: 'That fee has no amount recorded. Record one before confirming.',
   bad_reason: 'Give a reason of 3 to 500 characters.',
+  needs_method: 'Say how this was paid before confirming.',
+  bad_method: 'That is not how this fee can be paid. Only membership dues are sold on the SFU Rec website.',
+  short_reference: 'That reference is too short for an e-transfer, which has 6 to 32 characters. A 4 or 5 character number is an SFU Rec receipt.',
 };
 
 /** The submission, its fee, and the capability that settles it, checked. */
@@ -38,7 +60,7 @@ async function authorise(id: string) {
   const adminClient = createAdminClient();
   const { data: sub, error } = await adminClient
     .from('fee_submissions')
-    .select('id, club_fee_id, player_id, status')
+    .select('id, club_fee_id, player_id, status, method, reference')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(`Could not read that receipt: ${error.message}`);
@@ -56,7 +78,7 @@ async function authorise(id: string) {
   // exist.
   const actor = await requireCapability(capability ?? 'fees.clubfees.markpaid.write');
   if (!sub || !fee) throw new ExpectedError(NOT_FOUND);
-  if (!capability) throw new ExpectedError('This fee is not settled by e-transfer receipt.');
+  if (!capability) throw new ExpectedError('This fee is not settled by receipt.');
   return { adminClient, actor, sub: sub as SubmissionRow, fee: fee as FeeRow };
 }
 
@@ -65,15 +87,25 @@ function revalidate(fee: FeeRow) {
   if (fee.tournament_id) revalidatePath(`/tournaments/${fee.tournament_id}/fees`);
 }
 
-export async function confirmFeeSubmission(id: string): Promise<ActionResult> {
-  return runAction(() => confirmImpl(id));
+export async function confirmFeeSubmission(id: string, method?: string): Promise<ActionResult> {
+  return runAction(() => confirmImpl(id, method));
 }
 
-async function confirmImpl(id: string): Promise<void> {
+async function confirmImpl(id: string, method?: string): Promise<void> {
+  const picked = parseOrThrow(z.enum(RECEIPT_METHODS).optional(), method);
   const { adminClient, actor, sub, fee } = await authorise(id);
+  const effective = isReceiptMethod(sub.method) ? sub.method : picked;
+  if (!effective) throw new ExpectedError(REVIEW_REFUSALS.needs_method!);
+  if (effective === 'sfu_rec' && fee.fee_type !== 'dues') {
+    throw new ExpectedError(REVIEW_REFUSALS.bad_method!);
+  }
+  if (effective === 'e_transfer' && !ETRANSFER_REFERENCE_PATTERN.test(sub.reference)) {
+    throw new ExpectedError(REVIEW_REFUSALS.short_reference!);
+  }
   const { data, error } = await adminClient.rpc('review_fee_submission_confirm', {
     p_submission_id: sub.id,
     p_actor: actor.id,
+    p_method: effective,
   });
   if (error) throw new Error(`The receipt was not confirmed: ${error.message}`);
   if (data !== 'ok') throw new ExpectedError(REVIEW_REFUSALS[data as string] ?? 'The receipt was not confirmed.');
@@ -86,8 +118,8 @@ async function confirmImpl(id: string): Promise<void> {
       target_type: 'club_fee',
       target_id: fee.id,
       old_value: { paid: false },
-      new_value: { paid: true, method: 'e_transfer', fee_submission_id: sub.id, amount_cents: fee.amount_cents },
-      reason: 'E-transfer receipt confirmed',
+      new_value: { paid: true, method: effective, fee_submission_id: sub.id, amount_cents: fee.amount_cents },
+      reason: `Receipt confirmed (${formatPaymentMethod(effective)})`,
     },
     { submissionId: sub.id },
   );
@@ -130,7 +162,7 @@ async function rejectImpl(id: string, reason: string): Promise<void> {
   // or not the bell row commits. In-app only.
   await notifyPlayers(adminClient, [sub.player_id], {
     type: 'general',
-    title: 'Your e-transfer receipt was not accepted',
+    title: 'Your payment receipt was not accepted',
     body: why,
     metadata: { kind: 'fee_submission_rejected', fee_submission_id: sub.id },
   });
@@ -180,7 +212,7 @@ async function remindImpl(playerIds: string[]): Promise<{ sent: number; skipped:
   const { delivered } = await notifyPlayers(adminClient, members.map((m) => m.id), {
     type: 'general',
     title: 'A reminder to pay your club fees',
-    body: 'You have fees unpaid. Pay by e-transfer on the Membership page and upload your receipt.',
+    body: 'You have fees unpaid. Pay on the Membership page and upload your receipt.',
     metadata: { kind: 'fee_payment_reminder' },
   });
   if (delivered.length === 0) throw new Error('The reminders could not be sent. Try again.');

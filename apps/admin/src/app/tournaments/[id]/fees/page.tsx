@@ -120,6 +120,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         amount={money(s.amountCents)}
         reference={s.reference}
         proofHref={s.hasScreenshot ? `/tournaments/${id}/fees/proof/${s.id}` : null}
+        method={s.method}
+        feeType="tournament"
       />
     ) : null;
   };

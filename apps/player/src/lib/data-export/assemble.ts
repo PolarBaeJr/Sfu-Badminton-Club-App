@@ -665,16 +665,17 @@ export async function assembleMemberExport(
     })),
   ];
 
-  // E-transfer receipts they sent (00248). The screenshot is a stored file,
-  // so the file says whether one is held rather than where; the exec who
-  // reviewed it is a role. Receipts they reviewed as an officer are somebody
-  // else's payment and are not read at all.
+  // Receipts they sent (00248, 00253), with how they were paid. The screenshot
+  // is a stored file, so the file says whether one is held rather than where;
+  // the exec who reviewed it is a role. Receipts they reviewed as an officer
+  // are somebody else's payment and are not read at all.
   data.fee_submissions = (await reader.all('fee_submissions', (q) => q.eq('player_id', playerId))).map(
     (row) => ({
       id: row.id,
       club_fee_id: row.club_fee_id,
       status: row.status,
       reference: row.reference,
+      method: row.method,
       reject_reason: row.reject_reason,
       submitted_at: row.submitted_at,
       reviewed_at: row.reviewed_at,
