@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
-import { enrollPasskey, supportsPasskeys } from '@/lib/passkey-client';
+import {
+  enrollPasskey,
+  keepPasskeyEnrollmentFresh,
+  primePasskeyEnrollment,
+  refreshPasskeyEnrollment,
+  supportsPasskeys,
+} from '@/lib/passkey-client';
 import { listPasskeys, deletePasskey, passkeysConfigured, type PasskeySummary } from '@/lib/actions/passkeys';
 
 function formatDate(value: string | null): string {
@@ -54,6 +60,14 @@ export function PasskeyManager() {
     void passkeysConfigured().then(setConfigured);
   }, [refresh]);
 
+  // Fetch the enrolment options while the Add button is on screen, so the tap
+  // can open the passkey sheet synchronously (iOS requires it).
+  useEffect(() => {
+    if (!supported || configured !== true) return;
+    primePasskeyEnrollment();
+    return keepPasskeyEnrollmentFresh();
+  }, [supported, configured]);
+
   async function handleAdd() {
     setBusy(true);
     const result = await enrollPasskey();
@@ -61,6 +75,7 @@ export function PasskeyManager() {
     if (result.ok) {
       toast('Passkey added', 'success');
       await refresh();
+      primePasskeyEnrollment();
     } else if (result.error) {
       toast(result.error, 'error');
     }
@@ -76,6 +91,7 @@ export function PasskeyManager() {
     }
     toast('Passkey removed', 'success');
     await refresh();
+    refreshPasskeyEnrollment();
   }
 
   if (!supported) {
