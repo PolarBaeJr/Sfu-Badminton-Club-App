@@ -289,9 +289,11 @@ body {
   background-attachment: fixed;
 }
 
+/* Neutral, not the brand red: a solid red block over a whole card read as an
+   error state. A tint of the text colour works in both themes and keeps the
+   selected text its own colour. */
 ::selection {
-  background: var(--red);
-  color: #fff;
+  background: color-mix(in oklab, var(--ink) 24%, transparent);
 }
 
 /* Scrollbar */
@@ -387,6 +389,64 @@ body {
   height: 2px; background: var(--red);
 }
 .nav-item .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--red); }
+
+/* A nav group: the trigger is a .nav-item button, so it takes the same look and
+   the same active underline. The panel is portalled to <body>, which is why its
+   rules are top-level and not scoped under .topbar. */
+.nav-menu {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 4px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.nav-menu a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: var(--r-md);
+  color: var(--mute); font-weight: 600; font-size: 12px;
+  text-transform: uppercase; letter-spacing: .08em;
+  transition: color .15s, background-color .15s;
+}
+.nav-menu a:hover, .nav-menu a:focus-visible { color: var(--ink); background: var(--surface-2); outline: none; }
+.nav-menu a[aria-current="page"] { color: var(--ink); box-shadow: inset 2px 0 0 var(--red); }
+
+/* Phone only, like the tab bar it stands in for: the pages behind a grouped
+   tab (Events) as a segmented switch. The desktop nav has its own menu. */
+.group-switch {
+  display: none;
+  margin-bottom: 18px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.group-switch > a {
+  flex: 1; min-height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: calc(var(--r-md) - 3px);
+  color: var(--mute); font-weight: 600; font-size: 13px;
+}
+.group-switch > a.active { background: var(--bg); color: var(--ink); box-shadow: inset 0 -2px 0 var(--red); }
+@media (max-width: 980px) { .group-switch { display: flex; } }
+
+/* The Events tab's menu: rises from the tab, 200px wide, above the tab bar (z 40). */
+.tab-menu-scrim { position: fixed; inset: 0; z-index: 44; }
+.tab-menu {
+  position: fixed; z-index: 45; width: 200px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: 0 10px 30px color-mix(in oklab, #000 35%, transparent);
+  animation: tab-menu-in .14s ease-out;
+}
+.tab-menu > a {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 44px; padding: 0 12px;
+  border-radius: calc(var(--r-md) - 4px);
+  color: var(--ink); font-weight: 600; font-size: 14px;
+}
+.tab-menu > a:active { background: var(--surface-2); }
+.tab-menu > a.active { color: var(--red); }
+@keyframes tab-menu-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .tab-menu { animation: none; } }
 
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 
@@ -501,6 +561,12 @@ body {
 .btn-sm      { padding: 6px 10px; font-size: 12px; }
 .btn-lg      { padding: 12px 22px; font-size: 14px; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
+/* Styled file picker: a ghost button label around a visually hidden input. */
+.file-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.file-pick-button { position: relative; }
+.file-pick-button:focus-within { outline: 2px solid var(--red); outline-offset: 2px; }
+.file-pick-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+.file-pick-name { color: var(--ink-3, var(--ink-2)); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
 .btn-ghost-inverse { color: var(--hero-fg); border-color: color-mix(in oklab, var(--hero-fg) 30%, transparent); }
 .btn-ghost-inverse:hover { background: color-mix(in oklab, var(--hero-fg) 8%, transparent); }
 .btn-danger-ghost {
@@ -749,6 +815,74 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   font-size: 13px;
   padding: 6px 0;
 }
+
+/* SIGN-IN SCREENS (/login, /signup). Page-scoped; .auth and .auth-card stay onboarding's. */
+.signin-shell {
+  /* The page renders inside the layout's .page (max-width, padding) with the
+     legal footer below it, so the backdrop cannot be this box's background: it
+     would paint as a panel. It is a fixed full-screen layer behind the content
+     instead, and this box only centres the card. position + z-index make this a
+     stacking context, so the layers' z-index: -1 lands above body's own
+     background (which would otherwise cover them) and below the card. */
+  min-height: calc(100dvh - 200px); display: grid; place-items: center; padding-block: 24px;
+  position: relative; z-index: 0;
+}
+.signin-shell::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(ellipse at top, color-mix(in oklab, var(--red) 9%, transparent) 0%, transparent 55%),
+    radial-gradient(ellipse at bottom right, color-mix(in oklab, var(--ink) 5%, transparent) 0%, transparent 50%);
+}
+.signin-grid {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .6;
+  background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
+}
+.signin-wrap { position: relative; z-index: 1; width: 100%; max-width: 400px; }
+.signin-glow {
+  position: absolute; inset: -16px; border-radius: var(--r-xl); pointer-events: none; filter: blur(32px); opacity: .45;
+  background: linear-gradient(135deg, color-mix(in oklab, var(--red) 40%, transparent), transparent 60%);
+}
+.signin-card {
+  position: relative; display: flex; flex-direction: column; gap: 22px; padding: 28px 24px;
+  background: var(--surface); border: 1px solid color-mix(in oklab, var(--red) 18%, var(--line));
+  border-radius: var(--r-xl);
+  box-shadow: 0 0 40px color-mix(in oklab, var(--red) 7%, transparent), 0 8px 32px color-mix(in oklab, var(--ink) 10%, transparent);
+}
+.signin-head { text-align: center; padding-top: 4px; }
+/* Used WITH .brand-mark, which it resizes. */
+.signin-mark { width: 56px; height: 56px; border-radius: var(--r-lg); margin: 0 auto 16px; }
+.signin-title {
+  font-family: var(--display); font-weight: 700; font-size: 30px; line-height: 1; letter-spacing: .2em;
+  text-transform: uppercase; color: var(--red); margin: 0;
+}
+.signin-sub { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--mute); margin-top: 8px; }
+.signin-heading { text-align: center; }
+.signin-heading h2 { font-family: var(--display); font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 6px 0 0; }
+.signin-heading .page-eyebrow { justify-content: center; }
+.signin-icon {
+  width: 64px; height: 64px; border-radius: 999px; margin: 0 auto 14px; display: grid; place-items: center;
+  color: var(--red); background: var(--red-wash); border: 1px solid var(--red-border);
+}
+.signin-cta { width: 100%; justify-content: center; height: 48px; box-shadow: 0 4px 16px color-mix(in oklab, var(--red) 25%, transparent); }
+.signin-alt { width: 100%; justify-content: center; height: 48px; gap: 10px; }
+.signin-code { font-family: var(--mono); font-size: 24px; letter-spacing: .4em; text-align: center; }
+.signin-links { display: flex; justify-content: center; align-items: center; gap: 10px; font-size: 12px; color: var(--mute); flex-wrap: wrap; }
+.signin-links button, .signin-links a {
+  background: none; border: 0; padding: 0; color: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 4px;
+}
+.signin-links button:disabled { opacity: .55; cursor: not-allowed; }
+.signin-switch { text-align: center; font-size: 13px; color: var(--mute); }
+.signin-switch a { color: var(--red); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.signin-notice {
+  font-size: 13px; color: var(--ink-2); background: var(--red-wash); border: 1px solid var(--red-border);
+  padding: 10px 12px; border-radius: var(--r-md);
+}
+.signin-notice a { color: var(--red); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.signin-legal { font-size: 12px; text-align: center; color: var(--mute); }
+.signin-legal a { color: inherit; text-decoration: underline; }
 
 /* Auth split-screen */
 @media (max-width: 980px) {
@@ -1960,37 +2094,6 @@ html, body { overflow-x: clip; }
 .session-stats > * { padding-left: 14px; border-left: 1px solid var(--line); }
 .session-stats > *:first-child { padding-left: 0; border-left: 0; }
 
-/* Check-in is the most time-critical action in the product — it is used while a
-   queue forms behind you — so it is pinned under the thumb rather than left at
-   the end of a scroll.
-   `sticky`, not `fixed`: a sticky element stays in the document, so it cannot
-   cover the last row of the river and needs no compensating page padding. The
-   bottom offset clears .mobile-tabbar (6px + a 48px min-height + 6px + the safe
-   area, see the .mobile-tabbar rules above) and the z-index stays BELOW the tab
-   bar's 40, so if the two ever meet the navigation wins. */
-.feed-checkin-bar {
-  position: sticky;
-  bottom: 24px;
-  z-index: 30;
-  padding-top: 14px;
-  /* Opaque, because a sticky element floats over whatever it is currently
-     covering and a translucent primary button over a list of match results is
-     unreadable. The page background rather than the card surface: this is a
-     bar attached to the viewport, not a card. */
-  background: var(--bg);
-}
-/* The bar is the width of the page on a phone, which is what a bottom bar
-   should be; on a desktop a full-width red slab is a shout, so cap it and let
-   it sit under the sidebar it belongs to. */
-@media (min-width: 981px) {
-  .feed-checkin-bar { max-width: 320px; margin-left: auto; }
-}
-@media (max-width: 980px) {
-  .feed-checkin-bar {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 4.75rem);
-  }
-}
-
 /* The mockup's header has a hairline under it — it separates the identity
    block from the river, which is otherwise also hairline-ruled rows. */
 .feed-header {
@@ -2426,24 +2529,12 @@ html, body { overflow-x: clip; }
    whose whole rule is fewer, bigger things. Nothing the phone
    already had is hidden by it.
 
-   The one exception is the check-in button, which is not extra:
-   it exists twice in the document because it cannot simply MOVE
-   into the rail. .feed-checkin-bar is `position: sticky`, and a
-   sticky element only pins while its containing block is on
-   screen — nested in the rail it would appear on a phone only
-   after you had scrolled past the entire river, which is the
-   opposite of the point. So the phone keeps its thumb-reachable
-   bar, the desktop gets the card, and exactly one is displayed.
-
    `display: block` on the shown state, so anything using this
    must not also set display inline — an inline style would beat
    the `none` and leak the card onto the phone. */
 .wide-desktop-only { display: none; }
 @media (min-width: 1101px) {
   .wide-desktop-only { display: block; }
-  /* There is no thumb to reach on a laptop, so the floating bar
-     retires in favour of the rail card above. */
-  .feed-checkin-bar { display: none; }
 }
 
 /* /sessions: with no closed sessions yet, Upcoming used to be the
@@ -4139,6 +4230,132 @@ a.cal-ev:hover { filter: brightness(1.15); }
 @media (min-width: 1101px) {
   .sched-rail-hidden-phone { display: flex; }
 }
+
+/* ════════════════════════════════════════════════════════════
+   HOME (/feed): SCHEDULE FIRST, ACTIVITY BESIDE
+   The schedule is the main column and the club's activity the
+   side column from 1101px up; below that the DOM order is the
+   phone's order and nothing is repositioned. Phones get the week
+   strip, 761px and up the month grid: the grid's 620px floor and
+   88px cells would make it a sideways scroll about 500px tall on
+   a phone.
+   ════════════════════════════════════════════════════════════ */
+
+/* `min-width: 0` on every child is load-bearing: .cal-grid's 620px
+   floor would otherwise widen the page, the same bug documented
+   at .sched-wide > *. */
+.home-grid { display: grid; gap: 20px; }
+.home-grid > * { min-width: 0; }
+@media (max-width: 980px) { .home-grid { gap: 14px; } }
+@media (min-width: 1101px) {
+  .home-grid {
+    grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+.home-grid.is-single { grid-template-columns: minmax(0, 1fr); max-width: 760px; }
+
+.home-main, .home-side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.home-banners { margin-bottom: 20px; }
+
+.home-week { display: block; }
+.home-month { display: none; }
+@media (min-width: 761px) {
+  .home-week { display: none; }
+  .home-month { display: block; }
+}
+
+.week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.week-cell { min-width: 0; }
+.week-day {
+  min-height: 64px; height: 100%;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: inherit;
+  text-decoration: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.week-day.has-items { background: var(--surface); }
+.week-day.is-today { box-shadow: inset 0 0 0 2px var(--red); }
+.week-dow {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+}
+.week-num { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; }
+.week-day.is-today .week-num { color: var(--red); font-weight: 700; }
+.week-marks { display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%; }
+.week-mark { height: 4px; width: 100%; border-radius: 2px; }
+.week-more { font-family: var(--mono); font-size: 9px; color: var(--mute); text-align: center; line-height: 1; }
+
+/* One colour per tone, shared by the strip's marks and the month
+   grid's legend swatches. Solid tokens only. */
+.week-mark.is-open, .cal-swatch.is-open { background: var(--win); }
+.week-mark.is-closed, .cal-swatch.is-closed { background: var(--line-2); }
+.week-mark.is-club, .cal-swatch.is-club { background: var(--gold); }
+.week-mark.is-tournament, .cal-swatch.is-tournament { background: var(--ink-2); }
+.week-mark.is-cancelled, .cal-swatch.is-cancelled { background: var(--line-2); }
+
+/* A club event or tournament in the agenda: a compact row, not a
+   session card, because its controls live on its own page. */
+.home-row {
+  display: flex; gap: 12px; align-items: center;
+  padding: 14px 16px; min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+.home-row-title { font-weight: 600; font-size: 15px; min-width: 0; overflow-wrap: anywhere; }
+.home-row-meta { font-family: var(--mono); font-size: 11px; color: var(--mute); margin-top: 4px; }
+.home-row .is-cancelled { text-decoration: line-through; color: var(--mute); }
+/* The folded rest of the term under Up next. The summary reads as a quiet
+   full-width button; the rows inside keep the .sched-day rhythm. */
+.home-more { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.home-more > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  text-align: center;
+  font-size: 13px;
+  color: var(--mute);
+}
+.home-more > summary::-webkit-details-marker { display: none; }
+.home-more > summary:hover { color: var(--ink); border-color: color-mix(in oklab, var(--ink) 30%, transparent); }
+.home-more > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.home-more[open] > summary { margin-bottom: 22px; }
+.home-note { font-size: 13px; color: var(--mute); margin: 12px 0 0; }
+
+.home-notice {
+  display: block;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+  border-left: 3px solid var(--gold);
+  color: inherit;
+  text-decoration: none;
+}
+.home-activity-foot {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 16px; padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.cal-ev-cancelled { color: var(--mute); }
+.cal-ev-cancelled .cal-ev-name { text-decoration: line-through; }
+.cal-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  margin: 8px 0 0;
+}
+.cal-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.cal-swatch { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
 
 /* ── ≥1101px: the only place this screen states a placement ── */
 @media (min-width: 1101px) {

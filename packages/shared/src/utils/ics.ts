@@ -9,6 +9,11 @@ import {
   FALLBACK_CHECKIN_SETTINGS,
   type CheckinSettings,
 } from './session-window';
+import {
+  CLUB_EVENT_DEFAULT_DURATION_MINUTES,
+  CLUB_EVENT_KIND_LABELS,
+  type ClubEventKind,
+} from './club-events';
 
 export interface ICSSessionFields {
   id: string;
@@ -18,6 +23,19 @@ export interface ICSSessionFields {
   end_time: string | null; // HH:MM[:SS]
   location: string;
   notes: string | null;
+  updated_at: string;
+}
+
+export interface ICSClubEventFields {
+  id: string;
+  title: string;
+  kind: string;
+  description: string | null;
+  location: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  status: string;
+  cancelled_reason: string | null;
   updated_at: string;
 }
 
@@ -126,7 +144,50 @@ export function sessionToVEvent(
   if (session.notes) lines.push(`DESCRIPTION:${escapeICSText(session.notes)}`);
   // URL is a URI value, not TEXT, so it is not run through escapeICSText —
   // both baseUrl (env var) and session.id (uuid) are already URI-safe.
-  if (baseUrl) lines.push(`URL:${baseUrl}/sessions?s=${session.id}`);
+  if (baseUrl) lines.push(`URL:${baseUrl}/feed?s=${session.id}`);
+  lines.push('END:VEVENT');
+  return lines;
+}
+
+// One club event -> unfolded VEVENT content lines. Club events are stored as
+// instants, so DTSTART/DTEND are stamped straight from them with no wall-clock
+// conversion. The UID has its own `club-event-` namespace so it can never
+// collide with a session's, and it never changes for the life of the event.
+//
+// A cancelled event stays in the feed with STATUS:CANCELLED so calendar apps
+// strike it through, and its SUMMARY says so too, because some subscription
+// clients ignore STATUS. A live one says CONFIRMED explicitly, so reinstating
+// an event propagates.
+export function clubEventToVEvent(ev: ICSClubEventFields, baseUrl?: string): string[] {
+  const updated = new Date(ev.updated_at);
+  const stamp = formatUtcStamp(updated);
+  const startAt = new Date(ev.starts_at);
+  const endAt = ev.ends_at
+    ? new Date(ev.ends_at)
+    : new Date(startAt.getTime() + CLUB_EVENT_DEFAULT_DURATION_MINUTES * 60_000);
+  const cancelled = ev.status === 'cancelled';
+
+  const lines = [
+    'BEGIN:VEVENT',
+    `UID:club-event-${ev.id}@sfu-badminton`,
+    `DTSTAMP:${stamp}`,
+    `LAST-MODIFIED:${stamp}`,
+    `SEQUENCE:${Math.floor(updated.getTime() / 1000)}`,
+    `DTSTART:${formatUtcStamp(startAt)}`,
+    `DTEND:${formatUtcStamp(endAt)}`,
+    `SUMMARY:${escapeICSText(cancelled ? `Cancelled: ${ev.title}` : ev.title)}`,
+    `STATUS:${cancelled ? 'CANCELLED' : 'CONFIRMED'}`,
+  ];
+  if (ev.location) lines.push(`LOCATION:${escapeICSText(ev.location)}`);
+  const description = [
+    CLUB_EVENT_KIND_LABELS[ev.kind as ClubEventKind] ?? null,
+    ev.description,
+    cancelled && ev.cancelled_reason ? `Cancelled: ${ev.cancelled_reason}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (description) lines.push(`DESCRIPTION:${escapeICSText(description)}`);
+  if (baseUrl) lines.push(`URL:${baseUrl}/events/${ev.id}`);
   lines.push('END:VEVENT');
   return lines;
 }
@@ -134,7 +195,7 @@ export function sessionToVEvent(
 // Full VCALENDAR document, CRLF line endings, lines folded to 75 octets.
 export function buildICSCalendar(
   sessions: ICSSessionFields[],
-  opts?: { baseUrl?: string; settings?: CheckinSettings }
+  opts?: { baseUrl?: string; settings?: CheckinSettings; clubEvents?: ICSClubEventFields[] }
 ): string {
   const lines = [
     'BEGIN:VCALENDAR',
@@ -149,6 +210,7 @@ export function buildICSCalendar(
     'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
     'X-PUBLISHED-TTL:PT1H',
     ...sessions.flatMap((s) => sessionToVEvent(s, opts?.baseUrl, opts?.settings)),
+    ...(opts?.clubEvents ?? []).flatMap((e) => clubEventToVEvent(e, opts?.baseUrl)),
     'END:VCALENDAR',
   ];
   return lines.map(foldICSLine).join('\r\n') + '\r\n';

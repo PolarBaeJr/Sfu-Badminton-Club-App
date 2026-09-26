@@ -21,5 +21,41 @@ export {
   toggleValue,
   type MultiSelectOption,
 } from './multi-select';
+// Select's keyboard and placement rules, the same arrangement again. The
+// SelectOption type comes through './components' with the component.
+export {
+  indexOfValue,
+  nextEnabledIndex,
+  typeaheadMatch,
+  initialActiveIndex,
+  resolvePlacement,
+  shouldEmitChange,
+  filterOptions,
+  SEARCH_THRESHOLD,
+} from './select';
+export {
+  visibleEntries,
+  isRouteActive,
+  isGroupActive,
+  flattenEntries,
+  type NavGroup,
+  type NavEntry,
+} from './nav-groups';
+// The guided tour's decisions, React-free for the same reason again. The
+// component comes through './components'.
+export {
+  selectSteps,
+  stepAllowed,
+  requirementsMet,
+  resolveTarget,
+  placePopover,
+  shouldAutoStart,
+  type TourStep,
+  type TourStepRequires,
+  type TourContext,
+  type TourRect,
+  type TourPlacement,
+} from './tour';
+export { ROUTE_ERROR_FALLBACK, isGenericServerMessage, routeErrorMessage } from './route-error';
 export { useLiveChannel, type RecoverableChannel } from './use-live-channel';
 export { cn } from './utils';

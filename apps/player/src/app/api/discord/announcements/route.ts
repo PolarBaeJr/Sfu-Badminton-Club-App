@@ -3,6 +3,7 @@ import {
   ANNOUNCEMENT_BODY_MAX,
   ANNOUNCEMENT_LOOKBACK_HOURS,
   announcementRelayVerdict,
+  readFeatureFlags,
 } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
@@ -110,6 +111,12 @@ export async function GET(request: Request) {
 
   const supabase = createServiceRoleClient();
   const now = Date.now();
+
+  // Announcements switched off for members: nothing to relay. Messages already
+  // posted are left alone rather than retracted. A failed read is "on".
+  if (!(await readFeatureFlags(supabase)).announcements) {
+    return NextResponse.json({ actions: [], skipped: [] });
+  }
 
   const [settingsResult, mappedResult] = await Promise.all([
     supabase.from('discord_settings').select('key, value'),

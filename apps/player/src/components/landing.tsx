@@ -96,8 +96,8 @@ export function Landing({ top, seasonName, isAuthenticated }: { top: TopEntry[];
           </>
         ) : (
           <>
-            <p className="lp-close-lead">Sign in with your SFU email and issue your first challenge.</p>
-            <Link href="/login" className="lp-btn lp-btn-primary lp-btn-lg">
+            <p className="lp-close-lead">Create your account with your SFU email and issue your first challenge.</p>
+            <Link href="/signup" className="lp-btn lp-btn-primary lp-btn-lg">
               Get started <ArrowRight size={16} />
             </Link>
           </>

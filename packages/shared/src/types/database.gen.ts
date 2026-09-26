@@ -2001,6 +2001,7 @@ export type Database = {
           show_activity_status: boolean
           skill_tier: string | null
           status: Database["public"]["Enums"]["player_status"]
+          tours_seen: Json
           updated_at: string
           user_id: string | null
           waiver_reset_at: string | null
@@ -2053,6 +2054,7 @@ export type Database = {
           show_activity_status?: boolean
           skill_tier?: string | null
           status?: Database["public"]["Enums"]["player_status"]
+          tours_seen?: Json
           updated_at?: string
           user_id?: string | null
           waiver_reset_at?: string | null
@@ -2105,6 +2107,7 @@ export type Database = {
           show_activity_status?: boolean
           skill_tier?: string | null
           status?: Database["public"]["Enums"]["player_status"]
+          tours_seen?: Json
           updated_at?: string
           user_id?: string | null
           waiver_reset_at?: string | null
@@ -4192,6 +4195,10 @@ export type Database = {
       }
       mark_field_entries_no_show: {
         Args: { p_entry_ids: string[]; p_is_pair: boolean }
+        Returns: Json
+      }
+      mark_tour_seen: {
+        Args: { p_player_id: string; p_tour: string }
         Returns: Json
       }
       match_counts_toward_stats: {

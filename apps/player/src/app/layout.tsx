@@ -3,6 +3,7 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { BottomNav } from '@/components/bottom-nav';
+import { GroupSwitch } from '@/components/group-switch';
 import { TopBar } from '@/components/top-bar';
 import { ToastProvider } from '@/components/toast-provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
@@ -14,10 +15,13 @@ import { SentryUserInit } from '@/components/sentry-user-init';
 import { StandingProvider } from '@/components/standing-provider';
 import { StandingBanner } from '@/components/standing-banner';
 import { LegalFooter } from '@/components/legal-footer';
+import { MemberTourHost } from '@/components/member-tour-host';
 import { cookies } from 'next/headers';
-import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, getAccountStanding, type AccountStanding } from '@badminton/shared';
+import { LEGAL_DOCUMENT_ORDER, hasConsoleAccess, featureAccessFor, getAccountStanding, playerPathVisible, type AccountStanding, type FeatureId } from '@badminton/shared';
 import { evaluateLegalGate, type LegalAcceptance } from '../lib/legal-gate';
 import { createServerSupabaseClient, getActiveSeason, getViewer } from '@/lib/supabase-server';
+import { getFeatureFlags } from '@/lib/feature-gate';
+import { getClubSocials } from '@/lib/club-socials';
 import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 import { ConfirmProvider, StaleBuildBanner } from "@badminton/ui";
@@ -179,6 +183,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let missingLegalDocs: string[] = [];
   let deletionRequestedAt: string | null = null;
   let isExecOrAdmin = false;
+  // The switched-off features this viewer holds the key to, for the nav. A
+  // separate value from isExecOrAdmin, which still decides the Exec Panel link.
+  let featureAccess: FeatureId[] = [];
   // Published to every client control via StandingProvider so none of them has
   // to re-derive it (or, as before, offer a button the server is certain to
   // refuse). Defaults to good standing, which is what a signed-out visitor is.
@@ -194,7 +201,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // NEITHER OF THESE WAITS ON THE OTHER, and until now both did. The season is
   // not a property of the viewer, but it ran first and to completion in front of
   // everything below purely because of the order this function was written in.
-  const [season, viewer] = await Promise.all([
+  const [season, viewer, features, clubSocials] = await Promise.all([
     // No active season is the ordinary answer here, not an error.
     getActiveSeason().catch(() => null),
     // A signed-out visitor comes back as nulls rather than a throw, so a throw
@@ -207,6 +214,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       console.error('Root layout could not load the viewer:', err);
       return { user: null, player: null } as Awaited<ReturnType<typeof getViewer>>;
     }),
+    // The club feature switches, for the nav. Never throws; a failed read is
+    // every feature on.
+    getFeatureFlags(),
+    // The Instagram and Discord links, for the footer and the nav. Never
+    // throws; a failed read is the defaults.
+    getClubSocials(),
   ]);
 
   activeSeasonName = season?.name ?? '';
@@ -239,6 +252,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // deactivated exec is shown no route in, because the console would reject them
   // and a link that always errors is worse than no link.
   isExecOrAdmin = hasConsoleAccess(player);
+  featureAccess = featureAccessFor(player);
+
+  // THE SOCIALS SWITCH AND show_discord, DECIDED ONCE. The top bar, the tab bar
+  // and the footer all take the answer rather than the inputs, so the three
+  // cannot disagree. A holder of page.access.socials sees them while the
+  // switch is off, the same as the nav treats every other feature.
+  const socialsVisible = playerPathVisible('/socials', features, featureAccess);
+  const showDiscord = socialsVisible && clubSocials.showDiscord;
+  const footerSocials = socialsVisible ? clubSocials : null;
 
   const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
   singlesElo = (ratings as Record<string, unknown>)?.singles_elo as number ?? null;
@@ -333,7 +355,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <DeletionGate deletionRequestedAt={deletionRequestedAt} />
                 {/* Deletion screen wins when both gates would apply. */}
                 <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
-                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} activeSeasonId={season?.id ?? ''} />
+                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} activeSeasonId={season?.id ?? ''} features={features} featureAccess={featureAccess} showDiscord={showDiscord} />
                 {/* Under the top bar, above the page: the one place that says
                     why the controls below are missing. Nav gating is left as
                     it was — a link that still loads its page is not a control
@@ -341,10 +363,24 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                     pages to stay reachable. */}
                 <StandingBanner />
                 <main className="page pb-safe-nav">
+                  {isAuthenticated && (
+                    <GroupSwitch isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} featureAccess={featureAccess} />
+                  )}
                   {children}
-                  <LegalFooter />
+                  <LegalFooter socials={footerSocials} />
                 </main>
-                <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} />
+                <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} featureAccess={featureAccess} showDiscord={showDiscord} />
+                {/* Signed-in members only. Held back while either gate above
+                    owns the screen, so the tour never sits on top of it. */}
+                {player && (
+                  <MemberTourHost
+                    toursSeen={player.tours_seen ?? {}}
+                    features={features}
+                    featureAccess={featureAccess}
+                    approved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'}
+                    blocked={missingLegalDocs.length > 0 || !!deletionRequestedAt}
+                  />
+                )}
               </StandingProvider>
             </ConfirmProvider>
           </ToastProvider>

@@ -11,6 +11,8 @@ import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { TournamentFeeActions } from './tournament-fee-actions';
 import { BulkTournamentFeeActions } from './bulk-tournament-fee-actions';
+import { SubmissionActions } from '../../../fees/submission-actions';
+import { loadPendingSubmissions } from '@/lib/fee-submissions';
 
 /** Card identity line: the same avatar + name + email the Player cell shows. */
 function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: string) {
@@ -41,6 +43,9 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
     markPaid: may('tournaments.fees.markpaid.write'),
     markUnpaid: may('tournaments.fees.markunpaid.write'),
   };
+  // E-transfer receipts waiting on this tournament's entries (00248), read
+  // only for whoever may settle them.
+  const canReview = may('tournaments.fees.markpaid.write');
   const supabase = createAdminClient();
 
   const { data: tournament } = await supabase.from('tournaments').select('id, name').eq('id', id).single();
@@ -51,14 +56,16 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
       .from('tournament_fee_tiers')
       .select('id, tournament_id, name, amount_cents, is_default, sort_order, applies_to, created_at')
       .eq('tournament_id', id)
-      .order('sort_order')
+      .order('sort_order'),
+    'TRN-104',
   ) as TournamentFeeTier[];
   const tierById = new Map(tiers.map((t) => [t.id, t]));
 
   // Owed list: every player entered in any of this tournament's events, from
   // both singles participants and doubles pairs, excluding withdrawn entries.
   const events = unwrap(
-    await supabase.from('tournament_events').select('id').eq('tournament_id', id)
+    await supabase.from('tournament_events').select('id').eq('tournament_id', id),
+    'TRN-104',
   );
   const eventIds = events.map((e) => e.id);
 
@@ -95,9 +102,29 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
       .from('club_fees')
       .select('player_id, tier_id, amount_cents, paid_at, method')
       .eq('tournament_id', id)
-      .eq('fee_type', 'tournament')
+      .eq('fee_type', 'tournament'),
+    'TRN-104',
   ) as Pick<ClubFee, 'player_id' | 'tier_id' | 'amount_cents' | 'paid_at' | 'method'>[];
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
+  const submissionByPlayer = new Map(
+    (canReview ? await loadPendingSubmissions(supabase, { tournamentId: id }) : []).map((s) => [s.playerId, s]),
+  );
+  const money = (cents: number | null) => (cents != null ? `$${(cents / 100).toFixed(2)}` : 'No amount');
+  const reviewControls = (playerName: string, playerId: string) => {
+    const s = submissionByPlayer.get(playerId);
+    return s ? (
+      <SubmissionActions
+        submissionId={s.id}
+        memberName={playerName}
+        line={`${tournament.name} entry`}
+        amount={money(s.amountCents)}
+        reference={s.reference}
+        proofHref={s.hasScreenshot ? `/tournaments/${id}/fees/proof/${s.id}` : null}
+        method={s.method}
+        feeType="tournament"
+      />
+    ) : null;
+  };
 
   // WHO IS ON THIS PAGE: everyone currently entered, PLUS everyone who has a
   // fee row for this tournament whether or not they still are.
@@ -126,7 +153,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         .select('id, full_name, email, avatar_url, is_exec, fee_exempt, membership_type')
         .in('id', ids)
         .order('full_name') as never
-    )
+    ),
+    'TRN-104',
   ) as (Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'> & {
     is_exec: boolean; fee_exempt: boolean; membership_type: MembershipType | null;
   })[]).sort((a, b) => a.full_name.localeCompare(b.full_name));
@@ -253,26 +281,32 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                 }
                 value={owedCents != null ? `$${(owedCents / 100).toFixed(2)}` : '-'}
                 badges={
-                  <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
-                    {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
-                  </Badge>
+                  <>
+                    <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
+                      {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
+                    </Badge>
+                    {submissionByPlayer.has(player.id) && <Badge variant="neutral">Submitted</Badge>}
+                  </>
                 }
                 fields={[
                   { label: 'Tier', value: tier?.name ?? '-' },
                   { label: 'Method', value: (paid && fee?.method) || '-' },
                 ]}
                 actions={
-                  <TournamentFeeActions
-                    mode="mark"
-                    tournamentId={id}
-                    playerId={player.id}
-                    playerName={player.full_name}
-                    tiers={tiers}
-                    paid={paid}
-                    waived={waived}
-                    membershipType={player.membership_type}
-                    fee={fee ?? null}
-                  />
+                  <>
+                    {reviewControls(player.full_name, player.id)}
+                    <TournamentFeeActions
+                      mode="mark"
+                      tournamentId={id}
+                      playerId={player.id}
+                      playerName={player.full_name}
+                      tiers={tiers}
+                      paid={paid}
+                      waived={waived}
+                      membershipType={player.membership_type}
+                      fee={fee ?? null}
+                    />
+                  </>
                 }
               />
             );
@@ -324,6 +358,11 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                       <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
                         {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
                       </Badge>
+                      {submissionByPlayer.has(player.id) && (
+                        <span className="ml-2">
+                          <Badge variant="neutral">Submitted</Badge>
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                       {tier?.name ?? '-'}
@@ -336,7 +375,8 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                     <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                       {(paid && fee?.method) || '-'}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {reviewControls(player.full_name, player.id)}
                       <TournamentFeeActions
                         mode="mark"
                         tournamentId={id}

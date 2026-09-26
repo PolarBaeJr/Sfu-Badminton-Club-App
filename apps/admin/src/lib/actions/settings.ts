@@ -5,7 +5,7 @@ import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, eventWaiverTemplateUpdateSchema, type LegalDocumentUpdateInput, type EventWaiverTemplateUpdateInput, type WaiverDocument } from '@badminton/shared';
 import { requireCapability } from './_shared';
-import { ExpectedError } from '@badminton/shared';
+import { ExpectedError, FEATURES_SETTING_KEY } from '@badminton/shared';
 // TWO floors on purpose, and they are not the same number. Rating settings take
 // the console's ordinary REASON_MIN (5) — enough to prove somebody typed
 // something. A legal document takes MIN_REASON_LENGTH (10), because that reason
@@ -14,6 +14,14 @@ import { ExpectedError } from '@badminton/shared';
 // third hardcoded number is how the first two drift apart.
 import { REASON_MIN } from '../audit-reason';
 import { MIN_REASON_LENGTH } from '../legal-reason';
+import { SEEDABLE_SETTINGS } from '../platform-setting-fields';
+import {
+  CLUB_SOCIALS_SETTING_KEY,
+  MEMBERSHIP_PAYMENTS_SETTING_KEY,
+  safeEtransferEmail,
+  safeInstagramUrl,
+  safePurchaseUrl,
+} from '@badminton/shared';
 import { clubToday } from '@badminton/shared';
 
 // Platform configuration. Admin-only, and this is the boundary that matters:
@@ -57,13 +65,20 @@ export async function updatePlatformSettings(
   // it. A write that fails at the database is still partial, and cannot be made
   // otherwise from here — but that is an outage, not a payload we could have
   // rejected.
-  const checked: { key: string; value: Record<string, unknown>; stored: unknown }[] = [];
+  const checked: { key: string; value: Record<string, unknown>; stored: unknown; insert: boolean }[] = [];
   for (const update of updates) {
-    const { data: oldSetting } = await adminClient
+    const { data: found } = await adminClient
       .from('platform_settings')
       .select('value')
       .eq('key', update.key)
       .single();
+
+    // A SEEDABLE KEY WITH NO ROW YET IS CREATED, not refused. The row stands
+    // for its defaults until the first save (see SEEDABLE_SETTINGS), so it is
+    // judged against those below, and written with an insert: the update
+    // further down would match zero rows and audit a change that never landed.
+    const seed = !found && Object.hasOwn(SEEDABLE_SETTINGS, update.key);
+    const oldSetting = found ?? (seed ? { value: SEEDABLE_SETTINGS[update.key]!() } : null);
 
     // AN UNKNOWN KEY IS A REFUSAL, NOT A NO-OP. `.update().eq('key', ...)`
     // matches zero rows and returns no error, so an invented or misspelled key
@@ -106,18 +121,27 @@ export async function updatePlatformSettings(
       );
     }
 
-    checked.push({ key: update.key, value: update.value, stored: oldSetting.value ?? null });
+    const invalid = invalidClubLink(update.key, update.value);
+    if (invalid) throw new ExpectedError(invalid);
+
+    checked.push({
+      key: update.key,
+      value: update.value,
+      // null for a row that did not exist: that is what the audit's "before" was.
+      stored: seed ? null : oldSetting.value ?? null,
+      insert: seed,
+    });
   }
 
   for (const update of checked) {
-    const { error } = await adminClient
-      .from('platform_settings')
-      .update({
-        value: update.value,
-        updated_by: admin.id,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('key', update.key);
+    const row = {
+      value: update.value,
+      updated_by: admin.id,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = update.insert
+      ? await adminClient.from('platform_settings').insert({ key: update.key, ...row })
+      : await adminClient.from('platform_settings').update(row).eq('key', update.key);
 
     if (error) throw new Error(`Failed to update ${update.key}: ${error.message}`);
 
@@ -150,6 +174,35 @@ export async function updatePlatformSettings(
   // The form now lives on /ratings and /accounts, not /settings.
   revalidatePath('/ratings');
   revalidatePath('/accounts');
+  // The feature switches decide the console's nav, which the root layout
+  // draws, so the whole tree re-renders rather than one page.
+  if (checked.some((update) => update.key === FEATURES_SETTING_KEY)) revalidatePath('/', 'layout');
+}
+
+// THE TWO ROWS THE SITE PRINTS AS LINKS. The player app and the bot re-check
+// every value on read and hide one that fails, so a bad save here would not be
+// dangerous; it would be a link that silently vanishes. Refusing it at save
+// time is what tells the officer why. '' is always allowed: it hides the link.
+function invalidClubLink(key: string, value: Record<string, unknown>): string | null {
+  const blankOr = (raw: unknown, ok: (v: string) => boolean) =>
+    typeof raw === 'string' && (raw.trim() === '' || ok(raw));
+  if (key === CLUB_SOCIALS_SETTING_KEY) {
+    if (!blankOr(value.instagram_url, (v) => safeInstagramUrl(v) !== null)) {
+      return 'The Instagram link has to be an https://www.instagram.com/ address, or empty to hide it.';
+    }
+    if (typeof value.show_discord !== 'boolean') {
+      return 'Show Discord has to be on or off.';
+    }
+  }
+  if (key === MEMBERSHIP_PAYMENTS_SETTING_KEY) {
+    if (!blankOr(value.sfss_purchase_url, (v) => safePurchaseUrl(v) !== null)) {
+      return 'The buy membership link has to start with https://, or be empty to hide the button.';
+    }
+    if (!blankOr(value.etransfer_email, (v) => safeEtransferEmail(v) !== null)) {
+      return 'The e-transfer email does not look like an email address.';
+    }
+  }
+  return null;
 }
 
 // Bumping re-requires acceptance from every member (the player app compares

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Select } from '@badminton/ui';
 import { setRoundMatchShape } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -252,24 +253,19 @@ export function RoundShapeControl({
 
   const control = (
     <span className="flex flex-col gap-1.5">
-      <label className="flex items-center">
-        <span className="sr-only">{label}</span>
-        <select
-          value={customOpen ? CUSTOM : selected}
-          disabled={saving}
-          onChange={(e) => pick(e.target.value)}
-          aria-label={label}
-          className="w-full min-h-[44px] rounded-[8px] border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-[12px] text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50"
-        >
-          <option value="inherit">Same as event ({eventShape})</option>
-          {PRESETS.map((c) => (
-            <option key={c.id} value={c.id}>
-              {shapeLabel(c.games, c.points)}
-            </option>
-          ))}
-          <option value={CUSTOM}>Custom…</option>
-        </select>
-      </label>
+      <Select
+        variant="bare"
+        value={customOpen ? CUSTOM : selected}
+        disabled={saving}
+        onChange={(e) => pick(e.target.value)}
+        aria-label={label}
+        options={[
+          { value: 'inherit', label: `Same as event (${eventShape})` },
+          ...PRESETS.map((c) => ({ value: c.id, label: shapeLabel(c.games, c.points) })),
+          { value: CUSTOM, label: 'Custom…' },
+        ]}
+        className="w-full min-h-[44px] rounded-[8px] border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-[12px] text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50"
+      />
 
       {customOpen && (
         <span className="flex flex-col gap-1">

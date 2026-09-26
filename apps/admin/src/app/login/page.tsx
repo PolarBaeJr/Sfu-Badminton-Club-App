@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
-import { friendlyAuthError } from '@badminton/shared';
+import { authErrorCode, friendlyAuthError, withErrorCode } from '@badminton/shared';
 import { Shield, Mail, Loader2, Globe, AlertCircle, KeyRound } from 'lucide-react';
 import {
   signInWithPasskey,
@@ -85,7 +85,7 @@ export default function LoginPage() {
     }
     // An empty message means the user dismissed the system prompt — that is a
     // deliberate action, not a failure to report back at them.
-    if (result.error) setError(result.error);
+    if (result.error) setError(withErrorCode(result.error, 'AUTH-208'));
     setPasskeyLoading(false);
   }
 
@@ -98,7 +98,7 @@ export default function LoginPage() {
       options: { redirectTo: `${window.location.origin}${withBase('/auth/callback')}` },
     });
     if (authError) {
-      setError(authError.message);
+      setError(withErrorCode(authError.message, 'AUTH-209'));
       setGoogleLoading(false);
     }
   }
@@ -121,8 +121,8 @@ export default function LoginPage() {
     if (authError) {
       setError(
         isUnknownAccountError(authError.message)
-          ? 'No account uses that email. The console cannot create one — sign up in the player app first, then ask an admin for access.'
-          : friendlyAuthError(authError.message)
+          ? 'No account uses that email. The console cannot create one: sign up in the player app first, then ask an admin for access.'
+          : withErrorCode(friendlyAuthError(authError.message), authErrorCode(authError))
       );
     } else {
       setCode('');
@@ -142,7 +142,7 @@ export default function LoginPage() {
     setError('');
     const supabase = createClient();
     const token = code.trim();
-    let authError: { message: string } | null = null;
+    let authError: { message: string; code?: string; status?: number } | null = null;
     // See lib/auth-otp for why this is a list and not a single type.
     for (const type of SIGNIN_OTP_TYPES) {
       const { error: verifyError } = await supabase.auth.verifyOtp({ email, token, type });
@@ -155,7 +155,12 @@ export default function LoginPage() {
       authError = verifyError;
       if (!shouldTryNextOtpType(verifyError.message)) break;
     }
-    setError(friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'));
+    setError(
+      withErrorCode(
+        friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'),
+        authError ? authErrorCode(authError) : 'AUTH-203',
+      ),
+    );
     setLoading(false);
   }
 

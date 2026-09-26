@@ -5,7 +5,6 @@ import {
   CLUB_TIMEZONE,
   isDoublesEvent,
   quoteEntryFee,
-  scopeToActiveSeason,
   TOURNAMENT_EVENT_TYPE_LABELS,
   type PricingTier,
   type TournamentEventType,
@@ -25,6 +24,7 @@ import {
   soleEnterableEvent,
   spotsLeft,
   occupiesAPlace,
+  tournamentCalendarQuery,
   type IndexEvent,
   type IndexTournament,
 } from '@/lib/tournament-index';
@@ -46,7 +46,7 @@ type NestedEvent = {
   id: string;
   event_type: TournamentEventType;
   status: string;
-  tournament: { id: string; name: string; start_date: string } | null;
+  tournament: { id: string; name: string; start_date: string; status: string } | null;
 };
 type MyEntry = {
   id: string;
@@ -145,28 +145,24 @@ export default async function TournamentsPage({
   // unassigned rows, and never the whole table if something goes sideways. So
   // it is a strict .eq, on the id of a season already found in the list above
   // rather than on the string from the URL.
-  const calendar = supabase
-    .from('tournaments')
-    .select(
-      'id, name, start_date, status, suspended_at, ' +
-      'tournament_events(id, event_type, status, max_participants), ' +
-      'tournament_fee_tiers(id, name, amount_cents, is_default, sort_order, applies_to)',
-    );
-  const scopedCalendar = picked
-    ? calendar.eq('season_id', picked.id)
-    : scopeToActiveSeason(calendar, activeSeason?.id);
+  //
+  // Built in lib/tournament-index.ts, which also leaves out every draft.
+  const scopedCalendar = tournamentCalendarQuery(supabase, {
+    pickedId: picked?.id,
+    activeId: activeSeason?.id,
+  });
 
   // The club's tournaments, and — separately — everything the member is in.
   // The member's own history is deliberately NOT season-scoped: it is their
   // record, and a new season would otherwise wipe the results panel on day one.
   const [tournamentsRes, myEntriesRes, myPairsRes] = await Promise.all([
-    scopedCalendar.order('start_date', { ascending: true }),
+    scopedCalendar,
     player
       ? supabase
           .from('tournament_participants')
           .select(
             'id, seed_number, status, final_position, elo_change, ' +
-            'event:tournament_events(id, event_type, status, tournament:tournaments(id, name, start_date))',
+            'event:tournament_events(id, event_type, status, tournament:tournaments(id, name, start_date, status))',
           )
           .eq('player_id', player.id)
           .order('created_at', { ascending: false })
@@ -179,7 +175,7 @@ export default async function TournamentsPage({
             'id, seed_number, status, final_position, player1_id, player2_id, ' +
             'player1:players!tournament_pairs_player1_id_fkey(id, full_name, avatar_url), ' +
             'player2:players!tournament_pairs_player2_id_fkey(id, full_name, avatar_url), ' +
-            'event:tournament_events(id, event_type, status, tournament:tournaments(id, name, start_date))',
+            'event:tournament_events(id, event_type, status, tournament:tournaments(id, name, start_date, status))',
           )
           // player.id is players.id — a UUID read from the verified session in
           // getViewer, never a caller-supplied string, so interpolating
@@ -230,7 +226,9 @@ export default async function TournamentsPage({
         isDoubles: true,
       };
     }),
-  ].filter((e) => e.event !== null);
+  // A member can hold an entry on a draft (00196 allows it), and a draft is
+  // unpublished, so its name stays off this page like it does the calendar.
+  ].filter((e) => e.event !== null && e.event?.tournament?.status !== 'draft');
 
   const hero = pickHeroTournament(tournaments);
 
@@ -345,7 +343,7 @@ export default async function TournamentsPage({
             <h1 className="ptourn-title">
               Tournaments<span className="ptourn-stop">.</span>
             </h1>
-            <p className="ptourn-sub">Club events and the entries you are in.</p>
+            <p className="ptourn-sub">Draws and the entries you are in.</p>
           </div>
           {/* THE PICKER MOVES THE CALENDAR AND NOTHING ELSE. "You are in" and
               "Past results" below read the member's own entries unscoped, on

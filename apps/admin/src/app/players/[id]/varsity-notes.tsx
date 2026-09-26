@@ -74,7 +74,7 @@ export function VarsityNotes({ playerId, notes }: { playerId: string; notes: Var
         // Square hairline, matching the rest of the detail screen. The note
         // itself is prose, so it is the one thing here NOT set in mono; the
         // byline underneath is, because it is a date.
-        <div key={n.id} className="border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+        <div key={n.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
           <p className="whitespace-pre-wrap text-sm text-[var(--text-secondary)]">{n.note}</p>
           <div className="flex items-center justify-between gap-3 mt-2">
             <p className="font-mono text-[11px] text-[var(--text-muted)]">

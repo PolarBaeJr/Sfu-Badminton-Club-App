@@ -6,6 +6,7 @@ import { CHECKIN_TOKEN_REGEX, CLUB_TIMEZONE, ExpectedError, formatTime, getCheck
 import { createServerSupabaseClient, createServiceRoleClient } from '../supabase-server';
 import { getCheckinSettings } from '../checkin-settings';
 import { requirePlayer, getPlayerProps, trackServerEvent, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
+import { assertFeatureOn } from '../feature-gate';
 
 // Wrapped so its validation messages ("Already checked in", "Check-in opens at
 // 6:00 PM", etc.) survive to the client — Next.js redacts thrown Server Action
@@ -16,6 +17,7 @@ export async function checkInToSession(sessionId: string): Promise<ActionResult>
 
 async function checkInToSessionImpl(sessionId: string) {
   const player = await requirePlayer();
+  await assertFeatureOn('sessions', player);
   await assertScanNotRequired(sessionId);
   // The button flow treats a duplicate as an error; the QR flow doesn't.
   const { alreadyCheckedIn } = await performCheckIn(player, sessionId);
@@ -127,6 +129,9 @@ async function performCheckIn(
   trackServerEvent(player.id, 'session_checked_in', { ...getPlayerProps(player), session_id: sessionId });
   revalidatePath('/sessions');
   revalidatePath(`/sessions/${sessionId}`);
+  // The schedule's cards live on /feed, and CheckInButton's direct success
+  // path does no router.refresh() of its own.
+  revalidatePath('/feed');
   return { alreadyCheckedIn: false };
 }
 
@@ -152,6 +157,7 @@ async function checkInWithTokenImpl(token: string) {
   // authenticated') from an unknown one ('Invalid check-in code') — exactly the
   // enumeration oracle the uniform message exists to prevent.
   const player = await requirePlayer();
+  await assertFeatureOn('sessions', player);
 
   if (!CHECKIN_TOKEN_REGEX.test(token)) throw new ExpectedError('Invalid check-in code');
 
@@ -182,6 +188,7 @@ async function setSessionIntentImpl(
   intent: 'going' | 'declined' | null
 ) {
   const player = await requirePlayer();
+  await assertFeatureOn('sessions', player);
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);
 
@@ -213,4 +220,5 @@ async function setSessionIntentImpl(
 
   trackServerEvent(player.id, 'session_rsvp', { ...getPlayerProps(player), session_id: sessionId, intent });
   revalidatePath('/sessions');
+  revalidatePath('/feed');
 }

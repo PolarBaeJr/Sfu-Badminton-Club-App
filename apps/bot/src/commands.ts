@@ -24,6 +24,7 @@ import {
   writeGuildConfig,
   writeServerRoleCatalog,
   fetchDiscordSettings,
+  fetchClubSocials,
   writeDiscordSettings,
   submitAnnouncement,
   setMembership,
@@ -44,6 +45,7 @@ import { MEMBERSHIP_ROLES, type GuildRoleMap, type ManagedRole, type MembershipR
 import { offerableRoles } from './server-roles.js';
 import { DISPLAY_NAMES, planSetup, type DiscordRole, type MatchedRole } from './setup.js';
 import { syncMemberEverywhere } from './sync.js';
+import { socialsReply, type SocialsPayload } from './socials.js';
 import {
   ALL_SETTINGS,
   CHANNEL_SETTINGS,
@@ -793,6 +795,15 @@ export const COMMAND_DEFINITIONS = [
     // GUILD-ONLY filter and has no meaning in a DM, so without this line any
     // member could DM the bot and the exec gate above would be decorative.
     dm_permission: false,
+  },
+  {
+    name: 'socials',
+    description: "The club's links: Discord, Instagram and the website",
+    options: [],
+    // UNGATED, like /sessions: a read anybody may do, answered only to them.
+    // This does print the invite /discord keeps exec-only, but as a link a
+    // member can already copy from the website's footer, not as a QR code for
+    // a poster.
   },
 ];
 
@@ -3386,6 +3397,33 @@ function handleDiscordInvite(): BotResponse {
   });
 }
 
+/**
+ * /socials: the club's links, as the app says they stand.
+ *
+ * Not deferred: one GET with a 2.5s client timeout fits Discord's three
+ * seconds. An unreachable app is caught HERE rather than left to dispatch(),
+ * whose catch would answer "couldn't reach the club app" with no links at all;
+ * the invite and the website page are still worth giving.
+ */
+async function handleSocials(): Promise<BotResponse> {
+  let payload: SocialsPayload | null = null;
+  try {
+    payload = await fetchClubSocials();
+  } catch (err) {
+    console.error('[bot] /socials could not read the club links, answering with the fallback:', err);
+  }
+
+  let pageUrl: string | null = null;
+  try {
+    const base = process.env.APP_PUBLIC_URL;
+    if (base) pageUrl = new URL('/socials', base).toString();
+  } catch {
+    // An unparseable base drops the website line, nothing else.
+  }
+
+  return socialsReply({ payload, inviteUrl: DISCORD_INVITE_URL, pageUrl });
+}
+
 // ---------------------------------------------------------------------------
 // /config
 // ---------------------------------------------------------------------------
@@ -4761,6 +4799,8 @@ export async function dispatch(
         return handleGuidePost(context);
       case 'discord':
         return handleDiscordInvite();
+      case 'socials':
+        return await handleSocials();
       case 'announce':
         return openAnnounceModal(options);
       case 'say':

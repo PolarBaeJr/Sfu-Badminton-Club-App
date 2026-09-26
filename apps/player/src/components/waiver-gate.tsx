@@ -14,6 +14,7 @@ function isExemptPath(pathname: string) {
   return (
     pathname === '/' ||
     pathname.startsWith('/login') ||
+    pathname.startsWith('/signup') ||
     pathname.startsWith('/auth') ||
     pathname.startsWith('/exec') ||
     pathname.startsWith('/legal') ||

@@ -195,9 +195,9 @@ export function RosterTable({ head, rows, tabs, total, initialQuery = '', note, 
 
       {/* Zero padding: the table is full-bleed to the hairline, so the rows'
           own cell padding is the only inset and the header rule meets both
-          edges. No rounded-none: Card's rounded-xl already compiles to 0 —
-          this app's tailwind.config.ts replaces the whole radius scale. */}
-      <Card padding={false}>
+          edges. Card's rounded-xl is a real 16px corner, so overflow-hidden
+          clips the header row's fill to it. */}
+      <Card padding={false} className="overflow-hidden">
         {filtered.length === 0 ? (
           // Say what was searched. "No results" leaves the reader wondering
           // whether they mistyped or the row genuinely is not there.

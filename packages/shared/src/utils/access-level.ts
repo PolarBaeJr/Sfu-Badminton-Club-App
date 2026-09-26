@@ -19,6 +19,12 @@
 // returns in the database (migrations 00054, 00057); the admin middleware feeds
 // that value straight into canAccess(). A mismatch resolves to null, fails
 // closed, and locks the level out with no error surfaced anywhere.
+//
+// The club feature switches are imported for one thing: the `page` area's keys
+// are derived from that registry (see the end of CAPABILITIES). It has no
+// imports of its own, so the edge middleware pulls in nothing further.
+import { FEATURES, type FeatureId } from './features';
+
 export type AccessLevel = 'admin' | 'exec' | 'trainer';
 
 // Higher number = more access. Used for every comparison so a new level is one
@@ -103,6 +109,7 @@ export const AREAS = [
   'challenges',
   'announcements',
   'tournaments',
+  'events',
   'fees',
   'legal',
   'walkovers',
@@ -112,9 +119,17 @@ export const AREAS = [
   'ratings',
   'accounts',
   'platform',
+  'page',
 ] as const;
 
 export type Area = (typeof AREAS)[number];
+
+// The `page` area's keys, one per club feature switch, derived from the
+// registry so a feature cannot be added without one. See the entry at the end
+// of CAPABILITIES for what they are and why their names break the grammar.
+export const FEATURE_ACCESS_CAPABILITIES = FEATURES.map(
+  (feature) => `page.access.${feature.id}` as const,
+);
 
 export const CAPABILITIES = [
   // ---- players -----------------------------------------------------------
@@ -366,6 +381,19 @@ export const CAPABILITIES = [
   'tournaments.fees.markpaid.write',
   'tournaments.fees.markunpaid.write',
 
+  // ---- events ------------------------------------------------------------
+  // Club events that are not tournaments: socials, workshops, clinics, outings
+  // and the AGM. Admin-only by level: in no baseline, and in neither
+  // EXEC_ASSIGNABLE nor OFFERABLE_BEYOND_EXEC. Making them exec work later is a
+  // ROLE_DEFAULTS re-seed like 00224, and that is the owner's decision.
+  'events.page',
+  'events.signups.read',
+  'events.signups.remove.write',
+  'events.manage.create.write',
+  'events.manage.update.write',
+  'events.manage.cancel.write',
+  'events.manage.delete.write',
+
   // ---- fees --------------------------------------------------------------
   // Four ledgers plus the net position, each with its own read, under one page
   // key. /fees is a single section that has always been two boundaries: an exec
@@ -457,9 +485,42 @@ export const CAPABILITIES = [
   // be pruned from anybody the resolver ever runs for.
   'platform.page',
   'platform.settings.write',
+
+  // ---- page --------------------------------------------------------------
+  // INTO A FEATURE THE CLUB HAS SWITCHED OFF. One key per switch in
+  // ./features.ts, named `page.access.<feature id>` by the club owner:
+  // "build a permission node for access to a restricted page". It replaced
+  // "anybody with console access sees a switched-off feature" (47fc75e7), so
+  // letting somebody test tournaments before they go live is now a grant that
+  // somebody chose, and it does not also let them into challenges.
+  //
+  // DERIVED FROM THE REGISTRY, NOT TYPED HERE, so a new feature cannot forget
+  // its key. What it cannot do by itself is reach the database: the vocabulary
+  // CHECK has to learn the string in a migration, and capability-storage.test.ts
+  // fails until it has.
+  //
+  // THE ONE AREA THAT BREAKS THE GRAMMAR ABOVE, and it does so in two places,
+  // both stated for this area alone in capabilities.test.ts rather than by
+  // loosening the rule for everybody. The names end in the feature id rather
+  // than a mode, because those are the names the owner asked for; and the id is
+  // used verbatim, so `page.access.my_stats` carries an underscore.
+  //
+  // EACH ONE IS ITS OWN PAGE. There is no `page.page`: pageOf() maps these to
+  // themselves, so a grant needs nothing beside it and a revoke closes exactly
+  // the one feature. The editor draws them as reads, which is what they are:
+  // the holder may open the feature and use it while members are kept out.
+  //
+  // IN NO BASELINE. Switched off means off, and the only person who reaches a
+  // switched-off page without being handed its key is an admin, by level.
+  ...FEATURE_ACCESS_CAPABILITIES,
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
+
+/** The key that lets somebody into this feature while it is switched off. */
+export function featureAccessCapability(id: FeatureId): Capability {
+  return `page.access.${id}`;
+}
 
 const ALL_CAPABILITIES: ReadonlySet<Capability> = new Set(CAPABILITIES);
 
@@ -478,7 +539,13 @@ export function isCapability(value: unknown): value is Capability {
  * has a page, pinned by a test, so the cast cannot be wrong.
  */
 export function pageOf(capability: Capability): Capability {
-  return `${capability.split('.')[0]}.page` as Capability;
+  const area = capability.split('.')[0];
+  // THE `page` AREA IS THE EXCEPTION: every `page.access.<id>` is a page in its
+  // own right, and there is no `page.page` for it to hang off. Mapping one to
+  // itself is what keeps the resolver's prune, the baseline refusal and the
+  // baseline editor's toggle all agreeing that it stands alone.
+  if (area === 'page') return capability;
+  return `${area}.page` as Capability;
 }
 
 // ---------------------------------------------------------------------------
@@ -922,6 +989,20 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
   // would make "admin-only" mean "admin-only forever" rather than "not handed
   // out by default".
   //
+
+  // THE KEYS TO SWITCHED-OFF FEATURES, one per club feature switch. Here rather
+  // than in EXEC_ASSIGNABLE because that list is the historic transcription,
+  // pinned literally and partitioned exactly by the four VP roles, and none of
+  // these was ever exec work: they are handed to one person at a time, which is
+  // what a ceiling entry is for. Reads, not writes: they let the holder in, and
+  // every act inside is still gated by its own capability or by the member's
+  // own permissions.
+  //
+  // SPREAD FROM THE REGISTRY, which is the one place this ceiling moves without
+  // a line being typed here. It still does not move unreviewed: the literal list
+  // of what this ceiling adds, in editable-roles.test.ts, fails until the new
+  // key is written into it.
+  ...FEATURE_ACCESS_CAPABILITIES,
 ];
 
 // DELIBERATELY STILL OUT OF REACH, and each for its own reason:
@@ -1629,4 +1710,33 @@ export function hasConsoleAccess(
   player: (AccessLevelInput & StandingInput) | null | undefined,
 ): boolean {
   return consoleAccessLevelFor(player) !== null;
+}
+
+/**
+ * The switched-off club features this person may still open and use: the ones
+ * whose `page.access.<id>` key they hold. The members' app asks this for its
+ * page gate, its nav and its actions, with the same resolver the console uses.
+ *
+ * STANDING FIRST, exactly as the console: a banned exec holds nothing here.
+ *
+ * FAILS CLOSED, the opposite of a failed switch read, and on purpose. The
+ * feature is off; not letting somebody in is the state the club chose. So a row
+ * the resolver throws on (a role with a missing delta column) is logged and
+ * treated as holding no key at all.
+ */
+export function featureAccessFor(
+  player: (AccessLevelInput & StandingInput & PermissionsInput) | null | undefined,
+): FeatureId[] {
+  const level = consoleAccessLevelFor(player);
+  if (level === null) return [];
+  let held: ReadonlySet<Capability>;
+  try {
+    held = effectiveCapabilities(level, permissionsOf(level, player));
+  } catch (err) {
+    console.error('[features] could not resolve switched-off feature access, treating as none:', err);
+    return [];
+  }
+  return FEATURES.filter((feature) => held.has(featureAccessCapability(feature.id))).map(
+    (feature) => feature.id,
+  );
 }

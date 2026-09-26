@@ -1,24 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { completeOnboarding, getLegalDocuments, getSkillTiers } from '@/lib/actions';
+import { useEffect, useRef, useState } from 'react';
+import { completeOnboarding, getLegalDocuments, getSkillTiers, getSignupApprovalMode } from '@/lib/actions';
 import { markPasskeyEnrolled } from '@/lib/actions/profile';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
 import { LegalMarkdown } from '@badminton/ui';
 import { LEGAL_DOCUMENT_LABELS, sortLegalDocuments, CHECKIN_TOKEN_REGEX, type SkillTier } from '@badminton/shared';
 import type { SkillTierOption } from '@/lib/rating-tiers';
-import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket, KeyRound, Check, Mail } from 'lucide-react';
+import { User, Phone, Sparkles, ChevronRight, ChevronLeft, Loader2, Rocket, KeyRound, Check, Mail } from 'lucide-react';
 import { enrollPasskey, supportsPasskeys } from '@/lib/passkey-client';
 import { passkeysConfigured } from '@/lib/actions/passkeys';
 import type { PasskeySetupOutcome } from '@/lib/actions/profile';
 import { PASSKEY_DECLINED_THIS_SESSION_KEY } from '@/components/passkey-nudge';
-
-const steps = [
-  { number: 1, title: 'Profile' },
-  { number: 2, title: 'Waiver' },
-  { number: 3, title: 'Confirm' },
-];
+import {
+  activeOnboardingStep,
+  onboardingSteps,
+  ONBOARDING_STEP_COPY,
+  ONBOARDING_STEP_TITLES,
+  type OnboardingStepId,
+} from '@/lib/onboarding-steps';
 
 // Someone can arrive here by scanning a session QR before finishing setup — the
 // middleware forwards the token as ?checkin=<token> rather than dropping it.
@@ -181,7 +182,9 @@ function TierChoice({
 }
 
 export default function OnboardingPage() {
-  const [step, setStep] = useState(1);
+  // Tracked by id, not by position: the level step drops out when the tiers
+  // fail to load, and a position would then silently point one step further on.
+  const [stepId, setStepId] = useState<OnboardingStepId>('about');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -244,9 +247,9 @@ export default function OnboardingPage() {
     getLegalDocuments()
       .then((res) => {
         if (res.ok) setDocs(sortLegalDocuments(res.data));
-        else toast('Failed to load the waiver — please refresh', 'error');
+        else toast('Failed to load the waiver. Please refresh.', 'error');
       })
-      .catch(() => toast('Failed to load the waiver — please refresh', 'error'));
+      .catch(() => toast('Failed to load the waiver. Please refresh.', 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -259,6 +262,16 @@ export default function OnboardingPage() {
     getSkillTiers()
       .then(setTiers)
       .catch(() => setTiers([]));
+  }, []);
+
+  // Whether the club approves signups by itself (00220), for the line at the
+  // foot of the card. Null until known, and the line waits for it rather than
+  // promising a wait that may not come.
+  const [autoApprove, setAutoApprove] = useState<boolean | null>(null);
+  useEffect(() => {
+    getSignupApprovalMode()
+      .then(setAutoApprove)
+      .catch(() => setAutoApprove(false));
   }, []);
 
   useEffect(() => {
@@ -343,12 +356,34 @@ export default function OnboardingPage() {
   // is gated on the name alone. The same shape as passkeyAnswered above, for
   // the same reason — an unanswerable question must never hold the door shut.
   const skillTierAnswered = !tiers || tiers.length === 0 || skillTier !== null;
-  const step1Complete = nameEntered && skillTierAnswered;
-  // What the last step prints in the STARTING ELO tile. The chosen tier's live
-  // value, not a hardcoded 400 — that tile said "400" for every member
-  // regardless of tier until 00127, which would have made the confirm screen
-  // contradict the choice made two steps earlier.
-  const startingElo = tiers?.find((t) => t.tier === skillTier)?.elo ?? null;
+  // The level step itself waits for the tiers to load: Continue there would
+  // otherwise walk past a question that is about to appear.
+  const levelComplete = tiers !== null && skillTierAnswered;
+  const canEnter = nameEntered && skillTierAnswered && allAccepted && passkeyAnswered;
+
+  const steps = onboardingSteps({ tiersAvailable: tiers === null ? null : tiers.length > 0 });
+  const activeId = activeOnboardingStep(stepId, steps);
+  const stepNumber = steps.indexOf(activeId) + 1;
+  const goNext = () => {
+    const next = steps[steps.indexOf(activeId) + 1];
+    if (next) setStepId(next);
+  };
+  const goBack = () => {
+    const prev = steps[steps.indexOf(activeId) - 1];
+    if (prev) setStepId(prev);
+  };
+
+  // Focus the new step's heading, so a screen reader announces it and a
+  // keyboard starts from the top. Not on first paint: nothing has changed yet.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const firstStepRender = useRef(true);
+  useEffect(() => {
+    if (firstStepRender.current) {
+      firstStepRender.current = false;
+      return;
+    }
+    headingRef.current?.focus();
+  }, [activeId]);
 
   async function handleComplete() {
     setLoading(true);
@@ -381,7 +416,7 @@ export default function OnboardingPage() {
         setPasskeyBusy(false);
         if (enrolled.ok) {
           await markPasskeyEnrolled();
-          toast('Passkey saved — you can use it to sign in', 'success');
+          toast('Passkey saved. You can use it to sign in.', 'success');
         } else if (enrolled.error) {
           toast(`${enrolled.error} You can add one later from Settings.`, 'error');
         }
@@ -393,9 +428,18 @@ export default function OnboardingPage() {
     setLoading(false);
   }
 
+  const { heading, subheading } = ONBOARDING_STEP_COPY[activeId];
+
+  // The Back button every step but the first shares.
+  const backButton = (
+    <button type="button" onClick={goBack} className="btn btn-ghost" style={{ height: 48 }}>
+      <ChevronLeft size={14} /> Back
+    </button>
+  );
+
   return (
     // Onboarding is a form to complete, not a pitch to read. No full-height
-    // brand panel — the member is already signed in and just needs to finish.
+    // brand panel: the member is already signed in and just needs to finish.
     <div
       className="auth"
       style={{
@@ -417,76 +461,92 @@ export default function OnboardingPage() {
         }}
       >
         <div>
-          <div className="page-eyebrow"><span className="bar" /> STEP {step} OF 3 · {steps[step - 1]!.title.toUpperCase()}</div>
+          <div className="page-eyebrow">
+            <span className="bar" /> STEP {stepNumber} OF {steps.length} · {ONBOARDING_STEP_TITLES[activeId].toUpperCase()}
+          </div>
           <h2
+            ref={headingRef}
+            tabIndex={-1}
             style={{
               fontFamily: 'var(--display)',
               fontSize: 36,
               fontWeight: 700,
               letterSpacing: '-.03em',
               margin: '8px 0 0',
+              outline: 'none',
             }}
           >
-            {step === 1
-              ? 'Set up your profile'
-              : step === 2
-              ? 'Waiver & club policies'
-              : `You're ready, ${displayName || firstName}!`}
+            {heading}
           </h2>
           <div className="page-sub" style={{ marginTop: 8 }}>
-            {step === 1
-              ? 'This is how other players will see you. Display name and phone are optional.'
-              : step === 2
-              ? 'Read and accept the terms of use, privacy policy, liability waiver, and code of conduct to play.'
-              : 'Start exploring the club, check into sessions, and issue challenges.'}
+            {subheading}
           </div>
         </div>
 
-        <div className="row" style={{ gap: 6 }}>
-          {steps.map((s) => (
-            <div
-              key={s.number}
+        {/* The progress bar, as a list a screen reader can walk: each segment
+            is named, and the current one says so. */}
+        <ol aria-label="Setup progress" className="row" style={{ gap: 6, listStyle: 'none', margin: 0, padding: 0 }}>
+          {steps.map((id, i) => (
+            <li
+              key={id}
+              aria-current={id === activeId ? 'step' : undefined}
               style={{
                 flex: 1,
                 height: 4,
                 borderRadius: 999,
-                background: step >= s.number ? 'var(--red)' : 'var(--line)',
+                background: i < stepNumber ? 'var(--red)' : 'var(--line)',
                 transition: 'background .25s',
               }}
-            />
+            >
+              <span className="sr-only">
+                {ONBOARDING_STEP_TITLES[id]}
+                {i < stepNumber - 1 ? ', done' : ''}
+              </span>
+            </li>
           ))}
-        </div>
+        </ol>
 
-        {step === 1 ? (
+        {activeId === 'about' ? (
           <>
             <Field id="firstName"   label="First name"    icon={User}     value={firstName}   onChange={setFirstName}   placeholder="Your first name" />
             <Field id="lastName"    label="Last name"     optional icon={User}     value={lastName}    onChange={setLastName}    placeholder="Your last name" />
             <Field id="displayName" label="Display name"  optional icon={Sparkles} value={displayName} onChange={setDisplayName} placeholder="Nickname or gamertag" />
             <Field id="phone"       label="Phone"         optional icon={Phone}    value={phone}       onChange={(v) => setPhone(v.replace(/[^\d\s+\-()]/g, ''))} placeholder="For session reminders" inputMode="tel" />
 
-            {/* The skill-level question. On step 1 rather than the confirm
-                step because it is a fact about the member, like their name —
-                and because the confirm step then has something true to show in
-                its STARTING ELO tile. Rendered only when there is something to
-                ask: an empty list means the settings read failed, and the
-                member goes through on the club default. */}
+            <button
+              type="button"
+              onClick={() => { if (nameEntered) goNext(); }}
+              disabled={!nameEntered}
+              className="btn btn-primary btn-lg"
+              style={{
+                width: '100%',
+                justifyContent: 'center',
+                height: 48,
+                opacity: nameEntered ? 1 : 0.4,
+              }}
+            >
+              Continue <ChevronRight size={14} />
+            </button>
+            {/* Say WHY it is disabled. A dimmed control with no explanation is
+                how somebody concludes the app is broken. */}
+            {!nameEntered && (
+              <div className="muted" style={{ fontSize: 12, marginTop: -12, textAlign: 'center' }}>
+                Enter your first name to continue.
+              </div>
+            )}
+          </>
+        ) : activeId === 'level' ? (
+          <>
+            {/* The skill-level question, on its own step. Rendered only when
+                there is something to ask: an empty list means the settings
+                read failed, the step drops out, and the member goes through on
+                the club default. */}
             {tiers === null ? (
               <div className="muted" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                 <Loader2 size={14} className="animate-spin" /> Loading skill levels…
               </div>
-            ) : tiers.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div
-                  className="mono muted"
-                  style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase' }}
-                >
-                  Skill level <span style={{ color: 'var(--red)' }}>*</span>
-                </div>
-                <div className="muted" style={{ fontSize: 12, lineHeight: 1.5, marginBottom: 2 }}>
-                  This sets where you start on the ladder. Your rating adjusts quickly over your
-                  first few matches, so pick the closest fit — you do not need to get it exactly
-                  right.
-                </div>
+            ) : (
+              <div role="radiogroup" aria-label="Skill level" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {tiers.map((option) => (
                   <TierChoice
                     key={option.tier}
@@ -496,32 +556,34 @@ export default function OnboardingPage() {
                   />
                 ))}
               </div>
-            ) : null}
-
-            <button
-              type="button"
-              onClick={() => { if (step1Complete) setStep(2); }}
-              disabled={!step1Complete}
-              className="btn btn-primary btn-lg"
-              style={{
-                width: '100%',
-                justifyContent: 'center',
-                height: 48,
-                opacity: step1Complete ? 1 : 0.4,
-              }}
-            >
-              Continue <ChevronRight size={14} />
-            </button>
-            {/* Say WHY it is disabled, the same as the last step's button. A
-                dimmed control with no explanation is how somebody concludes the
-                app is broken. Only ever names the thing actually missing. */}
-            {!step1Complete && (
-              <div className="muted" style={{ fontSize: 12, marginTop: -12, textAlign: 'center' }}>
-                {!nameEntered ? 'Enter your first name to continue.' : 'Choose a skill level to continue.'}
-              </div>
             )}
+
+            <div>
+              <div className="row" style={{ gap: 10 }}>
+                {backButton}
+                <button
+                  type="button"
+                  onClick={() => { if (levelComplete) goNext(); }}
+                  disabled={!levelComplete}
+                  className="btn btn-primary btn-lg"
+                  style={{
+                    flex: 1,
+                    justifyContent: 'center',
+                    height: 48,
+                    opacity: levelComplete ? 1 : 0.4,
+                  }}
+                >
+                  Continue <ChevronRight size={14} />
+                </button>
+              </div>
+              {tiers !== null && !levelComplete && (
+                <div className="muted" style={{ fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+                  Choose a skill level to continue.
+                </div>
+              )}
+            </div>
           </>
-        ) : step === 2 ? (
+        ) : activeId === 'agreements' ? (
           <>
             <div className="card-base" style={{ maxHeight: '50vh', overflowY: 'auto', padding: 16 }}>
               {docs === null ? (
@@ -547,17 +609,10 @@ export default function OnboardingPage() {
             </div>
 
             <div className="row" style={{ gap: 10 }}>
+              {backButton}
               <button
                 type="button"
-                onClick={() => setStep(1)}
-                className="btn btn-ghost"
-                style={{ height: 48 }}
-              >
-                <ChevronLeft size={14} /> Back
-              </button>
-              <button
-                type="button"
-                onClick={() => { if (allAccepted) setStep(3); }}
+                onClick={() => { if (allAccepted) goNext(); }}
                 disabled={!allAccepted}
                 className="btn btn-primary btn-lg"
                 style={{
@@ -573,32 +628,8 @@ export default function OnboardingPage() {
           </>
         ) : (
           <>
-            <div className="grid grid-3" style={{ gap: 12 }}>
-              {/* The tier chosen on step 1, at the club's live configured
-                  value. This tile read a hardcoded 400 for every member until
-                  00127 — with tiers that would have been the confirm screen
-                  contradicting the answer given two steps earlier. An em dash
-                  when no tier was asked for, rather than a number nobody
-                  chose. */}
-              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
-                <div className="stat-label">STARTING ELO</div>
-                <div className="stat-value" style={{ marginTop: 4 }}>
-                  {startingElo ?? '—'}
-                </div>
-              </div>
-              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
-                <div className="stat-label">DIVISIONS</div>
-                <div className="stat-value" style={{ marginTop: 4, fontSize: 18 }}>S + D</div>
-              </div>
-              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
-                <div className="stat-label">RANK</div>
-                <div className="stat-value" style={{ marginTop: 4, fontSize: 18 }}>—</div>
-              </div>
-            </div>
-
-            {/* The passkey question. Full width and above the fold of this
-                step, not a footnote beside a "Set up" link, because it is now
-                the thing standing between the member and the button below. */}
+            {/* The passkey question. Its own step, because it is the thing
+                standing between the member and entering the club. */}
             {passkeyOffered && (
               <div
                 className="card-base"
@@ -618,9 +649,9 @@ export default function OnboardingPage() {
                     </div>
                     <div className="muted" style={{ fontSize: 12, marginTop: 2, lineHeight: 1.5 }}>
                       {passkeyAdded
-                        ? 'Next time, sign in with your fingerprint, face or device PIN — this device will offer it automatically.'
+                        ? 'Next time, sign in with your fingerprint, face or device PIN. This device will offer it automatically.'
                         : passkeyDeclined
-                        ? "No problem — we'll email you a 6-digit code every time you sign in. You can add a passkey later from Settings."
+                        ? "No problem. We'll email you a 6-digit code every time you sign in. You can add a passkey later from Settings."
                         : 'Sign in with your fingerprint, face or device PIN instead of waiting on an emailed code. It takes one tap and stays on this device.'}
                     </div>
                   </div>
@@ -634,11 +665,11 @@ export default function OnboardingPage() {
                   )}
                 </div>
 
-                {/* The chosen state. The button no longer enrols on the spot —
-                    it cannot, there is no players row yet — so without this the
-                    member taps "Set up a passkey", sees nothing happen, and taps
-                    it again. This says the choice landed and when the prompt
-                    comes. */}
+                {/* The chosen state. The button no longer enrols on the spot:
+                    it cannot, there is no players row yet. Without this the
+                    member taps "Set up a passkey", sees nothing happen, and
+                    taps it again. This says the choice landed and when the
+                    prompt comes. */}
                 {passkeyWanted && !passkeyAdded && (
                   <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 14 }}>
                     <Check size={14} /> Your device will ask for it when you enter the club.
@@ -657,11 +688,9 @@ export default function OnboardingPage() {
                       {passkeyBusy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
                       {passkeyDeclined ? 'Set up a passkey after all' : 'Set up a passkey'}
                     </button>
-                    {/* The decline. A real button the member has to press, not a
-                        pre-ticked box and not a way of doing nothing — that is
-                        the entire difference between this and the old optional
-                        offer, and it is what makes the recorded 'declined'
-                        mean something. */}
+                    {/* The decline. A real button the member has to press, not
+                        a pre-ticked box and not a way of doing nothing: that is
+                        what makes the recorded 'declined' mean something. */}
                     {!passkeyDeclined && (
                       <button
                         type="button"
@@ -671,7 +700,7 @@ export default function OnboardingPage() {
                         style={{ width: '100%', justifyContent: 'center', height: 44, gap: 8 }}
                       >
                         <Mail size={14} />
-                        No thanks — email me a code each time
+                        No thanks, email me a code each time
                       </button>
                     )}
                   </div>
@@ -680,11 +709,10 @@ export default function OnboardingPage() {
             )}
 
             {/* Nothing is ASKED of a member who cannot do this: they are told
-                what will happen instead, once, and the button below stays live.
-                They are still recorded — as 'unsupported' or 'unavailable', not
-                as a refusal — because the whole point of that column is being
-                able to tell "would not" from "could not". Covers both a browser
-                without WebAuthn and a deployment that cannot enrol. */}
+                what will happen instead, and "Enter the club" stays live. They are
+                still recorded, as 'unsupported' or 'unavailable' rather than
+                as a refusal, because that column exists to tell "would not"
+                from "could not". */}
             {passkeyImpossible && (
               <div className="card-base" style={{ padding: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
@@ -698,46 +726,26 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            <div
-              style={{
-                background: '#FBF1DA',
-                border: '1px solid rgba(201, 154, 60, 0.3)',
-                borderRadius: 10,
-                padding: '12px 14px',
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 10,
-                fontSize: 13,
-                lineHeight: 1.5,
-                color: '#6E4F1A',
-              }}
-            >
-              <Trophy size={16} style={{ marginTop: 2, flexShrink: 0 }} />
-              <span>
-                <strong>Pro tip:</strong> challenge players near your ELO. Closer matchups give bigger ELO swings — and the climb is faster.
-              </span>
-            </div>
+            {/* Both checks still resolving: say so rather than show nothing. */}
+            {!passkeyOffered && !passkeyImpossible && (
+              <div className="muted" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <Loader2 size={14} className="animate-spin" /> Checking this device…
+              </div>
+            )}
 
             <div>
               <div className="row" style={{ gap: 10 }}>
-                <button
-                  type="button"
-                  onClick={() => setStep(2)}
-                  className="btn btn-ghost"
-                  style={{ height: 48 }}
-                >
-                  <ChevronLeft size={14} /> Back
-                </button>
+                {backButton}
                 <button
                   type="button"
                   onClick={handleComplete}
-                  disabled={loading || !passkeyAnswered}
+                  disabled={loading || !canEnter}
                   className="btn btn-primary btn-lg"
                   style={{
                     flex: 1,
                     justifyContent: 'center',
                     height: 48,
-                    opacity: passkeyAnswered ? 1 : 0.4,
+                    opacity: canEnter ? 1 : 0.4,
                   }}
                 >
                   {loading ? <Loader2 size={16} className="animate-spin" /> : <Rocket size={14} />}
@@ -745,20 +753,29 @@ export default function OnboardingPage() {
                 </button>
               </div>
               {/* Say WHY it is disabled. A dimmed button with no explanation is
-                  how a member ends up stuck on the last step of onboarding
-                  believing the app is broken. */}
-              {!passkeyAnswered && (
+                  how a member ends up stuck believing the app is broken. */}
+              {!passkeyAnswered ? (
                 <div className="muted" style={{ fontSize: 12, marginTop: 8, textAlign: 'center' }}>
-                  Set up a passkey above, or choose to keep emailed codes, to continue.
+                  Set up a passkey above, or choose to keep emailed codes, to enter the club.
                 </div>
-              )}
+              ) : !canEnter ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+                  Go Back to finish an earlier step.
+                </div>
+              ) : null}
             </div>
           </>
         )}
 
-        <div className="muted" style={{ fontSize: 11, textAlign: 'center', fontFamily: 'var(--mono)', letterSpacing: '.08em' }}>
-          ACCOUNT PENDING APPROVAL · YOU&apos;LL GET AN EMAIL ONCE YOU&apos;RE LIVE
-        </div>
+        {/* What happens after "Enter the club", in the club's actual mode
+            (00220). Nothing until the mode is known. */}
+        {autoApprove !== null && (
+          <div className="muted" style={{ fontSize: 11, textAlign: 'center', fontFamily: 'var(--mono)', letterSpacing: '.08em' }}>
+            {autoApprove
+              ? 'Most accounts are approved straight away. If an exec needs to check yours, we will email you.'
+              : <>ACCOUNT PENDING APPROVAL · YOU&apos;LL GET AN EMAIL ONCE YOU&apos;RE LIVE</>}
+          </div>
+        )}
       </div>
     </div>
   );

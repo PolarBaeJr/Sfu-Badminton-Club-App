@@ -829,7 +829,7 @@ function ActionLink({ href, children }: { href: string; children: React.ReactNod
   return (
     <Link
       href={href}
-      className="inline-flex min-h-[44px] items-center justify-center gap-2 whitespace-nowrap rounded-none border border-[var(--line)] bg-[var(--surface-2)] px-3 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ink)] no-underline transition-all duration-150 hover:bg-[var(--line)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--red)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]"
+      className="inline-flex min-h-[44px] items-center justify-center gap-2 whitespace-nowrap rounded-md border border-[var(--line)] bg-[var(--surface-2)] px-3 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ink)] no-underline transition-all duration-150 hover:bg-[var(--line)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--red)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]"
     >
       {children}
     </Link>

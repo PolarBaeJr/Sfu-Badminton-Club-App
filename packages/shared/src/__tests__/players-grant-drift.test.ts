@@ -30,6 +30,7 @@ const REPO_ROOT = join(__dirname, '../../../..');
  *   passkey_setup             recordPasskeySetup, service role
  *   deletion_requested_at     deleteMyAccount, service role
  *   active_flag               deleteMyAccount / restoreMyAccount, service role
+ *   tours_seen                mark_tour_seen (00246), service role
  *
  * full_name is generated (00023) and cannot be written by anybody.
  */
@@ -72,6 +73,9 @@ const SERVICE_ROLE_ONLY = [
   'show_activity_status',
   'skill_tier',
   'status',
+  // 00246. Stamped by mark_tour_seen(), called by the service role when a
+  // member or exec finishes or skips a guided tour.
+  'tours_seen',
   'updated_at',
   'user_id',
   'waiver_reset_at',

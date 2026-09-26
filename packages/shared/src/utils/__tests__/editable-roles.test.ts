@@ -161,7 +161,16 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
   // External at the owner's request, which put it INSIDE that set. A capability
   // in both lists would be a duplicate in EDITOR_OFFERABLE, since the ceiling
   // is their union.
-  it('adds exactly the four finance reads and the one admin-only write', () => {
+  //
+  // THE SEVEN `page.access.*` KEYS JOINED IT, one per club feature switch: the
+  // owner's "permission node for access to a restricted page". Here and not in
+  // EXEC_ASSIGNABLE because they were never exec work, and that list is the
+  // historic transcription the four VP roles partition exactly. They are spread
+  // from the feature registry, and they are written out literally below anyway:
+  // this list is what makes a new feature's key a diff somebody reads rather
+  // than a ceiling that grew on its own. None of them is a write, so the
+  // assertion further down that names the one added write did not move.
+  it('adds exactly the four finance reads, the one admin-only write and the switched-off page keys', () => {
     // AGAINST EXEC_ASSIGNABLE, because "added" means "beyond what an exec could
     // already do". Measured against the narrowed floor instead, this list would
     // be 66 entries long and would stop being the reviewable diff it exists to
@@ -174,6 +183,16 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
       'fees.netposition.read',
       'fees.otherincome.read',
       'fees.reinstatements.read',
+      'page.access.announcements',
+      'page.access.challenges',
+      'page.access.events',
+      'page.access.fees',
+      'page.access.leaderboard',
+      'page.access.membership',
+      'page.access.my_stats',
+      'page.access.sessions',
+      'page.access.socials',
+      'page.access.tournaments',
       'players.consoleaccess.write',
     ]);
   });
@@ -255,6 +274,15 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
       'challenges.page',
       'walkovers.page',
       'disputes.page',
+      // Club events (00244): admin-only by level until the owner decides
+      // otherwise, which would be a ROLE_DEFAULTS re-seed.
+      'events.page',
+      'events.signups.read',
+      'events.signups.remove.write',
+      'events.manage.create.write',
+      'events.manage.update.write',
+      'events.manage.cancel.write',
+      'events.manage.delete.write',
     ] as Capability[]) {
       expect(offerable.has(capability), `${capability} became offerable`).toBe(false);
     }

@@ -78,6 +78,10 @@ export function clampElo(rating: number, bounds?: EloBounds | null): number {
 
 export const CLUB_TIMEZONE = 'America/Vancouver';
 
+// The club Discord. A 301 on the club's own domain rather than a discord.gg
+// link, so the invite behind it can be rotated without shipping anything.
+export const DISCORD_INVITE_URL = 'https://discord.sfubadminton.com';
+
 // Session check-in window. session_checkin_open()
 // (00008_richer_attendance.sql:56-58) is the enforcement source of truth, and
 // it reads both values out of the platform_settings 'session_attendance' row

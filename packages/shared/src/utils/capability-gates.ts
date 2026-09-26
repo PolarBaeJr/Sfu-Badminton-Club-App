@@ -47,6 +47,7 @@ export type CapabilityGate = {
 // non-destructive one.
 const MINT_A_TOKEN = 'Getting the token and rotating it are one act — minting a check-in secret.';
 const MARK_OR_CLEAR = 'Marking and clearing an attendance mark are the same act in two directions.';
+const SWITCHED_OFF = 'Opening a switched-off feature and using it are one act: being let into something members are kept out of.';
 
 export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   // ---- players -----------------------------------------------------------
@@ -479,6 +480,36 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     gate: 'actions/tournament-fees.ts markTournamentFeeUnpaid',
   },
 
+  // ---- events ------------------------------------------------------------
+  'events.page': {
+    label: 'Open Club events', area: 'events', group: null, mode: 'page',
+    gate: 'route /events',
+  },
+  'events.signups.read': {
+    label: 'See who signed up for a club event', area: 'events', group: null, mode: 'read',
+    gate: 'app/events/[id]/page.tsx signups fetch',
+  },
+  'events.signups.remove.write': {
+    label: 'Remove a member from a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts removeClubEventSignup',
+  },
+  'events.manage.create.write': {
+    label: 'Create a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts createClubEvent',
+  },
+  'events.manage.update.write': {
+    label: 'Edit or publish a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts updateClubEvent',
+  },
+  'events.manage.cancel.write': {
+    label: 'Cancel a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts cancelClubEvent',
+  },
+  'events.manage.delete.write': {
+    label: 'Delete a club event', area: 'events', group: null, mode: 'write',
+    gate: 'actions/club-events.ts deleteClubEvent',
+  },
+
   // ---- fees --------------------------------------------------------------
   // The page and the Expenses ledger are two gates now, where they used to be
   // one. FeesPage admits anyone with the page; the ledger's own fetch is what
@@ -669,6 +700,100 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'platform.settings.write': {
     label: 'Platform settings', area: 'platform', group: null, mode: 'write',
     gate: 'actions/settings.ts updatePlatformSettings',
+  },
+
+  // ---- page --------------------------------------------------------------
+  // THE KEYS TO SWITCHED-OFF FEATURES, and the first gates in this map that
+  // stand in the MEMBERS' app rather than the console, hence the `player `
+  // prefix. Each one's gate is the FeatureGate on its pages, and its `also` is
+  // every member action that calls assertFeatureOn for the same feature.
+  //
+  // MODE `read`, NOT `page`, even though pageOf() treats each as its own page.
+  // The editor keeps ONE page slot per area and draws every other entry as a
+  // row; seven page-mode entries in one area would overwrite each other there
+  // and only the last would be offered.
+  //
+  // The nav filters and the feed's cards ask the same question but are not
+  // listed: each is one function asking it for every feature at once, so it
+  // would be a site claimed seven times over.
+  //
+  // WRITTEN BY HAND, NOT DERIVED FROM THE REGISTRY, because the `also` lists
+  // differ per feature and a derived entry could only guess them. The Record
+  // type is what keeps it complete: a new feature is a compile error here
+  // until its entry exists.
+  'page.access.sessions': {
+    label: 'Sessions while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/sessions/layout.tsx FeatureGate',
+    also: [
+      'player app/checkin/layout.tsx FeatureGate',
+      'player actions/sessions.ts checkInToSession',
+      'player actions/sessions.ts checkInWithToken',
+      'player actions/sessions.ts setSessionIntent',
+    ],
+    merged: SWITCHED_OFF,
+  },
+  'page.access.challenges': {
+    label: 'Challenges while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/challenges/layout.tsx FeatureGate',
+    also: [
+      'player actions/challenges.ts createChallenge',
+      'player actions/challenges.ts acceptChallenge',
+      'player actions/challenges.ts rejectChallenge',
+      'player actions/challenges.ts cancelChallenge',
+      'player actions/matches.ts submitMatchResult',
+      'player actions/matches.ts reportWalkover',
+    ],
+    merged: SWITCHED_OFF,
+  },
+  'page.access.tournaments': {
+    label: 'Tournaments while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/tournaments/layout.tsx FeatureGate',
+    also: [
+      'player lib/tournament-actions.ts registerForEvent',
+      'player lib/tournament-actions.ts acceptEventWaiver',
+      'player lib/tournament-actions.ts withdrawFromEvent',
+      'player lib/tournament-actions.ts selfCheckIn',
+      'player lib/tournament-actions.ts setMyMatchReady',
+      'player lib/tournament-checkin.ts checkInToTournament',
+    ],
+    merged: SWITCHED_OFF,
+  },
+  'page.access.events': {
+    label: 'Club events while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/events/layout.tsx FeatureGate',
+    also: [
+      'player lib/club-event-actions.ts signUpForClubEvent',
+      'player lib/club-event-actions.ts withdrawFromClubEvent',
+    ],
+    merged: SWITCHED_OFF,
+  },
+  // The index page only, so member profiles under /leaderboard stay open.
+  'page.access.leaderboard': {
+    label: 'Leaderboard while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/leaderboard/page.tsx FeatureGate',
+  },
+  'page.access.my_stats': {
+    label: 'My stats while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/my-stats/layout.tsx FeatureGate',
+  },
+  'page.access.announcements': {
+    label: 'Announcements while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/announcements/layout.tsx FeatureGate',
+  },
+  'page.access.fees': {
+    label: 'Fees while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/fees/layout.tsx FeatureGate',
+  },
+  'page.access.membership': {
+    label: 'Membership page while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/membership/layout.tsx FeatureGate',
+  },
+  // The page only. The footer row, the nav's Discord links and the bot's reply
+  // ask the same question for everybody at once, so, like the nav filters, they
+  // are not listed as sites.
+  'page.access.socials': {
+    label: 'Social links while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player app/socials/layout.tsx FeatureGate',
   },
 };
 

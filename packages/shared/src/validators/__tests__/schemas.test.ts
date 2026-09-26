@@ -13,6 +13,7 @@ import {
   walkoverReportSchema,
   disputeResolveSchema,
   feeMarkSchema,
+  feeSubmissionSchema,
   seasonFeeSchema,
   sessionGroupSchema,
   manualFeeSchema,
@@ -549,6 +550,22 @@ describe('manualFeeSchema', () => {
   it('rejects an empty name', () => {
     expect(manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: '' }).success).toBe(false);
   });
+  it('normalises an optional email to the trimmed lowercase form the column requires', () => {
+    const r = manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe', email: '  Jane.Doe@SFU.ca ' });
+    expect(r.success && r.data.email).toBe('jane.doe@sfu.ca');
+  });
+  it('treats a blank email as absent rather than invalid', () => {
+    for (const email of ['', '   ']) {
+      const r = manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe', email });
+      expect(r.success).toBe(true);
+      expect(r.success && r.data.email).toBeUndefined();
+    }
+  });
+  it('rejects a malformed or oversized email', () => {
+    expect(manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe', email: 'jane' }).success).toBe(false);
+    const long = `${'a'.repeat(250)}@x.ca`;
+    expect(manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe', email: long }).success).toBe(false);
+  });
   it('rejects a name longer than 80 chars', () => {
     expect(
       manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'x'.repeat(81) }).success,
@@ -971,5 +988,35 @@ describe('otherIncomeSchema / clubExpenseSchema', () => {
   it('accepts an explicit ISO paid_at and rejects a bare date', () => {
     expect(clubExpenseSchema.safeParse({ ...expense, paid_at: '2026-09-15T12:00:00.000Z' }).success).toBe(true);
     expect(clubExpenseSchema.safeParse({ ...expense, paid_at: '2026-09-15' }).success).toBe(false);
+  });
+});
+
+describe('feeSubmissionSchema (00253)', () => {
+  const base = {
+    feeId: '00000000-0000-4000-8000-000000000001',
+    duesSeasonId: null,
+    reference: 'CA7Hd2k9',
+    screenshotPath: 'user/receipt.png',
+  };
+
+  it('takes the method the browser read, or none', () => {
+    expect(feeSubmissionSchema.safeParse(base).success).toBe(true);
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: null }).success).toBe(true);
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: 'e_transfer' }).success).toBe(true);
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: 'sfu_rec' }).success).toBe(true);
+  });
+
+  it('refuses a method a receipt cannot carry', () => {
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: 'cash' }).success).toBe(false);
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: 'online_portal' }).success).toBe(false);
+  });
+
+  it('lets a 4 character reference through to the action, which checks it by method', () => {
+    expect(feeSubmissionSchema.safeParse({ ...base, reference: '4821' }).success).toBe(true);
+    expect(feeSubmissionSchema.safeParse({ ...base, reference: '482' }).success).toBe(false);
+  });
+
+  it('is still strict', () => {
+    expect(feeSubmissionSchema.safeParse({ ...base, method: 'sfu_rec' }).success).toBe(false);
   });
 });

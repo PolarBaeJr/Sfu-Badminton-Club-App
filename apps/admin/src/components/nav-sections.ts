@@ -10,11 +10,25 @@ import {
   UserCog,
   Target,
   Calendar,
+  CalendarHeart,
   DollarSign,
   Megaphone,
   ShieldCheck,
 } from 'lucide-react';
-import { canAccess, type AccessLevel, type Area, type Permissions } from '../lib/permissions';
+import {
+  canAccess,
+  featureAccessCapability,
+  type AccessLevel,
+  type Area,
+  type Capability,
+  type Permissions,
+} from '../lib/permissions';
+// Deep and type-only, NOT the '@badminton/ui' barrel: that loads every
+// component in the package, and this module is imported by tests that must not
+// need a DOM.
+import type { NavEntry } from '@badminton/ui/src/nav-groups';
+// Deep for the same reason: the registry has no imports of its own.
+import { adminFeatureFor, type FeatureFlags } from '@badminton/shared/src/utils/features';
 
 // THE CONSOLE'S NAVIGATION, as data.
 //
@@ -55,6 +69,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, area: null },
       { href: '/matches', label: 'Matches', icon: Target, area: 'matches' },
       { href: '/tournaments', label: 'Tournaments', icon: Trophy, area: 'tournaments' },
+      { href: '/events', label: 'Club events', icon: CalendarHeart, area: 'events' },
       { href: '/sessions', label: 'Sessions', icon: Calendar, area: 'sessions' },
       { href: '/announcements', label: 'Announcements', icon: Megaphone, area: 'announcements' },
       { href: '/seasons', label: 'Seasons', icon: Medal, area: 'seasons' },
@@ -103,4 +118,55 @@ export function openableSections(
   return NAV_SECTIONS.flatMap((section) => section.items).filter((item) =>
     canAccess(level, permissions, item.href),
   );
+}
+
+// THE TOP BAR'S LAYOUT: the same items, arranged into menus.
+//
+// NAV_SECTIONS above stays the list of record (its order is pinned by
+// nav-drift.test.ts, and openableSections() walks it); this only decides where
+// each item sits on screen. The two sections are no longer rendered as rows. Built by href lookup so an item cannot be copied
+// here with a different label or area, and a mistyped href fails at module
+// load rather than quietly dropping a link. nav-layout.test.ts checks that
+// every item appears exactly once.
+//
+// A new destination in a group is one href added to its list.
+const byHref = new Map(NAV_SECTIONS.flatMap((section) => section.items).map((item) => [item.href, item]));
+
+function navItem(href: string): NavItem {
+  const item = byHref.get(href);
+  if (!item) throw new Error(`NAV_LAYOUT names ${href}, which is not in NAV_SECTIONS`);
+  return item;
+}
+
+const group = (id: string, label: string, hrefs: string[]): NavEntry<NavItem> => ({
+  kind: 'group',
+  group: { id, label, items: hrefs.map(navItem) },
+});
+
+export const NAV_LAYOUT: NavEntry<NavItem>[] = [
+  { kind: 'link', item: navItem('/dashboard') },
+  group('play', 'Play', ['/sessions', '/matches', '/seasons']),
+  group('events', 'Events', ['/tournaments', '/events']),
+  group('members', 'Members', ['/players', '/permissions', '/accounts']),
+  group('club', 'Club', ['/announcements', '/fees', '/legal']),
+  group('system', 'System', ['/ratings', '/audit']),
+  { kind: 'link', item: navItem('/settings') },
+];
+
+/**
+ * False for the nav item of a club feature that is switched off, unless the
+ * viewer holds that feature's `page.access.<id>` key (an admin always does, by
+ * level). Layered on top of canAccess() by the top bar and the dashboard; the
+ * page itself stays reachable by URL and says the feature is off.
+ *
+ * `held` is the viewer's resolved set, from effectiveCapabilities(), so this
+ * asks the same question the members' app asks through featureAccessFor().
+ */
+export function adminNavItemOn(
+  href: string,
+  features: FeatureFlags,
+  held: ReadonlySet<Capability>,
+): boolean {
+  const id = adminFeatureFor(href);
+  return id === null || features[id] || held.has(featureAccessCapability(id));
 }

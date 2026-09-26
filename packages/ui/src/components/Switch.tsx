@@ -29,26 +29,23 @@ export function Switch({ checked, onChange, label, description, disabled, classN
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          // rounded-[var(--r-control,999px)] on all three pieces, the same token
-          // Input, Textarea and SearchFilter already take. The admin console
-          // defines --r-control: 0, where this was the last pill-shaped control
-          // on a screen that is square everywhere else; the player app defines
-          // nothing, so the fallback keeps its toggle exactly as it renders
-          // today. 999px and not 8px as the fallback, because "unchanged" for a
-          // switch is the full pill, not a rounded rectangle.
+          // The track and knob are always a full pill, in both apps: a switch
+          // with 8px corners reads as a rounded rectangle, not a toggle. Only
+          // this focus-ring wrapper follows --r-control, the token Input,
+          // Textarea and SearchFilter take, so its ring matches their corners.
           'inline-flex items-center justify-center min-w-[44px] min-h-[44px] bg-transparent rounded-[var(--r-control,999px)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2 focus:ring-offset-[var(--bg-primary)]',
           disabled && 'opacity-50 cursor-not-allowed'
         )}
       >
         <span
           className={cn(
-            'relative inline-flex h-6 w-11 items-center rounded-[var(--r-control,999px)] transition-colors',
+            'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
             checked ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-hover)]'
           )}
         >
           <span
             className={cn(
-              'inline-block h-4 w-4 rounded-[var(--r-control,999px)] bg-white transition-transform',
+              'inline-block h-4 w-4 rounded-full bg-white transition-transform',
               checked ? 'translate-x-6' : 'translate-x-1'
             )}
           />

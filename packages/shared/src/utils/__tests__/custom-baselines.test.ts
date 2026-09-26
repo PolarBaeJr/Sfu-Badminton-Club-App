@@ -291,6 +291,12 @@ describe('what may go in a baseline', () => {
     // ceiling added beyond what an exec could already do; the narrowed baseline
     // would make it sixty-seven entries and this assertion would stop naming the
     // five capabilities somebody actually enumerated, which is its whole job.
+    //
+    // THIRTEEN NOW: the eight `page.access.*` keys to switched-off features
+    // joined the ceiling, one per club feature switch (`page.access.events`
+    // arrived with club events in 00244). They are enumerated below for
+    // the same reason the five are, even though the ceiling spreads them from
+    // the feature registry: a new feature's key should be a line somebody reads.
     const beyond = [...composed].filter(
       (capability) => !(EXEC_ASSIGNABLE as readonly Capability[]).includes(capability),
     );
@@ -299,6 +305,16 @@ describe('what may go in a baseline', () => {
       'fees.netposition.read',
       'fees.otherincome.read',
       'fees.reinstatements.read',
+      'page.access.announcements',
+      'page.access.challenges',
+      'page.access.events',
+      'page.access.fees',
+      'page.access.leaderboard',
+      'page.access.membership',
+      'page.access.my_stats',
+      'page.access.sessions',
+      'page.access.socials',
+      'page.access.tournaments',
       'players.consoleaccess.write',
     ]);
 

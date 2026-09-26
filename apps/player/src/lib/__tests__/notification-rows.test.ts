@@ -52,9 +52,9 @@ const PLAYER_ROUTES = [
   '/fees',
   '/leaderboard',
   '/leaderboard/[playerId]',
+  '/membership',
   '/my-stats',
   '/notifications',
-  '/sessions',
   '/settings',
   '/tournaments',
   '/tournaments/[id]',
@@ -66,7 +66,8 @@ const PLAYER_ROUTES = [
 /** Collapses concrete ids back to their route pattern so an href can be checked
  *  against the route table above. */
 function routePattern(href: string): string {
-  const parts = href.split('/');
+  // The query string is not part of the route.
+  const parts = (href.split('?')[0] ?? href).split('/');
   if (parts[1] === 'challenges' && parts[2]) return '/challenges/[id]';
   if (parts[1] === 'leaderboard' && parts[2]) return '/leaderboard/[playerId]';
   if (parts[1] === 'tournaments' && parts[2] && parts[2] !== 'checkin') {
@@ -77,7 +78,7 @@ function routePattern(href: string): string {
     }
     return '/tournaments/[id]';
   }
-  return href;
+  return parts.join('/');
 }
 
 describe('notificationLabel / notificationTone', () => {
@@ -161,8 +162,20 @@ describe('notificationAction', () => {
     });
     expect(notificationAction('general', { challenge_id: 'c1' })?.href).toBe('/challenges/c1');
     expect(notificationAction('general', { tournament_id: 't1' })?.href).toBe('/tournaments/t1');
-    expect(notificationAction('general', { session_id: 's1' })?.href).toBe('/sessions');
+    expect(notificationAction('general', { session_id: 's1' })?.href).toBe('/feed');
     expect(notificationAction('general', {})).toBeNull();
+  });
+
+  it('sends fee notices to /membership', () => {
+    expect(notificationAction('general', { kind: 'fee_submission_rejected', fee_submission_id: 'f1' })).toEqual({
+      href: '/membership',
+      label: 'View',
+    });
+    expect(notificationAction('general', { kind: 'fee_payment_reminder' })).toEqual({
+      href: '/membership',
+      label: 'View',
+    });
+    expect(notificationAction('general', { kind: 'something_else' })).toBeNull();
   });
 
   it('uses the event route when both ids are present and the tournament route when only one is', () => {
@@ -182,7 +195,13 @@ describe('notificationAction', () => {
 
   it('sends the standing-shaped types to the pages that show them', () => {
     expect(notificationAction('rank_changed', {})?.href).toBe('/my-stats');
-    expect(notificationAction('session_reminder', { session_id: 's1' })?.href).toBe('/sessions');
+    expect(notificationAction('session_reminder', { session_id: 's1' })?.href).toBe('/feed');
+  });
+
+  it('scrolls the schedule to the session when the id is a real uuid', () => {
+    const id = '33333333-3333-4333-8333-333333333333';
+    expect(notificationAction('session_reminder', { session_id: id })?.href).toBe(`/feed?s=${id}`);
+    expect(notificationAction('general', { session_id: id })?.href).toBe(`/feed?s=${id}`);
   });
 
   it('gives an unrecognised type no action and does not throw', () => {
@@ -197,10 +216,13 @@ describe('notificationAction', () => {
       { challenge_id: 'c1' },
       { announcement_id: 'a1' },
       { session_id: 's1' },
+      { session_id: '33333333-3333-4333-8333-333333333333' },
       { tournament_id: 't1' },
       { tournament_id: 't1', event_id: 'e1' },
       { event_id: 'e1' },
       { match_id: 'm1', challenge_id: 'c1' },
+      { kind: 'fee_submission_rejected' },
+      { kind: 'fee_payment_reminder' },
     ];
     for (const type of [...ENUM_TYPES, 'a_type_nobody_has_written_yet']) {
       for (const metadata of metadatas) {

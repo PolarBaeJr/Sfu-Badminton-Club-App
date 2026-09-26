@@ -87,9 +87,10 @@ describe('a session card gets its number from an aggregate', () => {
   });
 });
 
+// The schedule moved from /sessions to /feed; the rule moved with it.
 describe('the schedule page no longer reads other members\' attendance rows', () => {
   const page = readFileSync(
-    join(__dirname, '..', '..', 'app', 'sessions', 'page.tsx'),
+    join(__dirname, '..', '..', 'app', 'feed', 'page.tsx'),
     'utf8',
   );
 
@@ -106,6 +107,6 @@ describe('the schedule page no longer reads other members\' attendance rows', ()
   });
 
   it('gets the tally from the aggregate helper instead', () => {
-    expect(page).toMatch(/attendeeCountsBySession\(supabase as never, talliedSessionIds\)/);
+    expect(page).toMatch(/attendeeCountsBySession\(supabase as never, upcomingIds\)/);
   });
 });

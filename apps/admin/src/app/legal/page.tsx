@@ -165,7 +165,7 @@ export default async function LegalPage() {
       {/* Card chrome from tokens rather than `.card-base`: that class is
           declared only in the player app's globals.css, so in the console it
           styles nothing at all. See the note in ./legal-documents-form.tsx. */}
-      <div className="mt-6 border border-[var(--line)] bg-[var(--surface)] p-5">
+      <div className="mt-6 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5">
         <p className="settings-section-desc">
           The event waiver a tournament starts from, kept per season so each term&rsquo;s
           venue and club terms can differ.{' '}

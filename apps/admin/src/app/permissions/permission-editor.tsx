@@ -82,6 +82,7 @@ const AREA_LABELS: Record<Area, string> = {
   challenges: 'Challenges',
   announcements: 'Announcements',
   tournaments: 'Tournaments',
+  events: 'Club events',
   fees: 'Finances',
   legal: 'Legal',
   walkovers: 'Walkovers',
@@ -91,6 +92,7 @@ const AREA_LABELS: Record<Area, string> = {
   ratings: 'Ratings',
   accounts: 'Accounts',
   platform: 'Platform',
+  page: 'Switched-off pages',
 };
 
 const GROUP_LABELS: Record<string, string> = {
@@ -1418,9 +1420,8 @@ export function PermissionEditor({
           IN SOLO THE CARD IS NOT A CARD. The host is a `Panel` on the member's
           own detail page and already draws the hairline box, so a second border
           and a second surface inside it would read as a box in a box. The radius
-          is left alone on purpose — see Card itself, where `rounded-xl` compiles
-          to 0 in both apps and passing `rounded-none` is called out as the wrong
-          fix. */}
+          is left alone on purpose: Card's own `rounded-xl` is the console's card
+          corner. */}
       <Card
         padding={false}
         className={cn(
@@ -1430,7 +1431,7 @@ export function PermissionEditor({
         {!solo && (
         <div
           className={cn(
-            'md:sticky md:top-[120px] md:self-start md:h-[calc(100vh-140px)] md:flex md:flex-col md:border-r md:border-[var(--line)]',
+            'md:sticky md:top-[var(--console-header-h)] md:self-start md:h-[calc(100vh-var(--console-header-h)-20px)] md:flex md:flex-col md:border-r md:border-[var(--line)]',
             selected && 'hidden md:flex',
           )}
         >
@@ -1593,7 +1594,7 @@ export function PermissionEditor({
                     holding it the same thing as being one. The server refuses it
                     too — this only decides what is drawn. */}
                 {viewerCanGrantConsole && (
-                  <div className="border border-[var(--line)] p-3 space-y-3">
+                  <div className="rounded-md border border-[var(--line)] p-3 space-y-3">
                     <p className={cn(MICRO, 'text-[var(--mute)]')}>Console access</p>
                     {selected.id === viewerId ? (
                       <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
@@ -1764,7 +1765,7 @@ export function PermissionEditor({
                         no changes". Losing an hour to a screen that accepted the
                         work and discarded it is worse than being told up front. */}
                     {selectedLevel === 'admin' && (
-                      <div className="border border-[var(--border)] bg-[var(--surface-2)] p-3">
+                      <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3">
                         <p className={cn(MICRO, 'text-[var(--text-primary)]')}>
                           An admin holds every capability by level
                         </p>
@@ -1784,7 +1785,7 @@ export function PermissionEditor({
                         warning. See the note on `losing` above for why a trainer
                         needs it more sharply than an exec does. */}
                     {composable && losing.length > 0 && (
-                      <div className="border border-[var(--red-border)] bg-[var(--red-wash)] p-3">
+                      <div className="rounded-md border border-[var(--red-border)] bg-[var(--red-wash)] p-3">
                         <p className={cn(MICRO, 'text-[var(--red)]')}>
                           Saving takes away {losing.length}{' '}
                           {losing.length === 1 ? 'capability' : 'capabilities'} they hold today
@@ -1802,7 +1803,7 @@ export function PermissionEditor({
                         chose. Surfaced instead, with a one-click clear, so that "inert"
                         is a state somebody can see rather than one they discover. */}
                     {composable && orphanRevokes.length > 0 && (
-                      <div className="border border-[var(--line)] p-3">
+                      <div className="rounded-md border border-[var(--line)] p-3">
                         <p className={cn(MICRO, 'text-[var(--ink)]')}>
                           {orphanRevokes.length} revoke{orphanRevokes.length === 1 ? '' : 's'} the{' '}
                           {role === null ? 'current' : PERMISSION_ROLE_LABELS[role]} role does not give
@@ -1834,7 +1835,7 @@ export function PermissionEditor({
                         what a person can do. The figure above is the count; this is
                         the same set in words, and it is computed by the same function
                         the gates call. */}
-                    <div className="border border-[var(--line)] bg-[var(--surface-2)] p-3">
+                    <div className="rounded-md border border-[var(--line)] bg-[var(--surface-2)] p-3">
                       <p className={cn(MICRO, 'text-[var(--mute)]')}>Everything they hold</p>
                       <p className="mt-2 text-[11px] text-[var(--mute)] leading-relaxed">
                         {effective.size === 0
@@ -1859,7 +1860,11 @@ export function PermissionEditor({
                   looking like something you can edit. */}
               {composable && (
                 <>
-                  <div className="sticky top-[120px] z-10 flex flex-wrap items-center gap-2 border-y border-[var(--line)] bg-[var(--surface)] px-3 py-2.5">
+                  {/* --console-header-h (globals.css) is the console header's height
+                      (sidebar.tsx): one row since the nav became dropdowns. It was 120px
+                      for the old two-row bar, which left a gap that rows scrolled through
+                      above this filter. */}
+                  <div className="sticky top-[var(--console-header-h)] z-10 flex flex-wrap items-center gap-2 border-y border-[var(--line)] bg-[var(--surface)] px-3 py-2.5">
                     <SearchFilter
                       className="min-w-[200px] flex-1"
                       label="Filter capabilities by name or dotted path"
@@ -1915,7 +1920,7 @@ export function PermissionEditor({
           ONE PERSON READS EXACTLY AS IT DID BEFORE — same words, same figures,
           same plain Reset. The aggregate phrasing starts at two. */}
       {entries.length > 0 && (
-        <div className="sticky bottom-0 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+        <div className="sticky bottom-0 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
           <div className="min-w-0">
             <p className={cn(MICRO, 'text-[var(--ink)]')}>
               {only ? (

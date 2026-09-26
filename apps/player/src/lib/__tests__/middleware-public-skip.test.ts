@@ -74,6 +74,7 @@ describe('the middleware skips the auth round trip on public paths', () => {
     '/legal',
     '/legal/waiver',
     '/login',
+    '/signup',
     '/auth/callback',
     '/exec',
     '/unsubscribe',

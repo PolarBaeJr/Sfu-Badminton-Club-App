@@ -12,6 +12,7 @@ const DISCORD_API_ROUTES = [
   '/api/discord/link-tokens',
   '/api/discord/members',
   '/api/discord/sessions',
+  '/api/discord/socials',
 ];
 
 describe('isPublicPath', () => {
@@ -65,7 +66,7 @@ describe('isPublicPath', () => {
   });
 
   describe('public pages', () => {
-    it.each(['/', '/login', '/auth/callback', '/exec', '/legal/privacy', '/leaderboard'])(
+    it.each(['/', '/login', '/signup', '/auth/callback', '/exec', '/legal/privacy', '/leaderboard', '/membership', '/socials'])(
       'treats %s as public',
       (path) => {
         expect(isPublicPath(path)).toBe(true);
@@ -76,6 +77,15 @@ describe('isPublicPath', () => {
     // gate should open up wholesale.
     it('matches /leaderboard exactly', () => {
       expect(isPublicPath('/leaderboard/season-2')).toBe(false);
+    });
+
+    // Exact too. /fees is the member's own statement and needs a session.
+    it('matches /membership and /socials exactly, and keeps /fees gated', () => {
+      expect(isPublicPath('/membershipX')).toBe(false);
+      expect(isPublicPath('/membership/anything')).toBe(false);
+      expect(isPublicPath('/socialsX')).toBe(false);
+      expect(isPublicPath('/socials/anything')).toBe(false);
+      expect(isPublicPath('/fees')).toBe(false);
     });
 
     it('lets a signed-out scanner reach the tournament check-in page', () => {

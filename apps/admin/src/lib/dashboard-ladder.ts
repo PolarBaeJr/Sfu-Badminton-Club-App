@@ -90,7 +90,7 @@ export async function getLadderSpread(supabase: SupabaseClient): Promise<LadderS
   // "no member has a rating yet" over a club of a hundred rated players — a
   // plausible-looking picture of a false fact, which is the failure this
   // codebase refuses everywhere it counts anything.
-  const rows = unwrap(result as { data: RatingRow[] | null; error: { message: string } | null });
+  const rows = unwrap(result as { data: RatingRow[] | null; error: { message: string } | null }, 'RAT-101');
 
   const spread: LadderSpread = {
     singles: [],

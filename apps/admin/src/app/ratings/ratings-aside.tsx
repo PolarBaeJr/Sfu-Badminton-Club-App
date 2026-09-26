@@ -65,7 +65,7 @@ function formatDay(iso: string): string {
 
 function CardShell({ heading, children }: { heading: string; children: React.ReactNode }) {
   return (
-    <section className="border border-[var(--line)] bg-[var(--surface)]">
+    <section className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)]">
       <h2 className={`${MONO_LABEL} tracking-[.16em] px-4 pt-4 pb-3`}>{heading}</h2>
       {children}
     </section>
@@ -103,7 +103,7 @@ export function RatingsAside({
   };
 }) {
   return (
-    <div className="flex flex-col gap-5 xl:sticky xl:top-5 xl:self-start">
+    <div className="flex flex-col gap-5 xl:sticky xl:top-[calc(var(--console-header-h)+var(--sticky-gap))] xl:self-start">
       {/* WHAT A K-FACTOR IS WORTH, IN POINTS. First card in the column because
           it is the only one that makes the numbers in the form legible — the
           rest of the aside describes the club, this describes the settings.

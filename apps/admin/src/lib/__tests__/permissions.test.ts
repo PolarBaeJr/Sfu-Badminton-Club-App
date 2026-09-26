@@ -113,6 +113,8 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   { path: '/disputes', admin: true, exec: false, trainer: false },
   { path: '/walkovers', admin: true, exec: false, trainer: false },
   { path: '/challenges', admin: true, exec: false, trainer: false },
+  { path: '/events', admin: true, exec: false, trainer: false },
+  { path: '/events/abc-123', admin: true, exec: false, trainer: false },
   // Platform configuration, split out of /settings. /settings itself stays
   // trainer-level for passkey enrolment, so these two MUST be listed
   // separately — the club owner's rule was that execs cannot edit them, and

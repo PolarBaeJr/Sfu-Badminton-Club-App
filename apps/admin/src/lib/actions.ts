@@ -26,6 +26,7 @@
 //                        updatePlatformSettings (/ratings + /accounts)
 //   - bulk.ts          — one decision applied to several records: a loop over
 //                        the single-record actions above, never a batched write
+//   - tour.ts          - markConsoleTourSeen (the console tour, 00246)
 //   - _shared.ts       — requireCapability (NOT 'use server' — internal helper)
 export {
   approvePlayer,
@@ -171,3 +172,5 @@ export {
   bulkMarkTournamentFeesPaid,
   bulkMarkTournamentFeesUnpaid,
 } from './actions/bulk';
+
+export { markConsoleTourSeen } from './actions/tour';

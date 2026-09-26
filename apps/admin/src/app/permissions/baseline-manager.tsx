@@ -75,6 +75,7 @@ const AREA_LABELS: Record<Area, string> = {
   challenges: 'Challenges',
   announcements: 'Announcements',
   tournaments: 'Tournaments',
+  events: 'Club events',
   fees: 'Finances',
   legal: 'Legal',
   walkovers: 'Walkovers',
@@ -84,6 +85,7 @@ const AREA_LABELS: Record<Area, string> = {
   ratings: 'Ratings',
   accounts: 'Accounts',
   platform: 'Platform',
+  page: 'Switched-off pages',
 };
 
 /** The offerable capabilities, in area order — the same order the editor uses. */
@@ -503,7 +505,7 @@ export function BaselineManager({
             one keeps every capability they have; only the name for it goes.
           </p>
           {deleting !== null && deleting.holders > 0 && (
-            <p className="border border-[var(--color-warning)] p-3 text-[12px] text-[var(--color-warning)]">
+            <p className="rounded-md border border-[var(--color-warning)] p-3 text-[12px] text-[var(--color-warning)]">
               {deleting.holders} {deleting.holders === 1 ? 'person holds' : 'people hold'} it.
               This will be refused until they are moved onto something else — deleting a
               baseline must not be a way to quietly leave people on a set nobody can name.
@@ -541,7 +543,7 @@ export function BaselineManager({
             The name is kept.
           </p>
           {resetting !== null && resetting.holders > 0 && (
-            <p className="border border-[var(--color-warning)] p-3 text-[12px] text-[var(--color-warning)]">
+            <p className="rounded-md border border-[var(--color-warning)] p-3 text-[12px] text-[var(--color-warning)]">
               {resetting.holders} {resetting.holders === 1 ? 'person holds' : 'people hold'} it,
               and {resetting.holders === 1 ? 'their' : 'their'} access changes with it. If the
               shipped set is narrower than the current one this TAKES CAPABILITIES AWAY from

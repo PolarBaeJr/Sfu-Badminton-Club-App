@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CLUB_TIMEZONE, clubToday } from '@badminton/shared';
+import { CLUB_TIMEZONE, clubToday, readFeatureFlags } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -151,7 +151,11 @@ export async function GET(request: Request) {
   // window above is wider than a page: counting the rows the database returned
   // would count tournaments that finished last month, and the last page would
   // then be empty with no way for the bot to tell.
-  const upcoming = ((data ?? []) as Row[]).filter(
+  //
+  // Tournaments switched off for members answer as an empty list, in the same
+  // shape, so the bot says there is nothing scheduled.
+  const tournamentsOn = (await readFeatureFlags(supabase)).tournaments;
+  const upcoming = ((tournamentsOn ? data ?? [] : []) as Row[]).filter(
     (t) => (t.end_date ?? t.start_date) >= today
   );
 

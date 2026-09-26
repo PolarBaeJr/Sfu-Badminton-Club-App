@@ -40,6 +40,7 @@ function makeClient(rows: {
   dues?: Row[];
   tournament?: Row[];
   reinstatement?: Row[];
+  event?: Row[];
   income?: Row[];
   expense?: Row[];
 }) {
@@ -80,9 +81,14 @@ function makeClient(rows: {
           if (table !== 'club_fees') return resolve({ data: [] });
           // No fee_type filter: hand back the WHOLE table, which is what an
           // unfiltered query would really return.
-          const all = [...(rows.dues ?? []), ...(rows.tournament ?? []), ...(rows.reinstatement ?? [])];
+          const all = [
+            ...(rows.dues ?? []),
+            ...(rows.tournament ?? []),
+            ...(rows.reinstatement ?? []),
+            ...(rows.event ?? []),
+          ];
           if (feeType == null) return resolve({ data: all });
-          return resolve({ data: rows[feeType as 'dues' | 'tournament' | 'reinstatement'] ?? [] });
+          return resolve({ data: rows[feeType as 'dues' | 'tournament' | 'reinstatement' | 'event'] ?? [] });
         },
       };
       return chain;
@@ -101,6 +107,7 @@ describe('getSeasonIncome', () => {
       dues: [{ amount_cents: 5000 }, { amount_cents: 1500 }],
       tournament: [{ amount_cents: 2500 }],
       reinstatement: [{ amount_cents: 2000 }],
+      event: [{ amount_cents: 1200 }],
       income: [{ amount_cents: 3000 }],
     });
     const income = await getSeasonIncome(client as never, SEASON);
@@ -108,14 +115,15 @@ describe('getSeasonIncome', () => {
     expect(income.clubCents).toBe(6500);
     expect(income.tournamentCents).toBe(2500);
     expect(income.reinstatementCents).toBe(2000);
+    expect(income.eventCents).toBe(1200);
     expect(income.otherCents).toBe(3000);
-    expect(income.totalCents).toBe(14000);
+    expect(income.totalCents).toBe(15200);
   });
 
   // THE DOUBLE-COUNT PROOF, stated as arithmetic rather than as a magic number.
   //
   // Every fee in the ledger is paid, so the club's fee income is the sum of the
-  // rows, once each — no matter how they are split across the three kinds. If
+  // rows, once each, no matter how they are split across the four kinds. If
   // any slice overlapped another (a missing fee_type filter, a resurrected
   // tournament_fees branch) the total would exceed this and the test would say
   // so for every possible seeding, not just this one.
@@ -123,30 +131,32 @@ describe('getSeasonIncome', () => {
     const dues = [{ amount_cents: 4000 }, { amount_cents: 4000 }];
     const tournament = [{ amount_cents: 1500 }, { amount_cents: 1500 }, { amount_cents: 1500 }];
     const reinstatement = [{ amount_cents: 2000 }];
-    const everyFee = [...dues, ...tournament, ...reinstatement];
+    const event = [{ amount_cents: 1000 }, { amount_cents: 500 }];
+    const everyFee = [...dues, ...tournament, ...reinstatement, ...event];
     const onceEach = everyFee.reduce((n, r) => n + (r.amount_cents ?? 0), 0);
 
     const income = await getSeasonIncome(
-      makeClient({ dues, tournament, reinstatement }) as never,
+      makeClient({ dues, tournament, reinstatement, event }) as never,
       SEASON,
     );
 
     expect(income.totalCents).toBe(onceEach);
-    // And the three parts partition the whole — no row in two of them.
-    expect(income.clubCents + income.tournamentCents + income.reinstatementCents).toBe(onceEach);
+    // And the four parts partition the whole: no row in two of them.
+    expect(income.clubCents + income.tournamentCents + income.reinstatementCents + income.eventCents).toBe(onceEach);
   });
 
-  // The other half of the same guarantee: the three reads must be three
+  // The other half of the same guarantee: the four reads must be four
   // DIFFERENT slices. Without a fee_type filter each one returns the whole
-  // table, so the total comes out at three times the money.
-  it('asks for each kind by name, so the three reads cannot overlap', async () => {
+  // table, so the total comes out at four times the money.
+  it('asks for each kind by name, so the four reads cannot overlap', async () => {
     const client = makeClient({});
     await getSeasonIncome(client as never, SEASON);
 
     const feeReads = client.calls.filter((c) => c.table === 'club_fees');
-    expect(feeReads).toHaveLength(3);
+    expect(feeReads).toHaveLength(4);
     expect(feeReads.map((c) => c.filters.find((f) => f.startsWith('eq:fee_type='))).sort()).toEqual([
       'eq:fee_type=dues',
+      'eq:fee_type=event',
       'eq:fee_type=reinstatement',
       'eq:fee_type=tournament',
     ]);

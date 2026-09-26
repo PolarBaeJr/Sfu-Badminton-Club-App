@@ -2,33 +2,18 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { cn } from '@badminton/ui';
+import { cn, NavMenu, isRouteActive, isGroupActive } from '@badminton/ui';
+import { desktopEntries } from '@/lib/nav-entries';
+import { ALL_FEATURES_ENABLED, type FeatureFlags, type FeatureId } from '@badminton/shared/src/utils/features';
 import { ShuttleMark } from './shuttle-mark';
+import { DiscordMark } from './discord-mark';
+import { DISCORD_INVITE_URL } from '@badminton/shared';
 import {
-  Home,
-  Trophy,
-  Crosshair,
-  Calendar,
-  Award,
-  Sparkles,
   Bell,
   Settings,
   LogIn,
   Shield,
 } from 'lucide-react';
-
-// `gated` marks destinations that require an approved account. requirePlayer()
-// rejects a pending member with "Account pending approval", so linking them is
-// a promise the app can't keep — hide until approved rather than let someone
-// click through to an error.
-const desktopNavItems = [
-  { href: '/feed',          label: 'Feed',         icon: Home,      gated: false },
-  { href: '/leaderboard',   label: 'Leaderboard',  icon: Trophy,    gated: false },
-  { href: '/challenges',    label: 'Challenges',   icon: Crosshair, gated: true  },
-  { href: '/sessions',      label: 'Schedule',     icon: Calendar,  gated: true  },
-  { href: '/tournaments',   label: 'Tournaments',  icon: Award,     gated: true  },
-  { href: '/my-stats',      label: 'Stats',        icon: Sparkles,  gated: false },
-];
 
 export function TopBar({
   playerName,
@@ -39,6 +24,9 @@ export function TopBar({
   activeSeasonName,
   activeSeasonId,
   isApproved = true,
+  features = ALL_FEATURES_ENABLED,
+  featureAccess = [],
+  showDiscord = true,
 }: {
   playerName: string;
   avatarUrl?: string | null;
@@ -50,6 +38,15 @@ export function TopBar({
   activeSeasonId?: string;
   /** False while the account is pending approval or suspended. */
   isApproved?: boolean;
+  /** The club feature switches, read by the layout. */
+  features?: FeatureFlags;
+  /** Switched-off features whose `page.access.<id>` key the viewer holds. */
+  featureAccess?: readonly FeatureId[];
+  /**
+   * Whether to link the club Discord: the socials switch and club_socials'
+   * show_discord, decided once by the layout.
+   */
+  showDiscord?: boolean;
 }) {
   const pathname = usePathname();
   // This chrome renders above every page, and a LAYOUT never receives
@@ -70,12 +67,14 @@ export function TopBar({
   // every past-season screen already names its own term (past-season.tsx:267).
   // The only job here is to stop claiming a season the viewer is not looking at.
   const viewingPastSeason = viewedSeasonId !== '' && viewedSeasonId !== activeSeasonId;
-  const navItems = isAuthenticated
-    ? desktopNavItems.filter((item) => isApproved || !item.gated)
-    : [];
+  // Gated destinations are filtered on isApproved inside, and a group left
+  // empty (Events, for a pending member) is dropped with them.
+  // A switched-off feature is dropped the same way, except for a holder of its
+  // key, who can still open its pages.
+  const navEntries = isAuthenticated ? desktopEntries(isApproved, features, featureAccess) : [];
   // Auth, onboarding and the Discord consent screen render their own
   // full-screen layout — no app chrome.
-  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
+  if (pathname === '/login' || pathname === '/signup' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
     return null;
   }
   const initials = (playerName || 'You')
@@ -103,30 +102,56 @@ export function TopBar({
           </div>
         </Link>
 
-        <nav className="nav" aria-label="Main navigation">
+        <nav className="nav" aria-label="Main navigation" data-tour="top-nav">
           {isAuthenticated ? (
-            navItems.map((item) => {
-              const active = pathname.startsWith(item.href);
+            navEntries.map((entry) => {
+              if (entry.kind === 'link') {
+                const { item } = entry;
+                const active = isRouteActive(pathname, item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn('nav-item', active && 'active')}
+                    aria-current={active ? 'page' : undefined}
+                    data-tour={item.href === '/membership' ? 'membership-link' : undefined}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              }
+              const { group } = entry;
+              const active = isGroupActive(pathname, group);
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn('nav-item', active && 'active')}
-                  aria-current={active ? 'page' : undefined}
-                >
-                  {item.label}
-                </Link>
+                <NavMenu
+                  key={group.id}
+                  id={group.id}
+                  label={group.label}
+                  active={active}
+                  pathname={pathname}
+                  items={group.items.map((item) => ({
+                    href: item.href,
+                    label: item.label,
+                    icon: item.icon,
+                    current: isRouteActive(pathname, item.href),
+                  }))}
+                  renderLink={(item, props) => <Link href={item.href} {...props} />}
+                  triggerClassName={cn('nav-item nav-group', active && 'active')}
+                  panelClassName="nav-menu"
+                />
               );
             })
           ) : (
             <>
-              <Link
-                href="/leaderboard"
-                className={cn('nav-item', pathname.startsWith('/leaderboard') && 'active')}
-                aria-current={pathname.startsWith('/leaderboard') ? 'page' : undefined}
-              >
-                Leaderboard
-              </Link>
+              {features.leaderboard && (
+                <Link
+                  href="/leaderboard"
+                  className={cn('nav-item', pathname.startsWith('/leaderboard') && 'active')}
+                  aria-current={pathname.startsWith('/leaderboard') ? 'page' : undefined}
+                >
+                  Leaderboard
+                </Link>
+              )}
               {/* /exec IS ready and has been for a while: it lists ten officers
                   from get_executives(), which is granted to anon, and the landing
                   page, the fees page and the settings page all link straight to
@@ -141,6 +166,20 @@ export function TopBar({
               >
                 Execs
               </Link>
+              {features.membership && (
+                <Link
+                  href="/membership"
+                  className={cn('nav-item', pathname.startsWith('/membership') && 'active')}
+                  aria-current={pathname.startsWith('/membership') ? 'page' : undefined}
+                >
+                  Membership
+                </Link>
+              )}
+              {showDiscord && (
+                <a href={DISCORD_INVITE_URL} className="nav-item" target="_blank" rel="noopener noreferrer">
+                  Discord
+                </a>
+              )}
             </>
           )}
         </nav>
@@ -166,6 +205,21 @@ export function TopBar({
                   <span className="hidden md:inline" style={{ fontSize: 13, fontWeight: 600 }}>Exec Panel</span>
                 </a>
               )}
+              {/* A new tab on purpose, unlike the console link above: Discord is
+                  another site (or the Discord app), and the member should land
+                  back here when they close it. */}
+              {showDiscord && (
+                <a
+                  href={DISCORD_INVITE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="icon-btn"
+                  aria-label="Join the club Discord"
+                  title="Club Discord"
+                >
+                  <DiscordMark size={16} />
+                </a>
+              )}
               <Link
                 href="/notifications"
                 aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
@@ -188,7 +242,7 @@ export function TopBar({
                   />
                 )}
               </Link>
-              <Link href="/settings" className="me-chip" aria-label="Profile and settings">
+              <Link href="/settings" className="me-chip" aria-label="Profile and settings" data-tour="settings-chip">
                 <span className="avatar" data-size="sm" data-tone="4" style={{ overflow: 'hidden' }}>
                   {avatarUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -205,15 +259,17 @@ export function TopBar({
               </Link>
             </>
           ) : (
-            <Link href="/login" className="me-chip" aria-label="Sign in">
-              <span className="avatar" data-size="sm" data-tone="4" aria-hidden>
-                <LogIn className="w-4 h-4" />
-              </span>
-              <div>
-                <div className="name">Sign in</div>
-                <div className="sub">to your account</div>
-              </div>
-            </Link>
+            // Both doors, as text: a newcomer must not have to find sign-up
+            // behind the sign-in page, and the old icon chip lost its words on
+            // a phone.
+            <div className="row" style={{ gap: 8 }}>
+              <Link href="/login" className="btn btn-ghost btn-sm">
+                <LogIn className="w-4 h-4" aria-hidden /> Sign in
+              </Link>
+              <Link href="/signup" className="btn btn-primary btn-sm">
+                Join the club
+              </Link>
+            </div>
           )}
         </div>
       </div>

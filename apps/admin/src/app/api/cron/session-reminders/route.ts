@@ -9,6 +9,7 @@ import {
   wallClockToUtc,
   selectInChunks,
   chunkIds,
+  readFeatureFlags,
 } from '@badminton/shared';
 
 export const dynamic = 'force-dynamic';
@@ -66,6 +67,12 @@ export async function POST(request: Request) {
   try {
     const admin = createAdminClient();
     const now = new Date();
+
+    // Sessions switched off for members: nobody is reminded of a session they
+    // cannot open. A failed read is "on", so a blip never silences a reminder.
+    if (!(await readFeatureFlags(admin)).sessions) {
+      return NextResponse.json({ ran_at: now.toISOString(), sessions: 0, results: [], skipped: 'sessions_disabled' });
+    }
 
     // The scan window has to reach as far ahead as the longest notice anyone
     // can ask for, or that preference is quietly capped: a session outside the

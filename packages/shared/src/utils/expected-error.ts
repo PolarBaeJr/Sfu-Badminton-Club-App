@@ -1,3 +1,5 @@
+import { formatDigest, makeErrorRef, type ErrorCode } from './error-codes';
+
 // Not every thrown Error is a fault. This codebase uses exceptions for ordinary
 // user-facing rejections too — "Description must be at least 10 characters",
 // "Game scores cannot be tied", "Account pending approval" — and runAction
@@ -8,12 +10,26 @@
 // They still reach the user exactly as before — only the Sentry report is
 // skipped. Anything unmarked is still treated as a genuine fault, so this fails
 // safe: forgetting to mark something means noise, never a swallowed bug.
+//
+// A `code` from the registry also sets `digest` to `CODE.ref`, so a guard that
+// throws out of a page render shows its code on the error screen instead of a
+// bare number. Imports only ./error-codes: this file is in the edge bundle.
 export class ExpectedError extends Error {
   readonly expected = true as const;
+  // `declare`, not a field: an uncoded ExpectedError must not gain an own
+  // `digest` property set to undefined.
+  declare readonly code?: ErrorCode;
+  declare readonly ref?: string;
+  declare readonly digest?: string;
 
-  constructor(message: string) {
+  constructor(message: string, code?: ErrorCode) {
     super(message);
     this.name = 'ExpectedError';
+    if (code) {
+      this.code = code;
+      this.ref = makeErrorRef();
+      this.digest = formatDigest(code, this.ref);
+    }
   }
 }
 

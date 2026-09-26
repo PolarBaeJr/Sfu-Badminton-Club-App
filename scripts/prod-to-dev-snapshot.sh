@@ -701,6 +701,71 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# REFUSE PROD'S DISCORD CONFIG EVEN WHEN IT CAME BACK AS "STAGING'S OWN".
+#
+# The capture above keeps whatever staging holds, and it cannot tell staging's
+# values from prod's. Once prod's rows got onto staging (the 2026-09-22 window
+# is the likely entry), every night faithfully captured and restored them:
+# found 2026-09-23 with staging's pg_cron driving the PROD bot at
+# bot.sfubadminton.com, staging bound to the club's real guild, and prod's
+# service secret sitting in staging's cron_config. So the restored rows are now
+# checked against prod's LIVE values, and any that match are deleted.
+#
+# Compared by md5 fingerprint, computed inside each database, so no secret ever
+# passes through this shell, a log, or a variable. The values reach staging's
+# psql as set_config, not :'var', because psql does not expand variables inside
+# a dollar-quoted DO body (see the staging admin grant below).
+#
+# A deleted bot url or secret leaves the jobs' WHERE EXISTS guard false, so the
+# staging jobs simply stop firing until the owner sets staging's own values.
+# That is the intended failure: silent to members, loud in this log.
+echo "[$(date -u +%FT%TZ)] refusing any Discord config that matches prod's..."
+PROD_DISCORD_FP=$(docker exec -i "$PROD_CONTAINER" psql -U postgres -d postgres -qAt -v ON_ERROR_STOP=1 <<'SQL'
+SELECT concat_ws('|',
+  (SELECT coalesce(string_agg(md5(guild_id), ','), '') FROM public.discord_guilds),
+  (SELECT coalesce(string_agg(md5(value), ','), '') FROM public.cron_config
+     WHERE key IN ('discord_bot_url', 'discord_service_secret')),
+  (SELECT coalesce(string_agg(md5(player_id::text || ':' || discord_user_id), ','), '')
+     FROM public.player_discord_links));
+SQL
+)
+docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -qAt -v ON_ERROR_STOP=1 \
+  -v fp="$PROD_DISCORD_FP" <<'SQL'
+SELECT set_config('snap.prod_discord_fp', :'fp', false) AS _ \gset
+DO $refuse$
+DECLARE
+  parts  text[] := string_to_array(current_setting('snap.prod_discord_fp'), '|');
+  guilds text[] := string_to_array(coalesce(parts[1], ''), ',');
+  cron   text[] := string_to_array(coalesce(parts[2], ''), ',');
+  links  text[] := string_to_array(coalesce(parts[3], ''), ',');
+  n      int;
+BEGIN
+  IF to_regclass('public.discord_guild_roles') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.discord_guild_roles WHERE md5(guild_id) = ANY ($1)' USING guilds;
+  END IF;
+  IF to_regclass('public.discord_guilds') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.discord_guilds WHERE md5(guild_id) = ANY ($1)' USING guilds;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n > 0 THEN RAISE WARNING 'staging held % of PROD''s Discord guild(s); removed', n; END IF;
+  END IF;
+  IF to_regclass('public.cron_config') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.cron_config
+              WHERE key IN (''discord_bot_url'', ''discord_service_secret'')
+                AND md5(value) = ANY ($1)' USING cron;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n > 0 THEN RAISE WARNING 'staging held % of PROD''s bot url/secret; removed, staging Discord jobs are off until staging''s own are set', n; END IF;
+  END IF;
+  IF to_regclass('public.player_discord_links') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM public.player_discord_links
+              WHERE md5(player_id::text || '':'' || discord_user_id) = ANY ($1)' USING links;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n > 0 THEN RAISE WARNING 'staging held % of PROD''s member Discord links; removed', n; END IF;
+  END IF;
+END
+$refuse$;
+SQL
+
+# ---------------------------------------------------------------------------
 # RE-GRANT THE STAGING-ONLY ADMIN.
 #
 # The restore above put PROD's players table on staging, so staging roles ARE
@@ -723,6 +788,11 @@ fi
 # going in through psql genuinely behaves differently from going in through the
 # app, and here that is the point.
 #
+# active_flag too: admin_access_level() returns NULL for an inactive row no
+# matter the role, so a prod-side "Inactive" (set on this account 2026-09-16)
+# rendered staging's console as "Admin Access Required" despite the grant.
+# inactive_since is cleared with it so the purge clock never sees the row.
+#
 # Comma-separated and overridable, so the next person who needs an account on
 # staging edits an env var and not this file.
 STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca}"
@@ -731,13 +801,61 @@ if [ -n "$STAGING_ADMIN_EMAILS" ]; then
   echo "[$(date -u +%FT%TZ)] re-granting staging admin: $STAGING_ADMIN_EMAILS"
   grant_result=$(docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres \
       -Atq -v ON_ERROR_STOP=1 -v emails="$STAGING_ADMIN_EMAILS" <<'SQL'
+BEGIN;
+-- CREATE THE ACCOUNT WHEN PROD NO LONGER HAS IT. Once the owner account is
+-- deleted on prod, the restore brings over only a deleted+...@deleted.invalid
+-- tombstone, and the grant below would match nothing. So a listed address with
+-- no players row gets one here, linked to a staging-only login: the existing
+-- auth user for that address if one survived, otherwise a new confirmed one
+-- that the email-code sign-in finds by address. The token columns are '' and
+-- not NULL because GoTrue fails to scan a NULL into them.
+--
+-- :'emails' is not expanded inside a $do$ body, hence set_config
+-- (see reference: psql dollar quoting). \gset swallows the row so nothing
+-- extra lands in grant_result.
+SELECT set_config('grant.emails', :'emails', true) AS _ \gset
+CREATE TEMP TABLE created_now (email text) ON COMMIT DROP;
+DO $create$
+DECLARE
+  e   text;
+  uid uuid;
+BEGIN
+  FOR e IN
+    SELECT btrim(x) FROM unnest(string_to_array(current_setting('grant.emails'), ',')) x
+     WHERE btrim(x) <> ''
+  LOOP
+    CONTINUE WHEN EXISTS (SELECT 1 FROM public.players WHERE email = e);
+    SELECT id INTO uid FROM auth.users WHERE lower(email) = lower(e);
+    IF uid IS NULL THEN
+      uid := gen_random_uuid();
+      INSERT INTO auth.users (instance_id, id, aud, role, email, email_confirmed_at,
+                              raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                              confirmation_token, recovery_token, email_change_token_new,
+                              email_change, email_change_token_current, phone_change,
+                              phone_change_token, reauthentication_token)
+      VALUES ('00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated', e, now(),
+              '{"provider":"email","providers":["email"]}', '{}', now(), now(),
+              '', '', '', '', '', '', '', '');
+      INSERT INTO auth.identities (provider_id, user_id, identity_data, provider,
+                                   last_sign_in_at, created_at, updated_at)
+      VALUES (uid::text, uid,
+              jsonb_build_object('sub', uid::text, 'email', e, 'email_verified', true),
+              'email', now(), now(), now());
+    END IF;
+    INSERT INTO public.players (email, first_name, last_name, user_id, onboarding_completed, status)
+    VALUES (e, 'Staging', 'Admin', uid, TRUE, 'recreational');
+    INSERT INTO created_now VALUES (e);
+  END LOOP;
+END
+$create$;
+
 WITH t AS (
   SELECT btrim(e) AS email
     FROM unnest(string_to_array(:'emails', ',')) AS e
    WHERE btrim(e) <> ''
 ), upd AS (
   UPDATE public.players p
-     SET role = 'admin', is_exec = TRUE
+     SET role = 'admin', is_exec = TRUE, active_flag = TRUE, inactive_since = NULL
     FROM t
    WHERE p.email = t.email
   RETURNING p.email
@@ -745,9 +863,12 @@ WITH t AS (
 -- Reported per requested address rather than as a count, because the failure
 -- worth seeing is "that email is not in prod at all" (a typo, or an account
 -- that was never created), and a count of 0 does not say which one.
-SELECT CASE WHEN u.email IS NULL THEN 'MISSING ' ELSE 'granted ' END || t.email
+SELECT CASE WHEN u.email IS NULL THEN 'MISSING '
+            WHEN t.email IN (SELECT email FROM created_now) THEN 'created '
+            ELSE 'granted ' END || t.email
   FROM t LEFT JOIN upd u ON u.email = t.email
  ORDER BY 1;
+COMMIT;
 SQL
   )
   echo "$grant_result" | sed 's/^/  /'
@@ -1056,6 +1177,13 @@ BEGIN
     UPDATE public.club_fees
        SET manual_name = CASE WHEN manual_name IS NULL THEN NULL ELSE 'Unnamed Payer' END,
            ban_reason  = CASE WHEN ban_reason  IS NULL THEN NULL ELSE 'Reason removed for staging.' END;
+    -- 00252's manual_email is a non-member's address waiting for a signup. It is
+    -- nulled, not rewritten: a made-up address would be claimed by the first
+    -- staging player given it, and the column only exists once 00252 is applied.
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'club_fees' AND column_name = 'manual_email') THEN
+      EXECUTE 'UPDATE public.club_fees SET manual_email = NULL WHERE manual_email IS NOT NULL';
+    END IF;
   END IF;
 
   -- The audit log's old_value/new_value hold whole field-level diffs, which is

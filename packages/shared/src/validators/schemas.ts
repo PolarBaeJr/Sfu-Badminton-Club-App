@@ -6,6 +6,7 @@ import {
   type ExpenseCategory,
   type OtherIncomeCategory,
 } from '../utils/finance-categories';
+import { CLUB_EVENT_KINDS, CLUB_WALL_CLOCK_PATTERN } from '../utils/club-events';
 
 // Empty optional strings come from form fields where the user left the input blank.
 // Coerce them to undefined so downstream code doesn't have to discriminate "" vs unset.
@@ -322,6 +323,53 @@ export const tournamentCreateSchema = z.object({
   max_events_per_player: z.number().int().min(1).max(100).nullable().optional(),
 });
 
+// A club event as the console form posts it (00244). Mirrors the table's
+// CHECKs so a bad field is a sentence rather than a constraint name. Times are
+// club wall-clock strings, converted to instants by the action; cost is in
+// dollars here and stored as integer cents. No status and no created_by: the
+// action decides both.
+const clubWallClockSchema = z.string().regex(CLUB_WALL_CLOCK_PATTERN, 'Invalid date and time');
+const optionalClubWallClock = z.preprocess(
+  (val) => (val === '' || val === undefined ? null : val),
+  clubWallClockSchema.nullable(),
+);
+const optionalText = (max: number) =>
+  z.preprocess(
+    (val) => (typeof val === 'string' && val.trim() === '' ? null : val),
+    z.string().trim().max(max).nullable().optional(),
+  );
+
+export const clubEventSchema = z
+  .object({
+    title: z.string().trim().min(1, 'Title is required').max(120),
+    kind: z.enum(CLUB_EVENT_KINDS),
+    description: optionalText(4000),
+    location: optionalText(200),
+    starts_at: clubWallClockSchema,
+    ends_at: optionalClubWallClock,
+    signup_opens_at: optionalClubWallClock,
+    signup_closes_at: optionalClubWallClock,
+    capacity: z.number().int().min(1).nullable(),
+    cost_dollars: z.number().min(0).max(1000).nullable(),
+    publish: z.boolean(),
+  })
+  .strict()
+  // Zero-padded YYYY-MM-DDTHH:MM strings compare correctly lexicographically.
+  .refine((d) => !d.ends_at || d.ends_at > d.starts_at, {
+    message: 'The end must be after the start',
+    path: ['ends_at'],
+  })
+  .refine((d) => !d.signup_opens_at || !d.signup_closes_at || d.signup_closes_at > d.signup_opens_at, {
+    message: 'Sign-ups must close after they open',
+    path: ['signup_closes_at'],
+  })
+  .transform(({ cost_dollars, ...rest }) => ({
+    ...rest,
+    cost_cents: cost_dollars === null ? null : Math.round(cost_dollars * 100),
+  }));
+
+export type ClubEventInput = z.input<typeof clubEventSchema>;
+
 export const tournamentSuspendSchema = z.object({
   tournament_id: z.string().uuid(),
   reason: z.string().min(2, 'Reason is required').max(500),
@@ -478,6 +526,27 @@ export const feeMarkSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 
+// A member's payment receipt (00248, 00253). Exactly one of the two ids: feeId
+// for a fee row that exists, duesSeasonId for this season's dues when the
+// member has no dues row yet. detectedMethod is what the browser read off the
+// screenshot, a hint the action clamps by the fee's kind. The reference is
+// re-checked against the column's CHECK by isPlausibleReference once the stored
+// method is known (4 characters is only enough for an SFU Rec receipt); the
+// path against the member's own folder by the action.
+export const feeSubmissionSchema = z
+  .object({
+    feeId: z.string().uuid().nullable(),
+    duesSeasonId: z.string().uuid().nullable(),
+    reference: z.string().trim().min(4, 'The reference is at least 4 characters').max(32, 'The reference is at most 32 characters'),
+    screenshotPath: z.string().min(1, 'Attach a screenshot of your receipt').max(300),
+    detectedMethod: z.enum(['e_transfer', 'sfu_rec']).nullable().optional(),
+  })
+  .strict()
+  .refine((v) => (v.feeId === null) !== (v.duesSeasonId === null), {
+    message: 'Say which fee this receipt is for',
+    path: ['feeId'],
+  });
+
 // One-time season-fee waiver: stored as a paid row with amount_cents 0 and
 // method 'waived', so income sums stay correct without a schema migration.
 export const feeWaiveSchema = z.object({
@@ -511,9 +580,18 @@ export const seasonCreateSchema = z.object({
 
 // A manual fee entry: someone who paid the club fee without an account. The
 // admin records just a name against the active season.
+//
+// The email is optional (00252). When given, a later signup with that address
+// claims the payment onto the new account. Normalised here the way the column
+// CHECK demands (trimmed, lowercase), and a blank field means no email rather
+// than an invalid one.
 export const manualFeeSchema = z.object({
   season_id: z.string().uuid(),
   manual_name: z.string().min(1).max(80),
+  email: z.preprocess(
+    (val) => (typeof val === 'string' && val.trim() === '' ? undefined : val),
+    z.string().trim().toLowerCase().email('Invalid email address').max(254).optional(),
+  ),
   amount_cents: z.number().int().positive().optional(),
   method: z.string().max(40).optional(),
   reference: z.string().max(120).optional(),
@@ -772,6 +850,7 @@ export type AdminPlayerCreateInput = z.infer<typeof adminPlayerCreateSchema>;
 export type AdminMatchCreateInput = z.infer<typeof adminMatchCreateSchema>;
 export type AnnouncementInput = z.infer<typeof announcementSchema>;
 export type FeeMarkInput = z.infer<typeof feeMarkSchema>;
+export type FeeSubmissionInput = z.infer<typeof feeSubmissionSchema>;
 export type FeeWaiveInput = z.infer<typeof feeWaiveSchema>;
 export type SeasonFeeInput = z.infer<typeof seasonFeeSchema>;
 export type SeasonCreateInput = z.infer<typeof seasonCreateSchema>;

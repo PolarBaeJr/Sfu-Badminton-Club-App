@@ -68,6 +68,7 @@ order, and **only** these:
 | `00168_discord_self_roles.sql` | the self-serve ping roles and the session-ping schedule |
 | `00169_discord_tournament_events.sql` | the tournament -> Discord scheduled event mapping, and its schedule |
 | `00170_discord_announcement_posts.sql` | the announcement -> Discord message mapping, and its schedule |
+| `00245_club_events_go_to_the_discord_events_tab.sql` | the club event -> Discord scheduled event mapping (needs 00244 first); no schedule of its own, it rides 00169's |
 
 > ### ⚠️ Pause the prod → staging snapshot before running these on staging
 >
@@ -85,6 +86,10 @@ order, and **only** these:
 > has one, and `discord_announcement_posts` is the only thing stopping a club
 > announcement being posted into the channel twice. Inheriting prod's copies of
 > those means staging believes prod's work was its own.
+>
+> Since 00245, `discord_club_events` is a fourth idempotency record of the same
+> kind: the only thing stopping a second Discord event being created for a club
+> event that already has one.
 >
 > The announcement relay has a second guard of its own — it relays nothing
 > published more than 72 hours ago — so a staging database that comes up with

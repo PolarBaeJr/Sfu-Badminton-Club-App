@@ -7,7 +7,21 @@
 // starting rating is 800 on one page and 400 on the other.
 //
 // Deliberately dependency-free: no React, no Supabase. It is imported by a
-// client component, a server page and the tests.
+// client component, a server page and the tests. The feature registry is
+// imported deeply for the same reason: it has no imports of its own.
+import {
+  FEATURES,
+  FEATURES_SETTING_KEY,
+  defaultFeaturesValue,
+  featureField,
+  type FeatureDefinition,
+  type FeatureId,
+} from '@badminton/shared/src/utils/features';
+import { CLUB_SOCIALS_SETTING_KEY, defaultClubSocialsValue } from '@badminton/shared/src/utils/club-socials';
+import {
+  MEMBERSHIP_PAYMENTS_SETTING_KEY,
+  defaultMembershipPaymentsValue,
+} from '@badminton/shared/src/utils/membership-settings';
 
 export interface PlatformSetting {
   key: string;
@@ -27,6 +41,9 @@ export const SETTING_LABELS: Record<string, string> = {
   inactivity_rules: 'Inactivity Rules',
   session_attendance: 'Session Attendance',
   signup_settings: 'Signup Approval',
+  features: 'Club Features',
+  club_socials: 'Instagram and Discord',
+  membership_payments: 'Buying a membership',
 };
 
 export const SETTING_DESCRIPTIONS: Record<string, string> = {
@@ -40,6 +57,9 @@ export const SETTING_DESCRIPTIONS: Record<string, string> = {
   inactivity_rules: 'Days of inactivity before auto-marking players inactive',
   session_attendance: 'Check-in window and default session duration',
   signup_settings: 'Whether a new signup is approved automatically or waits for an exec',
+  features: 'Which member-facing features are running',
+  club_socials: 'The Instagram and Discord links on the site and in the bot',
+  membership_payments: 'Where the membership page sends people to buy a membership',
 };
 
 export interface FieldMeta {
@@ -61,6 +81,17 @@ export interface FieldMeta {
    * able to produce one.
    */
   options?: readonly { value: string; label: string }[];
+  /** One line under the label, for the tile layout. */
+  summary?: string;
+  /** Always shown in the tile layout, never tucked behind the disclosure. */
+  warning?: string;
+  /** The tile layout's disclosure body: the hint without the warning. */
+  detail?: string;
+  /**
+   * A fixed prefix drawn beside the input (see lib/prefixed-url.ts). The stored
+   * value stays the full URL.
+   */
+  adornment?: 'https' | 'instagram';
 }
 
 export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
@@ -443,4 +474,88 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       ],
     },
   },
+  // Both read by the player app and the bot, which re-check every value; the
+  // console refuses a bad one on save (updatePlatformSettings).
+  [CLUB_SOCIALS_SETTING_KEY]: {
+    instagram_url: {
+      label: 'Instagram',
+      hint: 'The club Instagram profile, as https://www.instagram.com/<name>/. Shown in the page footer, on the socials page and in the bot. Leave empty to hide Instagram everywhere.',
+      type: 'text',
+      adornment: 'instagram',
+    },
+    show_discord: {
+      label: 'Show Discord',
+      hint: 'Off hides every link to the club Discord: the nav, the page footer, the socials page and the bot\'s /socials reply. Linking a Discord account still works. The Social links switch under Club Features hides all of the links at once.',
+      type: 'boolean',
+    },
+  },
+  [MEMBERSHIP_PAYMENTS_SETTING_KEY]: {
+    sfss_purchase_url: {
+      label: 'Buy membership link',
+      hint: 'The SFU Recreation page where a membership is bought. It must start with https://. The membership page shows a "Buy membership on SFU Recreation" button while this is set; leave it empty to hide the button.',
+      type: 'text',
+      adornment: 'https',
+    },
+    etransfer_email: {
+      label: 'E-transfer email',
+      hint: 'Where members send an Interac e-Transfer for club fees. While this is empty, members cannot upload payment receipts: the Membership page says e-transfer is not set up.',
+      type: 'text',
+    },
+  },
+  // One switch per entry in the shared feature registry, so a feature added
+  // there appears here with no second list to keep in step.
+  // FEATURES is `as const`, so `warning` is only readable through the wider type.
+  [FEATURES_SETTING_KEY]: Object.fromEntries(
+    (FEATURES as readonly FeatureDefinition[]).map((f): [string, FieldMeta] => {
+      const offNote = ` Off hides it from members and sends them to the feed; admins, and anyone given its access key (page.access.${f.id}) under Permissions, can still open it.`;
+      return [
+        featureField(f.id as FeatureId),
+        {
+          label: f.label,
+          hint: `${f.description}${f.warning ? ` ${f.warning}` : ''}${offNote}`,
+          type: 'boolean',
+          summary: f.summary,
+          warning: f.warning,
+          detail: `${f.description}${offNote}`,
+        },
+      ];
+    }),
+  ),
 };
+
+/**
+ * Settings rows the console may create on first save, with the value a missing
+ * row stands for. Every other key still has to be seeded by a migration, and
+ * updatePlatformSettings refuses one that is absent.
+ *
+ * `features` is here so the switches need no migration: until somebody saves
+ * one, the absent row already means "everything on". `club_socials` and
+ * `membership_payments` are here for the same reason.
+ */
+export const SEEDABLE_SETTINGS: Record<string, () => Record<string, unknown>> = {
+  [FEATURES_SETTING_KEY]: defaultFeaturesValue,
+  // The same defaults the player app and the bot read an absent row as, so the
+  // form shows what the site is already showing.
+  [CLUB_SOCIALS_SETTING_KEY]: defaultClubSocialsValue,
+  [MEMBERSHIP_PAYMENTS_SETTING_KEY]: defaultMembershipPaymentsValue,
+};
+
+/**
+ * The rows as the form should draw them: a seedable row that does not exist
+ * yet is stood in by its defaults, and one that exists gains any field added
+ * to its defaults since it was saved (a feature added to the registry later),
+ * so every switch renders.
+ */
+export function withSeededSettings(rows: PlatformSetting[]): PlatformSetting[] {
+  const out = rows.map((row) =>
+    SEEDABLE_SETTINGS[row.key]
+      ? { ...row, value: { ...SEEDABLE_SETTINGS[row.key]!(), ...row.value } }
+      : row,
+  );
+  for (const [key, defaults] of Object.entries(SEEDABLE_SETTINGS)) {
+    if (!out.some((row) => row.key === key)) {
+      out.push({ key, value: defaults(), updated_by: null, updated_at: new Date(0).toISOString() });
+    }
+  }
+  return out;
+}

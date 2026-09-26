@@ -2,8 +2,9 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { UserPlus } from 'lucide-react';
 import { Button, Dialog, Input, useConfirm } from '@badminton/ui';
-import { resolvePaymentMethod } from '@badminton/shared';
+import { errorToastText, resolvePaymentMethod } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee, recordReinstatementPayment } from '@/lib/actions';
 import {
@@ -48,7 +49,7 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
         setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to mark fee paid', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to mark fee paid'), 'error');
       }
     });
   }
@@ -60,7 +61,7 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
         toast(successMessage, 'success');
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to mark fee unpaid', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to mark fee unpaid'), 'error');
       }
     });
   }
@@ -73,7 +74,7 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
         toast('Fee waived', 'success');
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to waive fee', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to waive fee'), 'error');
       }
     });
   }
@@ -120,36 +121,50 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
 export function AddManualFee({ seasonId, seasonName }: { seasonId: string; seasonName: string }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [amount, setAmount] = useState('');
   const [payment, setPayment] = useState<PaymentMethodState>(EMPTY_PAYMENT_METHOD);
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
 
+  // A named payment is inserted already paid, and club_fees_settled_has_amount
+  // refuses a paid row with no amount, so the amount is required here. There is
+  // no member row to take a tier price from, unlike Mark paid.
+  const dollars = parseFloat(amount);
+  const amountInvalid = amount.trim() === '' || Number.isNaN(dollars) || dollars < 0;
+
   function handleAdd() {
     startTransition(async () => {
       try {
-        const dollars = amount ? parseFloat(amount) : undefined;
         await addManualFee({
           season_id: seasonId,
           manual_name: name.trim(),
-          amount_cents: dollars ? Math.round(dollars * 100) : undefined,
+          email: email.trim() || undefined,
+          amount_cents: Math.round(dollars * 100),
           method: resolvePaymentMethod(payment.method, payment.customMethod),
           reference: payment.reference.trim() || undefined,
         });
         toast(`Added ${name.trim()}`, 'success');
         setOpen(false);
-        setName(''); setAmount(''); setPayment(EMPTY_PAYMENT_METHOD);
+        setName(''); setEmail(''); setAmount(''); setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to add name', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to add name'), 'error');
       }
     });
   }
 
   return (
     <>
-      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>Add a name</Button>
+      <Button
+        variant="secondary"
+        onClick={() => setOpen(true)}
+        className="border-[var(--border-hover)] text-[var(--text-primary)]"
+      >
+        <UserPlus aria-hidden className="w-4 h-4" />
+        Add a name
+      </Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Add a name">
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
@@ -157,11 +172,24 @@ export function AddManualFee({ seasonId, seasonName }: { seasonId: string; seaso
             <strong className="text-[var(--text-primary)]">{seasonName}</strong>.
           </p>
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Jane Doe" />
-          <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 15.00" />
+          <div className="space-y-1">
+            <Input
+              label="Email (optional)"
+              type="email"
+              autoComplete="off"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e.g. jane@sfu.ca"
+            />
+            <p className="text-xs text-[var(--text-muted)]">
+              If they sign up later with this email, the payment moves onto their account.
+            </p>
+          </div>
+          <Input label="Amount $" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 15.00" />
           <PaymentMethodFields value={payment} onChange={setPayment} disabled={isPending} />
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={handleAdd} loading={isPending} className="flex-1" disabled={!name.trim() || paymentMethodInvalid(payment)}>
+            <Button onClick={handleAdd} loading={isPending} className="flex-1" disabled={!name.trim() || amountInvalid || paymentMethodInvalid(payment)}>
               Add
             </Button>
           </div>
@@ -210,7 +238,7 @@ export function RecordReinstatementPayment({ feeId, playerName }: { feeId: strin
         setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to record payment', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to record payment'), 'error');
       }
     });
   }
@@ -250,7 +278,7 @@ export function RemoveManualFee({ id, name }: { id: string; name: string }) {
         toast(`Removed ${name}`, 'success');
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to remove', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to remove'), 'error');
       }
     });
   }

@@ -97,7 +97,8 @@ export function BulkFeeActions({
     setPayment(EMPTY_PAYMENT_METHOD);
     router.refresh();
     if (!result.ok) {
-      toast(result.error ?? 'Something went wrong', 'error');
+      const error = result.error ?? 'Something went wrong';
+      toast(result.code ? `${error} (${result.code}.${result.ref})` : error, 'error');
     } else {
       const { message, type } = describeBulkOutcome(result.outcome, 'marked paid', nameOf);
       toast(message, type);
@@ -113,7 +114,8 @@ export function BulkFeeActions({
     setMode(null);
     router.refresh();
     if (!result.ok) {
-      toast(result.error ?? 'Something went wrong', 'error');
+      const error = result.error ?? 'Something went wrong';
+      toast(result.code ? `${error} (${result.code}.${result.ref})` : error, 'error');
     } else {
       const { message, type } = describeBulkOutcome(
         result.outcome,

@@ -1,7 +1,11 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { PageHeader } from '@badminton/ui';
+import Link from 'next/link';
+import { AvatarChip, Badge, Card, PageHeader } from '@badminton/ui';
+import { accessLevelFor } from '@/lib/permissions';
+import { accessForLevel, EXEC_ROLE_OPTIONS } from '@/lib/console-access';
 import { PasskeySection } from './passkey-section';
+import { SignOutOtherDevices } from './sign-out-other-devices';
 
 // Personal settings ONLY. Platform configuration used to be an admin-gated
 // block on this page; it now lives at /ratings and /accounts, which are
@@ -29,90 +33,159 @@ export default async function SettingsPage() {
         .order('created_at')
     : { data: null };
 
+  // WHETHER GOOGLE IS LINKED, from GoTrue's own identities list. A failed
+  // lookup reads "Unknown", never "Not linked": that is a claim about the
+  // account, and an error is a claim about the request.
+  let google: 'Linked' | 'Not linked' | 'Unknown' = 'Unknown';
+  if (player?.user_id) {
+    const { data, error } = await supabase.auth.admin.getUserById(player.user_id as string);
+    if (!error && data?.user) {
+      google = (data.user.identities ?? []).some((i) => i.provider === 'google') ? 'Linked' : 'Not linked';
+    }
+  }
+
+  const passkeyList = passkeys ?? [];
+  const gateArmed = passkeyList.some((pk) => pk.enrolled_via === 'admin');
+  const roleLabel = player
+    ? EXEC_ROLE_OPTIONS.find((o) => o.value === accessForLevel(accessLevelFor(player)))?.label
+    : undefined;
+
   return (
-    <div>
+    <div className="mx-auto flex max-w-[880px] flex-col gap-7">
       <PageHeader
+        eyebrow="YOUR CONSOLE"
         title="Settings"
-        sub="Your console profile, passkeys and app version"
+        sub="Your console profile, passkeys, sign-in and app version"
         watermark="S"
+        className="!mb-0"
       />
 
-      <div className="grid md:grid-cols-[210px_1fr] gap-10 items-start">
-        {/* Section rail */}
-        <nav className="settings-rail hidden md:flex md:flex-col md:sticky md:top-6 md:self-start">
-          <a href="#general" className="active">
-            <span className="rail-label block">General</span>
-            <span className="rail-sub block">Your profile</span>
-          </a>
-          {player && (
-            <a href="#security">
-              <span className="rail-label block">Security</span>
-              <span className="rail-sub block">Passkeys</span>
-            </a>
-          )}
-          <a href="#about">
-            <span className="rail-label block">About</span>
-            <span className="rail-sub block">Version info</span>
-          </a>
-        </nav>
-
-        <div className="space-y-14 min-w-0">
-          {/* General */}
-          <section id="general" className="scroll-mt-32">
-            <h2 className="settings-section-title">General</h2>
-            <p className="settings-section-desc">
-              Your console profile. Ask an admin to change your name or role.
-            </p>
-            <div className="settings-row">
-              <div>
-                <div className="settings-row-label">Name</div>
-                <div className="settings-row-hint">Your full name as shown across the club.</div>
+      {player ? (
+        <>
+          <Card className="flex flex-col gap-5 sm:flex-row sm:items-center">
+            <AvatarChip
+              name={player.full_name as string}
+              id={player.id as string}
+              src={player.avatar_url as string | null}
+              size="xl"
+            />
+            <div className="flex min-w-0 flex-grow flex-col gap-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[18px] font-semibold text-[var(--ink)]">{player.full_name}</span>
+                {roleLabel && <Badge variant="neutral">{roleLabel}</Badge>}
               </div>
-              <div className="settings-row-control text-sm text-[var(--text-primary)]">{player?.full_name}</div>
+              <span className="truncate text-[14px] text-[var(--ink-2)]">{player.email}</span>
+              <span className="text-[13px] text-[var(--mute)]">Ask an admin to change your name or access.</span>
             </div>
-            <div className="settings-row">
-              <div>
-                <div className="settings-row-label">Email</div>
-                <div className="settings-row-hint">The address you sign in with.</div>
-              </div>
-              <div className="settings-row-control text-sm text-[var(--text-primary)]">{player?.email}</div>
-            </div>
-            <div className="settings-row">
-              <div>
-                <div className="settings-row-label">Role</div>
-                <div className="settings-row-hint">Controls which admin sections you can reach.</div>
-              </div>
-              <div className="settings-row-control text-sm text-[var(--text-primary)] capitalize">{player?.role}</div>
-            </div>
-          </section>
+            {/* next/link applies the base path itself, so no withBase here. */}
+            <Link
+              href="/dashboard?tour=exec"
+              className="inline-flex min-h-[40px] flex-shrink-0 items-center justify-center whitespace-nowrap rounded-[8px] border border-[var(--line)] px-4 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--ink-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+            >
+              Replay console tour
+            </Link>
+          </Card>
 
-          {/* Security */}
-          {player && (
-            <section id="security" className="scroll-mt-32">
-              <h2 className="settings-section-title">Security</h2>
-              <p className="settings-section-desc">
-                Passkeys gate access to the admin console. Once you enroll one, every login
-                requires a passkey check.
-              </p>
-              <PasskeySection passkeys={passkeys ?? []} />
-            </section>
-          )}
-
-
-          {/* About */}
-          <section id="about" className="scroll-mt-32">
-            <h2 className="settings-section-title">About</h2>
-            <div className="settings-row">
-              <div>
-                <div className="settings-row-label">App version</div>
+          <Card className="overflow-hidden p-0">
+            <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--line)] px-6 py-5">
+              <div className="flex min-w-0 flex-col gap-1">
+                <SectionTitle>Passkeys</SectionTitle>
+                <p className="text-[14px] text-[var(--mute)]">
+                  Once you enroll one, every login requires a passkey check.
+                </p>
               </div>
-              <div className="settings-row-control font-mono text-xs text-[var(--text-muted)]">
-                v{process.env.NEXT_PUBLIC_APP_VERSION}
-              </div>
+              <span className="font-mono text-[12px] text-[var(--mute)]">
+                {passkeyList.length === 0
+                  ? 'None yet'
+                  : passkeyList.length === 1
+                    ? '1 device'
+                    : `${passkeyList.length} devices`}
+              </span>
             </div>
-          </section>
-        </div>
+            <PasskeySection passkeys={passkeyList} />
+          </Card>
+
+          <Card className="overflow-hidden p-0">
+            <div className="border-b border-[var(--line)] px-6 py-5">
+              <SectionTitle>Sign-in</SectionTitle>
+            </div>
+            <SignInRow
+              label="Email code"
+              hint="Always available. A 6-digit code is sent to your email."
+              aside={<StateText tone="success">ON</StateText>}
+            />
+            <SignInRow
+              label="Google"
+              hint="Sign in with Google from the sign-in page."
+              aside={
+                <StateText tone={google === 'Linked' ? 'success' : 'mute'}>{google.toUpperCase()}</StateText>
+              }
+            />
+            <SignInRow
+              label="Passkey gate"
+              hint={
+                gateArmed
+                  ? 'A passkey enrolled here is checked at every console login.'
+                  : 'No passkey enrolled here yet, so the console is in the grace period.'
+              }
+              aside={
+                <StateText tone={gateArmed ? 'success' : 'warning'}>
+                  {gateArmed ? 'ON' : 'GRACE PERIOD'}
+                </StateText>
+              }
+            />
+            <SignInRow
+              label="Sign out other devices"
+              hint="Ends your console and member-app sessions on every other device. You stay signed in here."
+              aside={<SignOutOtherDevices />}
+            />
+          </Card>
+        </>
+      ) : (
+        <Card>
+          <p className="text-[14px] text-[var(--mute)]">Your profile could not be loaded.</p>
+        </Card>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-[var(--line)] px-6 py-4">
+        <span className="text-[14px] text-[var(--ink-2)]">SFU Badminton console</span>
+        <span className="rounded-full border border-[var(--line)] px-2.5 py-0.5 font-mono text-[12px] text-[var(--mute)]">
+          v{process.env.NEXT_PUBLIC_APP_VERSION}
+        </span>
       </div>
     </div>
   );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h2
+      className="text-[22px] font-bold uppercase leading-tight tracking-[0.04em] text-[var(--ink)]"
+      style={{ fontFamily: 'var(--display)' }}
+    >
+      {children}
+    </h2>
+  );
+}
+
+function SignInRow({ label, hint, aside }: { label: string; hint: string; aside: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3 border-b border-[var(--line)] px-6 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="text-[15px] font-semibold text-[var(--ink)]">{label}</span>
+        <span className="text-[13px] text-[var(--mute)]">{hint}</span>
+      </div>
+      <div className="flex-shrink-0">{aside}</div>
+    </div>
+  );
+}
+
+function StateText({ tone, children }: { tone: 'success' | 'warning' | 'mute'; children: React.ReactNode }) {
+  const color =
+    tone === 'success'
+      ? 'text-[var(--color-success)]'
+      : tone === 'warning'
+        ? 'text-[var(--color-warning)]'
+        : 'text-[var(--mute)]';
+  return <span className={`font-mono text-[11px] tracking-[0.1em] ${color}`}>{children}</span>;
 }

@@ -2,7 +2,7 @@ export { Button } from './Button';
 export { Input } from './Input';
 export { DatePicker } from './DatePicker';
 export { Textarea } from './Textarea';
-export { Select } from './Select';
+export { Select, type SelectProps, type SelectOption } from './Select';
 export {
   PlayerPicker,
   type PlayerOption,
@@ -28,6 +28,8 @@ export {
 } from './StaleBuildBanner';
 export { Dialog } from './Dialog';
 export { Dropdown } from './Dropdown';
+export { NavMenu, type NavMenuItem, type NavMenuLinkProps } from './NavMenu';
+export { Tour, type TourProps, type TourLabels, type TourFinishReason } from './Tour';
 export { Spinner } from './Spinner';
 export { EmptyState } from './EmptyState';
 export { DataTable } from './DataTable';
