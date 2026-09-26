@@ -5,21 +5,29 @@ import {
   ExpectedError,
   feeSubmissionSchema,
   isPlausibleReference,
+  normaliseReference,
   parseOrThrow,
   type FeeSubmissionInput,
 } from '@badminton/shared';
 import { createServerSupabaseClient, createServiceRoleClient } from '../supabase-server';
 import { assertFeatureOn } from '../feature-gate';
 import { seasonFeeFor } from '../member-fees';
+import { getMembershipPayments } from '../club-socials';
 import { requirePlayer, runAction, type ActionResult } from './_shared';
 
-// A MEMBER SENDS AN E-TRANSFER RECEIPT (00248).
+// A MEMBER SENDS A PAYMENT RECEIPT (00248, 00253).
 //
 // The browser has already uploaded the screenshot to fee-proofs under the
 // member's own folder; this files the row that points at it. EVERY INPUT IS A
-// CLIENT-CONTROLLED POST FIELD, and only four are read: which fee (feeId, or
-// duesSeasonId for dues with no row yet), the reference, and the path.
-// player_id and the dues amount come from the server.
+// CLIENT-CONTROLLED POST FIELD, and only five are read: which fee (feeId, or
+// duesSeasonId for dues with no row yet), the reference, the path, and the
+// method the browser read off the screenshot. player_id and the dues amount
+// come from the server.
+//
+// The method is a hint for the exec, and clamped here: only dues are sold on
+// the SFU Rec website, so every other line is stored as an e-transfer, and
+// paying one needs the club's e-transfer address to be set. A dues receipt
+// keeps the browser's answer, or NULL when it could not tell.
 //
 // Service role for every write: fee_submissions has no INSERT grant or policy
 // for members, and a dues row may have to be created.
@@ -50,14 +58,23 @@ async function submitFeeSubmissionImpl(input: FeeSubmissionInput): Promise<void>
 
   try {
     const parsed = parseOrThrow(feeSubmissionSchema, input);
-    const reference = parsed.reference.trim();
-    if (!isPlausibleReference(reference)) {
-      throw new ExpectedError('The reference is 6 to 32 letters, digits or hyphens, with no spaces');
-    }
+    const reference = normaliseReference(parsed.reference);
 
+    // Everything is checked before duesFee, which may write.
     const admin = createServiceRoleClient();
-    const feeId = parsed.feeId
-      ? await payableFee(admin, parsed.feeId, player.id)
+    const existing = parsed.feeId ? await payableFee(admin, parsed.feeId, player.id) : null;
+    const feeType = existing?.fee_type ?? 'dues';
+    const method = feeType === 'dues' ? (parsed.detectedMethod ?? null) : 'e_transfer';
+    if (feeType !== 'dues' && !(await getMembershipPayments()).etransferEmail) {
+      throw new ExpectedError('Ask an exec how to pay this one.');
+    }
+    if (!isPlausibleReference(reference, method)) {
+      throw new ExpectedError(
+        `The reference is ${method === 'e_transfer' ? 6 : 4} to 32 letters, digits or hyphens, with no spaces`,
+      );
+    }
+    const feeId = existing
+      ? existing.id
       : await duesFee(admin, parsed.duesSeasonId as string, player);
 
     const { error } = await admin.from('fee_submissions').insert({
@@ -65,6 +82,7 @@ async function submitFeeSubmissionImpl(input: FeeSubmissionInput): Promise<void>
       player_id: player.id,
       reference,
       screenshot_path: path,
+      method,
     });
     if (error?.code === '23505') {
       throw new ExpectedError('You already have a submission waiting for this fee.');
@@ -82,7 +100,11 @@ async function submitFeeSubmissionImpl(input: FeeSubmissionInput): Promise<void>
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
 /** An existing fee row: the member's own, unpaid, and not a reinstatement. */
-async function payableFee(admin: ServiceClient, feeId: string, playerId: string): Promise<string> {
+async function payableFee(
+  admin: ServiceClient,
+  feeId: string,
+  playerId: string,
+): Promise<{ id: string; fee_type: string }> {
   const { data: fee, error } = await admin
     .from('club_fees')
     .select('id, player_id, fee_type, paid_at, amount_cents')
@@ -91,13 +113,13 @@ async function payableFee(admin: ServiceClient, feeId: string, playerId: string)
   if (error) throw new Error(`Could not read that fee: ${error.message}`);
   if (!fee || fee.player_id !== playerId) throw new ExpectedError('That fee is not one of yours.');
   if (fee.fee_type === 'reinstatement') {
-    throw new ExpectedError('A reinstatement fee is settled with an exec, not by e-transfer receipt.');
+    throw new ExpectedError('A reinstatement fee is settled with an exec, not by receipt.');
   }
   if (fee.paid_at) throw new ExpectedError('That fee is already settled.');
   if (fee.amount_cents == null) {
     throw new ExpectedError('That fee has no amount recorded yet. Ask an exec how much to send.');
   }
-  return fee.id as string;
+  return { id: fee.id as string, fee_type: fee.fee_type as string };
 }
 
 /**

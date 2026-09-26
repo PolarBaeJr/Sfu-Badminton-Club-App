@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { extractEtransferReference, isPlausibleReference } from '../etransfer-reference';
+import {
+  extractEtransferReference,
+  isPlausibleReference,
+  normaliseReference,
+} from '../etransfer-reference';
 
 // EVERY FIXTURE BELOW IS SYNTHETIC. None is text read off a real bank's
 // e-Transfer screen: the layout of those screens is unverified, and the
@@ -61,5 +65,37 @@ describe('isPlausibleReference', () => {
     expect(isPlausibleReference('A'.repeat(33))).toBe(false);
     expect(isPlausibleReference('CA7 Hd2k9')).toBe(false);
     expect(isPlausibleReference("CA7'; drop")).toBe(false);
+  });
+});
+
+describe('SFU Rec receipt numbers (synthetic fixtures)', () => {
+  it('reads a number beside a receipt label', () => {
+    expect(extractEtransferReference('Receipt #: 20260924118\nTotal $40.00')).toEqual({
+      value: '20260924118',
+      confidence: 'anchored',
+    });
+  });
+
+  it('reads a number under an order label', () => {
+    expect(extractEtransferReference('Order Number\n88412093\nVisa ****1234')).toEqual({
+      value: '88412093',
+      confidence: 'anchored',
+    });
+  });
+
+  it('drops one leading hash', () => {
+    expect(normaliseReference('#12345678')).toBe('12345678');
+    expect(normaliseReference('  # 12345678 ')).toBe('12345678');
+    expect(isPlausibleReference(normaliseReference('#12345678'))).toBe(true);
+  });
+
+  it('allows 4 characters on anything not stored as an e-transfer (00253)', () => {
+    expect(isPlausibleReference('4821', 'sfu_rec')).toBe(true);
+    // An undetected dues receipt: the exec settles it, and confirm refuses a
+    // short reference as an e-transfer.
+    expect(isPlausibleReference('4821', null)).toBe(true);
+    expect(isPlausibleReference('4821', 'e_transfer')).toBe(false);
+    expect(isPlausibleReference('4821')).toBe(false);
+    expect(isPlausibleReference('482', 'sfu_rec')).toBe(false);
   });
 });

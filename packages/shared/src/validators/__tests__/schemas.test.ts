@@ -13,6 +13,7 @@ import {
   walkoverReportSchema,
   disputeResolveSchema,
   feeMarkSchema,
+  feeSubmissionSchema,
   seasonFeeSchema,
   sessionGroupSchema,
   manualFeeSchema,
@@ -987,5 +988,35 @@ describe('otherIncomeSchema / clubExpenseSchema', () => {
   it('accepts an explicit ISO paid_at and rejects a bare date', () => {
     expect(clubExpenseSchema.safeParse({ ...expense, paid_at: '2026-09-15T12:00:00.000Z' }).success).toBe(true);
     expect(clubExpenseSchema.safeParse({ ...expense, paid_at: '2026-09-15' }).success).toBe(false);
+  });
+});
+
+describe('feeSubmissionSchema (00253)', () => {
+  const base = {
+    feeId: '00000000-0000-4000-8000-000000000001',
+    duesSeasonId: null,
+    reference: 'CA7Hd2k9',
+    screenshotPath: 'user/receipt.png',
+  };
+
+  it('takes the method the browser read, or none', () => {
+    expect(feeSubmissionSchema.safeParse(base).success).toBe(true);
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: null }).success).toBe(true);
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: 'e_transfer' }).success).toBe(true);
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: 'sfu_rec' }).success).toBe(true);
+  });
+
+  it('refuses a method a receipt cannot carry', () => {
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: 'cash' }).success).toBe(false);
+    expect(feeSubmissionSchema.safeParse({ ...base, detectedMethod: 'online_portal' }).success).toBe(false);
+  });
+
+  it('lets a 4 character reference through to the action, which checks it by method', () => {
+    expect(feeSubmissionSchema.safeParse({ ...base, reference: '4821' }).success).toBe(true);
+    expect(feeSubmissionSchema.safeParse({ ...base, reference: '482' }).success).toBe(false);
+  });
+
+  it('is still strict', () => {
+    expect(feeSubmissionSchema.safeParse({ ...base, method: 'sfu_rec' }).success).toBe(false);
   });
 });

@@ -1,16 +1,18 @@
 import {
+  isReceiptMethod,
   reminderDecision,
   lastRemindedAt,
   selectInChunks,
   unwrap,
   type FeeType,
   type PayableFeeLine,
+  type ReceiptMethod,
   type ReminderDecision,
 } from '@badminton/shared';
 import type { createAdminClient } from './supabase-server';
 import type { Capability } from './permissions';
 
-// E-TRANSFER RECEIPTS AND UNPAID LINES, READ FOR THE CONSOLE (00248).
+// PAYMENT RECEIPTS AND UNPAID LINES, READ FOR THE CONSOLE (00248, 00253).
 //
 // Not a 'use server' module: the /fees page and the actions in
 // ./actions/fee-submissions.ts both read through here, so the list an exec
@@ -32,6 +34,8 @@ export function submissionCapability(feeType: string | null | undefined): Capabi
 export type PendingSubmission = {
   id: string;
   reference: string;
+  /** How the member paid, as their browser read the receipt. Null when it could not tell. */
+  method: ReceiptMethod | null;
   submittedAt: string;
   hasScreenshot: boolean;
   feeId: string;
@@ -58,11 +62,19 @@ export async function loadPendingSubmissions(
   const subs = unwrap(
     await admin
       .from('fee_submissions')
-      .select('id, club_fee_id, player_id, reference, screenshot_path, submitted_at')
+      .select('id, club_fee_id, player_id, reference, method, screenshot_path, submitted_at')
       .eq('status', 'submitted')
       .order('submitted_at', { ascending: true }),
     'FEE-102',
-  ) as { id: string; club_fee_id: string; player_id: string; reference: string; screenshot_path: string | null; submitted_at: string }[];
+  ) as {
+    id: string;
+    club_fee_id: string;
+    player_id: string;
+    reference: string;
+    method: string | null;
+    screenshot_path: string | null;
+    submitted_at: string;
+  }[];
   if (subs.length === 0) return [];
 
   const feeQuery = (ids: string[]) => {
@@ -127,6 +139,7 @@ export async function loadPendingSubmissions(
     return {
       id: s.id,
       reference: s.reference,
+      method: isReceiptMethod(s.method) ? s.method : null,
       submittedAt: s.submitted_at,
       hasScreenshot: s.screenshot_path != null,
       feeId: fee.id,

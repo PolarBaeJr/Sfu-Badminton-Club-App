@@ -466,7 +466,7 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     playerColumns: ['player_id', 'reviewed_by'],
     disposition: 'project',
     withheldColumns: ['reviewed_by', 'screenshot_path'],
-    why: 'Every e-transfer receipt you sent the club: the reference, when you sent it, and whether an exec confirmed or rejected it, with the reason they gave. Which exec reviewed it is reduced to their role. Receipts you reviewed as an officer are other members\' payments and are not listed.',
+    why: 'Every payment receipt you sent the club (e-transfer or SFU Rec): the reference, how it was paid, when you sent it, and whether an exec confirmed or rejected it, with the reason they gave. Which exec reviewed it is reduced to their role. Receipts you reviewed as an officer are other members\' payments and are not listed.',
   },
   club_ledger: {
     playerColumns: ['paid_by', 'marked_by', 'reimbursed_by'],

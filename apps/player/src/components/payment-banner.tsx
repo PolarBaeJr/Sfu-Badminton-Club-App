@@ -29,7 +29,7 @@ export async function PaymentBanner({
         style={{ marginBottom: 20, borderLeft: '3px solid var(--gold)' }}
       >
         <p style={{ fontSize: 14, lineHeight: 1.55, margin: 0 }}>
-          You have {amount} unpaid. Pay by e-transfer and upload your receipt.{' '}
+          You have {amount} unpaid. Pay and upload your receipt.{' '}
           <Link href="/membership#pay" className="fees-link">
             Pay now
           </Link>

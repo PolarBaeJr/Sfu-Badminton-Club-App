@@ -46,7 +46,7 @@ import { OutstandingCard } from './outstanding-card';
 // the write with a control they cannot navigate to.
 const TABS = [
   { id: 'fees', label: 'Club fees', read: 'fees.clubfees.read', add: 'fees.clubfees.addmanual.write' },
-  // E-transfer receipts (00248). Offered to whoever may settle them, and the
+  // Payment receipts (00248, 00253). Offered to whoever may settle them, and the
   // unpaid list to whoever may read the club-fee roster it is drawn from.
   { id: 'submitted', label: 'Submitted', read: 'fees.clubfees.markpaid.write', add: 'fees.clubfees.markpaid.write' },
   { id: 'outstanding', label: 'Outstanding', read: 'fees.clubfees.read', add: 'fees.clubfees.read' },

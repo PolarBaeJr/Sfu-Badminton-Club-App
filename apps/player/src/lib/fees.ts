@@ -91,6 +91,27 @@ export function isSettled(line: FeeLine): boolean {
   return line.paid || line.waived;
 }
 
+/**
+ * Whether an outstanding line gets the receipt form. A reinstatement is settled
+ * with an exec, a line with no price has nothing to pay yet, and a line with a
+ * receipt waiting has one in. Dues can be bought on the SFU Rec website; every
+ * other line is paid by e-transfer, so it needs the club's address set. The
+ * submit action refuses the same cases.
+ */
+export function canUploadReceipt(line: {
+  kind: FeeKind;
+  owedCents: number | null;
+  waiting: boolean;
+  etransferConfigured: boolean;
+}): boolean {
+  return (
+    line.kind !== 'reinstatement' &&
+    line.owedCents != null &&
+    !line.waiting &&
+    (line.etransferConfigured || line.kind === 'season')
+  );
+}
+
 // ------------------------------------------------------------------
 // The headline figure
 // ------------------------------------------------------------------

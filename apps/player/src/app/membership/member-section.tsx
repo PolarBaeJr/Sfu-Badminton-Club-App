@@ -3,6 +3,7 @@ import { unwrap } from '@badminton/shared';
 import { Atomic, Badge } from '@badminton/ui';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import {
+  canUploadReceipt,
   headlineAmount,
   headlineBadge,
   money,
@@ -38,17 +39,19 @@ type Player = {
   fee_exempt: boolean | null;
 };
 
-/** A line of the statement, with what paying it by e-transfer needs. */
+/** A line of the statement, with what sending a receipt for it needs. */
 type PayLine = FeeLine & { feeId: string | null; duesSeasonId: string | null; row: OwnFeeRow | undefined };
 
 export async function MemberSection({
   player,
   season,
   etransferEmail,
+  sfssPurchaseUrl,
 }: {
   player: Player;
   season: Season | null;
   etransferEmail: string | null;
+  sfssPurchaseUrl: string | null;
 }) {
   const supabase = await createServerSupabaseClient();
   const exempt = Boolean(player.is_exec || player.fee_exempt);
@@ -141,6 +144,7 @@ export async function MemberSection({
   const badge = headlineBadge(summary);
   const footer = outstandingFooter(seasonLine, season?.end_date);
   const outstanding = summary.outstanding as PayLine[];
+  const duesOutstanding = outstanding.some((l) => l.kind === 'season');
 
   return (
     <>
@@ -178,16 +182,39 @@ export async function MemberSection({
       {/* ── PAY ───────────────────────────────────────────────────── */}
       {outstanding.length > 0 && (
         <section id="pay" className="fees-section" style={{ scrollMarginTop: 80, order: 1 }}>
-          <h2 className="fees-section-label">Pay by e-transfer</h2>
-          {etransferEmail ? (
+          <h2 className="fees-section-label">Pay and send your receipt</h2>
+          {etransferEmail || duesOutstanding ? (
             <p className="fees-note" style={{ marginTop: 0 }}>
-              Send each amount by Interac e-Transfer to <Atomic>{etransferEmail}</Atomic>, then upload a
-              screenshot of the confirmation and its reference number. An exec checks it against the
-              club&apos;s account and marks the fee paid.
+              {etransferEmail && (
+                <>
+                  Send each amount by Interac e-Transfer to <Atomic>{etransferEmail}</Atomic>.{' '}
+                </>
+              )}
+              {duesOutstanding && (
+                <>
+                  Your membership can {etransferEmail ? 'also ' : ''}be bought on the{' '}
+                  {sfssPurchaseUrl ? (
+                    <a
+                      href={sfssPurchaseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="fees-link"
+                    >
+                      SFU Rec website
+                    </a>
+                  ) : (
+                    'SFU Rec website'
+                  )}
+                  .{' '}
+                </>
+              )}
+              Upload a screenshot of the e-Transfer confirmation or the SFU Rec receipt, with its
+              reference or receipt number. The site works out which it is, and an exec checks it and
+              marks the fee paid.
             </p>
           ) : (
             <p className="fees-note" style={{ marginTop: 0 }}>
-              E-transfer is not set up yet. Ask an exec how to pay.
+              Ask an exec how to pay.
             </p>
           )}
           <ul className="fees-receipts">
@@ -195,6 +222,12 @@ export async function MemberSection({
               const latest = latestSubmission(l.row);
               const waiting = latest?.status === 'submitted';
               const payable = l.kind !== 'reinstatement' && l.owedCents != null;
+              const uploadable = canUploadReceipt({
+                kind: l.kind,
+                owedCents: l.owedCents,
+                waiting,
+                etransferConfigured: etransferEmail != null,
+              });
               return (
                 <li key={l.key} className="fees-receipt" style={{ display: 'block' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
@@ -206,6 +239,7 @@ export async function MemberSection({
                     {latest?.status === 'rejected' && `Rejected: ${latest.reject_reason ?? ''}`}
                     {l.kind === 'reinstatement' && 'Settled with an exec'}
                     {l.kind !== 'reinstatement' && l.owedCents == null && 'No price recorded yet. Ask an exec.'}
+                    {payable && !waiting && !uploadable && 'Ask an exec how to pay this one.'}
                     {waiting && (
                       <>
                         {' · '}
@@ -213,8 +247,12 @@ export async function MemberSection({
                       </>
                     )}
                   </div>
-                  {etransferEmail && payable && !waiting && (
-                    <EtransferForm feeId={l.feeId} duesSeasonId={l.duesSeasonId} />
+                  {uploadable && (
+                    <EtransferForm
+                      feeId={l.feeId}
+                      duesSeasonId={l.duesSeasonId}
+                      dues={l.kind === 'season'}
+                    />
                   )}
                 </li>
               );

@@ -1,4 +1,4 @@
-// READING THE E-TRANSFER SCREENSHOT, IN THE BROWSER.
+// READING THE RECEIPT SCREENSHOT, IN THE BROWSER.
 //
 // Loaded only when a member picks a screenshot (a dynamic import from
 // etransfer-form.tsx), so nobody else downloads any of it.
@@ -11,15 +11,23 @@
 // would send the member's browser to a third party; a test pins that no URL
 // appears in this file.
 //
-// It never throws: a failure, or a read that takes too long, answers null and
+// One read answers two things: the reference, and whether the screenshot is an
+// e-transfer confirmation or an SFU Rec receipt (receipt-method.ts in shared).
+//
+// It never throws: a failure, or a read that takes too long, answers nulls and
 // the member types the reference themselves. The worker is terminated either
 // way, since it holds the model in memory.
 
 import { extractEtransferReference, type ExtractedReference } from '@badminton/shared/src/utils/etransfer-reference';
+import { classifyReceiptText, type ReceiptMethod } from '@badminton/shared/src/utils/receipt-method';
 
 const OCR_TIMEOUT_MS = 30_000;
 
-export async function readReferenceFromImage(file: Blob): Promise<ExtractedReference | null> {
+export type ReceiptRead = { reference: ExtractedReference | null; method: ReceiptMethod | null };
+
+const NOTHING: ReceiptRead = { reference: null, method: null };
+
+export async function readReceipt(file: Blob): Promise<ReceiptRead> {
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -33,25 +41,28 @@ export async function readReferenceFromImage(file: Blob): Promise<ExtractedRefer
         workerBlobURL: false,
       });
       try {
-        if (timedOut) return null;
+        if (timedOut) return NOTHING;
         const { data } = await worker.recognize(file);
-        return extractEtransferReference(data.text);
+        return {
+          reference: extractEtransferReference(data.text),
+          method: classifyReceiptText(data.text),
+        };
       } finally {
         worker.terminate().catch(() => undefined);
       }
     })();
     // A late failure after the timeout has already answered is not an error.
     work.catch(() => undefined);
-    const timeout = new Promise<null>((resolve) => {
+    const timeout = new Promise<ReceiptRead>((resolve) => {
       timer = setTimeout(() => {
         timedOut = true;
-        resolve(null);
+        resolve(NOTHING);
       }, OCR_TIMEOUT_MS);
     });
     return await Promise.race([work, timeout]);
   } catch (err) {
     console.warn('[membership] could not read the screenshot:', err);
-    return null;
+    return NOTHING;
   } finally {
     if (timer) clearTimeout(timer);
   }
