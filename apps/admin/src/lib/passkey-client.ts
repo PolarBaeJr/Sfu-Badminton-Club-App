@@ -12,6 +12,7 @@ import {
   type AuthenticationResponseJSON,
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
+import * as Sentry from '@sentry/nextjs';
 import { friendlyPasskeyError } from './passkey/errors';
 import { withBase } from './base-path';
 
@@ -56,34 +57,167 @@ async function errorFrom(response: Response, fallback: string): Promise<string> 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Options prefetch
+// ---------------------------------------------------------------------------
+//
+// See the player app's copy for the full reasoning. In short: iOS Safari only
+// opens the passkey sheet from inside the tap, so an awaited options fetch
+// between the tap and startAuthentication makes it refuse with NotAllowedError,
+// which reads as a silent cancel. The options are fetched before the tap and the
+// button starts synchronously. 4 minutes stays under the 5-minute challenge TTL.
+export const OPTIONS_FRESH_MS = 4 * 60 * 1000;
+
+export type OptionsCache<T> = {
+  prime: () => Promise<T | null>;
+  takeFresh: () => T | null;
+  invalidate: () => void;
+};
+
+// Dedupes: one challenge cookie per app and the last fetch wins, so concurrent
+// primes must share a single fetch.
+export function createOptionsCache<T>(
+  fetcher: () => Promise<T | null>,
+  now: () => number = Date.now
+): OptionsCache<T> {
+  let promise: Promise<T | null> | null = null;
+  let options: T | null = null;
+  let fetchedAt = 0;
+  let generation = 0;
+
+  const isFresh = () => options !== null && now() - fetchedAt < OPTIONS_FRESH_MS;
+
+  return {
+    prime() {
+      if (promise && (options === null || isFresh())) return promise;
+      options = null;
+      const mine = ++generation;
+      const pending: Promise<T | null> = fetcher()
+        .catch(() => null)
+        .then((result) => {
+          if (mine !== generation) return result;
+          if (result === null) {
+            promise = null;
+            return null;
+          }
+          options = result;
+          fetchedAt = now();
+          return result;
+        });
+      promise = pending;
+      return pending;
+    },
+    takeFresh() {
+      return isFresh() ? options : null;
+    },
+    invalidate() {
+      generation += 1;
+      promise = null;
+      options = null;
+    },
+  };
+}
+
+let lastOptionsError: string | null = null;
+
+const loginOptions = createOptionsCache<PublicKeyCredentialRequestOptionsJSON>(async () => {
+  lastOptionsError = null;
+  const res = await fetch(withBase('/api/passkey/login/options'), { method: 'POST' });
+  if (!res.ok) {
+    lastOptionsError = await errorFrom(res, 'Could not start passkey sign-in.');
+    return null;
+  }
+  return (await res.json()) as PublicKeyCredentialRequestOptionsJSON;
+});
+
+/** Fetch sign-in options ahead of the tap, so the button can start synchronously. */
+export function primePasskeySignIn(): void {
+  if (!supportsPasskeys()) return;
+  void loginOptions.prime();
+}
+
+// Calls `callback` when the tab becomes visible again or the window regains
+// focus; returns the cleanup. prime() only fetches when stale or empty, so this
+// keeps a long-open login page's first tap working on iOS at no cost otherwise.
+export function onPageReturn(
+  callback: () => void,
+  win: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> = window,
+  doc: Pick<Document, 'addEventListener' | 'removeEventListener' | 'visibilityState'> = document
+): () => void {
+  const onVisibility = () => {
+    if (doc.visibilityState === 'visible') callback();
+  };
+  doc.addEventListener('visibilitychange', onVisibility);
+  win.addEventListener('focus', callback);
+  return () => {
+    doc.removeEventListener('visibilitychange', onVisibility);
+    win.removeEventListener('focus', callback);
+  };
+}
+
+/** Keep the sign-in options fresh while the page is left open. Returns the cleanup. */
+export function keepPasskeySignInFresh(): () => void {
+  return onPageReturn(primePasskeySignIn);
+}
+
+// No user identifier is attached. `prefetched` says which path ran.
+function reportCeremonyError(err: unknown, prefetched: boolean): void {
+  try {
+    const e = err as { name?: string; message?: string } | null;
+    Sentry.withScope((scope) => {
+      scope.setUser(null);
+      Sentry.captureMessage('passkey signin ceremony did not complete', {
+        level: isUserCancellation(err) ? 'info' : 'warning',
+        tags: { passkey: 'signin', passkey_error: e?.name ?? 'unknown' },
+        extra: { message: e?.message ?? String(err), prefetched },
+      });
+    });
+  } catch {
+    // Reporting must never break the flow.
+  }
+}
+
 export async function signInWithPasskey(): Promise<PasskeyResult> {
   if (!supportsPasskeys()) {
     return { ok: false, error: 'This device does not support passkeys.' };
   }
 
-  // Cancel the speculative autofill request before minting a new challenge —
-  // the fetch below would otherwise replace the cookie it is waiting on.
+  // Abort the speculative autofill request first. The button then reuses the
+  // same, still unspent challenge rather than minting a new one.
   cancelPasskeyCeremony();
 
-  const optionsRes = await fetch(withBase('/api/passkey/login/options'), { method: 'POST' });
-  if (!optionsRes.ok) {
-    return { ok: false, error: await errorFrom(optionsRes, 'Could not start passkey sign-in.') };
-  }
-
+  // Nothing may be awaited before startAuthentication on the prefetched path.
+  // The fallback fetch-then-start works everywhere except iOS, and leaves the
+  // options cached for a second tap.
+  const cached = loginOptions.takeFresh();
   let credential;
   try {
-    credential = await startAuthentication({ optionsJSON: await optionsRes.json() });
+    if (cached) {
+      credential = await startAuthentication({ optionsJSON: cached });
+    } else {
+      const optionsJSON = await loginOptions.prime();
+      if (!optionsJSON) {
+        return { ok: false, error: lastOptionsError ?? 'Could not start passkey sign-in.' };
+      }
+      credential = await startAuthentication({ optionsJSON });
+    }
   } catch (err) {
+    reportCeremonyError(err, cached !== null);
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: friendlyPasskeyError(err, 'No passkey was used.') };
   }
 
+  // Verify consumes the challenge whether or not it succeeds.
+  loginOptions.invalidate();
   const verifyRes = await fetch(withBase('/api/passkey/login/verify'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ credential }),
   });
   if (!verifyRes.ok) {
+    // That challenge is spent. Fetch the next now, so a retry starts from the tap.
+    // Not on success: the page redirects.
+    primePasskeySignIn();
     return { ok: false, error: await errorFrom(verifyRes, 'Passkey sign-in failed.') };
   }
   return { ok: true };
@@ -136,17 +270,17 @@ export async function attemptConditionalSignIn(
 
 const browserConditionalSteps: ConditionalSignInSteps = {
   autofillAvailable: () => browserSupportsWebAuthnAutofill(),
-  requestOptions: async () => {
-    const res = await fetch(withBase('/api/passkey/login/options'), { method: 'POST' });
-    return res.ok ? ((await res.json()) as PublicKeyCredentialRequestOptionsJSON) : null;
-  },
+  // Shared with the button, so both use one challenge.
+  requestOptions: () => loginOptions.prime(),
   authenticate: (optionsJSON) => startAuthentication({ optionsJSON, useBrowserAutofill: true }),
   verifyCredential: async (credential) => {
+    loginOptions.invalidate();
     const res = await fetch(withBase('/api/passkey/login/verify'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ credential }),
     });
+    if (!res.ok) primePasskeySignIn();
     return res.ok;
   },
 };

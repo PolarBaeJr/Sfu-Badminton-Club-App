@@ -11,6 +11,8 @@ import {
   supportsPasskeys,
   beginConditionalPasskeySignIn,
   cancelPasskeyCeremony,
+  primePasskeySignIn,
+  keepPasskeySignInFresh,
   PASSKEY_AUTOFILL_AUTOCOMPLETE,
 } from '@/lib/passkey-client';
 
@@ -66,7 +68,8 @@ export default function LoginPage() {
   // Deliberately NOT gated on canUsePasskeys — beginConditionalPasskeySignIn
   // does its own (stricter) detection and returns false without touching the
   // network when the browser cannot do this, so gating here would only add a
-  // render's delay and a second source of truth.
+  // render's delay and a second source of truth. The button's prime below does
+  // fetch on any passkey-capable browser, autofill or not.
   //
   // Runs only on the screen that actually has the email field: the code screen
   // (`sent`) has unmounted it, and under "Sign up" a passkey cannot help — it
@@ -76,11 +79,15 @@ export default function LoginPage() {
   useEffect(() => {
     if (sent || mode !== 'signin') return;
     let live = true;
+    // The button needs its options before the tap (iOS). Shares the fetch below.
+    primePasskeySignIn();
+    const stopRefreshing = keepPasskeySignInFresh();
     void beginConditionalPasskeySignIn().then((signedIn) => {
       if (signedIn && live) window.location.href = `/auth/post-login${authSuffix()}`;
     });
     return () => {
       live = false;
+      stopRefreshing();
       cancelPasskeyCeremony();
     };
   }, [sent, mode]);
