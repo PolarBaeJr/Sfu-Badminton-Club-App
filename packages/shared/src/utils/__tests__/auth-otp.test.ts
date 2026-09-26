@@ -19,7 +19,13 @@ describe('OTP type order', () => {
 
   it('falls through only on a type mismatch', () => {
     expect(shouldTryNextOtpType('Invalid email verification type')).toBe(true);
-    expect(shouldTryNextOtpType('Token has expired or is invalid')).toBe(false);
+    expect(shouldTryNextOtpType('Email rate limit exceeded')).toBe(false);
+  });
+
+  // GoTrue gives a wrong-type attempt this same message, so an unconfirmed
+  // account's valid code was reported expired before the signup type was tried.
+  it('falls through on GoTrue\'s expired-or-invalid answer', () => {
+    expect(shouldTryNextOtpType('Token has expired or is invalid')).toBe(true);
   });
 });
 

@@ -45,7 +45,7 @@ export async function sendEmailCode(
  *
  * GoTrue issues a different token type per flow, and the client cannot be
  * certain which one a person is in, so `order` is tried in turn. A wrong-type
- * attempt returns "not found" without consuming the real token.
+ * attempt fails without touching the real token.
  */
 export async function verifyEmailCode(
   email: string,
