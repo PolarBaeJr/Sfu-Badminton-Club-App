@@ -17,18 +17,20 @@
  * The console only ever signs an existing account in — signInWithOtp() passes
  * shouldCreateUser: false — so `recovery` goes first. `signup` stays behind it
  * for the admin whose account was created but never confirmed. A wrong-type
- * attempt reads a different token column and comes back "not found" without
- * consuming the real token, so trying both in turn is safe.
+ * attempt reads a different token column and fails without touching the real
+ * token, so trying both in turn is safe.
  */
 export const SIGNIN_OTP_TYPES = ['recovery', 'signup'] as const;
 
 /**
- * Only fall through to the next token type on a type/token mismatch. A
- * genuinely wrong or expired code should surface immediately rather than being
- * retried under a type that could not have matched it either.
+ * Fall through to the next token type when the code did not match. GoTrue
+ * answers a wrong-type attempt exactly as it answers a wrong or expired code,
+ * "Token has expired or is invalid", so the two cannot be told apart and the
+ * other type must be tried before the code is called expired. Anything else
+ * (a rate limit, a network failure) surfaces immediately.
  */
 export function shouldTryNextOtpType(message: string): boolean {
-  return /verification type|not found/i.test(message ?? '');
+  return /verification type|not found|expired or is invalid/i.test(message ?? '');
 }
 
 /**

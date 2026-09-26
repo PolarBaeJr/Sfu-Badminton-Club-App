@@ -168,8 +168,8 @@ export default function LoginPage() {
     // and always failed with "Invalid email verification type". The client
     // can't be certain which flow a user is in (they may pick the wrong tab),
     // so try the mode-appropriate type first and fall back to the other. A
-    // wrong-type attempt looks up a different token column and returns
-    // "not found" without consuming the real token, so the fallback is safe.
+    // wrong-type attempt reads a different token column and fails without
+    // touching the real token, so the fallback is safe.
     const typeOrder = mode === 'signup'
       ? (['signup', 'recovery'] as const)
       : (['recovery', 'signup'] as const);
@@ -182,9 +182,11 @@ export default function LoginPage() {
         return;
       }
       authError = error;
-      // Only fall through to the other type on a type/token mismatch; a genuinely
-      // wrong or expired code should surface immediately.
-      if (!/verification type|not found/i.test(authError.message ?? '')) break;
+      // GoTrue answers a wrong-type attempt with "Token has expired or is
+      // invalid", the same as a truly expired code, so that has to fall through
+      // too: a new member on the sign-in tab was told their fresh code expired.
+      // Anything else (a rate limit, a network failure) surfaces immediately.
+      if (!/verification type|not found|expired or is invalid/i.test(authError.message ?? '')) break;
     }
     setError(friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'));
     setLoading(false);
