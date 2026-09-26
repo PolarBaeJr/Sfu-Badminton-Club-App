@@ -11,6 +11,8 @@ import {
   supportsPasskeys,
   beginConditionalPasskeySignIn,
   cancelPasskeyCeremony,
+  primePasskeySignIn,
+  keepPasskeySignInFresh,
   PASSKEY_AUTOFILL_AUTOCOMPLETE,
 } from '@/lib/passkey-client';
 import { SIGNIN_OTP_TYPES, shouldTryNextOtpType, isUnknownAccountError } from '@/lib/auth-otp';
@@ -63,11 +65,15 @@ export default function LoginPage() {
   useEffect(() => {
     if (checkingSession || sent) return;
     let live = true;
+    // The button needs its options before the tap (iOS). Shares the fetch below.
+    primePasskeySignIn();
+    const stopRefreshing = keepPasskeySignInFresh();
     void beginConditionalPasskeySignIn().then((signedIn) => {
       if (signedIn && live) window.location.href = withBase('/dashboard');
     });
     return () => {
       live = false;
+      stopRefreshing();
       cancelPasskeyCeremony();
     };
   }, [checkingSession, sent]);
