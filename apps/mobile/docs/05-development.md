@@ -89,6 +89,16 @@ built APKs and bundles. The Gradle wrapper jar is committed on purpose.
 The application id `com.sfubadminton.app` is permanent once a build reaches Google
 Play.
 
+## Look and feel
+
+The app wears the club website's dark theme and nothing else: no light mode, no
+dynamic colour. The tokens are the website's (`apps/player/src/app/globals.css`),
+kept in `ui/theme/Theme.kt`; the type is Barlow, Barlow Condensed and JetBrains
+Mono, in `ui/theme/Type.kt` with the files in `res/font`. The cards, page headers,
+buttons, avatars and sign-in card copy the website's components, and the launcher
+icon is the site header's shuttle mark on its red tile. Change the website first
+and follow it here.
+
 ## Deferred past milestone 1
 
 - Google sign in.
@@ -99,7 +109,8 @@ Play.
 - Push notifications.
 - The fees feature switch. The web shows the statement only while the switch is on
   (`playerPathVisible('/fees', ...)`); this app shows it to every approved member.
-- A launcher icon (the manifest sets none yet) and release signing.
+- Release signing, and the 512 px Play Store icon (a PNG render of the launcher
+  icon, made when the listing is).
 - A minimum version gate (see `04-release-and-versioning.md`).
 - CI for this directory.
 - iOS.

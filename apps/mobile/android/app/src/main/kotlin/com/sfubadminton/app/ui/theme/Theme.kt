@@ -1,69 +1,86 @@
 package com.sfubadminton.app.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// The Expo app's palette (src/components/theme.ts), following the phone's
-// light or dark setting.
+// The club website's dark theme tokens (apps/player/src/app/globals.css). The
+// app is dark only.
 
 @Immutable
 data class Palette(
     val background: Color,
     val surface: Color,
+    val surface2: Color,
+    val surface3: Color,
     val line: Color,
+    val line2: Color,
     val text: Color,
+    val ink2: Color,
     val muted: Color,
+    val dim: Color,
+    val faint: Color,
+    val placeholder: Color,
     val accent: Color,
+    val redInk: Color,
+    val redBorder: Color,
     val danger: Color,
     val highlight: Color,
-)
-
-private val Light = Palette(
-    background = Color(0xFFF6F6F4),
-    surface = Color(0xFFFFFFFF),
-    line = Color(0xFFE2E2DE),
-    text = Color(0xFF16181D),
-    muted = Color(0xFF6B6F78),
-    accent = Color(0xFFA6192E),
-    danger = Color(0xFFB42318),
-    highlight = Color(0xFFFBE9EC),
+    val win: Color,
+    val winWash: Color,
+    val warning: Color,
+    val gold: Color,
+    val silver: Color,
+    val bronze: Color,
 )
 
 private val Dark = Palette(
-    background = Color(0xFF0F1114),
-    surface = Color(0xFF181B20),
-    line = Color(0xFF2A2E35),
-    text = Color(0xFFF1F2F4),
-    muted = Color(0xFF9AA0AA),
-    accent = Color(0xFFE0485D),
-    danger = Color(0xFFF97066),
-    highlight = Color(0xFF3A1D23),
+    background = Color(0xFF0A0A0A),
+    surface = Color(0xFF111111),
+    surface2 = Color(0xFF1A1A1A),
+    surface3 = Color(0xFF232323),
+    line = Color(0x14FFFFFF),
+    line2 = Color(0x24FFFFFF),
+    text = Color(0xFFF0F0F0),
+    ink2 = Color(0xFFC8C8C8),
+    muted = Color(0xFF888888),
+    dim = Color(0xFF666666),
+    faint = Color(0xFF444444),
+    placeholder = Color(0xFF565656),
+    accent = Color(0xFFCC0000),
+    redInk = Color(0xFFA30000),
+    redBorder = Color(0x4DCC0000),
+    danger = Color(0xFFCC0000),
+    highlight = Color(0x1ACC0000),
+    win = Color(0xFF4ADE80),
+    winWash = Color(0x1A4ADE80),
+    warning = Color(0xFFFBBF24),
+    gold = Color(0xFFEAB308),
+    silver = Color(0xFFBCBDC0),
+    bronze = Color(0xFFC68A55),
 )
 
-val LocalPalette = staticCompositionLocalOf { Light }
+val LocalPalette = staticCompositionLocalOf { Dark }
 
 @Composable
 fun AppTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    val p = if (dark) Dark else Light
-    val base = if (dark) darkColorScheme() else lightColorScheme()
-    val scheme = base.copy(
+    val p = Dark
+    val scheme = darkColorScheme().copy(
         primary = p.accent,
         onPrimary = Color.White,
         background = p.background,
         onBackground = p.text,
         surface = p.surface,
         onSurface = p.text,
-        surfaceVariant = p.surface,
+        surfaceVariant = p.surface2,
         onSurfaceVariant = p.muted,
         surfaceContainer = p.surface,
+        surfaceContainerHigh = p.surface2,
+        surfaceContainerHighest = p.surface3,
         secondaryContainer = p.highlight,
         onSecondaryContainer = p.text,
         outline = p.line,
@@ -71,6 +88,6 @@ fun AppTheme(content: @Composable () -> Unit) {
         error = p.danger,
     )
     CompositionLocalProvider(LocalPalette provides p) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        MaterialTheme(colorScheme = scheme, typography = AppTypography, content = content)
     }
 }

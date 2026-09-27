@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sfubadminton.app.ui.theme.BarlowCondensed
 import com.sfubadminton.app.ui.theme.LocalPalette
 
 /** Shown instead of the app when the build has no Supabase URL or key. */
@@ -22,12 +23,14 @@ fun ConfigErrorScreen(missing: List<String>) {
         Modifier.fillMaxSize().background(p.background).safeDrawingPadding().padding(24.dp),
         verticalArrangement = Arrangement.Center,
     ) {
+        BrandTile(size = 56.dp, corner = 12.dp, markSize = 28.dp)
         Text(
             "This build is not configured",
             color = p.text,
-            fontSize = 20.sp,
+            fontFamily = BarlowCondensed,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 12.dp),
+            fontSize = 26.sp,
+            modifier = Modifier.padding(top = 20.dp, bottom = 12.dp),
         )
         Text(
             "Missing or invalid: ${missing.joinToString(", ")}. Copy local.properties.example to " +

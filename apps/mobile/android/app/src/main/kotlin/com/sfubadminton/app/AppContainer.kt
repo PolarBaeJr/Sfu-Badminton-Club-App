@@ -15,7 +15,7 @@ import com.sfubadminton.app.net.UrlConnectionTransport
 import java.io.File
 
 /** The configured app: built once per process, so one session has one owner. */
-class Services(context: Context, config: SupabaseConfig.Ok, siteUrl: String?) {
+class Services(context: Context, config: SupabaseConfig.Ok, val siteUrl: String?) {
     private val transport = UrlConnectionTransport()
     private val clock = { System.currentTimeMillis() / 1000 }
     private val gotrue = GoTrueApi(config, transport, clock)

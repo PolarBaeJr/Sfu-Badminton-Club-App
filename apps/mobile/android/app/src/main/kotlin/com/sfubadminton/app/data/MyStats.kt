@@ -148,7 +148,9 @@ suspend fun loadMyStats(postgrest: Postgrest, playerId: String): MyStats = corou
         position = ladderPosition(ladder, playerId, singlesElo),
         seasonName = season?.name,
         record = season?.let { summarizeSeason(seasonRecordRows(matches, it.id, playerId)) },
-        recent = matches.take(HISTORY_ROWS).map { m ->
+        // Same season rule as the website's My stats: a match from an earlier or
+        // hidden season (the retired test season) never shows under this one.
+        recent = matches.filter { season != null && it.seasonId == season.id }.take(HISTORY_ROWS).map { m ->
             val own = ownParticipant(m, playerId)
             RecentMatch(
                 id = m.id,

@@ -30,7 +30,17 @@ passkey cost: the unsigned release APK went from about 2.4 MB to about 3.2 MB
 manifest gains no content provider or startup initializer, and Credential
 Manager is created only when a member taps the passkey button.
 
-It has not yet been run on a device or emulator.
+The website's fonts cost about 148 KiB more to download. The unsigned release APK
+went from 3,174,477 to 3,362,620 bytes on disk and from 1,557,102 to 1,708,699
+bytes to download (apkanalyzer), a rise of 151,597 bytes. Nearly all of it is the
+five latin-only TTFs in `res/font` (compressed in the APK: Barlow 400, 600 and 700
+about 19 KB each, Barlow Condensed 700 about 18 KB, the variable JetBrains Mono
+about 37 KB); the vector icons and the licence texts in `assets/licenses` are a
+few KB. Where the fonts come from is in `../assets/fonts/README.md`.
+
+It runs on the emulator against staging. The restyled sign-in screen, launcher
+icon and cold start have been checked there; the restyled signed-in screens have
+not been checked on a device yet.
 
 ## Before it can ship
 
