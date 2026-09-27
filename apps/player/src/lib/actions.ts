@@ -12,6 +12,7 @@
 //   - calendar.ts    — getCalendarFeedToken / regenerateCalendarFeedToken
 //   - exec.ts        — updateExecBio (the exec panel's one write)
 //   - tour.ts        - markMemberTourSeen (the app tour, 00246)
+//   - media-consent.ts - getMyMediaConsent / setMyMediaConsent (00255)
 //   - _shared.ts     — requirePlayer / getPlayerProps / trackServerEvent
 //                      (NOT 'use server' — internal helpers)
 export {
@@ -61,3 +62,5 @@ export {
 export { updateExecBio } from './actions/exec';
 
 export { markMemberTourSeen } from './actions/tour';
+
+export { getMyMediaConsent, setMyMediaConsent } from './actions/media-consent';

@@ -108,11 +108,14 @@ describe('withSeededSettings', () => {
     updated_at: '2026-09-01T00:00:00.000Z',
   });
 
-  it('stands in for an absent features row with every switch on', () => {
+  // Every switch on but guest waivers, the one feature that starts off.
+  it('stands in for an absent features row with every switch at its default', () => {
     const out = withSeededSettings([row('session_caps', { max_rated_singles_per_session: 3 })]);
     const features = out.find((r) => r.key === 'features');
     expect(features?.value).toEqual(defaultFeaturesValue());
-    expect(Object.values(features!.value).every((v) => v === true)).toBe(true);
+    const { guest_waivers_enabled: guestWaivers, ...rest } = features!.value;
+    expect(guestWaivers).toBe(false);
+    expect(Object.values(rest).every((v) => v === true)).toBe(true);
   });
 
   it('keeps a saved switch, and adds one a later feature brought in', () => {

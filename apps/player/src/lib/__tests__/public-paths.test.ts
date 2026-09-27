@@ -88,6 +88,14 @@ describe('isPublicPath', () => {
       expect(isPublicPath('/fees')).toBe(false);
     });
 
+    // A guest has no account, and a proof link is opened by whoever holds it.
+    // By whole segment, so a lookalike path stays gated.
+    it('lets a guest reach the guest waiver and its proof pages, by whole segment', () => {
+      expect(isPublicPath('/guest-waiver')).toBe(true);
+      expect(isPublicPath('/guest-waiver/abc')).toBe(true);
+      expect(isPublicPath('/guest-waiverX')).toBe(false);
+    });
+
     it('lets a signed-out scanner reach the tournament check-in page', () => {
       expect(isPublicPath('/tournaments/checkin/xyz')).toBe(true);
     });

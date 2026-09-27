@@ -1,13 +1,20 @@
 // CLUB FEATURE SWITCHES: which optional member-facing features are running.
 //
 // One platform_settings row, key `features`, holding `<id>_enabled` booleans.
-// No migration seeds it: an absent row, an absent field and anything other
-// than a literal `false` all read as ENABLED, so nothing changes until an admin
-// flips a switch on /accounts. The first save inserts the row (see
-// SEEDABLE_SETTINGS in the admin's actions/settings.ts).
+// No migration seeds it: an absent row or an absent field reads as the
+// feature's default, so nothing changes until an admin flips a switch on
+// /accounts. The first save inserts the row (see SEEDABLE_SETTINGS in the
+// admin's actions/settings.ts).
 //
-// A FAILED READ IS ALSO ENABLED. Hiding a feature is not a safety property,
-// and a settings blip must not make a live tournament vanish mid-event.
+// ON BY DEFAULT, unless the entry says `defaultEnabled: false`. A default-on
+// feature is switched off only by a literal `false`; a default-off one is
+// switched on only by a literal `true`. So every doubt resolves to the default.
+//
+// A FAILED READ IS ALSO THE DEFAULT. Hiding a feature is not a safety
+// property, and a settings blip must not make a live tournament vanish
+// mid-event. A default-off feature stays off, because it is off until somebody
+// has decided otherwise (guest_waivers waits on a privacy policy that covers
+// guests).
 //
 // THIS REGISTRY DRIVES EVERYTHING ELSE: the player nav, the admin nav, the
 // redirect gate on the player routes, the refusal in the player actions and
@@ -40,7 +47,8 @@ export interface FeatureDefinition {
    * Player app route prefixes this feature owns: hidden from the nav when off,
    * and gated by a FeatureGate in app/<route>/layout.tsx, which redirects
    * anybody not holding the feature's `page.access.<id>` key. The leaderboard gates its index page only, so profiles under it
-   * stay reachable.
+   * stay reachable, and so does the guest waiver, so a proof link under it
+   * outlives the switch.
    */
   playerRoutes: readonly string[];
   /**
@@ -50,6 +58,13 @@ export interface FeatureDefinition {
    * (app/<route>/layout.tsx in the admin app).
    */
   adminRoutes: readonly string[];
+  /** Absent means on. False keeps the feature off until an admin switches it on. */
+  defaultEnabled?: boolean;
+  /**
+   * Replaces the settings form's generic sentence about what off does, for a
+   * feature where "members are sent to the feed" is not what happens.
+   */
+  offNote?: string;
 }
 
 export const FEATURES = [
@@ -144,6 +159,20 @@ export const FEATURES = [
     playerRoutes: ['/socials'],
     adminRoutes: [],
   },
+  {
+    id: 'guest_waivers',
+    label: 'Guest waivers',
+    summary: 'Non-members sign the waiver and privacy policy with a name and email',
+    description:
+      'A public page where somebody who is not a member signs the liability waiver and the privacy policy with only a name and an email, and gets a link that proves it. Execs see the signings under Legal.',
+    warning:
+      'WARNING: keep this off until the privacy policy has been republished, with a new version, to cover guests. The current policy is written for members only, and every guest signing records the version it was signed against.',
+    offNote:
+      ' Off hides the guest waiver page and the links to it, and refuses new signings. Proof links already given out still work, and the console list stays.',
+    playerRoutes: ['/guest-waiver'],
+    adminRoutes: ['/legal/guests'],
+    defaultEnabled: false,
+  },
 ] as const satisfies readonly FeatureDefinition[];
 
 export type FeatureId = (typeof FEATURES)[number]['id'];
@@ -161,15 +190,31 @@ export const ALL_FEATURES_ENABLED: FeatureFlags = Object.fromEntries(
   FEATURES.map((f) => [f.id, true]),
 ) as FeatureFlags;
 
-/** The row a first save starts from: every feature on. */
-export function defaultFeaturesValue(): Record<string, boolean> {
-  return Object.fromEntries(FEATURES.map((f) => [featureField(f.id), true]));
+function defaultOn(f: FeatureDefinition): boolean {
+  return f.defaultEnabled ?? true;
 }
 
 /**
- * The stored row as a flag per feature. Only a literal `false` switches a
- * feature off; an absent row, an absent field, a string, a null or a non-object
- * all read as on.
+ * Each feature at its default: what an absent row, and a failed read, mean.
+ * NOT ALL_FEATURES_ENABLED, which stays literally everything on for the nav
+ * components and tests that want that.
+ */
+export const DEFAULT_FEATURE_FLAGS: FeatureFlags = Object.fromEntries(
+  (FEATURES as readonly FeatureDefinition[]).map((f) => [f.id, defaultOn(f)]),
+) as FeatureFlags;
+
+/** The row a first save starts from: every feature at its default. */
+export function defaultFeaturesValue(): Record<string, boolean> {
+  return Object.fromEntries(
+    (FEATURES as readonly FeatureDefinition[]).map((f) => [featureField(f.id as FeatureId), defaultOn(f)]),
+  );
+}
+
+/**
+ * The stored row as a flag per feature. A default-on feature is off only for a
+ * literal `false`; a default-off one is on only for a literal `true`. An absent
+ * row, an absent field, a string, a null or a non-object all read as the
+ * default.
  */
 export function parseFeatureFlags(value: unknown): FeatureFlags {
   const row =
@@ -177,7 +222,10 @@ export function parseFeatureFlags(value: unknown): FeatureFlags {
       ? (value as Record<string, unknown>)
       : {};
   return Object.fromEntries(
-    FEATURES.map((f) => [f.id, row[featureField(f.id)] !== false]),
+    (FEATURES as readonly FeatureDefinition[]).map((f) => {
+      const stored = row[featureField(f.id as FeatureId)];
+      return [f.id, defaultOn(f) ? stored !== false : stored === true];
+    }),
   ) as FeatureFlags;
 }
 
@@ -238,8 +286,8 @@ export function featureOffMessage(id: FeatureId): string {
 type FlagsReader = { from: (table: string) => any };
 
 /**
- * Read the switches. Never throws: a failed read logs and returns everything
- * ENABLED, which is the behaviour before this row existed.
+ * Read the switches. Never throws: a failed read logs and returns the
+ * defaults, which is the behaviour before this row existed.
  */
 export async function readFeatureFlags(client: FlagsReader): Promise<FeatureFlags> {
   try {
@@ -249,12 +297,12 @@ export async function readFeatureFlags(client: FlagsReader): Promise<FeatureFlag
       .eq('key', FEATURES_SETTING_KEY)
       .maybeSingle();
     if (error) {
-      console.error('[features] could not read the feature switches, treating all as on:', error.message);
-      return { ...ALL_FEATURES_ENABLED };
+      console.error('[features] could not read the feature switches, using the defaults:', error.message);
+      return { ...DEFAULT_FEATURE_FLAGS };
     }
     return parseFeatureFlags(data?.value ?? null);
   } catch (err) {
-    console.error('[features] could not read the feature switches, treating all as on:', err);
-    return { ...ALL_FEATURES_ENABLED };
+    console.error('[features] could not read the feature switches, using the defaults:', err);
+    return { ...DEFAULT_FEATURE_FLAGS };
   }
 }

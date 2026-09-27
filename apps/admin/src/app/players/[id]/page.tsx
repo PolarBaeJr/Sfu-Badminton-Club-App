@@ -6,7 +6,7 @@ import { accessLevelFor, effectiveCapabilities, permissionsOf, permits } from '@
 import { PermissionEditor } from '@/app/permissions/permission-editor';
 import { customBaselinesFrom, personRowFrom } from '@/lib/person-row';
 import { Badge, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
-import { readFeatureFlags, seasonDuesState, type SeasonDuesState } from '@badminton/shared';
+import { clubDate, readFeatureFlags, seasonDuesState, type SeasonDuesState } from '@badminton/shared';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode, summarizeSeason } from '@badminton/shared';
 import type { SeasonMatchRow } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -428,6 +428,12 @@ export default async function PlayerDetailPage({
               </Badge>
               {player.is_exec && <Badge variant="info">Exec</Badge>}
               {player.is_trainer && <Badge variant="info">Trainer</Badge>}
+              {/* Badge takes no title, so the span carries the date. */}
+              {player.media_consent && (
+                <span title={player.media_consent_changed_at ? `Since ${clubDate(player.media_consent_changed_at)}` : undefined}>
+                  <Badge variant="success">Photo consent</Badge>
+                </span>
+              )}
               {duesState && (
                 <Badge
                   variant={duesState === 'paid' ? 'success' : duesState === 'unpaid' ? 'warning' : 'neutral'}

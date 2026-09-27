@@ -14,6 +14,8 @@ import {
   DollarSign,
   Megaphone,
   ShieldCheck,
+  FileSignature,
+  Camera,
 } from 'lucide-react';
 import {
   canAccess,
@@ -96,6 +98,8 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: '/ratings', label: 'Ratings', icon: Gauge, area: 'ratings' },
       { href: '/accounts', label: 'Accounts', icon: UserCog, area: 'accounts' },
       { href: '/legal', label: 'Legal', icon: Scale, area: 'legal' },
+      { href: '/legal/guests', label: 'Guest waivers', icon: FileSignature, area: 'legal' },
+      { href: '/legal/media-consent', label: 'Photo consent', icon: Camera, area: 'legal' },
       { href: '/audit', label: 'Audit Log', icon: ScrollText, area: 'audit' },
       { href: '/settings', label: 'Settings', icon: Settings, area: null },
     ],
@@ -148,7 +152,7 @@ export const NAV_LAYOUT: NavEntry<NavItem>[] = [
   group('play', 'Play', ['/sessions', '/matches', '/seasons']),
   group('events', 'Events', ['/tournaments', '/events']),
   group('members', 'Members', ['/players', '/permissions', '/accounts']),
-  group('club', 'Club', ['/announcements', '/fees', '/legal']),
+  group('club', 'Club', ['/announcements', '/fees', '/legal', '/legal/guests', '/legal/media-consent']),
   group('system', 'System', ['/ratings', '/audit']),
   { kind: 'link', item: navItem('/settings') },
 ];

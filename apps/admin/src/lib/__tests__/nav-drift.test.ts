@@ -115,6 +115,8 @@ describe('the console nav', () => {
       '/fees',
       '/players',
       '/legal',
+      '/legal/guests',
+      '/legal/media-consent',
       '/settings',
     ]);
   });

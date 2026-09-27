@@ -38,6 +38,9 @@ const FAIL_SOFT_SECRETS = [
   'NEXT_PUBLIC_VAPID_PUBLIC_KEY',
   'VAPID_PRIVATE_KEY',
   'VAPID_EMAIL',
+  // The guest waiver's per-network throttle switches off; only the per-email
+  // one runs.
+  'GUEST_WAIVER_IP_SALT',
 ];
 
 describe('.env.example', () => {

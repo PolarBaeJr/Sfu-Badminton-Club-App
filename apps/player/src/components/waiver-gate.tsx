@@ -19,6 +19,10 @@ function isExemptPath(pathname: string) {
     pathname.startsWith('/exec') ||
     pathname.startsWith('/legal') ||
     pathname === '/leaderboard' ||
+    // A member with an outstanding signature opening the guest page is not the
+    // member overlay's business: that page is signed as a guest.
+    pathname === '/guest-waiver' ||
+    pathname.startsWith('/guest-waiver/') ||
     pathname.startsWith('/onboarding')
   );
 }

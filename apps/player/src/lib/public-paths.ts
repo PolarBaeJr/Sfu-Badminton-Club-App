@@ -64,6 +64,11 @@ export function isPublicPath(pathname: string): boolean {
     // /fees, which stays gated.
     pathname === '/membership' ||
     // The club's social links. Exact, same reason.
-    pathname === '/socials'
+    pathname === '/socials' ||
+    // A guest with no account signs the waiver here, and the proof link under
+    // it is opened by whoever holds it. By whole segment, so /guest-waiverX
+    // stays gated.
+    pathname === '/guest-waiver' ||
+    pathname.startsWith('/guest-waiver/')
   );
 }

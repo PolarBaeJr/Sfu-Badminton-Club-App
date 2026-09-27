@@ -187,6 +187,7 @@ describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
       'page.access.challenges',
       'page.access.events',
       'page.access.fees',
+      'page.access.guest_waivers',
       'page.access.leaderboard',
       'page.access.membership',
       'page.access.my_stats',

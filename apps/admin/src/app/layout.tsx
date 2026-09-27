@@ -4,7 +4,7 @@ import './globals.css';
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { ALL_FEATURES_ENABLED, readFeatureFlags } from '@badminton/shared';
+import { DEFAULT_FEATURE_FLAGS, readFeatureFlags } from '@badminton/shared';
 import {
   accessLevelFor,
   effectiveCapabilities,
@@ -177,9 +177,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let heldCapabilities: string[] = [];
   let toursSeen: Record<string, unknown> = {};
   // Started before the viewer read and awaited after it, so the two overlap.
-  // Never throws: a failed read is every feature on.
+  // Never throws: a failed read is every feature at its default.
   const featuresRead = (async () => readFeatureFlags(createAdminClient()))()
-    .catch(() => ({ ...ALL_FEATURES_ENABLED }));
+    .catch(() => ({ ...DEFAULT_FEATURE_FLAGS }));
   try {
     const viewer = await getAuthenticatedConsoleUser({ skipPasskey: true });
     initialAccessLevel = accessLevelFor(viewer);

@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
-import { updateProfile, updateNotificationPreferences, deleteMyAccount, getMyCompetitionCategory } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, COMPETITION_CATEGORY_CHOICES, toCompetitionCategory, type CompetitionCategory, type NotificationCategory } from '@badminton/shared';
+import { updateProfile, updateNotificationPreferences, deleteMyAccount, getMyCompetitionCategory, getMyMediaConsent, setMyMediaConsent } from '@/lib/actions';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, clubDate, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, COMPETITION_CATEGORY_CHOICES, toCompetitionCategory, type CompetitionCategory, type NotificationCategory } from '@badminton/shared';
 // Deep import, not the '@badminton/shared' barrel: see the player middleware.
 import { signOutEverywhere, signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { useToast } from '@/components/toast-provider';
@@ -36,6 +36,7 @@ import {
   ChevronRight,
   MessageSquareWarning,
   Trash2,
+  Camera,
 } from 'lucide-react';
 
 type Theme = 'light' | 'dark' | 'system';
@@ -97,6 +98,12 @@ export default function SettingsPage() {
   // cannot.
   const [declaredCategory, setDeclaredCategory] = useState<CompetitionCategory | null>(null);
   const [showOnLeaderboard, setShowOnLeaderboard] = useState(true);
+  // 00255. Saved on its own, never by Save profile, and read through a server
+  // action because members hold no SELECT grant on either column.
+  const [mediaConsent, setMediaConsent] = useState(false);
+  const [mediaConsentChangedAt, setMediaConsentChangedAt] = useState<string | null>(null);
+  // A failed read must not say "Not turned on" to somebody who has consented.
+  const [mediaConsentLoadFailed, setMediaConsentLoadFailed] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
@@ -166,7 +173,7 @@ export default function SettingsPage() {
       // and nobody else. Adding the column to the select above would not leak
       // anything by itself; it would simply return nothing, and the grant that
       // "fixed" it would be the leak.
-      const mine = await getMyCompetitionCategory();
+      const [mine, media] = await Promise.all([getMyCompetitionCategory(), getMyMediaConsent()]);
       if (data) {
         setPlayerId(data.id);
         setAvatarUrl(data.avatar_url);
@@ -185,6 +192,12 @@ export default function SettingsPage() {
         setPhone(data.phone || '');
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
+        if (media.ok) {
+          setMediaConsent(media.data.consent);
+          setMediaConsentChangedAt(media.data.changedAt);
+        } else {
+          setMediaConsentLoadFailed(true);
+        }
         setNotifPrefs(normalizeNotificationPreferences(data.notification_preferences));
         setEmailPrefs(normalizeEmailPreferences(data.notification_preferences));
         const mins = getReminderLeadMinutes(data.notification_preferences);
@@ -345,6 +358,25 @@ export default function SettingsPage() {
       setEmailPrefs(previous); // revert
       toast(res.error, 'error');
     }
+  }
+
+  async function handleMediaConsentToggle(value: boolean) {
+    const previous = { consent: mediaConsent, changedAt: mediaConsentChangedAt };
+    setMediaConsent(value); // optimistic
+    const res = await setMyMediaConsent({ media_consent: value });
+    if (!res.ok) {
+      setMediaConsent(previous.consent); // revert
+      setMediaConsentChangedAt(previous.changedAt);
+      toast(res.error, 'error');
+      return;
+    }
+    setMediaConsent(res.data.consent);
+    setMediaConsentChangedAt(res.data.changedAt);
+    setMediaConsentLoadFailed(false);
+    toast(
+      res.data.consent ? 'Photo and video consent turned on' : 'Photo and video consent turned off',
+      res.data.consent ? 'success' : 'info',
+    );
   }
 
   async function handleNotifPrefToggle(category: NotificationCategory, value: boolean) {
@@ -776,6 +808,26 @@ export default function SettingsPage() {
                 export is not destructive. */}
             <div className="sep" />
             <DataExport />
+          </Section>
+
+          {/* Not behind isApproved: withdrawing consent must always be possible,
+              whatever the account's standing. */}
+          <Section icon={Camera} title="Photos and video">
+            <Switch
+              checked={mediaConsent}
+              onChange={handleMediaConsentToggle}
+              label="Photos and video of me"
+              description="Let the club use photos or video of you from club activities on its website and social media. This is off unless you turn it on, and it never affects your membership."
+            />
+            <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              {mediaConsentLoadFailed
+                ? 'Your photo and video choice could not be loaded. Reload to check it.'
+                : mediaConsent && mediaConsentChangedAt
+                  ? `Allowed since ${clubDate(mediaConsentChangedAt)}.`
+                  : mediaConsentChangedAt
+                    ? `Turned off ${clubDate(mediaConsentChangedAt)}.`
+                    : 'Not turned on.'}
+            </p>
           </Section>
 
           <Section icon={KeyRound} title="Passkeys">
