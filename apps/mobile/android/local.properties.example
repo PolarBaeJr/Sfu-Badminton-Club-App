@@ -1,0 +1,6 @@
+# Copy to local.properties (gitignored) and fill in. Public values only: the
+# project URL and the anon key, which every member's browser already holds.
+# Never the service role key.
+sdk.dir=/path/to/Android/sdk
+badminton.supabaseUrl=
+badminton.supabaseAnonKey=
