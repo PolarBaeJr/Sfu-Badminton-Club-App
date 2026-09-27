@@ -18,9 +18,15 @@ describe('shouldTryNextOtpType', () => {
     expect(shouldTryNextOtpType('Token not found')).toBe(true);
   });
 
-  it('stops on a wrong or expired code rather than retrying it', () => {
-    expect(shouldTryNextOtpType('Token has expired or is invalid')).toBe(false);
+  // GoTrue gives a wrong-type attempt this same message, so an unconfirmed
+  // account's valid code was reported expired before the signup type was tried.
+  it('falls through on GoTrue\'s expired-or-invalid answer', () => {
+    expect(shouldTryNextOtpType('Token has expired or is invalid')).toBe(true);
+  });
+
+  it('stops on anything that is not a token mismatch', () => {
     expect(shouldTryNextOtpType('Email rate limit exceeded')).toBe(false);
+    expect(shouldTryNextOtpType('Failed to fetch')).toBe(false);
   });
 
   it('stops when there is no message at all', () => {
