@@ -47,14 +47,21 @@ describe('formatClubTimestamp', () => {
     expect(formatClubTimestamp('2026-09-21T02:00:00.000Z')).toBe('2026-09-20 19:00:00');
   });
 
-  it('pins what THIS build believes about Vancouver after 2026-11-01', () => {
-    // British Columbia intends to stop falling back on 2026-11-01. Node's
-    // bundled tzdata (process.versions.tz, 2026a at the time of writing) does
-    // not carry that change, so this instant still reads at UTC-8 here. The
-    // assertion is deliberately exact: when a future tzdata lands the change,
-    // this is the line that says so, and the hour becomes 19. Check
-    // process.versions.tz before touching the function, never the Node version.
-    expect(formatClubTimestamp('2026-11-05T02:00:00.000Z')).toBe('2026-11-04 18:00:00');
+  it('reads Vancouver after 2026-11-01 as UTC-07:00 on every build', () => {
+    // British Columbia stops falling back on 2026-11-01. Node's bundled tzdata
+    // disagrees about that by build (2026a says UTC-8, 2026b says UTC-7), so
+    // past the cutover the offset is pinned, the same rule as clubToday() and
+    // club_local_instant(). This instant must read 19:00 whatever
+    // process.versions.tz says.
+    expect(formatClubTimestamp('2026-11-05T02:00:00.000Z')).toBe('2026-11-04 19:00:00');
+  });
+
+  it('switches to the pinned offset at midnight club time on the cutover day', () => {
+    // 2026-11-01 07:00Z is 00:00 on the 1st at UTC-07:00, the first pinned instant.
+    expect(formatClubTimestamp('2026-11-01T07:00:00.000Z')).toBe('2026-11-01 00:00:00');
+    // One second earlier is still October, read through tzdata, which every
+    // release agrees on for that date (PDT, UTC-07:00).
+    expect(formatClubTimestamp('2026-11-01T06:59:59.000Z')).toBe('2026-10-31 23:59:59');
   });
 
   it('pads every field, so the column sorts as a string', () => {

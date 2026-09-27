@@ -46,6 +46,7 @@
 // clients attached. Same reason ./private-notes.ts imports query-chunks by
 // path.
 import { CLUB_TIMEZONE } from '@badminton/shared/src/utils/constants';
+import { CLUB_PERMANENT_OFFSET_FROM } from '@badminton/shared/src/utils/session-window';
 import { actionLabel, entryKind, isDegradedEntry } from './audit-log-view';
 // TYPE-ONLY, and it has to stay that way. supabase-server.ts reaches for
 // next/headers and the passkey cookie machinery at import time; a value import
@@ -157,6 +158,13 @@ export function formatClubTimestamp(iso: string | null | undefined): string {
   if (!iso) return '';
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return iso;
+  // Past the cutover the club clock is UTC-07:00 all year, and whether the
+  // runtime's tzdata knows that depends on the Node build (2026a does not,
+  // 2026b does), so it is not asked. clubToday()'s rule, in session-window.
+  const pinned = new Date(at.getTime() - 7 * 60 * 60_000).toISOString();
+  if (pinned.slice(0, 10) >= CLUB_PERMANENT_OFFSET_FROM) {
+    return `${pinned.slice(0, 10)} ${pinned.slice(11, 19)}`;
+  }
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: CLUB_TIMEZONE,
     year: 'numeric',
