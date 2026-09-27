@@ -8,10 +8,11 @@
 // bulkMarkFeesPaid and bulkAddManualFees, so nothing here decides who may do
 // what.
 //
-// ONLY AN EMAIL OR AN EXACT FULL NAME MARKS ANYBODY. Everything looser (a
-// surname and an initial, a display name) is a hint shown beside a not-found
-// row and is never acted on: marking the wrong Jane paid is a record that
-// looks correct and is not, and nothing downstream would ever notice it.
+// ONLY AN EMAIL OR AN EXACT FULL NAME MARKS ANYBODY ON ITS OWN. Everything
+// looser (a surname and an initial, a display name) is offered as a candidate
+// beside a not-found row, and nothing is marked until the exec picks one:
+// marking the wrong Jane paid is a record that looks correct and is not, and
+// nothing downstream would ever notice it.
 
 import { isWaivedFee } from './fee-status';
 
@@ -282,6 +283,7 @@ export interface PasteRosterPlayer {
 }
 
 export interface PasteDuesRow {
+  id: string;
   player_id: string | null;
   manual_name: string | null;
   manual_email: string | null;
@@ -299,6 +301,29 @@ export interface PasteMatchResult {
   alreadyNamed: Array<{ entry: PastedPayer; manualName: string }>;
   notFound: Array<{ entry: PastedPayer; possibleMembers: PasteRosterPlayer[] }>;
   invalid: PastedInvalid[];
+  /** Unclaimed named payments this season that look like a member on the roster. */
+  namedMatches: PasteNamedMatch[];
+  /** Where every member offered as a candidate above stands this season. */
+  statusOf: Map<string, PasteCandidateStatus>;
+}
+
+export type PasteCandidateState = 'will_mark' | 'already_paid' | 'waived' | 'not_billable';
+
+export interface PasteCandidateStatus {
+  state: PasteCandidateState;
+  reason: string | null;
+}
+
+export type PasteMemberDues = 'none' | 'unpaid' | 'paid' | 'waived';
+
+export interface PasteNamedMatch {
+  row: PasteDuesRow;
+  candidates: Array<{
+    player: PasteRosterPlayer;
+    /** email and name are the same person by the rule this file marks on; similar is a hint. */
+    match: 'email' | 'name' | 'similar';
+    memberDues: PasteMemberDues;
+  }>;
 }
 
 const isTombstone = (p: PasteRosterPlayer) => (p.email ?? '').toLowerCase().endsWith('@deleted.invalid');
@@ -328,7 +353,7 @@ function firstAndLast(p: PasteRosterPlayer): { first: string; last: string } {
   };
 }
 
-// Display-only hints for a name that matched nobody exactly. Never acted on.
+// Hints for a name that matched nobody exactly. Acted on only when an exec picks one.
 function possibleMembersFor(name: string, pool: PasteRosterPlayer[]): PasteRosterPlayer[] {
   const norm = normalisePersonName(name);
   const tokens = norm.split(' ').filter(Boolean);
@@ -348,6 +373,62 @@ function possibleMembersFor(name: string, pool: PasteRosterPlayer[]): PasteRoste
   return hits;
 }
 
+function memberDuesOf(fee: PasteDuesRow | undefined): PasteMemberDues {
+  if (!fee) return 'none';
+  if (isWaivedFee(fee)) return 'waived';
+  return fee.paid_at ? 'paid' : 'unpaid';
+}
+
+/** What choosing this member on an ambiguous or hinted row would do. */
+export function candidateStatus(p: PasteRosterPlayer, fee: PasteDuesRow | undefined): PasteCandidateStatus {
+  const reason = notBillableReason(p);
+  if (reason) return { state: 'not_billable', reason };
+  const dues = memberDuesOf(fee);
+  if (dues === 'waived') return { state: 'waived', reason: null };
+  if (dues === 'paid') return { state: 'already_paid', reason: null };
+  return { state: 'will_mark', reason: null };
+}
+
+/**
+ * Every unclaimed named dues payment that looks like a member, pasted or not.
+ *
+ * A named payment is somebody who paid before they had an account. When they
+ * sign up with the email on it the claim trigger (00252) moves it onto them;
+ * when they sign up with another address, or the payment carried none, it sits
+ * beside their own row and the season counts them twice. This finds those: the
+ * same email or the exact same name is the same person by this file's rule, and
+ * a looser resemblance is offered as a hint. Nothing here moves anything.
+ */
+export function findNamedMatches(
+  pool: PasteRosterPlayer[],
+  duesRows: PasteDuesRow[],
+): PasteNamedMatch[] {
+  const live = pool.filter((p) => !isTombstone(p));
+  const duesByPlayer = new Map(duesRows.filter((d) => d.player_id).map((d) => [d.player_id!, d]));
+  const out: PasteNamedMatch[] = [];
+  for (const row of duesRows) {
+    if (row.player_id != null || row.manual_name == null) continue;
+    const email = row.manual_email?.toLowerCase() ?? null;
+    const norm = normalisePersonName(row.manual_name);
+    const candidates: PasteNamedMatch['candidates'] = [];
+    const seen = new Set<string>();
+    const add = (player: PasteRosterPlayer, match: 'email' | 'name' | 'similar') => {
+      if (seen.has(player.id)) return;
+      seen.add(player.id);
+      candidates.push({ player, match, memberDues: memberDuesOf(duesByPlayer.get(player.id)) });
+    };
+    for (const p of live) {
+      if (email != null && p.email != null && p.email.toLowerCase() === email) add(p, 'email');
+    }
+    for (const p of live) {
+      if (norm !== '' && normalisePersonName(p.full_name) === norm) add(p, 'name');
+    }
+    for (const p of possibleMembersFor(row.manual_name, live)) add(p, 'similar');
+    if (candidates.length > 0) out.push({ row, candidates });
+  }
+  return out;
+}
+
 /**
  * Sort parsed entries into what the paste would do.
  *
@@ -364,6 +445,7 @@ export function matchPastedPayers(
   const result: PasteMatchResult = {
     willMark: [], alreadyPaid: [], waived: [], notBillable: [],
     ambiguous: [], alreadyNamed: [], notFound: [], invalid: [],
+    namedMatches: [], statusOf: new Map(),
   };
 
   const pool = players.filter((p) => !isTombstone(p));
@@ -440,6 +522,14 @@ export function matchPastedPayers(
     else result.willMark.push({ entry, player });
   }
 
+  for (const p of [
+    ...result.ambiguous.flatMap((a) => a.candidates),
+    ...result.notFound.flatMap((n) => n.possibleMembers),
+  ]) {
+    result.statusOf.set(p.id, candidateStatus(p, duesByPlayer.get(p.id)));
+  }
+  result.namedMatches = findNamedMatches(pool, duesRows);
+
   return result;
 }
 
@@ -463,10 +553,20 @@ export interface FeePasteWillMark {
   email: string | null;
 }
 
+/** A member an exec may pick for an ambiguous or hinted line. */
+export interface FeePasteCandidate {
+  playerId: string;
+  name: string;
+  maskedEmail: string | null;
+  state: PasteCandidateState;
+  /** Why they are not billed, when state is not_billable. */
+  reason: string | null;
+}
+
 export interface FeePasteAmbiguous {
   raw: string;
   reason: string;
-  candidates: Array<{ name: string; maskedEmail: string | null }>;
+  candidates: FeePasteCandidate[];
 }
 
 export interface FeePasteNotFound {
@@ -474,8 +574,22 @@ export interface FeePasteNotFound {
   name: string | null;
   email: string | null;
   amountCents: number | null;
-  /** Names only, and a hint only. */
-  possibleMembers: string[];
+  /** A hint only: none of them is marked unless the exec picks one. */
+  possibleMembers: FeePasteCandidate[];
+}
+
+export interface FeePasteNamedMatch {
+  feeId: string;
+  manualName: string;
+  amountCents: number | null;
+  paidAt: string | null;
+  candidates: Array<{
+    playerId: string;
+    name: string;
+    maskedEmail: string | null;
+    match: 'email' | 'name' | 'similar';
+    memberDues: PasteMemberDues;
+  }>;
 }
 
 export interface FeePastePreview {
@@ -488,6 +602,7 @@ export interface FeePastePreview {
   ambiguous: FeePasteAmbiguous[];
   notFound: FeePasteNotFound[];
   invalid: Array<{ raw: string; reason: string }>;
+  namedMatches: FeePasteNamedMatch[];
 }
 
 /** "j***@sfu.ca". Enough to tell two members apart, not enough to write to. */
@@ -507,6 +622,16 @@ export function toFeePastePreview(
     name: player.full_name,
     reason,
   });
+  const candidate = (p: PasteRosterPlayer): FeePasteCandidate => {
+    const status = m.statusOf.get(p.id) ?? { state: 'not_billable' as const, reason: 'Could not be checked' };
+    return {
+      playerId: p.id,
+      name: p.full_name,
+      maskedEmail: maskEmail(p.email),
+      state: status.state,
+      reason: status.reason,
+    };
+  };
   return {
     season,
     willMark: m.willMark.map(({ entry, player }) => ({
@@ -526,15 +651,28 @@ export function toFeePastePreview(
     ambiguous: m.ambiguous.map(({ entry, candidates, reason }) => ({
       raw: entry.raw,
       reason,
-      candidates: candidates.map((c) => ({ name: c.full_name, maskedEmail: maskEmail(c.email) })),
+      candidates: candidates.map(candidate),
     })),
     notFound: m.notFound.map(({ entry, possibleMembers }) => ({
       raw: entry.raw,
       name: entry.name,
       email: entry.email,
       amountCents: entry.amountCents,
-      possibleMembers: possibleMembers.map((p) => p.full_name),
+      possibleMembers: possibleMembers.map(candidate),
     })),
     invalid: m.invalid.map(({ raw, reason }) => ({ raw, reason })),
+    namedMatches: m.namedMatches.map(({ row, candidates }) => ({
+      feeId: row.id,
+      manualName: row.manual_name!,
+      amountCents: row.amount_cents,
+      paidAt: row.paid_at,
+      candidates: candidates.map(({ player, match, memberDues }) => ({
+        playerId: player.id,
+        name: player.full_name,
+        maskedEmail: maskEmail(player.email),
+        match,
+        memberDues,
+      })),
+    })),
   };
 }

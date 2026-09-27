@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   MAX_PASTE_ENTRIES,
+  findNamedMatches,
   maskEmail,
   matchPastedPayers,
   normalisePersonName,
@@ -165,7 +166,9 @@ const ROSTER = [
 const match = (text: string, players = ROSTER, dues: PasteDuesRow[] = []) =>
   matchPastedPayers(parsePastedPayers(text), players, dues);
 
+let dueSeq = 0;
 const due = (over: Partial<PasteDuesRow>): PasteDuesRow => ({
+  id: `fee-${++dueSeq}`,
   player_id: null,
   manual_name: null,
   manual_email: null,
@@ -289,6 +292,81 @@ describe('matchPastedPayers', () => {
   });
 });
 
+describe('findNamedMatches', () => {
+  const named = (name: string, over: Partial<PasteDuesRow> = {}) =>
+    due({ manual_name: name, paid_at: '2026-09-02T00:00:00Z', method: 'cash', amount_cents: 2500, ...over });
+
+  it('finds a named payment whose email is a member, whatever the name says', () => {
+    const row = named('JD', { manual_email: 'JANE@sfu.ca' });
+    const found = findNamedMatches(ROSTER, [row]);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.row.id).toBe(row.id);
+    expect(found[0]!.candidates.map((c) => [c.player.id, c.match, c.memberDues])).toEqual([['jane', 'email', 'none']]);
+  });
+
+  it('finds a named payment by the exact full name, accents and case aside', () => {
+    const found = findNamedMatches(ROSTER, [named('zoe TREMBLAY')]);
+    expect(found[0]!.candidates.map((c) => [c.player.id, c.match])).toEqual([['zoe', 'name']]);
+  });
+
+  it('says whether the member already has a dues row, and in what state', () => {
+    const dues = [
+      named('Jane Doe'),
+      named('Sam Lee'),
+      named('Zoe Tremblay'),
+      due({ player_id: 'sam', paid_at: null }),
+      due({ player_id: 'zoe', paid_at: '2026-09-02T00:00:00Z', method: 'waived', amount_cents: 0 }),
+    ];
+    const found = findNamedMatches(ROSTER, dues);
+    expect(found.map((f) => [f.candidates[0]!.player.id, f.candidates[0]!.memberDues])).toEqual([
+      ['jane', 'none'],
+      ['sam', 'unpaid'],
+      ['zoe', 'waived'],
+    ]);
+    const paid = findNamedMatches(ROSTER, [named('Jane Doe'), due({ player_id: 'jane', paid_at: '2026-09-02T00:00:00Z', method: 'cash', amount_cents: 3000 })]);
+    expect(paid[0]!.candidates[0]!.memberDues).toBe('paid');
+  });
+
+  it('offers a looser resemblance as a similar hint, after the strong matches', () => {
+    const roster = [member('j', 'Jennifer Doe'), member('d', 'Dee Nguyen', { display_name: 'Jenny D' })];
+    const found = findNamedMatches(roster, [named('J. Doe'), named('Jenny D')]);
+    expect(found.map((f) => f.candidates.map((c) => [c.player.id, c.match]))).toEqual([
+      [['j', 'similar']],
+      [['d', 'similar']],
+    ]);
+  });
+
+  it('never offers a tombstoned account', () => {
+    const roster = [member('gone', 'Pat Gone', { email: 'abc@deleted.invalid' })];
+    expect(findNamedMatches(roster, [named('Pat Gone', { manual_email: 'abc@deleted.invalid' })])).toEqual([]);
+  });
+
+  it('skips a payment that already belongs to a member, and one that looks like nobody', () => {
+    const dues = [
+      due({ player_id: 'jane', paid_at: '2026-09-02T00:00:00Z', method: 'cash', amount_cents: 3000 }),
+      named('Robin Park'),
+    ];
+    expect(findNamedMatches(ROSTER, dues)).toEqual([]);
+  });
+
+  it('reaches the browser as ids, names and masked addresses', () => {
+    const row = named('Jane Doe', { manual_email: 'jane@sfu.ca' });
+    const preview = toFeePastePreview(
+      { id: 's', name: 'Fall 2026', competitiveFeeCents: 3000, recreationalFeeCents: 2000 },
+      matchPastedPayers([], ROSTER, [row]),
+    );
+    expect(preview.namedMatches).toEqual([
+      {
+        feeId: row.id,
+        manualName: 'Jane Doe',
+        amountCents: 2500,
+        paidAt: '2026-09-02T00:00:00Z',
+        candidates: [{ playerId: 'jane', name: 'Jane Doe', maskedEmail: 'j***@sfu.ca', match: 'email', memberDues: 'none' }],
+      },
+    ]);
+  });
+});
+
 describe('toFeePastePreview', () => {
   const season = { id: 's', name: 'Fall 2026', competitiveFeeCents: 3000, recreationalFeeCents: 2000 };
 
@@ -297,10 +375,41 @@ describe('toFeePastePreview', () => {
     const preview = toFeePastePreview(season, match('sam@sfu.ca\nJane Doe', roster));
     expect(preview.willMark).toEqual([{ raw: 'sam@sfu.ca', playerId: 'sam', fullName: 'Sam Lee', email: 'sam@sfu.ca' }]);
     expect(preview.ambiguous[0]!.candidates).toEqual([
-      { name: 'Jane Doe', maskedEmail: 'j***@sfu.ca' },
-      { name: 'Jane Doe', maskedEmail: 'j***@sfu.ca' },
+      { playerId: 'jane', name: 'Jane Doe', maskedEmail: 'j***@sfu.ca', state: 'will_mark', reason: null },
+      { playerId: 'jane2', name: 'Jane Doe', maskedEmail: 'j***@sfu.ca', state: 'will_mark', reason: null },
     ]);
     expect(JSON.stringify(preview.ambiguous)).not.toContain('jane2@');
+  });
+
+  it('says where each candidate of an ambiguous line stands this season', () => {
+    const roster = [
+      member('a', 'Jane Doe'),
+      member('b', 'Jane Doe'),
+      member('c', 'Jane Doe'),
+      member('d', 'Jane Doe', { is_exec: true }),
+    ];
+    const dues = [
+      due({ player_id: 'b', paid_at: '2026-09-02T00:00:00Z', method: 'cash', amount_cents: 3000 }),
+      due({ player_id: 'c', paid_at: '2026-09-02T00:00:00Z', method: 'waived', amount_cents: 0 }),
+    ];
+    const preview = toFeePastePreview(season, match('Jane Doe', roster, dues));
+    expect(preview.ambiguous[0]!.candidates.map((c) => [c.playerId, c.state, c.reason])).toEqual([
+      ['a', 'will_mark', null],
+      ['b', 'already_paid', null],
+      ['c', 'waived', null],
+      ['d', 'not_billable', 'Exec, not billed a season fee'],
+    ]);
+  });
+
+  it('offers the hinted members of a not-found line as candidates, with their state', () => {
+    const roster = [member('j', 'Jennifer Doe'), member('k', 'Jo Doe')];
+    const dues = [due({ player_id: 'k', paid_at: '2026-09-02T00:00:00Z', method: 'cash', amount_cents: 3000 })];
+    const preview = toFeePastePreview(season, match('J. Doe', roster, dues));
+    expect(preview.willMark).toHaveLength(0);
+    expect(preview.notFound[0]!.possibleMembers).toEqual([
+      { playerId: 'j', name: 'Jennifer Doe', maskedEmail: 'j***@sfu.ca', state: 'will_mark', reason: null },
+      { playerId: 'k', name: 'Jo Doe', maskedEmail: 'k***@sfu.ca', state: 'already_paid', reason: null },
+    ]);
   });
 
   it('masks an email down to its first character and domain', () => {

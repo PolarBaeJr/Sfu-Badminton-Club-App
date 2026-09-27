@@ -118,6 +118,7 @@ export {
   markFeeUnpaid,
   addManualFee,
   removeManualFee,
+  attachNamedPayment,
 } from './actions/fees';
 
 // Non-fee money ledgers (00073): donations/grants in, shuttles/courts out,

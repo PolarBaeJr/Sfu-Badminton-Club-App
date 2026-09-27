@@ -460,6 +460,8 @@ export default async function FeesPage({
                   competitiveFeeCents={season.competitive_fee_cents}
                   recreationalFeeCents={season.recreational_fee_cents}
                   canKeep={showAddManualFee}
+                  canAttach={may('fees.clubfees.addmanual.write')}
+                  canRemove={may('fees.clubfees.removemanual.write')}
                 />
               )}
               {showAddManualFee && <AddManualFee seasonId={season.id} seasonName={season.name} />}

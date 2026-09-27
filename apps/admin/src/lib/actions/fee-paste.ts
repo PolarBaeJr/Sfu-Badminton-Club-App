@@ -1,8 +1,9 @@
 'use server';
 
 // "Paste a list" on /fees, the read half. Writes nothing: marking goes through
-// bulkMarkFeesPaid and keeping a named payment through bulkAddManualFees, each
-// a loop over the single-record action with its own gate.
+// bulkMarkFeesPaid, keeping a named payment through bulkAddManualFees, and
+// settling a named payment that looks like a member through attachNamedPayment
+// or removeManualFee, each with its own gate.
 
 import { createAdminClient } from '../supabase-server';
 import { parseOrThrow, feePastePreviewSchema, unwrap, unwrapMaybe, ExpectedError } from '@badminton/shared';
@@ -12,6 +13,7 @@ import {
   parsePastedPayers,
   toFeePastePreview,
   type FeePastePreview,
+  type PasteDuesRow,
   type PasteRosterPlayer,
 } from '../fee-paste';
 import { requireCapability } from './_shared';
@@ -59,16 +61,25 @@ export async function previewFeePaste(input: unknown): Promise<ActionResult<FeeP
       if (page.length < PAGE) break;
     }
 
-    const dues = unwrap(
-      await adminClient
-        .from('club_fees')
-        .select('player_id, manual_name, manual_email, paid_at, method, amount_cents')
-        .eq('season_id', season.id)
-        // Dues only: the same permission boundary the /fees roster query draws.
-        // Reinstatements and entry fees share this table.
-        .eq('fee_type', 'dues'),
-      'FEE-105',
-    );
+    // Paged for the same reason: a season past the row cap would otherwise
+    // drop whoever sorted last, and a paid member dropped here reads as unpaid.
+    const dues: PasteDuesRow[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const page = unwrap(
+        await adminClient
+          .from('club_fees')
+          .select('id, player_id, manual_name, manual_email, paid_at, method, amount_cents')
+          .eq('season_id', season.id)
+          // Dues only: the same permission boundary the /fees roster query draws.
+          // Reinstatements and entry fees share this table.
+          .eq('fee_type', 'dues')
+          .order('id')
+          .range(from, from + PAGE - 1),
+        'FEE-105',
+      );
+      dues.push(...page);
+      if (page.length < PAGE) break;
+    }
 
     const match = matchPastedPayers(parsePastedPayers(text), players, dues);
     return toFeePastePreview(
