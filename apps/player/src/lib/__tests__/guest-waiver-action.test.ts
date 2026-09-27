@@ -91,7 +91,7 @@ describe('signGuestWaiver: the switch', () => {
   it('refuses while the switch is off, and never calls the database', async () => {
     getFeatureFlags.mockResolvedValue({ ...DEFAULT_FEATURE_FLAGS });
     const res = await signGuestWaiver(input);
-    expect(res).toEqual({ ok: false, error: 'The club has switched guest waivers off for now.' });
+    expect(res).toEqual({ ok: false, error: 'The club has switched external waivers off for now.' });
     expect(rpc).not.toHaveBeenCalled();
   });
 

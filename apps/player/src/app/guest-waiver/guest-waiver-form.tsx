@@ -152,7 +152,7 @@ export function GuestWaiverForm() {
       {error && <div className="alert-danger" role="alert">{error}</div>}
       <button type="submit" disabled={loading} className="btn btn-primary btn-lg signin-cta">
         {loading && <Loader2 size={16} className="animate-spin" />}
-        Sign as a guest
+        Sign as an external
       </button>
     </form>
   );

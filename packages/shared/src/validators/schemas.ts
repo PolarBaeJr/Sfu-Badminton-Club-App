@@ -818,7 +818,7 @@ export const guestWaiverSchema = z.object({
   full_name: z.string().trim().min(2, 'Enter your full name').max(100),
   email: z.string().trim().toLowerCase().email('Invalid email address').max(254),
   age_attestation: z.literal(true, {
-    errorMap: () => ({ message: 'You must be 19 or older to sign as a guest' }),
+    errorMap: () => ({ message: 'You must be 19 or older to sign as an external' }),
   }),
   documents_accepted: z.literal(true, {
     errorMap: () => ({ message: 'Please accept the waiver and privacy policy' }),

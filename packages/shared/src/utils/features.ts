@@ -161,14 +161,14 @@ export const FEATURES = [
   },
   {
     id: 'guest_waivers',
-    label: 'Guest waivers',
+    label: 'External waivers',
     summary: 'Non-members sign the waiver and privacy policy with a name and email',
     description:
       'A public page where somebody who is not a member signs the liability waiver and the privacy policy with only a name and an email, and gets a link that proves it. Execs see the signings under Legal.',
     warning:
-      'WARNING: keep this off until the privacy policy has been republished, with a new version, to cover guests. The current policy is written for members only, and every guest signing records the version it was signed against.',
+      'WARNING: keep this off until the privacy policy has been republished, with a new version, to cover externals. The current policy is written for members only, and every external signing records the version it was signed against.',
     offNote:
-      ' Off hides the guest waiver page and the links to it, and refuses new signings. Proof links already given out still work, and the console list stays.',
+      ' Off hides the external waiver page and the links to it, and refuses new signings. Proof links already given out still work, and the console list stays.',
     playerRoutes: ['/guest-waiver'],
     adminRoutes: ['/legal/guests'],
     defaultEnabled: false,

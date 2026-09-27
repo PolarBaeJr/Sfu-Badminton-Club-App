@@ -35,9 +35,9 @@ describe('guestWaiverSchema', () => {
   });
 
   it('refuses a missing or false age attestation with the 19+ message', () => {
-    expect(messages({ ...valid, age_attestation: false })).toEqual(['You must be 19 or older to sign as a guest']);
+    expect(messages({ ...valid, age_attestation: false })).toEqual(['You must be 19 or older to sign as an external']);
     const { age_attestation: _age, ...missing } = valid;
-    expect(messages(missing)).toEqual(['You must be 19 or older to sign as a guest']);
+    expect(messages(missing)).toEqual(['You must be 19 or older to sign as an external']);
   });
 
   it('refuses the documents unaccepted', () => {

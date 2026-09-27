@@ -49,7 +49,7 @@ export default async function GuestWaiverProofPage({
 
   return (
     <div data-screen-label="Guest waiver proof" style={{ maxWidth: 760, margin: '0 auto' }}>
-      <PageHeader eyebrow="GUEST WAIVER" title={row.full_name} sub="Signed as a guest of SFU Badminton Club." />
+      <PageHeader eyebrow="EXTERNAL WAIVER" title={row.full_name} sub="Signed as an external of SFU Badminton Club." />
       <dl className="card-base" style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px', margin: 0 }}>
         <dt className="muted">Signed</dt>
         <dd style={{ margin: 0 }}>{clubDate(row.accepted_at)}</dd>

@@ -36,8 +36,8 @@ async function GuestWaiverBody() {
   return (
     <div data-screen-label="Guest waiver" style={{ maxWidth: 760, margin: '0 auto' }}>
       <PageHeader
-        eyebrow="PLAYING AS A GUEST"
-        title="Guest waiver"
+        eyebrow="PLAYING AS AN EXTERNAL"
+        title="External waiver"
         sub="Not a member? Read and sign these before you play. No account needed."
       />
       {available ? (
@@ -60,7 +60,7 @@ async function GuestWaiverBody() {
         </div>
       ) : (
         <div className="card-base" role="status">
-          The guest waiver is not available right now. Please try again later, or speak to a club executive.
+          The external waiver is not available right now. Please try again later, or speak to a club executive.
         </div>
       )}
     </div>

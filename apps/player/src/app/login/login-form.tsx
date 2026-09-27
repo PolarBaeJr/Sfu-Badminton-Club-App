@@ -317,7 +317,7 @@ export function LoginForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
           </div>
           {guestWaiversOn && (
             <div className="signin-switch">
-              Not a member? <Link href="/guest-waiver">Sign the guest waiver</Link>
+              Not a member? <Link href="/guest-waiver">Sign the external waiver</Link>
             </div>
           )}
         </>
