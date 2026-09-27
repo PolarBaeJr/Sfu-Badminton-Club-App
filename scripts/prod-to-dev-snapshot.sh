@@ -11,8 +11,9 @@
 # Scope:
 #   - public schema (full drop and recreate)  — all app data
 #   - auth.users + auth.identities            — keeps player.user_id FKs valid
-# Skipped: prod auth sessions / refresh_tokens / etc — staging gets
-# fresh sessions.
+# Skipped: prod auth sessions / refresh_tokens / etc. The keep-list admins'
+# own staging sessions and passkeys are carried across (KEEP THE STAGING
+# ADMINS SIGNED IN, below); everyone else's go with the truncate.
 #
 # Two things are deliberately NOT faithful copies of prod afterwards, because a
 # faithful copy is the wrong answer for both:
@@ -534,6 +535,61 @@ if [ -s "$DISCORD_SQL" ]; then
     exit 1
   fi
 fi
+
+# KEEP THE STAGING ADMINS SIGNED IN (owner request, 2026-09-27).
+#
+# The TRUNCATE auth.users CASCADE below takes auth.sessions and
+# auth.refresh_tokens with it, and the scrub deletes every passkey, so every
+# refresh used to sign the keep-list admins out of staging and take their
+# passkeys away. A refresh token here can only ever mint a token for STAGING
+# (prod's JWT secret is different), and a passkey enrolled here is scoped to the
+# staging hostname, so keeping them exposes nothing of prod's.
+#
+# Only the keep-list admins' own rows are set aside, in a holding schema the
+# drop and the truncate cannot reach, and put back once the scrub has verified.
+# Members' sessions still go with the truncate. The holding schema is dropped at
+# the start of every run, so a failed run costs one sign-in at worst.
+STAGING_ADMIN_EMAILS="${STAGING_ADMIN_EMAILS:-wkc10@sfu.ca}"
+
+echo "[$(date -u +%FT%TZ)] setting aside the staging admins' sessions and passkeys..."
+docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 \
+    -v emails="$STAGING_ADMIN_EMAILS" <<'SQL'
+BEGIN;
+\o /dev/null
+SELECT set_config('keep.emails', :'emails', true);
+\o
+DROP SCHEMA IF EXISTS staging_keep CASCADE;
+CREATE SCHEMA staging_keep;
+REVOKE ALL ON SCHEMA staging_keep FROM PUBLIC;
+DO $keep$
+DECLARE
+  keep text[] := ARRAY(
+    SELECT btrim(e) FROM unnest(string_to_array(current_setting('keep.emails'), ',')) e
+     WHERE btrim(e) <> '');
+BEGIN
+  CREATE TABLE staging_keep.users AS
+    SELECT id FROM auth.users WHERE email = ANY(keep);
+  CREATE TABLE staging_keep.sessions AS
+    SELECT s.* FROM auth.sessions s WHERE s.user_id IN (SELECT id FROM staging_keep.users);
+  CREATE TABLE staging_keep.refresh_tokens AS
+    SELECT r.* FROM auth.refresh_tokens r WHERE r.session_id IN (SELECT id FROM staging_keep.sessions);
+  CREATE TABLE staging_keep.mfa_amr_claims AS
+    SELECT m.* FROM auth.mfa_amr_claims m WHERE m.session_id IN (SELECT id FROM staging_keep.sessions);
+  IF to_regclass('public.passkey_credentials') IS NOT NULL THEN
+    CREATE TABLE staging_keep.passkey_credentials AS
+      SELECT c.* FROM public.passkey_credentials c
+        JOIN public.players p ON p.id = c.player_id
+       WHERE p.user_id IN (SELECT id FROM staging_keep.users);
+  END IF;
+  RAISE NOTICE 'kept for % admin account(s): % session(s), % passkey(s)',
+    (SELECT count(*) FROM staging_keep.users),
+    (SELECT count(*) FROM staging_keep.sessions),
+    CASE WHEN to_regclass('staging_keep.passkey_credentials') IS NULL THEN 0
+         ELSE (SELECT count(*) FROM staging_keep.passkey_credentials) END;
+END
+$keep$;
+COMMIT;
+SQL
 
 # CASCADE, and ours rather than pg_dump's. The NOTICEs list what dev had that
 # prod does not — normally the migrations being rehearsed on staging.
@@ -1310,6 +1366,58 @@ SQL
     echo "       production until this is fixed, and do not hand anyone access." >&2
     exit 1
   fi
+fi
+
+# PUT THE STAGING ADMINS' SESSIONS AND PASSKEYS BACK (set aside above).
+#
+# After the scrub, so its blanket passkey DELETE cannot remove these, and only
+# once its floor guard has passed. Columns are the intersection of the saved and
+# live tables, because the public schema was just rebuilt from prod plus
+# replayed migrations. A row whose account or player no longer exists is
+# skipped rather than failing the run: that admin signs in once.
+if [ "$MEMBERS_EXPOSED" = "0" ]; then
+  echo "[$(date -u +%FT%TZ)] restoring the staging admins' sessions and passkeys..."
+  docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+DO $restore$
+DECLARE
+  pair record;
+  cols text;
+  n integer;
+BEGIN
+  IF to_regnamespace('staging_keep') IS NULL THEN
+    RAISE NOTICE 'nothing set aside to restore';
+    RETURN;
+  END IF;
+  FOR pair IN
+    SELECT * FROM (VALUES
+      (1, 'sessions',            'auth.sessions',              'user_id IN (SELECT id FROM auth.users)'),
+      (2, 'refresh_tokens',      'auth.refresh_tokens',        'session_id IN (SELECT id FROM auth.sessions)'),
+      (3, 'mfa_amr_claims',      'auth.mfa_amr_claims',        'session_id IN (SELECT id FROM auth.sessions)'),
+      (4, 'passkey_credentials', 'public.passkey_credentials', 'player_id IN (SELECT id FROM public.players)')
+    ) v(ord, saved, live, still_valid)
+    ORDER BY ord
+  LOOP
+    IF to_regclass('staging_keep.' || pair.saved) IS NULL OR to_regclass(pair.live) IS NULL THEN
+      CONTINUE;
+    END IF;
+    SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) INTO cols
+      FROM pg_attribute a
+     WHERE a.attrelid = pair.live::regclass AND a.attnum > 0 AND NOT a.attisdropped
+       AND a.attgenerated = ''
+       AND EXISTS (SELECT 1 FROM pg_attribute b
+                    WHERE b.attrelid = ('staging_keep.' || pair.saved)::regclass
+                      AND b.attname = a.attname AND NOT b.attisdropped);
+    EXECUTE format('INSERT INTO %s (%s) SELECT %s FROM staging_keep.%I WHERE %s ON CONFLICT DO NOTHING',
+                   pair.live, cols, cols, pair.saved, pair.still_valid);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RAISE NOTICE 'restored % row(s) into %', n, pair.live;
+  END LOOP;
+  DROP SCHEMA staging_keep CASCADE;
+END
+$restore$;
+COMMIT;
+SQL
 fi
 
 # PostgREST caches the schema, and the app reads these tables through it. A
