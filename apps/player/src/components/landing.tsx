@@ -57,8 +57,8 @@ export function Landing({
             <Link href="/guest-waiver" className="lp-guest">
               <FileSignature size={18} className="lp-guest-icon" />
               <span>
-                <strong>Not a member? Sign the guest waiver</strong>
-                <span className="lp-guest-sub">Playing as a guest? Takes a minute, no account needed.</span>
+                <strong>Not a member? Sign the external waiver</strong>
+                <span className="lp-guest-sub">Playing as an external? Takes a minute, no account needed.</span>
               </span>
               <ArrowRight size={16} className="lp-guest-arrow" />
             </Link>

@@ -81,7 +81,7 @@ export default async function MediaConsentPage() {
       <PageHeader
         eyebrow={`PHOTO CONSENT · ${rows.length}`}
         title="Photo and video consent"
-        sub="Members and guests who allow the club to use photos or video of them. Check here before you post."
+        sub="Members and externals who allow the club to use photos or video of them. Check here before you post."
         watermark="P"
       />
 
@@ -122,7 +122,7 @@ export default async function MediaConsentPage() {
                     )}
                   </td>
                   <td className="px-5 py-3">
-                    {row.playerId ? <Badge variant="info">Member</Badge> : <Badge variant="neutral">Guest</Badge>}
+                    {row.playerId ? <Badge variant="info">Member</Badge> : <Badge variant="neutral">External</Badge>}
                   </td>
                   <td className="whitespace-nowrap px-5 py-3 text-[var(--text-secondary)]">
                     {row.since ? clubDate(row.since) : ''}

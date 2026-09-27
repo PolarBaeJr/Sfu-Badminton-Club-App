@@ -56,7 +56,7 @@ const REFUSALS: Record<string, string> = {
   guest_waiver_ip_limit:
     'Too many signings from this network in the last hour. Please try again later or speak to a club executive.',
   guest_waiver_no_document: 'The waiver is not available right now. Please try again later.',
-  guest_waiver_age: 'You must be 19 or older to sign as a guest.',
+  guest_waiver_age: 'You must be 19 or older to sign as an external.',
 };
 
 let warnedNoSalt = false;
