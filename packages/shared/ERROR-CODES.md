@@ -75,6 +75,7 @@ had no code of its own, and the digits are the digest Next printed in the log.
 | `TRN-101` | Event could not load | This event could not be read. Try again in a moment. | A read behind the member event page (tournament, event, draw, matches or registration) failed. |
 | `TRN-102` | Event waiver status unknown | We could not check the event waiver. Try again in a moment. | The tournament waiver text or the event_waiver_acceptances read failed. |
 | `TRN-104` | Tournament fees could not load | The fees for this tournament could not be read. | A read behind the console tournament fees page failed. |
+| `TRN-105` | Entry groups could not load | Who has paid this season's club fee could not be read, so entry prices cannot be shown. | The season or club-fee read that decides each entrant's entry group failed on the console tournament fees page. |
 
 ## CHL: Challenges
 

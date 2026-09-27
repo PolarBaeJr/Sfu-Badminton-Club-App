@@ -19,22 +19,35 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const store = vi.hoisted(() => ({
   rpcResult: {} as Record<string, unknown>,
   event: {} as Record<string, unknown>,
+  rpcCalls: 0,
+  // This season's club fee rows (00260). Paid by default, so every test above
+  // the membership section reaches the switch it is about.
+  dues: [] as Record<string, unknown>[],
+  duesError: null as { message: string } | null,
+  activeSeason: { id: 's-active' } as Record<string, unknown> | null,
+  player: {} as Record<string, unknown>,
 }));
 
 vi.mock('../supabase-server', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createServiceRoleClient: () => ({
-    rpc: () => Promise.resolve({ data: store.rpcResult, error: null }),
+    rpc: () => { store.rpcCalls += 1; return Promise.resolve({ data: store.rpcResult, error: null }); },
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
       const self = () => chain;
       chain.select = self; chain.eq = self; chain.or = self; chain.limit = self;
+      chain.in = self; chain.is = self; chain.not = self; chain.order = self;
+      if (table === 'club_fees') {
+        chain.then = (resolve: (v: unknown) => unknown) =>
+          Promise.resolve({ data: store.duesError ? null : store.dues, error: store.duesError }).then(resolve);
+      }
       chain.insert = () => Promise.resolve({ error: null });
       chain.upsert = () => Promise.resolve({ error: null });
       chain.update = self;
       chain.maybeSingle = () => Promise.resolve({
         data: table === 'tournament_events' ? store.event
           : table === 'ratings' ? { singles_elo: 1000, doubles_elo: 1000 }
+          : table === 'seasons' ? store.activeSeason
           : null,
         error: null,
       });
@@ -46,9 +59,7 @@ vi.mock('../supabase-server', async (importOriginal) => ({
 
 vi.mock('../actions/_shared', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  requirePlayer: () => Promise.resolve({
-    id: 'p1', is_banned: false, membership_type: 'internal', competition_category: 'mens',
-  }),
+  requirePlayer: () => Promise.resolve(store.player),
   assertCurrentWaiver: () => Promise.resolve(),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
@@ -57,6 +68,14 @@ vi.mock('next/headers', () => ({ headers: () => Promise.resolve(new Map()) }));
 const { registerForEvent } = await import('../tournament-actions');
 
 beforeEach(() => {
+  store.rpcCalls = 0;
+  store.duesError = null;
+  store.activeSeason = { id: 's-active' };
+  store.player = {
+    id: 'p1', is_banned: false, membership_type: 'internal', competition_category: 'mens',
+    is_exec: false, fee_exempt: false,
+  };
+  store.dues = [{ player_id: 'p1', paid_at: '2026-09-01T00:00:00Z' }];
   // An event whose every app-side gate PASSES. That is the whole point: the
   // only way to reach the switch arms below is for the application's copy of a
   // fact and the database's copy to disagree, which is the race 00196 closes.
@@ -72,6 +91,7 @@ beforeEach(() => {
       suspension_reason: null,
       waiver_text: null,
       allowed_memberships: ['internal', 'alumni', 'external'],
+      season_id: 's1',
     },
   };
 });
@@ -84,6 +104,8 @@ describe('every eligibility refusal reaches the member as its own sentence', () 
     ['tournament_suspended', {}, /currently suspended$/],
     ['tournament_closed', { status: 'archived' }, /has been archived, so you cannot enter this event/],
     ['membership_not_allowed', { allowed: ['alumni'] }, /Alumni members only/],
+    // 00260: the club fee was marked unpaid between the screen and the lock.
+    ['membership_unpaid', { allowed: ['internal'] }, /Internal means this season's club fee is paid/],
     ['player_suspended', {}, /account is suspended/],
     ['already_in_pair', {}, /already in a pair/],
   ];
@@ -179,5 +201,73 @@ describe('the category refusals the database now makes', () => {
     const r = await registerForEvent('e1');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).not.toMatch(/women/i);
+  });
+});
+
+// ===========================================================================
+// INTERNAL MEANS THIS SEASON'S CLUB FEE IS PAID (00260)
+// ===========================================================================
+//
+// The screen before the RPC. The stored membership_type is a member's own pick
+// in Discord (00221), so it no longer decides entry on its own: the dues row
+// does. These pin that the action refuses BEFORE calling the database, with
+// the sentence that tells the member what to do.
+describe('the club-fee membership screen', () => {
+  const internalOnly = () => {
+    (store.event.tournament as Record<string, unknown>).allowed_memberships = ['internal'];
+  };
+  beforeEach(() => { store.rpcResult = { ok: true }; });
+
+  it('refuses an unpaid internal member from an internal-only event, before the RPC', async () => {
+    internalOnly();
+    store.dues = [];
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/Internal means this season's club fee is paid/);
+    expect(store.rpcCalls).toBe(0);
+  });
+
+  it('does not count an unpaid dues row as paid', async () => {
+    internalOnly();
+    store.dues = [{ player_id: 'p1', paid_at: null }];
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    expect(store.rpcCalls).toBe(0);
+  });
+
+  it('admits a paid member whose stored group is external', async () => {
+    internalOnly();
+    store.player.membership_type = 'external';
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(true);
+    expect(store.rpcCalls).toBe(1);
+  });
+
+  it('admits an exec who has paid nothing', async () => {
+    internalOnly();
+    store.dues = [];
+    store.player.is_exec = true;
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(true);
+    expect(store.rpcCalls).toBe(1);
+  });
+
+  it('refuses a paid member at an alumni-only event with the not-allowed sentence', async () => {
+    (store.event.tournament as Record<string, unknown>).allowed_memberships = ['alumni'];
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/Alumni members only/);
+      expect(r.error).not.toMatch(/club fee/);
+    }
+  });
+
+  it('asks for a retry, and refuses, when the dues read fails', async () => {
+    internalOnly();
+    store.duesError = { message: 'boom' };
+    const r = await registerForEvent('e1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/try again shortly/);
+    expect(store.rpcCalls).toBe(0);
   });
 });

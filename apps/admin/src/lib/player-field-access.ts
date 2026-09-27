@@ -152,7 +152,9 @@ export const ADMIN_ONLY_PLAYER_FIELDS = [
 // other two are on the lists above (is_exec on the floor, fee_exempt grantable).
 // So an exec holding nothing but players.update.write can move a member from
 // 'internal' to whichever group the cheapest tier names, and the next entry they
-// make is priced there. Unlike competition_category there was no note recording
+// make is priced there. Less since 00260: an unpaid member enters, and is
+// priced, as external whatever this says, and a paid one as internal, so the
+// field now moves a price only for alumni or when there is no season. Unlike competition_category there was no note recording
 // that anybody had thought about it, which is what made it read as an oversight.
 //
 // IT STAYS OFF BOTH LISTS, for the reason the note below gives about the near
@@ -161,8 +163,9 @@ export const ADMIN_ONLY_PLAYER_FIELDS = [
 //   * PLAYER_FIELD_PRIVILEGED is the near miss again, and wrong again.
 //     players.privilegedfields.write is in no baseline, so this field would
 //     become admin-only — and membership_type is not primarily a price. It is
-//     WHO A MEMBER IS: `isMembershipAllowed(player.membership_type, …)` decides
-//     which events they may enter at all, tournaments carry an applies_to per
+//     WHO A MEMBER SAYS THEY ARE: since 00260 entry is decided by the group they
+//     enter as (entryMembership), which is this value corrected by whether this
+//     season's club fee is paid, tournaments carry an applies_to per
 //     tier, and an alumnus who graduates or an external who joins the club is
 //     ordinary roster correction. Making that admin-only would put the roster's
 //     own classification behind the one level that does not do roster work.

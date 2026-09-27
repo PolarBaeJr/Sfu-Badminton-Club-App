@@ -9,9 +9,17 @@
 // app), and an exec adds one, several, or a doubles pair (admin app). Four
 // registration paths that each priced entries their own way would produce four
 // prices, and the one thing a fee ledger has to be is consistent.
+//
+// PRICED BY THE GROUP THE MEMBER ENTERS AS, not the stored membership_type.
+// Internal means this season's club fee is paid (entryMembership, 00260), so a
+// member who has not paid is priced at the External tier and one who has is
+// priced as Internal whatever they picked for themselves in Discord. The price
+// is still snapshotted: paying dues after entering does not re-price the entry.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectFeeTier, type PricingTier } from './fee-tiers';
+import { entryMembership } from './membership';
+import { loadPaidDues, resolveEntrySeasonId } from './entry-membership';
 
 export interface EntryFeeResult {
   playerId: string;
@@ -32,7 +40,8 @@ export interface EntryFeeResult {
  *
  * NEVER OVERWRITES AN EXISTING ROW. That is what makes the club owner's second
  * rule true — "changing someone's membership_type does not re-price an entry
- * they have already made". The price is a fact about the day they entered; a
+ * they have already made". Paying this season's dues after entering does not
+ * re-price it either. The price is a fact about the day they entered; a
  * ledger whose recorded amounts move underneath it stops reconciling, and
  * somebody who was charged $25 and later reads $15 has been told the club
  * cannot count. Re-pricing is an exec editing the row, visibly.
@@ -106,6 +115,20 @@ async function ensureEntryFeesImpl(
   const already = new Set((existingRes.data ?? []).map((r) => r.player_id as string));
   const seasonId = (tournamentRes.data as { season_id: string | null } | null)?.season_id ?? null;
 
+  // The season the DUES are looked up in, which falls back to the active one
+  // when the tournament has none. Never stamped on the row: season_id above is
+  // the tournament's own, for the reason given where it is read.
+  const duesSeason = await resolveEntrySeasonId(supabase, seasonId);
+  if (duesSeason.error) return [];
+  const paid = await loadPaidDues(
+    supabase,
+    duesSeason.seasonId,
+    ((playersRes.data ?? []) as { id: string }[]).map((p) => p.id),
+  );
+  // Same reasoning as the bail-out above: pricing a paid member at the
+  // External tier because a read failed is a wrong number on the ledger.
+  if (!paid) return [];
+
   const rows: Record<string, unknown>[] = [];
   const results: EntryFeeResult[] = [];
 
@@ -126,7 +149,17 @@ async function ensureEntryFeesImpl(
       continue;
     }
 
-    const match = selectFeeTier(player.membership_type, tiers);
+    // exempt is false because the two exempt groups returned above; what is
+    // left is the stored group, corrected by whether this season is paid.
+    const match = selectFeeTier(
+      entryMembership({
+        stored: player.membership_type,
+        exempt: false,
+        paid: paid.has(player.id),
+        hasSeason: duesSeason.seasonId !== null,
+      }),
+      tiers,
+    );
     rows.push({
       fee_type: 'tournament',
       tournament_id: tournamentId,

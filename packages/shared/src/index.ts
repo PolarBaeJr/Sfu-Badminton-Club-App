@@ -57,6 +57,7 @@ export * from './utils/member-identity';
 export * from './utils/membership';
 export * from './utils/fee-tiers';
 export * from './utils/entry-fee';
+export * from './utils/entry-membership';
 export * from './utils/match-result';
 export * from './utils/season';
 export * from './utils/standings';

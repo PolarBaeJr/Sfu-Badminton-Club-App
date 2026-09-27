@@ -22,14 +22,15 @@ export const dynamic = 'force-dynamic';
 // MEMBERSHIP_ROLES).
 //
 // WHAT THAT COSTS, STATED PLAINLY SO NOBODY REDISCOVERS IT IN A TOURNAMENT:
-// membership_type prices a tournament entry (quoteEntryFee) and decides which
-// events a member may enter at all (isMembershipAllowed). A member picking
-// @Internal is therefore asserting the student fee and student-only eligibility
-// for themselves. That is the club's call, it is the same trust the club already
-// places in the paper sign-up sheet, and it is why every change here writes an
-// audit row naming Discord as the source — an exec can see it on the member's
-// history and correct it in the console, which then holds until the member picks
-// again.
+// less than it used to. Since 00260 a tournament entry is priced and gated by
+// the group the member ENTERS as (entryMembership): internal means this
+// season's club fee is paid. So picking @Internal no longer buys the internal
+// fee or internal-only eligibility on its own; an unpaid member still enters as
+// external. The stored value still matters where there is no season to have
+// paid for, and it is what an alum keeps. Every change here still writes an
+// audit row naming Discord as the source, so an exec can see it on the
+// member's history and correct it in the console, which then holds until the
+// member picks again.
 //
 // NOT A PERMISSION ESCALATION PATH: only membership_type is ever written. Not
 // status, not is_exec, not role, not fee_exempt.
