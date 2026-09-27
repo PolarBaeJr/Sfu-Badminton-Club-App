@@ -264,6 +264,12 @@ export const ERROR_CODES = {
     meaning: 'The fees for this tournament could not be read.',
     cause: 'A read behind the console tournament fees page failed.',
   },
+  'TRN-105': {
+    area: 'TRN',
+    title: 'Entry groups could not load',
+    meaning: "Who has paid this season's club fee could not be read, so entry prices cannot be shown.",
+    cause: 'The season or club-fee read that decides each entrant\'s entry group failed on the console tournament fees page.',
+  },
 
   'CHL-000': {
     area: 'CHL',
