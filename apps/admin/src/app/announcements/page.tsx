@@ -551,6 +551,9 @@ export default async function AnnouncementsPage() {
                     channels={canSendDiscord ? discordChannels : []}
                     roles={discordRoles}
                     ambiguousRoleNames={ambiguousRoleNames}
+                    // UI only: `deleteAnnouncement` enforces
+                    // `announcements.delete.write` on the server whatever this says.
+                    canDelete={canDelete}
                   />
                 ) : (
                   // Withheld, not empty. A blank left column on the widest half of

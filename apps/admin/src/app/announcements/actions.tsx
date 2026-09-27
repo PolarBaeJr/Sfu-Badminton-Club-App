@@ -11,16 +11,20 @@ import {
 import {
   AUDIENCE_OPTIONS,
   TYPE_OPTIONS,
+  rowEditActions,
+  showsComposerDelete,
+  toPendingWebsiteEdit,
   type AnnouncementStatus,
   type AnnouncementType,
+  type PendingWebsiteEdit,
   type PostedMapping,
   type TargetAudience,
 } from './announcement-shape';
-// NO CYCLE. `discord-console-context` imports leaf types from
-// `announcement-shape` and nothing from this file, which is why the pending
-// website edit declares the row's fields there rather than importing
-// `RowAnnouncement` from here.
-import { useDiscordConsole, type PendingWebsiteEdit } from './discord-console-context';
+// NO CYCLE. Neither `discord-console-context` nor `announcement-shape` imports
+// anything from this file, which is why the pending website edit and the helper
+// that builds it declare the row's fields in `announcement-shape` rather than
+// importing `RowAnnouncement` from here.
+import { useDiscordConsole } from './discord-console-context';
 import { DiscordPreview } from './discord-preview';
 import { FormatBar, formatShortcut } from './format-bar';
 
@@ -306,12 +310,19 @@ function AnnouncementFields({
 export function Composer({
   pushReachable,
   discord,
+  canDelete,
 }: {
   pushReachable: number | null;
   discord: DiscordContext | null;
+  /**
+   * `announcements.delete.write`, for the Delete drawn while editing a posted
+   * row. UI only: `deleteAnnouncement` enforces the key on the server.
+   */
+  canDelete: boolean;
 }) {
   const [form, setForm] = useState<AnnouncementFormData>(EMPTY_FORM);
   const [busy, setBusy] = useState<null | AnnouncementStatus>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   /**
    * The posted row this composer is editing, or null for a fresh post.
    *
@@ -333,11 +344,9 @@ export function Composer({
   // re-run this over somebody's typing.
   useEffect(() => {
     // A NULL HERE IS SOMEBODY LETTING GO OF THE ROW, not a quiet state to skip.
-    // `handleDelete` clears the context when the row being edited is deleted,
-    // and without this branch the composer went on showing that post's words,
-    // its Editing header and its PUBLISHED badge until somebody pressed Cancel.
-    // Back to a blank new post instead: the row those words describe is gone, so
-    // keeping them offers a draft of something nobody can look at any more.
+    // Whoever clears the context means the composer to stop holding that row,
+    // and without this branch it would go on showing the post's words, its
+    // Editing header and its PUBLISHED badge until somebody pressed Cancel.
     if (!pendingWebsite) {
       setEditing(null);
       setEditReason('');
@@ -545,6 +554,21 @@ export function Composer({
                   posts nothing. */}
               {busy === editing.status ? 'Saving…' : 'Save changes'}
             </Button>
+            {/* DELETE LIVES HERE WHILE EDITING, because on this path Edit fills
+                the composer and no dialog opens to hold it. Ghost rather than
+                danger red, like the row's standalone Delete: the mis-tap guard
+                is the typed reason the dialog still asks for. */}
+            {showsComposerDelete({ editing: !!editing, canDelete }) && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-h-[44px]"
+                disabled={busy !== null}
+                onClick={() => setDeleteOpen(true)}
+              >
+                Delete
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -552,7 +576,7 @@ export function Composer({
               disabled={busy !== null}
               onClick={clearComposer}
             >
-              Cancel
+              Cancel editing
             </Button>
           </>
         ) : (
@@ -591,6 +615,19 @@ export function Composer({
       <p className={`${MICRO} text-[var(--text-muted)] leading-relaxed`}>
         Posts cannot be unsent. Editing a live one is recorded, with your reason.
       </p>
+
+      {editing && (
+        <DeleteAnnouncementDialog
+          // KEYED ON THE ROW so a reason typed for one post and then cancelled
+          // is not still sitting in the box when Delete opens on the next one.
+          key={editing.id}
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          announcement={editing}
+          // Back to a blank new post: the row the form was filled from is gone.
+          onDeleted={clearComposer}
+        />
+      )}
     </div>
   );
 }
@@ -628,15 +665,14 @@ export function AnnouncementRowActions({
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [reason, setReason] = useState('');
   const [editReason, setEditReason] = useState('');
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   // SAFE TO CALL UNCONDITIONALLY. This component is rendered from one place,
   // page.tsx, inside `DiscordConsoleProvider` (page.tsx:519), and the hook
   // throws loudly rather than returning null when it is not (see its own note).
-  const { startWebsiteEdit, hasWebsiteComposer, pendingWebsite, clearWebsiteEdit } =
-    useDiscordConsole();
+  const { startWebsiteEdit, hasWebsiteComposer } = useDiscordConsole();
+  const actions = rowEditActions({ canUpdate, canDelete, hasWebsiteComposer });
 
   // A live post has already been read by members, so changing it is audited and
   // takes an explanation. A draft has been said to nobody — it is exempt, and
@@ -667,11 +703,8 @@ export function AnnouncementRowActions({
   // `announcements.create.write` are separate keys, so a viewer holding Edit and
   // no composer is a live case rather than a hypothetical one.
   const openEdit = () => {
-    if (hasWebsiteComposer) {
-      // A NEW OBJECT ON EVERY PRESS. The composer refills on the pending edit's
-      // IDENTITY rather than its contents, so a second press on the same row
-      // has to hand over a fresh one or it would appear to do nothing.
-      startWebsiteEdit({ ...announcement, posted });
+    if (actions.edit === 'inline') {
+      startWebsiteEdit(toPendingWebsiteEdit(announcement, posted));
       return;
     }
     setForm(fromRow(announcement));
@@ -732,26 +765,6 @@ export function AnnouncementRowActions({
     }
   };
 
-  const handleDelete = async () => {
-    if (!reason.trim()) return;
-    setLoading(true);
-    try {
-      await deleteAnnouncement(announcement.id, reason.trim());
-      toast('Announcement deleted', 'success');
-      setDeleteOpen(false);
-      setReason('');
-      // THE CONTEXT LETS GO, THE COMPOSER DOES NOT: its effect early-returns on
-      // null, so a form already filled from this row keeps those words and its
-      // Editing header until somebody presses Cancel. Saving from there writes
-      // nothing, because `updateAnnouncement` refuses an update matching no rows.
-      if (pendingWebsite?.id === announcement.id) clearWebsiteEdit();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Failed to delete announcement', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Nothing to offer. Said plainly rather than left as an empty slot, which
   // reads as a row that failed to render.
   if (!canUpdate && !canDelete) {
@@ -760,41 +773,18 @@ export function AnnouncementRowActions({
 
   return (
     <>
-      {canUpdate ? (
-        // A FLEX OF ITS OWN, because the two cells that render this put no gap
-        // between two buttons: the desktop row's wrapper (page.tsx) sets only
-        // the 44px floor, and both that floor and TableCard's reach through this
-        // div as descendant selectors.
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="min-h-[44px] min-w-[44px]"
-            onClick={openEdit}
-          >
-            Edit
-          </Button>
-          {/* DELETE COMES OUT OF THE DIALOG WHEN EDIT NO LONGER OPENS ONE. On
-              the in-place path that dialog is never drawn, so leaving Delete
-              inside it would take the control away from everybody who can use
-              it. Ghost, like the standalone below rather than the dialog's
-              danger red: two viewers looking at the same column should not see
-              the destructive action in two different weights, and the mis-tap
-              guard is the typed reason it still asks for. */}
-          {hasWebsiteComposer && canDelete && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="min-h-[44px] min-w-[44px]"
-              onClick={() => setDeleteOpen(true)}
-            >
-              Delete
-            </Button>
-          )}
-        </div>
-      ) : (
+      {actions.edit !== null && (
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="min-h-[44px] min-w-[44px]"
+          onClick={openEdit}
+        >
+          Edit
+        </Button>
+      )}
+      {actions.rowDelete && (
         // Delete without edit: the danger action is the only one, and it is
         // never the thing a thumb finds first, so it keeps its own label.
         <Button
@@ -844,10 +834,10 @@ export function AnnouncementRowActions({
                 this dialog and nothing else, so inside it is the only place a
                 Delete can sit without being a second control in a 480px rail.
                 Where Edit fills the composer instead, this dialog never opens
-                and Delete is drawn beside Edit in the row. It is labelled, it
-                names the post, and it takes a reason either way: the three
+                and Delete is drawn in the composer's edit mode. It is labelled,
+                it names the post, and it takes a reason either way: the three
                 things the console asks of a destructive action. */}
-            {canDelete ? (
+            {actions.dialogDelete ? (
               <Button
                 type="button"
                 variant="danger"
@@ -889,48 +879,93 @@ export function AnnouncementRowActions({
         </form>
       </Dialog>
 
-      <Dialog
+      <DeleteAnnouncementDialog
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}
-        title={`Delete "${announcement.title}"`}
-      >
-        <div className="flex flex-col gap-5">
-          <p className="text-sm text-[var(--text-secondary)]">
-            This removes the post and its read receipts. Members who already saw it keep the bell
-            notification it sent — the post itself will not come back.
-          </p>
-
-          <Textarea
-            label="Reason (required)"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Why is this coming down?"
-            rows={3}
-            required
-          />
-
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              className="min-h-[44px]"
-              onClick={() => setDeleteOpen(false)}
-              disabled={loading}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="danger"
-              className="min-h-[44px]"
-              onClick={handleDelete}
-              disabled={loading || !reason.trim()}
-            >
-              {loading ? 'Deleting…' : 'Delete post'}
-            </Button>
-          </div>
-        </div>
-      </Dialog>
+        announcement={announcement}
+      />
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Delete behind a typed reason
+// ---------------------------------------------------------------------------
+
+/**
+ * One dialog for both places a Delete is drawn: the row's standalone button and
+ * the composer's edit mode. The reason and the in-flight state live here, so
+ * each caller only says when it is open and what to do once the row is gone.
+ */
+function DeleteAnnouncementDialog({
+  open,
+  onClose,
+  announcement,
+  onDeleted,
+}: {
+  open: boolean;
+  onClose: () => void;
+  announcement: { id: string; title: string };
+  onDeleted?: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+
+  const handleDelete = async () => {
+    if (!reason.trim()) return;
+    setLoading(true);
+    try {
+      await deleteAnnouncement(announcement.id, reason.trim());
+      toast('Announcement deleted', 'success');
+      onClose();
+      setReason('');
+      onDeleted?.();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to delete announcement', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} title={`Delete "${announcement.title}"`}>
+      <div className="flex flex-col gap-5">
+        <p className="text-sm text-[var(--text-secondary)]">
+          This removes the post and its read receipts. Members who already saw it keep the bell
+          notification it sent. The post itself will not come back.
+        </p>
+
+        <Textarea
+          label="Reason (required)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Why is this coming down?"
+          rows={3}
+          required
+        />
+
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-[44px]"
+            onClick={onClose}
+            disabled={loading}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            className="min-h-[44px]"
+            onClick={handleDelete}
+            disabled={loading || !reason.trim()}
+          >
+            {loading ? 'Deleting…' : 'Delete post'}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   );
 }

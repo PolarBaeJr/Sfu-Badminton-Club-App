@@ -317,3 +317,107 @@ export function showsModeSelector(modes: ComposerMode[]): boolean {
 export function hasWebsiteComposer(modes: ComposerMode[]): boolean {
   return modes.includes('website');
 }
+
+// ---------------------------------------------------------------------------
+// Editing a posted row, and where its Delete goes
+// ---------------------------------------------------------------------------
+
+export interface PendingWebsiteEdit {
+  /** The announcement row somebody pressed Edit on. */
+  id: string;
+  title: string;
+  body: string;
+  type: AnnouncementType;
+  target_audience: TargetAudience;
+  pinned: boolean;
+  send_push: boolean;
+  status: AnnouncementStatus;
+  expires_at: string | null;
+  /**
+   * The row's Discord mapping, or null when Discord has never had this post.
+   *
+   * Carried rather than looked up because the composer is SHARED: it has no row
+   * of its own to read a mapping off, and the preview it draws needs one to say
+   * whether the channel is already holding an older version of these words. The
+   * page threads the same mapping into the row that hands this over, so the two
+   * cannot answer differently.
+   */
+  posted: PostedMapping | null;
+}
+
+/**
+ * The row the composer is asked to fill from, plus its mapping.
+ *
+ * THE ROW IS A STRUCTURAL TYPE rather than `RowAnnouncement`, which lives in
+ * `actions.tsx`: that file imports this one, so reaching back for it would be
+ * an import cycle.
+ *
+ * A NEW OBJECT ON EVERY CALL, and that is the contract rather than a detail.
+ * The composer refills on the pending edit's IDENTITY, not its contents, so a
+ * second press on the same row has to hand over a fresh object or it would
+ * appear to do nothing. The fields are copied one by one so nothing else a
+ * caller's row happens to carry rides along into the context.
+ */
+export function toPendingWebsiteEdit(
+  row: {
+    id: string;
+    title: string;
+    body: string;
+    type: AnnouncementType;
+    target_audience: TargetAudience;
+    pinned: boolean;
+    send_push: boolean;
+    status: AnnouncementStatus;
+    expires_at: string | null;
+  },
+  posted: PostedMapping | null,
+): PendingWebsiteEdit {
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    type: row.type,
+    target_audience: row.target_audience,
+    pinned: row.pinned,
+    send_push: row.send_push,
+    status: row.status,
+    expires_at: row.expires_at,
+    posted,
+  };
+}
+
+/**
+ * WHICH CONTROLS A POSTED ROW DRAWS, decided in one place because no test here
+ * mounts a component and the row has two keys and a layout fact to combine.
+ *
+ * - `edit`: nothing without `announcements.update.write`; with it, the composer
+ *   in place when there is one, and the dialog when there is not.
+ * - `rowDelete`: the standalone Delete in the row, only for a viewer who may
+ *   delete and not edit. Everybody who may edit reaches Delete from wherever
+ *   Edit takes them.
+ * - `dialogDelete`: the Delete inside the edit dialog, so only on the dialog
+ *   path. On the inline path Delete lives in the composer's edit mode instead
+ *   (see `showsComposerDelete`).
+ */
+export function rowEditActions(caps: {
+  canUpdate: boolean;
+  canDelete: boolean;
+  hasWebsiteComposer: boolean;
+}): { edit: 'inline' | 'dialog' | null; rowDelete: boolean; dialogDelete: boolean } {
+  const edit = !caps.canUpdate ? null : caps.hasWebsiteComposer ? 'inline' : 'dialog';
+  return {
+    edit,
+    rowDelete: caps.canDelete && !caps.canUpdate,
+    dialogDelete: caps.canDelete && edit === 'dialog',
+  };
+}
+
+/**
+ * Whether the composer offers Delete: only while it holds a posted row, since a
+ * fresh post has nothing to delete, and only for a viewer holding the key. The
+ * gate is UI only; `deleteAnnouncement` checks `announcements.delete.write` on
+ * the server whatever this says.
+ */
+export function showsComposerDelete(state: { editing: boolean; canDelete: boolean }): boolean {
+  return state.editing && state.canDelete;
+}
