@@ -70,7 +70,9 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   const supabase = await createServerSupabaseClient();
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
-  if (!tournament) notFound();
+  // A draft is unpublished. RLS lets a member read it (tournaments_select is
+  // USING (TRUE)), so the page is what keeps it private.
+  if (!tournament || tournament.status === 'draft') notFound();
 
   const { data: events } = await supabase
     .from('tournament_events')

@@ -19,7 +19,7 @@ export function StandingBanner() {
   const pathname = usePathname();
 
   if (standing.ok) return null;
-  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) return null;
+  if (pathname === '/login' || pathname === '/signup' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) return null;
 
   return (
     <div

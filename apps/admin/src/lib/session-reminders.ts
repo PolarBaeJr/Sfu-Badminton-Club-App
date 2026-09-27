@@ -54,7 +54,7 @@ export async function remindSessionGoers(
       body,
       metadata: { session_id: sessionId, kind: 'session_reminder' },
     },
-    { title: 'Session reminder', body, url: '/sessions' },
+    { title: 'Session reminder', body, url: '/feed' },
     'sessions',
   );
 

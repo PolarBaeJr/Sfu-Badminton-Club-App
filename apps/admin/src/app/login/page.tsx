@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
-import { friendlyAuthError } from '@badminton/shared';
+import { authErrorCode, friendlyAuthError, withErrorCode } from '@badminton/shared';
 import { Shield, Mail, Loader2, Globe, AlertCircle, KeyRound } from 'lucide-react';
 import {
   signInWithPasskey,
@@ -17,7 +17,9 @@ import {
 } from '@/lib/passkey-client';
 import { SIGNIN_OTP_TYPES, shouldTryNextOtpType, isUnknownAccountError } from '@/lib/auth-otp';
 import { withBase } from '@/lib/base-path';
-import { reportAuthFailure, authErrorCode, secondsSince } from '@/lib/auth-telemetry';
+// Aliased: shared's authErrorCode is the AUTH-xxx banner code, this one is
+// GoTrue's raw code for Sentry. Same name, different questions.
+import { reportAuthFailure, authErrorCode as gotrueErrorCode, secondsSince } from '@/lib/auth-telemetry';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -94,7 +96,7 @@ export default function LoginPage() {
     }
     // An empty message means the user dismissed the system prompt — that is a
     // deliberate action, not a failure to report back at them.
-    if (result.error) setError(result.error);
+    if (result.error) setError(withErrorCode(result.error, 'AUTH-208'));
     setPasskeyLoading(false);
   }
 
@@ -107,7 +109,7 @@ export default function LoginPage() {
       options: { redirectTo: `${window.location.origin}${withBase('/auth/callback')}` },
     });
     if (authError) {
-      setError(authError.message);
+      setError(withErrorCode(authError.message, 'AUTH-209'));
       setGoogleLoading(false);
     }
   }
@@ -131,13 +133,13 @@ export default function LoginPage() {
       reportAuthFailure({
         flow: 'email_code_send',
         stage: 'send',
-        error: authErrorCode(authError),
+        error: gotrueErrorCode(authError),
         message: authError.message,
       });
       setError(
         isUnknownAccountError(authError.message)
-          ? 'No account uses that email. The console cannot create one — sign up in the player app first, then ask an admin for access.'
-          : friendlyAuthError(authError.message)
+          ? 'No account uses that email. The console cannot create one: sign up in the player app first, then ask an admin for access.'
+          : withErrorCode(friendlyAuthError(authError.message), authErrorCode(authError))
       );
     } else {
       codeSentAt.current = Date.now();
@@ -158,7 +160,7 @@ export default function LoginPage() {
     setError('');
     const supabase = createClient();
     const token = code.trim();
-    let authError: { message: string } | null = null;
+    let authError: { message: string; code?: string; status?: number } | null = null;
     let typesTried = 0;
     // See lib/auth-otp for why this is a list and not a single type.
     for (const type of SIGNIN_OTP_TYPES) {
@@ -176,7 +178,7 @@ export default function LoginPage() {
     reportAuthFailure({
       flow: 'email_code_verify',
       stage: 'verify',
-      error: authErrorCode(authError),
+      error: gotrueErrorCode(authError),
       message: authError?.message,
       extra: {
         types_tried: typesTried,
@@ -184,7 +186,12 @@ export default function LoginPage() {
         seconds_since_sent: secondsSince(codeSentAt.current),
       },
     });
-    setError(friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'));
+    setError(
+      withErrorCode(
+        friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'),
+        authError ? authErrorCode(authError) : 'AUTH-203',
+      ),
+    );
     setLoading(false);
   }
 

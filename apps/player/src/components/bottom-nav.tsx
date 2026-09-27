@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { cn, useLiveChannel } from '@badminton/ui';
+import { cn, useLiveChannel, isRouteActive, isGroupActive } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import {
   ANNOUNCEMENT_VISIBILITY_COLUMNS,
@@ -11,36 +11,62 @@ import {
   unreadAnnouncementCount,
   withVisibleAnnouncements,
 } from '@/lib/announcement-visibility';
-import { Home, Trophy, Crosshair, Calendar, Sparkles, LogIn } from 'lucide-react';
+import { mobileSlots, type PlayerNavEntry } from '@/lib/nav-entries';
+import {
+  ALL_FEATURES_ENABLED,
+  playerPathVisible,
+  type FeatureFlags,
+  type FeatureId,
+} from '@badminton/shared/src/utils/features';
+import { Home, Trophy, LogIn, CreditCard } from 'lucide-react';
+import { DISCORD_INVITE_URL } from '@badminton/shared';
+import { DiscordMark } from './discord-mark';
 
-// `gated` = needs an approved account (see top-bar.tsx).
-const navItems = [
-  { href: '/feed',        label: 'Feed',  icon: Home,      gated: false },
-  { href: '/leaderboard', label: 'Ranks', icon: Trophy,    gated: false },
-  { href: '/challenges',  label: 'Vs.',   icon: Crosshair, gated: true  },
-  { href: '/sessions',    label: 'Play',  icon: Calendar,  gated: true  },
-  { href: '/my-stats',    label: 'Me',    icon: Sparkles,  gated: false },
-];
-
-const publicNavItems = [
-  { href: '/',            label: 'Home',    icon: Home  },
-  { href: '/leaderboard', label: 'Ranks',   icon: Trophy },
-  { href: '/login',       label: 'Sign in', icon: LogIn },
+// Four slots plus the Discord anchor below: five, which is what fits.
+const publicSlots: PlayerNavEntry[] = [
+  { kind: 'link', item: { href: '/',            label: 'Home',       icon: Home,       gated: false } },
+  { kind: 'link', item: { href: '/leaderboard', label: 'Ranks',      icon: Trophy,     gated: false } },
+  { kind: 'link', item: { href: '/membership',  label: 'Membership', icon: CreditCard, gated: false } },
+  { kind: 'link', item: { href: '/login',       label: 'Sign in',    icon: LogIn,      gated: false } },
 ];
 
 export function BottomNav({
   isAuthenticated,
   isApproved = true,
+  features = ALL_FEATURES_ENABLED,
+  featureAccess = [],
+  showDiscord = true,
 }: {
   isAuthenticated: boolean;
   /** False while the account is pending approval or suspended. */
   isApproved?: boolean;
+  /** The club feature switches, read by the layout. */
+  features?: FeatureFlags;
+  /** Switched-off features whose `page.access.<id>` key the viewer holds, so they stay in the nav. */
+  featureAccess?: readonly FeatureId[];
+  /** Whether to link the club Discord, decided once by the layout. */
+  showDiscord?: boolean;
 }) {
   const pathname = usePathname();
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
   /** The viewer's players.id, once resolved. Null while signed out. */
   const [playerId, setPlayerId] = useState<string | null>(null);
+  /** The group whose menu is open (Events) and where its tab sits, or null. */
+  const [menu, setMenu] = useState<{ id: string; left: number; bottom: number } | null>(null);
 
+  // A navigation from anywhere, the back button included, shuts the menu.
+  useEffect(() => {
+    setMenu(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menu]);
   // ONE CLIENT FOR THE LIFE OF THE NAV. This component sits in the layout and
   // never unmounts, and the count is re-read on every navigation now — a client
   // built inside that effect would be a new one per route change, each with its
@@ -150,7 +176,7 @@ export function BottomNav({
   // read that lands from their other device.
   //
   // Nothing is subscribed until the viewer is resolved. A signed-out visitor
-  // has no badge to keep up to date — publicNavItems has no Feed tab — so a
+  // has no badge to keep up to date (publicSlots has no Feed tab), so a
   // socket for them would be a socket for nothing.
   // RE-COUNT WHEN THE CHANNEL COMES BACK, and note this one does NOT refresh
   // the route — it re-runs the same count query the two listeners below run,
@@ -217,60 +243,140 @@ export function BottomNav({
 
   // Auth, onboarding and the Discord consent screen render their own
   // full-screen layout — no app chrome.
-  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
+  if (pathname === '/login' || pathname === '/signup' || pathname.startsWith('/auth') || pathname === '/onboarding' || pathname.startsWith('/link/')) {
     return null;
   }
 
-  const items = isAuthenticated
-    ? navItems.filter((item) => isApproved || !item.gated)
-    : publicNavItems;
+  // Gated slots are filtered on isApproved inside, and a group left empty
+  // (Events, for a pending member) is dropped with them.
+  // A signed-out visitor's Ranks and Membership slots follow their switches as well.
+  const slots = isAuthenticated
+    ? mobileSlots(isApproved, features, featureAccess)
+    : publicSlots.filter(
+        (slot) => slot.kind !== 'link' || playerPathVisible(slot.item.href, features, []),
+      );
+
+  const openGroup = slots.flatMap((slot) =>
+    slot.kind === 'group' && slot.group.id === menu?.id ? [slot.group] : [],
+  )[0];
 
   return (
-    <nav className="mobile-tabbar" aria-label="Mobile navigation">
-      {items.map((item) => {
-        const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
-        const isLeaderboard = item.href === '/leaderboard';
-        const showBadge = item.href === '/feed' && unreadAnnouncements > 0;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn('press', active && 'active')}
-            aria-current={active ? 'page' : undefined}
-          >
-            <item.icon
-              size={20}
-              className={cn(
-                active && isLeaderboard && 'icon-trophy-shimmer',
-              )}
-            />
-            <span>{item.label}</span>
-            {showBadge && (
-              <span
-                aria-label={`${unreadAnnouncements} unread announcements`}
-                style={{
-                  position: 'absolute',
-                  top: 6,
-                  right: '38%',
-                  minWidth: 14,
-                  height: 14,
-                  padding: '0 4px',
-                  borderRadius: 999,
-                  background: 'var(--red)',
-                  color: '#fff',
-                  fontSize: 9,
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+    <>
+      <nav className="mobile-tabbar" aria-label="Mobile navigation" data-tour="tab-bar">
+        {slots.map((slot) => {
+          if (slot.kind === 'group') {
+            // A small menu that rises from the tab itself, not a dialog in
+            // the middle of the page.
+            const { group } = slot;
+            const active = isGroupActive(pathname, group);
+            const GroupIcon = group.icon;
+            const open = menu?.id === group.id;
+            return (
+              <button
+                key={group.id}
+                type="button"
+                className={cn('press', active && 'active')}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onClick={(e) => {
+                  if (open) return setMenu(null);
+                  const tab = e.currentTarget.getBoundingClientRect();
+                  const bar = e.currentTarget.parentElement!.getBoundingClientRect();
+                  setMenu({ id: group.id, left: tab.left + tab.width / 2, bottom: window.innerHeight - bar.top + 8 });
                 }}
               >
-                {unreadAnnouncements > 9 ? '9+' : unreadAnnouncements}
-              </span>
-            )}
-          </Link>
-        );
-      })}
-    </nav>
+                {GroupIcon && <GroupIcon size={20} />}
+                <span>{group.label}</span>
+              </button>
+            );
+          }
+          const { item } = slot;
+          const active = isRouteActive(pathname, item.href);
+          const isLeaderboard = item.href === '/leaderboard';
+          const showBadge = item.href === '/feed' && unreadAnnouncements > 0 && features.announcements;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn('press', active && 'active')}
+              aria-current={active ? 'page' : undefined}
+            >
+              <item.icon
+                size={20}
+                className={cn(
+                  active && isLeaderboard && 'icon-trophy-shimmer',
+                )}
+              />
+              <span>{item.label}</span>
+              {showBadge && (
+                <span
+                  aria-label={`${unreadAnnouncements} unread announcements`}
+                  style={{
+                    position: 'absolute',
+                    top: 6,
+                    right: '38%',
+                    minWidth: 14,
+                    height: 14,
+                    padding: '0 4px',
+                    borderRadius: 999,
+                    background: 'var(--red)',
+                    color: '#fff',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {unreadAnnouncements > 9 ? '9+' : unreadAnnouncements}
+                </span>
+              )}
+            </Link>
+          );
+        })}
+        {/* Signed out only: a member reaches Discord from the top bar, and their
+            five slots are full. An anchor rather than a slot entry because it
+            leaves the app, so it has no route to be active on. */}
+        {!isAuthenticated && showDiscord && (
+          <a href={DISCORD_INVITE_URL} target="_blank" rel="noopener noreferrer" className="press">
+            <DiscordMark size={20} />
+            <span>Discord</span>
+          </a>
+        )}
+      </nav>
+      {openGroup && menu && (
+        <>
+          {/* Transparent: a tap anywhere else closes the menu and does nothing more. */}
+          <div className="tab-menu-scrim" onClick={() => setMenu(null)} aria-hidden />
+          <div
+            className="tab-menu"
+            role="menu"
+            aria-label={openGroup.label}
+            style={{
+              bottom: menu.bottom,
+              // Centred over its tab, but never off either edge of the screen.
+              left: `clamp(12px, ${menu.left}px - 100px, calc(100vw - 212px))`,
+            }}
+          >
+            {openGroup.items.map((item) => {
+              const current = isRouteActive(pathname, item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  role="menuitem"
+                  className={cn(current && 'active')}
+                  aria-current={current ? 'page' : undefined}
+                  onClick={() => setMenu(null)}
+                >
+                  <item.icon size={18} />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </>
   );
 }

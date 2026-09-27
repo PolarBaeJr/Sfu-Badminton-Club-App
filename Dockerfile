@@ -9,6 +9,9 @@ COPY package.json package-lock.json turbo.json tsconfig.base.json .npmrc ./
 COPY apps/player/package.json apps/player/
 COPY apps/admin/package.json apps/admin/
 COPY apps/bot/package.json apps/bot/
+# Not built here (it has its own apps/data-api/Dockerfile), but npm ci checks
+# every workspace in the lockfile against its manifest.
+COPY apps/data-api/package.json apps/data-api/
 COPY packages/shared/package.json packages/shared/
 COPY packages/ui/package.json packages/ui/
 COPY packages/config/package.json packages/config/

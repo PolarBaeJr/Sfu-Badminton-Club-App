@@ -77,7 +77,7 @@ export function CalendarFeed() {
         <div>
           <div className="settings-row-label">Subscribe in your calendar</div>
           <div className="settings-row-hint">
-            Opens your calendar app and keeps upcoming sessions in sync automatically.
+            Opens your calendar app and keeps club sessions and events in sync automatically.
           </div>
         </div>
         <div className="settings-row-control">
@@ -110,7 +110,7 @@ export function CalendarFeed() {
         <div>
           <div className="settings-row-label">Reset link</div>
           <div className="settings-row-hint">
-            Anyone with this link can see your session schedule. Reset it to revoke old links.
+            Anyone with this link can see your club schedule. Reset it to revoke old links.
           </div>
         </div>
         <div className="settings-row-control">

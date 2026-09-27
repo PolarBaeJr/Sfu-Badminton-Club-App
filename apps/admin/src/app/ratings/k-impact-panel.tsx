@@ -196,7 +196,7 @@ export function KImpactPanel({
           only shows up weeks later as a mis-seeded member sitting on a winning
           streak. Said here, next to the numbers that make it concrete. */}
       {!provisionalKEnabled && (
-        <p className="border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2 text-[13px] leading-[1.5] text-[var(--ink-2)]">
+        <p className="rounded-md border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2 text-[13px] leading-[1.5] text-[var(--ink-2)]">
           Provisional K-factors are switched off, so every member moves on the established
           K-factors from their first match. A member who understates their skill level at signup
           will now take far longer to reach their true rating — and they climb by beating people

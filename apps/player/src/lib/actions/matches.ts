@@ -18,6 +18,7 @@ import {
   type WalkoverReportInput,
 } from '@badminton/shared';
 import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, runAction, type ActionResult } from './_shared';
+import { assertFeatureOn } from '../feature-gate';
 
 export async function submitMatchResult(challengeId: string, input: MatchResultInput): Promise<ActionResult<string>> {
   return runAction(() => submitMatchResultImpl(challengeId, input));
@@ -30,6 +31,7 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
   parseOrThrow(matchResultSchema, input);
 
   const player = await requirePlayer();
+  await assertFeatureOn('challenges', player);
   const supabase = await createServerSupabaseClient();
 
   // No players embed: 00032 revoked blanket SELECT on players and granted a
@@ -285,6 +287,7 @@ export async function reportWalkover(input: WalkoverReportInput): Promise<Action
 async function reportWalkoverImpl(input: WalkoverReportInput) {
   parseOrThrow(walkoverReportSchema, input);
   const player = await requirePlayer();
+  await assertFeatureOn('challenges', player);
   const supabase = await createServerSupabaseClient();
 
   // ONE STATEMENT, and it is the fix for F-009. This used to be four reads and

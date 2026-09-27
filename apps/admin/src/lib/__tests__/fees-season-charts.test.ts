@@ -249,6 +249,7 @@ const FINANCES = {
     clubCents: 34000,
     tournamentCents: 0,
     reinstatementCents: 0,
+    eventCents: 0,
     otherCents: 0,
     totalCents: 34000,
     payments: [],

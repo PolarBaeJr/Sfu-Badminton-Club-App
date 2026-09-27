@@ -69,6 +69,7 @@ vi.mock('../actions/_shared', () => ({
 
 import { updatePlatformSettings } from '../actions/settings';
 import { REASON_MIN } from '../audit-reason';
+import { SEEDABLE_SETTINGS } from '../platform-setting-fields';
 
 const KEY = 'elo_settings';
 const settings = () => store.db.platform_settings ?? [];
@@ -240,5 +241,95 @@ describe('updatePlatformSettings — a partial blob is refused, not applied', ()
     expect(settings().find((s) => s.key === KEY)!.value).toEqual({ k_factor: 32 });
     expect(ratingRow().value).toEqual(REAL_RATING_BLOB);
     expect(audits()).toHaveLength(0);
+  });
+});
+
+// THE FEATURE SWITCHES NEED NO MIGRATION. `features` is the one key the console
+// may create: the absent row already means "everything on", so its first save
+// inserts it. Every other absent key is still refused, above.
+describe('updatePlatformSettings: a seedable key with no row yet', () => {
+  const FEATURES_KEY = 'features';
+  const featuresRow = () => settings().find((s) => s.key === FEATURES_KEY);
+  const allOn = () => ({ ...SEEDABLE_SETTINGS[FEATURES_KEY]!() });
+
+  it('inserts the row on first save and audits it with no "before"', async () => {
+    const value = { ...allOn(), tournaments_enabled: false };
+    await updatePlatformSettings([{ key: FEATURES_KEY, value }], 'Not running tournaments this term');
+
+    expect(featuresRow()?.value).toEqual(value);
+    expect(featuresRow()?.updated_by).toBe(store.actor.id);
+    expect(audits()).toHaveLength(1);
+    expect(audits()[0]!.old_value).toBeNull();
+    expect(audits()[0]!.new_value).toEqual(value);
+  });
+
+  it('updates the row once it exists, rather than inserting a second', async () => {
+    store.db.platform_settings!.push({ key: FEATURES_KEY, value: allOn() });
+    await updatePlatformSettings(
+      [{ key: FEATURES_KEY, value: { ...allOn(), sessions_enabled: false } }],
+      'Summer break, no sessions',
+    );
+
+    expect(settings().filter((s) => s.key === FEATURES_KEY)).toHaveLength(1);
+    expect(featuresRow()?.value).toHaveProperty('sessions_enabled', false);
+    expect(audits()[0]!.old_value).toEqual(allOn());
+  });
+
+  it('still refuses a first save that would drop a switch', async () => {
+    await expect(
+      updatePlatformSettings([{ key: FEATURES_KEY, value: { tournaments_enabled: false } }], WHY),
+    ).rejects.toThrow(/would delete/);
+    expect(featuresRow()).toBeUndefined();
+    expect(audits()).toHaveLength(0);
+  });
+});
+
+// THE CLUB LINKS ARE PRINTED ON EVERY PAGE, so a value the site would refuse to
+// show is refused here, with a message, rather than saved and silently hidden.
+describe('updatePlatformSettings: the club links', () => {
+  const socials = (value: Record<string, unknown>) => ({
+    key: 'club_socials',
+    value: { ...SEEDABLE_SETTINGS.club_socials!(), ...value },
+  });
+  const payments = (value: Record<string, unknown>) => ({
+    key: 'membership_payments',
+    value: { ...SEEDABLE_SETTINGS.membership_payments!(), ...value },
+  });
+
+  it('seeds both rows on first save', async () => {
+    await updatePlatformSettings([socials({}), payments({})], WHY);
+    expect(settings().map((s) => s.key)).toEqual(expect.arrayContaining(['club_socials', 'membership_payments']));
+  });
+
+  it.each([
+    'javascript:alert(1)',
+    'http://www.instagram.com/sfu_badmintonclub/',
+    'https://evil.com/sfu_badmintonclub',
+  ])('refuses the Instagram link %s and writes nothing', async (instagram_url) => {
+    await expect(updatePlatformSettings([socials({ instagram_url })], WHY)).rejects.toThrow(/Instagram/);
+    expect(settings().some((s) => s.key === 'club_socials')).toBe(false);
+    expect(audits()).toHaveLength(0);
+  });
+
+  it('allows an empty Instagram link, which hides it', async () => {
+    await updatePlatformSettings([socials({ instagram_url: '' })], WHY);
+    expect(settings().find((s) => s.key === 'club_socials')?.value).toHaveProperty('instagram_url', '');
+  });
+
+  it('refuses a show_discord that is not a boolean', async () => {
+    await expect(updatePlatformSettings([socials({ show_discord: 'false' })], WHY)).rejects.toThrow(/Discord/);
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,hi', 'http://go.sfss.ca/'])(
+    'refuses the purchase link %s',
+    async (sfss_purchase_url) => {
+      await expect(updatePlatformSettings([payments({ sfss_purchase_url })], WHY)).rejects.toThrow(/https/);
+    },
+  );
+
+  it('refuses an e-transfer address that is not one, and allows an empty one', async () => {
+    await expect(updatePlatformSettings([payments({ etransfer_email: 'treasurer' })], WHY)).rejects.toThrow(/email/);
+    await updatePlatformSettings([payments({ etransfer_email: '' })], WHY);
+    expect(settings().find((s) => s.key === 'membership_payments')?.value).toHaveProperty('etransfer_email', '');
   });
 });

@@ -2,7 +2,9 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader, TableCard, Atomic } from '@badminton/ui';
-import { MATCH_FORMAT_LABELS, formatDateTime, unwrap } from '@badminton/shared';
+import { MATCH_FORMAT_LABELS, formatDateTime, unwrap, scopeToActiveSeason } from '@badminton/shared';
+import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
+import { SeasonSelect } from '@/components/season-select';
 import { SearchableTable } from '@/components/searchable-table';
 import { canReadMatchNotes, fetchMatchNotes } from '@/lib/match-note';
 import { MatchActions } from './actions';
@@ -19,7 +21,12 @@ import {
   StickyNote,
 } from 'lucide-react';
 
-export default async function MatchesPage() {
+export default async function MatchesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ season?: string }>;
+}) {
+  const { season: seasonParam } = await searchParams;
   // Same capability middleware resolves for '/matches', re-asked at the fetch.
   const viewer = await requireCapability('matches.page');
   // The roster below is not this page's data — it is the option list of ONE
@@ -38,14 +45,29 @@ export default async function MatchesPage() {
   const canSeeNotes = canReadMatchNotes(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer));
   const supabase = createAdminClient();
 
+  // One season's matches, like /sessions and /tournaments: see
+  // scopeToActiveSeason for why an unassigned match is kept and why no active
+  // season means no filter.
+  const { data: allSeasons } = await supabase
+    .from('seasons')
+    .select('id, name, start_date, end_date, active_flag')
+    .order('start_date', { ascending: false });
+  const { seasons: seasonList, selected: scopedSeason, isPast } = resolveSeasonScope(
+    allSeasons,
+    seasonParam,
+  );
+
   // TWO ROUND TRIPS, NOT FIVE. The roster is not derived from the ledger, so it
   // has no reason to queue behind it; disputes, walkovers and notes all key off
   // the fifty match ids and so genuinely cannot start until those are in hand.
   // That is the only ordering this page actually requires.
   const [matchesResult, playersResult] = await Promise.all([
-    supabase
-      .from('matches')
-      .select('*, match_participants(*, player:players(full_name)), match_games(*)')
+    scopeToActiveSeason(
+      supabase
+        .from('matches')
+        .select('*, match_participants(*, player:players(full_name)), match_games(*)'),
+      scopedSeason?.id,
+    )
       .order('created_at', { ascending: false })
       .limit(50),
     // Get all active players for the create match form
@@ -357,6 +379,11 @@ export default async function MatchesPage() {
         actions={<CreateMatchForm players={allPlayers || []} />}
       />
 
+      <div className="space-y-2">
+        <SeasonSelect seasons={seasonList} selected={scopedSeason} basePath="/matches" />
+        {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
+      </div>
+
       {/* Matches Table */}
       <Card padding={false}>
         <SearchableTable
@@ -384,9 +411,13 @@ export default async function MatchesPage() {
               <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--border-hover)] mb-4">
                 <Inbox className="w-7 h-7 text-[var(--text-muted)]" />
               </div>
-              <h3 className="text-base font-semibold text-[var(--text-primary)] mb-1">No matches yet</h3>
+              <h3 className="text-base font-semibold text-[var(--text-primary)] mb-1">
+                {scopedSeason ? `No matches in ${scopedSeason.name}` : 'No matches yet'}
+              </h3>
               <p className="text-sm text-[var(--text-muted)] max-w-sm">
-                Matches will appear here once players start competing. Create a new match to get started.
+                {scopedSeason
+                  ? 'Pick another season above to see its matches, or enter one for this season.'
+                  : 'Matches will appear here once players start competing. Create a new match to get started.'}
               </p>
             </div>
           }

@@ -16,7 +16,7 @@ import { useToast } from '@/components/toast-provider';
 // The token is minted on CLICK, not on page load. It is a bearer credential for
 // that member's schedule (calendar apps cannot log in, so the unguessable token
 // IS the auth), and there is no reason to create one for everybody who merely
-// opens the sessions page.
+// opens the schedule.
 export function SubscribeAllButton() {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
@@ -40,7 +40,7 @@ export function SubscribeAllButton() {
       disabled={loading}
       className="btn btn-ghost press"
       style={{ gap: 6, fontSize: 13 }}
-      title="Subscribe in your calendar app — stays up to date as sessions change"
+      title="Subscribe in your calendar app. It stays up to date as the schedule changes."
     >
       <CalendarPlus size={14} />
       {loading ? 'Opening…' : 'Add all to calendar'}

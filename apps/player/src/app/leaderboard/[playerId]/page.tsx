@@ -1,13 +1,15 @@
 import { createServerSupabaseClient, getViewer, getActiveSeason } from '@/lib/supabase-server';
 import { getPublicProfile } from '@/lib/public-profile';
 import { getRatingSettings } from '@/lib/rating-settings';
-import { getKFactor, PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, clubDate, buildChallengeQrUrl, getAccountStanding, summarizeSeason } from '@badminton/shared';
+import { getKFactor, PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, clubDate, buildChallengeQrUrl, getAccountStanding, summarizeSeason, featureAccessFor, playerPathVisible } from '@badminton/shared';
 import type { SeasonMatchRow } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Crosshair, QrCode, Trophy } from 'lucide-react';
 import Link from 'next/link';
 import { AvatarChip } from '@badminton/ui';
 import { StandingNote } from '@/components/standing-notice';
+import { PaidBadge } from '@/components/paid-badge';
+import { getFeatureFlags } from '@/lib/feature-gate';
 import QRCode from 'qrcode';
 
 /** See the season tally read below: a guard against an unbounded read. */
@@ -197,6 +199,10 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     })
     .slice(0, 10);
 
+  // The Paid badge: signed-in viewers only (the function behind it refuses
+  // anon), and only while the fees switch is on for this viewer.
+  const showPaid = viewer !== null && playerPathVisible('/fees', await getFeatureFlags(), featureAccessFor(viewer));
+
   return (
     <div data-screen-label="Player Profile">
       <div className="page-header" style={{ marginBottom: 18 }}>
@@ -232,6 +238,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                 </span>
               )}
               {r?.singles_provisional && <span className="pill pill-out">PROVISIONAL</span>}
+              {showPaid && <PaidBadge playerId={player.id} />}
             </div>
             {player.bio && (
               <p style={{ marginTop: 12, fontSize: 14, lineHeight: 1.55, color: 'var(--ink-2)', maxWidth: '56ch' }}>
@@ -242,8 +249,10 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
             {/* Kept alongside the QR — on desktop nobody scans their own screen.
                 The QR stays either way: it is how someone ELSE challenges this
-                profile, so the viewer's own standing has no bearing on it. */}
-            {standing.ok ? (
+                profile, so the viewer's own standing has no bearing on it.
+                A signed-out visitor has good standing but no account to
+                challenge from, so they get no button at all. */}
+            {!viewer ? null : standing.ok ? (
               <Link href={`/challenges/new?opponent=${playerId}`} className="btn btn-primary">
                 <Crosshair size={14} /> Challenge
               </Link>

@@ -14,6 +14,8 @@ let settings: { key: string; value: string }[] = [];
 let mapped: Record<string, unknown>[] = [];
 let tournaments: Record<string, unknown>[] = [];
 let readError: Record<string, { code: string; message: string } | null> = {};
+// The stored `features` row, or null for none (which means every feature on).
+let featuresRow: Record<string, unknown> | null = null;
 const upserted = vi.fn();
 const deleted = vi.fn();
 
@@ -67,6 +69,15 @@ function thenable(rows: Record<string, unknown>[], error: unknown = null) {
 vi.mock("@/lib/supabase-server", () => ({
   createServiceRoleClient: () => ({
     from: (table: string) => {
+      if (table === "platform_settings") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: featuresRow ? { value: featuresRow } : null, error: null }),
+            }),
+          }),
+        };
+      }
       if (table === "discord_settings")
         return thenable(settings, readError.settings ?? null);
       if (table === "tournaments")
@@ -160,6 +171,7 @@ function tournament(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   process.env.DISCORD_SERVICE_SECRET = "test-secret";
   readError = {};
+  featuresRow = null;
   mapped = [];
   upserted.mockReset();
   deleted.mockReset();
@@ -178,6 +190,29 @@ describe("GET /api/discord/tournament-events", () => {
       headers: { authorization: "Bearer wrong" },
     });
     expect((await GET(bad)).status).toBe(401);
+  });
+
+  // TOURNAMENTS SWITCHED OFF: nothing to do. Not even a cancel for one already
+  // posted, so a switch flipped by mistake cannot tear down the Events tab.
+  it("has nothing to do while tournaments are switched off", async () => {
+    featuresRow = { tournaments_enabled: false };
+    mapped = [
+      {
+        tournament_id: "t1",
+        discord_event_id: "d1",
+        synced_name: "Old name",
+        synced_starts_at: new Date(Date.now() + 86400000).toISOString(),
+        synced_ends_at: new Date(Date.now() + 2 * 86400000).toISOString(),
+      },
+    ];
+    const { actions, skipped } = await run();
+    expect(actions).toEqual([]);
+    expect(skipped).toEqual([{ tournamentId: "*", reason: "tournaments_disabled" }]);
+  });
+
+  it("still announces when only another feature is switched off", async () => {
+    featuresRow = { sessions_enabled: false, tournaments_enabled: true };
+    expect(only((await run()).actions).kind).toBe("create");
   });
 
   it("offers a create for an active tournament with no Discord event yet", async () => {

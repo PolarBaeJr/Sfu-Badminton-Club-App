@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+import Link from 'next/link';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import { sortLegalDocuments, getMissingLegalDocuments } from '@badminton/shared';
@@ -151,6 +152,14 @@ export default async function LegalPage() {
         watermark="L"
       />
 
+      {canReadRoster && (
+        <p className="mb-4 text-sm text-[var(--text-secondary)]">
+          <Link href="/legal/signatures" className="underline hover:text-[var(--color-accent)]">
+            See which version every member last signed
+          </Link>
+        </p>
+      )}
+
       <LegalConsole
         documents={documents}
         signatures={signatures}
@@ -165,7 +174,7 @@ export default async function LegalPage() {
       {/* Card chrome from tokens rather than `.card-base`: that class is
           declared only in the player app's globals.css, so in the console it
           styles nothing at all. See the note in ./legal-documents-form.tsx. */}
-      <div className="mt-6 border border-[var(--line)] bg-[var(--surface)] p-5">
+      <div className="mt-6 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5">
         <p className="settings-section-desc">
           The event waiver a tournament starts from, kept per season so each term&rsquo;s
           venue and club terms can differ.{' '}

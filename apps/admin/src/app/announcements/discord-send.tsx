@@ -36,7 +36,7 @@ import {
 import { useDiscordConsole } from './discord-console-context';
 import { DiscordButtonsPreview } from './discord-buttons-preview';
 import { DISCORD_BG } from './discord-markdown';
-import { DiscordPreview } from './discord-preview';
+import { DiscordMessagePreview, DiscordPreview } from './discord-preview';
 import { FormatBar, formatShortcut } from './format-bar';
 
 // Speaking as the club in Discord, from the console.
@@ -315,6 +315,23 @@ export function DiscordSend({
    * re-notify anybody when a message changes. So the badge goes quiet in edit
    * mode rather than promising something that cannot happen.
    */
+  function pickShape(next: 'message' | 'embed') {
+    if (next === shape) return;
+    setShape(next);
+    // THE PING CONTROLS ARE PER SHAPE AND THE STATE IS NOT. Without this,
+    // switching to Embed after arming the switch leaves `ping` true and
+    // lights the PINGS badge over a message that pings nobody, and
+    // switching the other way would carry a picked role into a shape that
+    // has no line to put it on.
+    setPing(false);
+    setPingRoles([]);
+    // AND `buttonSet` IS DELIBERATELY LEFT ALONE, which is the opposite of
+    // the two lines above and needs saying because of them: the ping
+    // controls are per shape, the buttons are not. A button means the same
+    // thing under a plain message as it does under an embed, so clearing
+    // the choice here would throw one away for no reason.
+  }
+
   const willPing = editing ? false : shape === 'message' ? ping : pingRoles.length > 0;
 
   // Choosing to paste and then pasting nothing is now an incomplete form rather
@@ -397,30 +414,41 @@ export function DiscordSend({
         {willPing && <Badge variant="danger">PINGS</Badge>}
       </div>
 
-      <Select
-        label="Shape"
-        value={shape}
-        // FIXED WHILE EDITING. Discord's edit endpoint leaves a field it is not
-        // sent standing, so a message that posted as plain text cannot become an
-        // embed without the old line remaining above it.
-        disabled={editing}
-        onChange={(e) => {
-          setShape(e.target.value as 'message' | 'embed');
-          // THE PING CONTROLS ARE PER SHAPE AND THE STATE IS NOT. Without this,
-          // switching to Embed after arming the switch leaves `ping` true and
-          // lights the PINGS badge over a message that pings nobody, and
-          // switching the other way would carry a picked role into a shape that
-          // has no line to put it on.
-          setPing(false);
-          setPingRoles([]);
-          // AND `buttonSet` IS DELIBERATELY LEFT ALONE, which is the opposite of
-          // the two lines above and needs saying because of them: the ping
-          // controls are per shape, the buttons are not. A button means the same
-          // thing under a plain message as it does under an embed, so clearing
-          // the choice here would throw one away for no reason.
-        }}
-        options={SHAPE_OPTIONS}
-      />
+      {/* TWO BUTTONS, NOT A SELECT. The select drew no box, so it read as a
+          line of text and nobody could see there was a choice to make. With
+          two options a toggle shows both at once. */}
+      <div className="space-y-1.5">
+        <span className="block text-sm font-medium text-[var(--text-secondary)]">Shape</span>
+        <div
+          role="radiogroup"
+          aria-label="Shape"
+          className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)]"
+        >
+          {SHAPE_OPTIONS.map((o) => {
+            const on = shape === o.value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                // FIXED WHILE EDITING. Discord's edit endpoint leaves a field it
+                // is not sent standing, so a message that posted as plain text
+                // cannot become an embed without the old line remaining above it.
+                disabled={editing}
+                onClick={() => pickShape(o.value as 'message' | 'embed')}
+                className={`min-h-[40px] rounded-md text-sm transition-colors disabled:cursor-not-allowed ${
+                  on
+                    ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-[inset_0_-2px_0_var(--color-accent)]'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50'
+                }`}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {shape === 'message' ? (
         <div className="space-y-1">
@@ -706,10 +734,20 @@ export function DiscordSend({
         </p>
       )}
 
-      {/* The embed shape gets the same preview the composer does, from the same
-          code, which is the whole reason the preview lives in shared. A plain
-          message has nothing to preview: it is posted exactly as typed. */}
-      {shape === 'embed' && title.trim() && (
+      {/* Both shapes show a preview from the moment the shape is picked, empty
+          form included: a preview that appeared only after the headline was
+          typed read as no preview at all. The embed gets the same preview the
+          website composer does, from the same code. */}
+      {shape === 'message' && (
+        <DiscordMessagePreview
+          content={content}
+          // Club roles only, as below: the send path resolves those alone.
+          roles={clubRoles}
+          buttonSet={buttonSet}
+          pings={ping && !editing}
+        />
+      )}
+      {shape === 'embed' && (
         <DiscordPreview
           title={title}
           body={body}

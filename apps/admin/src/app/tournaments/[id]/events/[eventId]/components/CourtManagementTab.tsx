@@ -310,7 +310,7 @@ export function CourtManagementTab({
             answers "what am I calling next" without scrolling, which is the ask,
             and it names the match rather than just counting — a desk holding a
             phone wants the two names it is about to shout. */}
-        <div className="border border-[var(--border)] bg-[var(--bg-elevated)] p-3 space-y-2">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3 space-y-2">
           {nextRow ? (
             <div className="flex items-start gap-2">
               <ArrowRight className="w-4 h-4 text-[var(--color-accent)] mt-0.5 shrink-0" aria-hidden />

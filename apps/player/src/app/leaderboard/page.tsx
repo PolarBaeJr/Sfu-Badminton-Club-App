@@ -10,6 +10,7 @@ import {
   type HistorySeason,
 } from '@/lib/season-history';
 import { pastLeaderboardEntries, type SnapshotRow } from '@/lib/past-leaderboard';
+import { FeatureGate } from '@/lib/feature-gate';
 import LeaderboardClient, { type LeaderboardEntry, type LeaderboardRow } from './leaderboard-client';
 
 // A season id arriving from the URL is checked against this before it is used in
@@ -40,8 +41,14 @@ export default async function LeaderboardPage({
   const params = (await searchParams) ?? {};
   const raw = params.season;
   const seasonParam = (typeof raw === 'string' ? raw : '').trim();
-  if (seasonParam) return <PastSeasonLadder seasonId={seasonParam} />;
-  return <CurrentLadder />;
+  // Gated HERE, not in a layout, because a layout would also cover the member
+  // profiles under /leaderboard/<id>, which are linked from everywhere and stay
+  // reachable when the ladder is switched off.
+  return (
+    <FeatureGate feature="leaderboard">
+      {seasonParam ? <PastSeasonLadder seasonId={seasonParam} /> : <CurrentLadder />}
+    </FeatureGate>
+  );
 }
 
 async function CurrentLadder() {

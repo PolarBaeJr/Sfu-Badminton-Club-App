@@ -67,7 +67,7 @@ export function SessionCard({
 
   return (
     <article
-      // Calendar entries deep-link to /sessions?s=<id>, and deep-link-scroll.tsx
+      // Calendar entries deep-link to /feed?s=<id>, and deep-link-scroll.tsx
       // finds the card by this exact id. It must not change shape.
       id={`session-${session.id}`}
       className={`session-card${isNext ? ' is-next' : ''}`}
@@ -128,7 +128,9 @@ export function SessionCard({
         {/* Check-in stays first and unwrapped: this is what someone taps at the
             door with a queue behind them, and it must not move further from
             their thumb than it was. */}
-        <div className="sess-actions">
+        {/* The tour points at this row, not the whole card: on a short phone
+            the card and the tour's popover cannot both fit on screen. */}
+        <div className="sess-actions" data-tour={isNext ? 'next-session' : undefined}>
           <CheckInButton
             sessionId={session.id}
             myStatus={myStatus}

@@ -8,7 +8,40 @@
 // than reading the clock, so "open" and "upcoming" can be tested rather than
 // hoped for.
 
-import { isDoublesEvent, doublesDrawSlots, type TournamentEventType } from '@badminton/shared';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { isDoublesEvent, doublesDrawSlots, scopeToActiveSeason, type TournamentEventType } from '@badminton/shared';
+
+/**
+ * The tournament calendar read behind /tournaments, as a builder so
+ * tournaments-season-query.test.ts runs this exact code.
+ *
+ * NEVER A DRAFT. tournaments_select is USING (TRUE), so without the status
+ * filter every member could read an exec's unpublished tournament here.
+ *
+ * The two season branches are different questions and get different filters.
+ * The bare path (no pick) goes through scopeToActiveSeason, loose on purpose:
+ * it also admits rows whose season_id IS NULL, and with no active season it
+ * drops the filter entirely. An explicit ?season= is a question with one
+ * answer, so it is a strict .eq on the id of a season the caller already
+ * found, never on the string from the URL.
+ */
+export function tournamentCalendarQuery(
+  supabase: Pick<SupabaseClient, 'from'>,
+  season: { pickedId: string | null | undefined; activeId: string | null | undefined },
+) {
+  const calendar = supabase
+    .from('tournaments')
+    .select(
+      'id, name, start_date, status, suspended_at, ' +
+      'tournament_events(id, event_type, status, max_participants), ' +
+      'tournament_fee_tiers(id, name, amount_cents, is_default, sort_order, applies_to)',
+    )
+    .neq('status', 'draft');
+  const scoped = season.pickedId
+    ? calendar.eq('season_id', season.pickedId)
+    : scopeToActiveSeason(calendar, season.activeId);
+  return scoped.order('start_date', { ascending: true });
+}
 
 export type IndexEvent = {
   id: string;

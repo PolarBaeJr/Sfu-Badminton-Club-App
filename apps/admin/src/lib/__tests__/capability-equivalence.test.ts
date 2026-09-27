@@ -262,6 +262,15 @@ const TODAY: Row[] = [
   { capability: 'tournaments.fees.markpaid.write',    admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — tournament-fees.ts:218' },
   { capability: 'tournaments.fees.markunpaid.write',  admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — tournament-fees.ts:294' },
 
+  // ---- events ----------------------------------------------------------
+  { capability: 'events.page',                         admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.signups.read',                 admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.signups.remove.write',         admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.manage.create.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.manage.update.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.manage.cancel.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+  { capability: 'events.manage.delete.write',          admin: T, exec: F, trainer: F, was: 'no prior gate: club events are new in 00244' },
+
   // ---- fees ------------------------------------------------------------
   // The exec rows in this whole area are the club owner's "allow execs to add
   // expenses too", and nothing else on the page ever was.
@@ -315,6 +324,16 @@ const TODAY: Row[] = [
 
   // ---- audit / ratings / accounts --------------------------------------
   { capability: 'audit.page',                         admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/audit'] = 'admin'" },
+  // THE AUDIT LOG'S CSV EXPORT. No prior gate to transcribe, so these two rows
+  // are a reason rather than a transcription, the way the three
+  // `accounts.apikey.*` rows below are. `exec: F` on both follows `audit.page`
+  // above: a download from a section somebody cannot open is not a coherent
+  // grant, and until that row moves neither of these can. The split into two is
+  // the sign-in trail, which carries account email addresses and login times
+  // for members as well as officers, and which the club may want to withhold
+  // from somebody who may still export what the console did.
+  { capability: 'audit.export.read',                  admin: T, exec: F, trainer: F, was: 'no prior gate: the log-type export on /audit is new, and it follows audit.page' },
+  { capability: 'audit.signins.read',                 admin: T, exec: F, trainer: F, was: 'no prior gate: the sign-in log was unreachable from the console before 00257' },
   { capability: 'ratings.page',                       admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — ratings/page.tsx:17' },
   { capability: 'accounts.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — accounts/page.tsx:12' },
   // THE DATA API'S KEYS, minted from a panel on that page. No prior gate, and
@@ -333,6 +352,28 @@ const TODAY: Row[] = [
   // admin-only in every half, which is where this row's answers come from.
   { capability: 'platform.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — the form on ratings/page.tsx and accounts/page.tsx' },
   { capability: 'platform.settings.write',            admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — settings.ts:14' },
+
+  // ---- page --------------------------------------------------------------
+  // THE KEYS TO SWITCHED-OFF FEATURES, and the rows where this table's columns
+  // and the gate they replaced deliberately part. For the one commit these
+  // features were switchable without keys (47fc75e7), hasConsoleAccess() let
+  // every console level in, trainers included. The club owner replaced that
+  // with a key per feature, handed to one person at a time, so an unrestricted
+  // exec or trainer now holds none of them. That is a narrowing, which the
+  // implication in the per-row cases is silent about on purpose, and `exec: F`
+  // is what keeps the exec column equal to EXEC_ASSIGNABLE, which these are
+  // not in: they are offerable through OFFERABLE_BEYOND_EXEC instead.
+  { capability: 'page.access.sessions',               admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.challenges',             admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.tournaments',            admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.leaderboard',            admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.my_stats',               admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.announcements',          admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.fees',                   admin: T, exec: F, trainer: F, was: 'any console level, hasConsoleAccess() in the player FeatureGate, 47fc75e7' },
+  { capability: 'page.access.events',                 admin: T, exec: F, trainer: F, was: 'no prior gate: the events switch is new in 00244' },
+  { capability: 'page.access.membership',             admin: T, exec: F, trainer: F, was: 'no prior gate: the membership switch is new in 00247' },
+  { capability: 'page.access.socials',                admin: T, exec: F, trainer: F, was: 'no prior gate: the socials switch is new in 00247' },
+  { capability: 'page.access.guest_waivers',          admin: T, exec: F, trainer: F, was: 'no prior gate: the guest waivers switch is new in 00254' },
 ];
 
 describe('capability equivalence — nobody gained anything', () => {

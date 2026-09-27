@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@badminton/ui';
-import { clearHostOnlyAuthCookies } from '@badminton/shared';
+// Deep import, not the '@badminton/shared' barrel: see the player middleware.
+import { signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { Check } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 import { ConsentShell } from './consent-shell';
@@ -59,10 +60,7 @@ export function LinkClient({ token, playerName }: { token: string; playerName: s
   async function switchAccount() {
     setSigningOut(true);
     try {
-      await createClient().auth.signOut();
-      // See clearHostOnlyAuthCookies: signOut alone can leave a pre-migration
-      // host-only cookie behind, which would still read as a live session.
-      clearHostOnlyAuthCookies();
+      await signOutThisDevice(createClient().auth);
     } finally {
       window.location.href = `/link/${token}`;
     }

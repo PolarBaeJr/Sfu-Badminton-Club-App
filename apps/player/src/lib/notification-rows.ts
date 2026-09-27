@@ -16,6 +16,7 @@
 // rating delta beside it — neither is derivable, and guessing would be worse
 // than leaving it out.
 
+import { isUuid } from '@badminton/shared';
 import { clubDayKey, shiftDayKey } from './feed-activity';
 
 export type NotificationMetadata = Record<string, unknown> | null | undefined;
@@ -147,6 +148,10 @@ export function notificationAction(type: string, metadata: NotificationMetadata)
   const eventId = str(metadata, 'event_id');
   const announcementId = str(metadata, 'announcement_id');
   const sessionId = str(metadata, 'session_id');
+  const sessionLink: NotificationAction = {
+    href: sessionId && isUuid(sessionId) ? `/feed?s=${sessionId}` : '/feed',
+    label: 'View',
+  };
 
   // /challenges/[id] is the one page that shows a challenge, the result
   // submitted against it and any dispute on it — so every challenge-shaped
@@ -185,9 +190,9 @@ export function notificationAction(type: string, metadata: NotificationMetadata)
       return { href: '/my-stats', label: 'View' };
 
     case 'session_reminder':
-      // There is no /sessions/[id] route — the list is the destination, and it
-      // does show the session being reminded about.
-      return { href: '/sessions', label: 'View' };
+      // There is no page per session: the schedule on /feed is the
+      // destination, scrolled to the session's card when the id is a real one.
+      return sessionLink;
 
     case 'tournament_checkin_open':
       return tournamentId && eventId
@@ -211,9 +216,13 @@ export function notificationAction(type: string, metadata: NotificationMetadata)
       // tournament registration, challenge reminders) and only the metadata
       // says which. Read the metadata, not the type.
       if (announcementId) return { href: '/announcements', label: 'Read' };
+      // A rejected e-transfer receipt, or an exec's reminder to pay (00248).
+      if (str(metadata, 'kind') === 'fee_submission_rejected' || str(metadata, 'kind') === 'fee_payment_reminder') {
+        return { href: '/membership', label: 'View' };
+      }
       if (challengeId) return { href: `/challenges/${challengeId}`, label: 'View' };
       if (tournamentId) return event('View');
-      if (sessionId) return { href: '/sessions', label: 'View' };
+      if (sessionId) return sessionLink;
       return null;
 
     default:

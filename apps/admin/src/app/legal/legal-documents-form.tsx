@@ -36,8 +36,8 @@ export interface DocumentSignatures {
 // never declares it, so every one of those cards currently renders with no
 // surface, no border and no padding at all. Rather than inherit that, the card
 // chrome here is written from tokens, which is what the class would have said:
-// --surface on a hairline --line border, radius 0, no shadow.
-const CARD = 'border border-[var(--line)] bg-[var(--surface)] p-5';
+// --surface on a hairline --line border, the 16px card corner, no shadow.
+const CARD = 'rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5';
 
 /** The small uppercase card heading from the guidelines. `.section-heading` is
  *  likewise undeclared in this app, so it is spelled out in tokens. */

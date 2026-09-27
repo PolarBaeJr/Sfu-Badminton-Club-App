@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CLUB_TIMEZONE, wallClockToUtc } from '@badminton/shared';
+import { CLUB_TIMEZONE, readFeatureFlags, wallClockToUtc } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
@@ -103,6 +103,11 @@ export async function GET(request: Request) {
 
   const supabase = createServiceRoleClient();
   const now = new Date();
+
+  // Sessions switched off for members: nothing to ping. A failed read is "on".
+  if (!(await readFeatureFlags(supabase)).sessions) {
+    return NextResponse.json({ pings: [] });
+  }
 
   const [rolesResult, settingsResult] = await Promise.all([
     supabase

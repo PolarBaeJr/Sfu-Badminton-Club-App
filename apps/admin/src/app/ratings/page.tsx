@@ -110,7 +110,7 @@ export default async function RatingsPage() {
         />
       ) : (
         // Withheld, not empty. A blank page reads as broken.
-        <p className="border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-[13px] text-[var(--mute)]">
+        <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-[13px] text-[var(--mute)]">
           The rating settings are not shown to you.
         </p>
       )}

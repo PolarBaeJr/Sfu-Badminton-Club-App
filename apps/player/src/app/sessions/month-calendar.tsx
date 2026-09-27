@@ -1,27 +1,38 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { ArrowLeftRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { CalendarMonth } from '@/lib/schedule';
+import type { CalendarItem, CalendarTone } from '@/lib/calendar-items';
 
-/**
- * One session as the calendar needs it. Every string on it was formatted on
- * the server — this component does no date maths and holds no clock, so it
- * cannot disagree with the schedule in the rail beside it.
- */
-export interface CalendarEvent {
-  id: string;
-  date: string;
-  name: string;
-  /** 'open' or 'closed' — the session_status enum has no third value. */
-  status: string;
-  /** "6:30 PM", or null for a night with no start time on it yet. */
-  timeLabel: string | null;
-  /** This member has said yes to it, or is already on the attendance list. */
-  mine: boolean;
-  /** True when there is a card in the rail for this id to jump to. */
-  linkable: boolean;
-}
+// Every string on an item was formatted on the server: this component does no
+// date maths and holds no clock, so it cannot disagree with the agenda beside
+// it. Sessions, club events and tournaments share the grid, told apart by the
+// badge vocabulary the rest of the app already speaks.
+const TONE_CLASS: Record<CalendarTone, string> = {
+  open: 'tag tag-win',
+  closed: 'tag',
+  club: 'tag tag-gold cal-ev-club',
+  tournament: 'tag tag-outline',
+  cancelled: 'tag cal-ev-cancelled',
+};
+
+const TONE_WORD: Record<CalendarTone, string> = {
+  open: 'open',
+  closed: 'closed',
+  club: 'Club event',
+  tournament: 'Tournament',
+  cancelled: 'Cancelled',
+};
+
+const LEGEND_LABEL: Record<CalendarTone, string> = {
+  open: 'Session',
+  closed: 'Closed',
+  club: 'Club event',
+  tournament: 'Tournament',
+  cancelled: 'Cancelled',
+};
 
 interface MonthCalendarProps {
   /**
@@ -37,13 +48,14 @@ interface MonthCalendarProps {
    * reachable month with years of nothing on either side, and stepping off it
    * lands back at the term. The note under the grid is what says so.
    */
-  months: CalendarMonth<CalendarEvent>[];
+  months: CalendarMonth<CalendarItem>[];
   initialIndex: number;
   weekdays: string[];
-  /** Named in the "that's all we loaded" note under the grid. */
+  /** The kinds the page actually loaded, named in a key under the grid. */
+  legend?: CalendarTone[];
 }
 
-export function MonthCalendar({ months, initialIndex, weekdays }: MonthCalendarProps) {
+export function MonthCalendar({ months, initialIndex, weekdays, legend }: MonthCalendarProps) {
   const [index, setIndex] = useState(() =>
     Math.min(Math.max(initialIndex, 0), Math.max(months.length - 1, 0))
   );
@@ -144,22 +156,28 @@ export function MonthCalendar({ months, initialIndex, weekdays }: MonthCalendarP
                   // stacked in one cell reads as a layout fault, and the
                   // member has no way to know which of them is a link until
                   // they try. Uniform, or the grid stops looking like a grid.
-                  const cls = `tag ${ev.status === 'open' ? 'tag-win' : ''} cal-ev${ev.mine ? ' is-mine' : ''}`;
-                  const label = [
-                    ev.name,
-                    ev.timeLabel,
-                    ev.status === 'open' ? 'open' : 'closed',
-                  ]
+                  const cls = `${TONE_CLASS[ev.tone]} cal-ev${ev.mine ? ' is-mine' : ''}`;
+                  const label = [ev.name, ev.timeLabel, TONE_WORD[ev.tone]]
                     .filter(Boolean)
                     .join(' · ');
-                  return ev.linkable ? (
-                    <a key={ev.id} href={`#session-${ev.id}`} className={cls} title={label}>
-                      <span className="cal-ev-name">{ev.name}</span>
+                  const body = <span className="cal-ev-name">{ev.name}</span>;
+                  if (!ev.href) {
+                    return (
+                      <span key={ev.key} className={cls} title={label}>
+                        {body}
+                      </span>
+                    );
+                  }
+                  // A card on this page is an in-page jump; anything else is a
+                  // route of its own.
+                  return ev.href.startsWith('#') ? (
+                    <a key={ev.key} href={ev.href} className={cls} title={label}>
+                      {body}
                     </a>
                   ) : (
-                    <span key={ev.id} className={cls} title={label}>
-                      <span className="cal-ev-name">{ev.name}</span>
-                    </span>
+                    <Link key={ev.key} href={ev.href} className={cls} title={label}>
+                      {body}
+                    </Link>
                   );
                 })}
               </div>
@@ -168,6 +186,16 @@ export function MonthCalendar({ months, initialIndex, weekdays }: MonthCalendarP
         </div>
       </div>
 
+      {legend && legend.length > 0 && (
+        <p className="cal-legend">
+          {legend.map((tone) => (
+            <span key={tone} className="cal-legend-item">
+              <span className={`cal-swatch is-${tone}`} aria-hidden="true" />
+              {LEGEND_LABEL[tone]}
+            </span>
+          ))}
+        </p>
+      )}
     </div>
   );
 }

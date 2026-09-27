@@ -971,8 +971,10 @@ export default function LeaderboardClient({
                       showRecord={showRecord}
                       // Same gate as before, plus the season: a term that is over
                       // cannot be played. Your own row is excluded because there
-                      // is no such thing as challenging yourself.
-                      canChallenge={!isPast && standing.ok && p.id !== meId}
+                      // is no such thing as challenging yourself. A signed-out
+                      // visitor has good standing (they are not a member in bad
+                      // standing), so the meId check is what hides it from them.
+                      canChallenge={!isPast && standing.ok && meId !== null && p.id !== meId}
                       onChallenge={goChallenge}
                     />
                   ))}

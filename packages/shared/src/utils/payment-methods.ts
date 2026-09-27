@@ -7,6 +7,7 @@ export const PAYMENT_METHODS = [
   { value: 'e_transfer', label: 'E-transfer' },
   { value: 'cash', label: 'Cash' },
   { value: 'online_portal', label: 'Online portal' },
+  { value: 'sfu_rec', label: 'SFU Rec website' },
   { value: 'custom', label: 'Custom' },
 ] as const;
 

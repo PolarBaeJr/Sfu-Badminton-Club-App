@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { clubToday } from '@badminton/shared';
+import { clubToday, readFeatureFlags } from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { onPublicTracks, onVisibleTracks } from '@/lib/session-track-filter';
@@ -166,7 +166,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'sessions_unavailable' }, { status: 502 });
   }
 
-  const rows = sessions ?? [];
+  // Sessions switched off for members answer as an empty schedule, in the same
+  // shape and through the same branch below.
+  const rows = (await readFeatureFlags(supabase)).sessions ? sessions ?? [] : [];
   // `linked` travels with the payload so the bot can tell an unlinked caller WHY
   // their list is short, instead of them seeing a thin schedule and concluding
   // the club has nothing on. The paging fields travel on this branch too: a bot

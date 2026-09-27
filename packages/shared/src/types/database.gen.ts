@@ -1985,6 +1985,8 @@ export type Database = {
           joined_at: string
           last_active_at: string
           last_name: string | null
+          media_consent: boolean
+          media_consent_changed_at: string | null
           member_code: string | null
           membership_type: Database["public"]["Enums"]["membership_type"]
           notification_preferences: Json
@@ -2001,6 +2003,7 @@ export type Database = {
           show_activity_status: boolean
           skill_tier: string | null
           status: Database["public"]["Enums"]["player_status"]
+          tours_seen: Json
           updated_at: string
           user_id: string | null
           waiver_reset_at: string | null
@@ -2037,6 +2040,8 @@ export type Database = {
           joined_at?: string
           last_active_at?: string
           last_name?: string | null
+          media_consent?: boolean
+          media_consent_changed_at?: string | null
           member_code?: string | null
           membership_type?: Database["public"]["Enums"]["membership_type"]
           notification_preferences?: Json
@@ -2053,6 +2058,7 @@ export type Database = {
           show_activity_status?: boolean
           skill_tier?: string | null
           status?: Database["public"]["Enums"]["player_status"]
+          tours_seen?: Json
           updated_at?: string
           user_id?: string | null
           waiver_reset_at?: string | null
@@ -2089,6 +2095,8 @@ export type Database = {
           joined_at?: string
           last_active_at?: string
           last_name?: string | null
+          media_consent?: boolean
+          media_consent_changed_at?: string | null
           member_code?: string | null
           membership_type?: Database["public"]["Enums"]["membership_type"]
           notification_preferences?: Json
@@ -2105,6 +2113,7 @@ export type Database = {
           show_activity_status?: boolean
           skill_tier?: string | null
           status?: Database["public"]["Enums"]["player_status"]
+          tours_seen?: Json
           updated_at?: string
           user_id?: string | null
           waiver_reset_at?: string | null
@@ -4194,6 +4203,10 @@ export type Database = {
         Args: { p_entry_ids: string[]; p_is_pair: boolean }
         Returns: Json
       }
+      mark_tour_seen: {
+        Args: { p_player_id: string; p_tour: string }
+        Returns: Json
+      }
       match_counts_toward_stats: {
         Args: {
           p_result_status: Database["public"]["Enums"]["result_status"]
@@ -4390,6 +4403,13 @@ export type Database = {
       set_match_ready: {
         Args: { p_match_id: string; p_player_id: string; p_ready: boolean }
         Returns: string[]
+      }
+      set_my_media_consent: {
+        Args: { p_consent: boolean }
+        Returns: {
+          media_consent: boolean
+          media_consent_changed_at: string
+        }[]
       }
       strip_identity_keys: { Args: { v: Json }; Returns: Json }
       submit_match_result: {

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, DatePicker, useConfirm } from '@badminton/ui';
 import {
+  errorToastText,
   resolvePaymentMethod,
   PAYMENT_METHODS,
   PAYMENT_METHOD_CUSTOM,
@@ -512,7 +513,7 @@ export function AddOtherIncome({ seasonId, seasonName }: { seasonId: string; sea
         setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to record income', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to record income'), 'error');
       }
     });
   }
@@ -607,7 +608,7 @@ export function AddExpense({
         setReceiptFile(null);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to record expense', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to record expense'), 'error');
       }
     });
   }
@@ -762,7 +763,7 @@ export function EditExpense({
         setOpen(false);
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to update expense', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to update expense'), 'error');
       }
     });
   }
@@ -861,7 +862,7 @@ export function MarkReimbursed({
         // matched no rows — PostgREST calls that success, so the message here
         // is the only thing standing between an admin and a "done" toast for a
         // reimbursement that never happened.
-        toast(err instanceof Error ? err.message : 'Failed to mark reimbursed', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to mark reimbursed'), 'error');
       }
     });
   }
@@ -911,7 +912,7 @@ export function RemoveLedgerEntry({
         toast('Deleted', 'success');
         router.refresh();
       } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to delete', 'error');
+        toast(errorToastText(err, 'FEE', 'Failed to delete'), 'error');
       }
     });
   }

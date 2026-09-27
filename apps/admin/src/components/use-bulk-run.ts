@@ -41,6 +41,9 @@ export interface BulkRunResult {
   outcome: BulkOutcome;
   /** The whole-operation failure, if there was one. */
   error?: string;
+  /** The failure's error code and ref, when the action returned one. */
+  code?: string;
+  ref?: string;
 }
 
 export function useBulkRun() {
@@ -62,7 +65,12 @@ export function useBulkRun() {
         for (const chunk of chunks) {
           const res = await call(chunk);
           if (!res.ok) {
-            return { ok: false, outcome: mergeBulkOutcomes(parts), error: res.error };
+            return {
+              ok: false,
+              outcome: mergeBulkOutcomes(parts),
+              error: res.error,
+              ...(res.code ? { code: res.code, ref: res.ref } : {}),
+            };
           }
           parts.push(res.data);
           const done = parts.reduce((n, p) => n + p.attempted, 0);

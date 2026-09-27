@@ -1,9 +1,9 @@
 import * as Sentry from '@sentry/nextjs';
-import { isExpectedFailure } from '@badminton/shared';
+import { isAppError, isExpectedFailure } from '@badminton/shared';
 
 export type ActionResult<T = void> =
   | { ok: true; data: T }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: string; ref?: string };
 
 const NEXT_CONTROL_FLOW = /^NEXT_(REDIRECT|NOT_FOUND|HTTP_ERROR_FALLBACK)/;
 
@@ -20,6 +20,13 @@ export async function runAction<T>(fn: () => Promise<T>): Promise<ActionResult<T
     // on the allowlisted guard message too, not just on ExpectedError: a guard
     // that arrives as a plain Error is still the system working.
     if (!isExpectedFailure(err)) Sentry.captureException(err);
-    return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
+    // A coded error also hands back its code and ref, so the toast can show
+    // what to report. Next never logs an error returned as a value, so a coded
+    // fault is logged here, under the same CODE.ref the member sees.
+    if (!isAppError(err)) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
+    }
+    if (!isExpectedFailure(err)) console.error('[action]', err.digest, err);
+    return { ok: false, error: err.message, code: err.code, ref: err.ref };
   }
 }

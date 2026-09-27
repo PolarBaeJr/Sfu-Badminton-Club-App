@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input, PlayerPicker, Select, Switch, Textarea } from '@badminton/ui';
+import { Button, Dialog, Input, PlayerPicker, Switch, Textarea } from '@badminton/ui';
 import {
   tallyGames,
   CUSTOM_FORMAT_BOUNDS,
@@ -82,7 +82,7 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
     if (formatInvalid) { toast(customFormatHint(Number(customGames), Number(customPoints)), 'error'); return; }
     // Level or unplayed games have no winner, and guessing one here would write
     // a rating change nobody could trace back to a wrong scoreline.
-    if (!tally.winner) { toast('Games are level or incomplete — enter the scores that decide the match', 'error'); return; }
+    if (!tally.winner) { toast('No winner yet: enter the scores that decide the match', 'error'); return; }
 
     const sideAPlayers = matchType === 'doubles' ? [sideA1, sideA2] : [sideA1];
     const sideBPlayers = matchType === 'doubles' ? [sideB1, sideB2] : [sideB1];
@@ -114,24 +114,65 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
     setLoading(false);
   }
 
+
   const playerOptions = players.map(p => ({ id: p.id, name: p.full_name, avatarUrl: p.avatar_url }));
+
+  // Scores are typed on a numeric keypad, not spun: a text field with digits
+  // only, and an empty box standing for 0 so a score is typed, not edited.
+  const scoreInput = (i: number, field: 'side_a_score' | 'side_b_score', label: string, won: boolean) => (
+    <input
+      type="text"
+      inputMode="numeric"
+      aria-label={label}
+      placeholder="0"
+      value={games[i]![field] === 0 ? '' : String(games[i]![field])}
+      onChange={(e) => updateGame(i, field, Number(e.target.value.replace(/\D/g, '').slice(0, 2)))}
+      className={`h-12 w-full rounded-[var(--r-control,8px)] border bg-[var(--bg-surface)] text-center font-mono text-lg tabular-nums placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors ${
+        won ? 'border-[var(--color-success)] text-[var(--color-success)]' : 'border-[var(--border)] text-[var(--text-primary)]'
+      }`}
+    />
+  );
 
   return (
     <>
       <Button onClick={() => setOpen(true)}>Enter Match</Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Admin Match Entry">
-        <form onSubmit={handleCreate} className="space-y-4 max-h-[70vh] overflow-y-auto">
-          <Select
-            label="Match Type"
-            value={matchType}
-            onChange={(e) => setMatchType(e.target.value)}
-            options={[
-              { value: 'singles', label: 'Singles' },
-              { value: 'doubles', label: 'Doubles' },
-            ]}
-          />
+        {/* No scroll of its own: the Dialog panel already scrolls at 90vh, and a
+            second scroller inside it showed two scrollbars. */}
+        <form onSubmit={handleCreate} className="space-y-5">
+          <div className="space-y-1.5">
+            <p className="block text-[13px] font-medium text-[var(--text-secondary)]" id="match-type-label">Match type</p>
+            <div
+              role="radiogroup"
+              aria-labelledby="match-type-label"
+              className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[var(--bg-card)] border border-[var(--border)]"
+            >
+              {[
+                { value: 'singles', label: 'Singles' },
+                { value: 'doubles', label: 'Doubles' },
+              ].map((o) => {
+                const on = matchType === o.value;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => setMatchType(o.value)}
+                    className={`min-h-[40px] rounded-md text-sm transition-colors ${
+                      on
+                        ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-[inset_0_-2px_0_var(--color-accent)]'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             <Input
               label="Best of (games)"
               type="text"
@@ -141,7 +182,7 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
                 const next = e.target.value.replace(/\D/g, '').slice(0, 1);
                 setCustomGames(next);
                 // Shortening the match must not leave more score rows than it
-                // can hold — those rows are submitted, and a best-of-1 with
+                // can hold: those rows are submitted, and a best-of-1 with
                 // three games recorded is not a result that could have happened.
                 if (isLegalCustomGames(Number(next))) {
                   setGames((current) => current.slice(0, Number(next)));
@@ -157,78 +198,85 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
               onChange={(e) => setCustomPoints(e.target.value.replace(/\D/g, '').slice(0, 2))}
               placeholder="21"
             />
-            <p className={`col-span-2 text-xs ${formatInvalid ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
+            <p className={`col-span-2 -mt-1 text-xs ${formatInvalid ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
               {customFormatHint(Number(customGames), Number(customPoints))}
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Switch checked={rated} onChange={setRated} />
-            <span className="text-sm text-[var(--text-secondary)]">Rated match</span>
-          </div>
+          <Switch
+            checked={rated}
+            onChange={setRated}
+            label="Rated match"
+            description={rated ? 'Moves both sides’ ratings.' : 'Recorded, but no rating changes.'}
+          />
 
-          {/* role=group ties the two pickers to their side heading — without it a
+          {/* role=group ties the pickers to their side heading: without it a
               screen reader hears "Player 1" twice with nothing to tell them apart. */}
-          <div className="dialog-group space-y-3" role="group" aria-labelledby="side-a-heading">
-            <p className="dialog-group-label" id="side-a-heading">Side A</p>
-            <PlayerPicker label="Player 1" value={sideA1} onChange={setSideA1} players={playerOptions} />
-            {matchType === 'doubles' && (
-              <PlayerPicker label="Player 2" value={sideA2} onChange={setSideA2} players={playerOptions} />
-            )}
-          </div>
-
-          <div className="dialog-group space-y-3" role="group" aria-labelledby="side-b-heading">
-            <p className="dialog-group-label" id="side-b-heading">Side B</p>
-            <PlayerPicker label="Player 1" value={sideB1} onChange={setSideB1} players={playerOptions} />
-            {matchType === 'doubles' && (
-              <PlayerPicker label="Player 2" value={sideB2} onChange={setSideB2} players={playerOptions} />
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-[var(--text-secondary)]">Games</p>
-              <div className="flex gap-2">
-                <button type="button" className="stepper-btn" onClick={removeGame} aria-label="Remove game">&minus;</button>
-                <button type="button" className="stepper-btn" onClick={addGame} aria-label="Add game">+</button>
-              </div>
-            </div>
-            {games.map((g, i) => (
-              <div key={i} className="grid grid-cols-3 gap-2 items-end">
-                <span className="text-xs text-[var(--text-muted)] py-2">Game {g.game_number}</span>
-                <Input
-                  label="A Score"
-                  type="number"
-                  value={String(g.side_a_score)}
-                  onChange={(e) => updateGame(i, 'side_a_score', Number(e.target.value))}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              { key: 'a', title: 'Side A', one: [sideA1, setSideA1], two: [sideA2, setSideA2] },
+              { key: 'b', title: 'Side B', one: [sideB1, setSideB1], two: [sideB2, setSideB2] },
+            ] as const).map((side) => (
+              <div key={side.key} className="dialog-group space-y-3" role="group" aria-labelledby={`side-${side.key}-heading`}>
+                <p className="dialog-group-label !mb-0" id={`side-${side.key}-heading`}>{side.title}</p>
+                <PlayerPicker
+                  label={matchType === 'doubles' ? 'Player 1' : 'Player'}
+                  value={side.one[0]}
+                  onChange={side.one[1]}
+                  players={playerOptions}
                 />
-                <Input
-                  label="B Score"
-                  type="number"
-                  value={String(g.side_b_score)}
-                  onChange={(e) => updateGame(i, 'side_b_score', Number(e.target.value))}
-                />
+                {matchType === 'doubles' && (
+                  <PlayerPicker label="Player 2" value={side.two[0]} onChange={side.two[1]} players={playerOptions} />
+                )}
               </div>
             ))}
+          </div>
+
+          <div className="dialog-group">
+            <div className="flex items-center justify-between mb-3">
+              <p className="dialog-group-label !mb-0">Games</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[var(--text-muted)] tabular-nums">{games.length} of {maxGames}</span>
+                <button type="button" className="stepper-btn" onClick={removeGame} disabled={games.length <= 1} aria-label="Remove game">&minus;</button>
+                <button type="button" className="stepper-btn" onClick={addGame} disabled={games.length >= maxGames} aria-label="Add game">+</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-[4.5rem_1fr_1fr] gap-x-2 gap-y-2 items-center">
+              <span />
+              <span className="text-center text-xs font-medium text-[var(--text-secondary)]">Side A</span>
+              <span className="text-center text-xs font-medium text-[var(--text-secondary)]">Side B</span>
+              {games.map((g, i) => (
+                <div key={i} className="contents">
+                  <span className="text-xs text-[var(--text-muted)]">Game {g.game_number}</span>
+                  {scoreInput(i, 'side_a_score', `Game ${g.game_number}, Side A score`, g.side_a_score > g.side_b_score)}
+                  {scoreInput(i, 'side_b_score', `Game ${g.game_number}, Side B score`, g.side_b_score > g.side_a_score)}
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Read-only: the scores above already answer this. The tally is shown
               alongside so a typo is visible as a wrong games count, not just as
               a winner the admin has no way to check. */}
-          <div className="dialog-group" role="status" aria-live="polite">
-            <p className="dialog-group-label">Winner</p>
-            <p className={`text-sm font-medium ${tally.winner ? 'text-[var(--color-success)]' : 'text-[var(--text-muted)]'}`}>
-              {tally.winner
-                ? `${tally.winner === 'a' ? 'Side A' : 'Side B'} — ${tally.aGamesWon}-${tally.bGamesWon} in games`
-                : `Level or incomplete (${tally.aGamesWon}-${tally.bGamesWon} in games) — enter the deciding scores`}
-            </p>
+          <div
+            role="status"
+            aria-live="polite"
+            className={`rounded-lg border px-4 py-3 text-sm ${
+              tally.winner
+                ? 'border-[var(--color-success)] text-[var(--color-success)]'
+                : 'border-[var(--border)] text-[var(--text-muted)]'
+            }`}
+          >
+            {tally.winner
+              ? <><span className="font-semibold">{tally.winner === 'a' ? 'Side A' : 'Side B'} wins</span>, {tally.aGamesWon}-{tally.bGamesWon} in games</>
+              : <>No winner yet ({tally.aGamesWon}-{tally.bGamesWon} in games). Enter the deciding scores.</>}
           </div>
 
-          <Textarea label="Admin Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} onInput={autoGrow} />
+          <Textarea label="Admin note (optional)" value={note} onChange={(e) => setNote(e.target.value)} onInput={autoGrow} />
 
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-end gap-2 pt-1">
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
-            <Button type="submit" loading={loading} disabled={formatInvalid}>Create Match</Button>
+            <Button type="submit" loading={loading} disabled={formatInvalid}>Create match</Button>
           </div>
         </form>
       </Dialog>

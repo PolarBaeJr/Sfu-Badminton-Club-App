@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { readFeatureFlags } from '@badminton/shared';
 import {
   discordServiceUnauthorized,
   isAuthorizedDiscordService,
@@ -49,6 +50,13 @@ export async function GET(request: Request) {
   const page = Math.max(1, Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1);
 
   const supabase = createServiceRoleClient();
+
+  // The leaderboard switched off for members answers as an empty ladder, in the
+  // same shape. A failed read is "on".
+  if (!(await readFeatureFlags(supabase)).leaderboard) {
+    return NextResponse.json({ ladder, page: 1, totalPages: 1, totalPlayers: 0, entries: [] });
+  }
+
   const { data, error } = await supabase.rpc('get_leaderboard');
 
   if (error) {

@@ -19,6 +19,10 @@ self.addEventListener('fetch', (event) => {
   // player app's cache on a shared phone, and hand it back whenever the network
   // drops.
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return;
+  // The OCR engine behind the e-transfer form: about 6 MB, fetched once when a
+  // member picks a screenshot. Left to the browser's HTTP cache rather than
+  // copied into this one on every install.
+  if (url.pathname.startsWith('/tesseract/')) return;
 
   event.respondWith(
     fetch(event.request)

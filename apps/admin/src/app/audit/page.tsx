@@ -1,46 +1,48 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
-import { selectInChunks, clubToday, wallClockToUtc } from '@badminton/shared';
+import { selectInChunks } from '@badminton/shared';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
 import { AuditActivityChart } from './activity-chart';
+import { LogTypeSelect } from './log-type-select';
 import { countDegraded } from '@/lib/audit-log-view';
+import { resolveAuditWindow } from '@/lib/audit-scope';
+import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
+import { withBase } from '@/lib/base-path';
 import { SeasonSelect } from '@/components/season-select';
-import { resolveSeasonScope } from '@/components/season-scope';
-
-/**
- * Club-local midnight opening `date`, as a UTC instant.
- *
- * BOTH ENDS OF THIS FILTER WERE IN THE WRONG ZONE (F-022). The season's
- * start_date and end_date are DATE columns and mean club-local calendar days,
- * but created_at is a timestamptz: the start bound was pinned to UTC midnight
- * and the end bound was `new Date('YYYY-MM-DDT00:00:00')`, which parses in
- * whatever timezone the container happens to run in — UTC in production. Both
- * therefore sat 7 hours ahead of the club's own midnight, so every season's
- * window opened and closed at 17:00 the previous afternoon. Actions taken on
- * the last evening of a season were filed under the next one.
- *
- * `offset` shifts by whole calendar days before the conversion, which is what
- * makes the end bound half-open: end_date means "this day inclusive", so the
- * filter runs up to (but not including) club-local midnight the morning after.
- */
-function clubDayStart(date: string, offset = 0): string {
-  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  return wallClockToUtc(y, m, d + offset, 0, 0).toISOString();
-}
+import {
+  LOG_TYPES,
+  LOG_TYPE_LABELS,
+  SIGNIN_FUNCTION,
+  fetchSignIns,
+  isMissingFunctionError,
+  resolveLogType,
+} from '@/lib/audit-export';
 
 export default async function AuditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ range?: string; season?: string }>;
+  searchParams: Promise<{ range?: string; season?: string; log?: string; emails?: string }>;
 }) {
-  const { range, season } = await searchParams;
+  const params = await searchParams;
+  const { range, season, log, emails } = params;
   const fullHistory = range === 'all';
+  const logType = resolveLogType(log);
   // Same capability middleware resolves for '/audit', re-asked at the fetch. An
   // audit trail names who did what to whom, so it is the last page that should
   // rely on a route match having happened upstream.
-  await requireCapability('audit.page');
+  const viewer = await requireCapability('audit.page');
+
+  // THE EXPORT BAND'S TWO KEYS, asked here so the page draws only what this
+  // person may actually use. Offering a control that answers 403 is worse than
+  // not offering it: the officer reads a refusal as a bug and asks an admin to
+  // check a flag that is already correct.
+  const viewerLevel = accessLevelFor(viewer);
+  const viewerPermissions = permissionsOf(viewerLevel, viewer);
+  const canExport = permits(viewerLevel, viewerPermissions, 'audit.export.read');
+  const canSeeSignins = permits(viewerLevel, viewerPermissions, 'audit.signins.read');
+
   const supabase = createAdminClient();
 
   // The seasons themselves are the navigation. An audit trail is read to answer
@@ -53,31 +55,14 @@ export default async function AuditPage({
     .select('id, name, start_date, end_date, active_flag')
     .order('start_date', { ascending: false });
 
-  // Same resolution as /sessions, /fees and /tournaments — one shared helper, so
-  // `?season=` means the same thing on every scoped page and a link between them
-  // keeps its scope.
-  const { seasons: allSeasons, selected: scopeSeason } = resolveSeasonScope(seasons, season);
-
-  // Two overrides on top of the shared answer, both specific to a log.
-  //
-  // `?range=all` is the escape hatch: an audit trail is the one page where
-  // "before any season we still have" is a real question, so no season at all is
-  // a legitimate scope here in a way it is not on a fee ledger.
-  //
-  // And a club activates the NEXT season before it starts — that is the normal
-  // way to line one up. Defaulting to it would show an empty page: the window
-  // opens in the future, so nothing that has already happened is inside it. An
-  // explicit ?season= is still honoured either way. Picking a season that has
-  // not started and being shown nothing is a correct answer to a question
-  // somebody asked; being shown nothing on arrival is not.
-  // The club's today — toLocaleDateString with no timeZone reads the HOST
-  // zone, and the containers run UTC. On a club evening it would call a
-  // season that starts tomorrow 'already started' and stop defaulting to
-  // full history.
-  const today = clubToday();
-  const impliedAndUnstarted =
-    !season && !!scopeSeason?.start_date && scopeSeason.start_date > today;
-  const selectedSeason = fullHistory || impliedAndUnstarted ? null : scopeSeason;
+  // The whole scope, from one helper, because /api/audit/export answers the
+  // same question for the same parameters and the file is read beside the
+  // screen it came from. Two copies of a timezone bound is F-022 exactly, and a
+  // route that resolved the season for itself could disagree with this page
+  // about WHICH term is selected while agreeing about the arithmetic. See
+  // lib/audit-scope.ts.
+  const { seasons: allSeasons, selectedSeason, since, until, scopeLabel } =
+    resolveAuditWindow(seasons, season, fullHistory);
 
   // Caps keep the payload bounded either way.
   let query = supabase
@@ -85,31 +70,8 @@ export default async function AuditPage({
     .select('*, actor:players!audit_logs_actor_id_fkey(full_name)')
     .order('created_at', { ascending: false })
     .limit(fullHistory ? 1000 : 500);
-
-  let scopeLabel: string;
-  if (fullHistory) {
-    scopeLabel = 'Full history';
-  } else if (selectedSeason) {
-    // start_date is nullable, and the string-template form this replaced hid
-    // that: a null interpolated to the literal `nullT00:00:00Z`, which
-    // PostgREST rejects — so the filter silently became "no rows" rather than
-    // "no lower bound". A season without a start simply has no lower bound.
-    if (selectedSeason.start_date) {
-      query = query.gte('created_at', clubDayStart(selectedSeason.start_date));
-    }
-    // An unfinished season has no end: everything since it started, up to now.
-    if (selectedSeason.end_date) {
-      query = query.lt('created_at', clubDayStart(selectedSeason.end_date, 1));
-    }
-    scopeLabel = selectedSeason.name;
-  } else {
-    // No season to scope by: none active, or the active one has not started.
-    // Falling back to a window keeps the page useful instead of empty, and the
-    // label says which one so it cannot be mistaken for a season.
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    query = query.gte('created_at', since);
-    scopeLabel = 'Last 30 days';
-  }
+  if (since) query = query.gte('created_at', since);
+  if (until) query = query.lt('created_at', until);
 
   const { data: logs } = await query;
   const rows = (logs ?? []) as AuditLogRow[];
@@ -164,6 +126,75 @@ export default async function AuditPage({
   }));
 
   const degraded = countDegraded(rows);
+
+  // WHICH TYPES THIS PERSON MAY DOWNLOAD. The sign-ins option is absent rather
+  // than disabled for somebody without the key: a greyed control on an audit
+  // page invites the question "why can that person see this exists", and the
+  // route refuses it anyway.
+  const exportOptions = LOG_TYPES.filter((type) => type !== 'signins' || canSeeSignins).map(
+    (type) => ({ value: type, label: LOG_TYPE_LABELS[type] }),
+  );
+  // A `?log=signins` typed by hand resolves to a type the selector does not
+  // offer, so the band falls back to the default rather than showing a
+  // selection this person cannot act on.
+  const selectedLogType =
+    logType === 'signins' && !canSeeSignins ? 'console' : logType;
+  const wantsSignins = selectedLogType === 'signins' || selectedLogType === 'all';
+  // `?emails=1` is ignored without the sign-in key, here as in the route: the
+  // email column exists only because the sign-in log carries one.
+  const revealEmails = emails === '1' && canSeeSignins;
+
+  // IS 00257 THERE? Asked only when the selected type needs it, with a limit of
+  // one row that is thrown away. The default view is `console`, which issues
+  // ZERO extra queries, and that matters: /audit already carries four auth
+  // round trips per page and this would be a fifth on every load for a question
+  // almost nobody is asking.
+  let signinsMissing = false;
+  if (canExport && canSeeSignins && wantsSignins) {
+    const { error } = await fetchSignIns(supabase, { from: since, to: until, limit: 1 });
+    signinsMissing = isMissingFunctionError(error, SIGNIN_FUNCTION);
+  }
+
+  // NAMED PARAMETERS HERE, a copy in the emails toggle below, and the
+  // difference is the destination rather than an inconsistency. A link back to
+  // this page has to carry parameters this file does not know about, because
+  // dropping one silently changes what somebody was looking at. A link at the
+  // route handler has to carry only what that handler reads: it resolves the
+  // same window from the same four, and anything else forwarded is a parameter
+  // travelling to a place that will never look at it.
+  const exportQuery = new URLSearchParams();
+  if (selectedLogType !== 'console') exportQuery.set('log', selectedLogType);
+  // The season is forwarded EXACTLY as it arrived, blank included. The route
+  // resolves the window from the same helper this page did, so passing the
+  // parameter rather than the resolved season is what keeps the two answers the
+  // same one.
+  if (season) exportQuery.set('season', season);
+  if (fullHistory) exportQuery.set('range', 'all');
+  if (revealEmails) exportQuery.set('emails', '1');
+  const exportHref = withBase(`/api/audit/export?${exportQuery.toString()}`);
+
+  const chip =
+    'whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition-colors';
+  const chipOff =
+    'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]';
+  const chipOn = 'border-[var(--color-accent)] text-[var(--color-accent)]';
+
+  // The emails toggle COPIES the incoming params and flips one, rather than
+  // rebuilding the URL from the handful it happens to know about. Rebuilding is
+  // correct only for as long as this list stays complete, and the moment a
+  // fifth param is added the toggle silently drops it: that is precisely the
+  // bug recorded at season-select.tsx:72-77, where rebuilding cleared the audit
+  // filters that were the reason somebody was on the page. Copying cannot
+  // develop that defect, so it is the shape to use even while the two would
+  // behave identically.
+  const emailsQuery = new URLSearchParams(
+    Object.entries(params).flatMap(([k, v]) =>
+      typeof v === 'string' ? [[k, v] as [string, string]] : [],
+    ),
+  );
+  if (revealEmails) emailsQuery.delete('emails');
+  else emailsQuery.set('emails', '1');
+  const emailsHref = `/audit?${emailsQuery.toString()}`;
 
   return (
     <div className="space-y-6">
@@ -226,14 +257,58 @@ export default async function AuditPage({
             <SeasonSelect seasons={allSeasons} selected={selectedSeason} basePath="/audit" />
             <Link
               href={fullHistory ? '/audit' : '/audit?range=all'}
-              className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                fullHistory
-                  ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
-                  : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]'
-              }`}
+              className={`${chip} ${fullHistory ? chipOn : chipOff}`}
             >
               {fullHistory ? 'Back to season' : 'Full history →'}
             </Link>
+
+            {/* THE EXPORT BAND, drawn only for somebody who may run a download.
+                Its own column inside the control row so the one line of copy
+                sits under the controls it explains rather than under the whole
+                band. */}
+            {canExport && (
+              <div className="flex flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <LogTypeSelect options={exportOptions} selected={selectedLogType} />
+
+                  {/* The email opt-in, as a URL parameter rather than client
+                      state: it keeps the band server-rendered, and it makes a
+                      particular export a link somebody can send. Offered only
+                      alongside a type that HAS emails, because the column comes
+                      from the sign-in log and nowhere else. */}
+                  {canSeeSignins && wantsSignins && (
+                    <Link href={emailsHref} className={`${chip} ${revealEmails ? chipOn : chipOff}`}>
+                      {revealEmails ? 'Emails included' : 'Include emails'}
+                    </Link>
+                  )}
+
+                  {/* A PLAIN ANCHOR THROUGH withBase(), not a <Link> and not a
+                      bare '/api/...' string. Next prefixes <Link> and the
+                      router but never a raw string, and the console is mounted
+                      at /admin on the PLAYER app's origin: an unprefixed path
+                      here is not a 404, it is a live route on a different
+                      container. See lib/base-path.ts. */}
+                  {signinsMissing ? (
+                    <span className={`${chip} border-[var(--border)] text-[var(--text-muted)]`}>
+                      Download unavailable
+                    </span>
+                  ) : (
+                    <a href={exportHref} className={`${chip} ${chipOff}`}>
+                      Download CSV
+                    </a>
+                  )}
+                </div>
+
+                {/* THE SELECTOR IS HONEST ONLY IF THE PAGE SAYS WHAT IT DOES
+                    NOT CHANGE. It sits in a row of filters that all rewrite the
+                    table, and this one does not touch it. */}
+                <p className="text-[11px] leading-tight text-[var(--text-muted)]">
+                  {signinsMissing
+                    ? 'Sign-ins need migration 00257, which has not been applied yet - the other types still download.'
+                    : 'The list below always shows console edits. The selector scopes the download.'}
+                </p>
+              </div>
+            )}
           </>
         }
       />

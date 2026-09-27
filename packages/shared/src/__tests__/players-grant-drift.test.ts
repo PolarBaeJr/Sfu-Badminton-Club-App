@@ -30,6 +30,9 @@ const REPO_ROOT = join(__dirname, '../../../..');
  *   passkey_setup             recordPasskeySetup, service role
  *   deletion_requested_at     deleteMyAccount, service role
  *   active_flag               deleteMyAccount / restoreMyAccount, service role
+ *   tours_seen                mark_tour_seen (00246), service role
+ *   media_consent             set_my_media_consent (00255), owner-run
+ *   media_consent_changed_at  stamp_media_consent_changed_at (00255) trigger
  *
  * full_name is generated (00023) and cannot be written by anybody.
  */
@@ -58,6 +61,10 @@ const SERVICE_ROLE_ONLY = [
   'is_exec',
   'is_trainer',
   'joined_at',
+  // 00255. Written only by set_my_media_consent() as the owner, with the
+  // timestamp stamped by a trigger, and no member SELECT grant either.
+  'media_consent',
+  'media_consent_changed_at',
   'member_code',
   'membership_type',
   'notification_preferences',
@@ -72,6 +79,9 @@ const SERVICE_ROLE_ONLY = [
   'show_activity_status',
   'skill_tier',
   'status',
+  // 00246. Stamped by mark_tour_seen(), called by the service role when a
+  // member or exec finishes or skips a guided tour.
+  'tours_seen',
   'updated_at',
   'user_id',
   'waiver_reset_at',

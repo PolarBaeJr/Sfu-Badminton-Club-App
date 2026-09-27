@@ -665,6 +665,25 @@ export async function assembleMemberExport(
     })),
   ];
 
+  // Receipts they sent (00248, 00253), with how they were paid. The screenshot
+  // is a stored file, so the file says whether one is held rather than where;
+  // the exec who reviewed it is a role. Receipts they reviewed as an officer
+  // are somebody else's payment and are not read at all.
+  data.fee_submissions = (await reader.all('fee_submissions', (q) => q.eq('player_id', playerId))).map(
+    (row) => ({
+      id: row.id,
+      club_fee_id: row.club_fee_id,
+      status: row.status,
+      reference: row.reference,
+      method: row.method,
+      reject_reason: row.reject_reason,
+      submitted_at: row.submitted_at,
+      reviewed_at: row.reviewed_at,
+      screenshot_held: row.screenshot_path != null,
+      reviewed_by_role: officerDescriptor(row.reviewed_by as string | null),
+    }),
+  );
+
   // Ledger rows they PAID are their own money out of pocket. Rows where they
   // are only marked_by or reimbursed_by record an official act, so those are
   // reduced to their existence: the club cashbook is not personal information.
@@ -838,6 +857,34 @@ export async function assembleMemberExport(
     ...dropColumns(row, ['created_by']),
     you_created_this: row.created_by === playerId,
   }));
+
+  // Club events (00244): the member's sign-ups, then just enough of each event
+  // to read them by, plus any event they created without signing up for it.
+  data.club_event_signups = await reader.all('club_event_signups', (q) =>
+    q.eq('player_id', playerId),
+  );
+  const clubEventIds = ids(data.club_event_signups, 'event_id');
+  data.club_events = (
+    await reader.allInByKey(
+      'club_events',
+      clubEventIds,
+      (q, batch) => q.in('id', batch),
+      'id, title, kind, starts_at, ends_at, location, status, created_by',
+    )
+  ).map((row) => ({
+    ...dropColumns(row, ['created_by']),
+    you_created_this: row.created_by === playerId,
+  }));
+  const createdClubEvents = await reader.all(
+    'club_events',
+    (q) => q.eq('created_by', playerId),
+    'id, title, kind, starts_at, ends_at, location, status',
+  );
+  for (const row of createdClubEvents) {
+    if (!clubEventIds.includes(row.id as string)) {
+      data.club_events.push({ ...row, you_created_this: true });
+    }
+  }
 
   // Announcements they wrote, reduced to the title and the dates: the
   // announcement itself was published to the whole club.

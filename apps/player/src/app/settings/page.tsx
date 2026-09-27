@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
-import { updateProfile, updateNotificationPreferences, deleteMyAccount, getMyCompetitionCategory } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, COMPETITION_CATEGORY_CHOICES, toCompetitionCategory, type CompetitionCategory, type NotificationCategory } from '@badminton/shared';
+import { updateProfile, updateNotificationPreferences, deleteMyAccount, getMyCompetitionCategory, getMyMediaConsent, setMyMediaConsent } from '@/lib/actions';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, clubDate, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, COMPETITION_CATEGORY_CHOICES, toCompetitionCategory, type CompetitionCategory, type NotificationCategory } from '@badminton/shared';
+// Deep import, not the '@badminton/shared' barrel: see the player middleware.
+import { signOutEverywhere, signOutThisDevice } from '@badminton/shared/src/utils/sign-out';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -13,6 +15,7 @@ import { AvatarUpload } from '@/components/AvatarUpload';
 import { CalendarFeed } from './calendar-feed';
 import { DataExport } from './data-export';
 import { PasskeyManager } from '@/components/passkey-manager';
+import { SignOutOtherDevices } from '@/components/sign-out-other-devices';
 import {
   User,
   Calendar,
@@ -33,6 +36,7 @@ import {
   ChevronRight,
   MessageSquareWarning,
   Trash2,
+  Camera,
 } from 'lucide-react';
 
 type Theme = 'light' | 'dark' | 'system';
@@ -94,6 +98,12 @@ export default function SettingsPage() {
   // cannot.
   const [declaredCategory, setDeclaredCategory] = useState<CompetitionCategory | null>(null);
   const [showOnLeaderboard, setShowOnLeaderboard] = useState(true);
+  // 00255. Saved on its own, never by Save profile, and read through a server
+  // action because members hold no SELECT grant on either column.
+  const [mediaConsent, setMediaConsent] = useState(false);
+  const [mediaConsentChangedAt, setMediaConsentChangedAt] = useState<string | null>(null);
+  // A failed read must not say "Not turned on" to somebody who has consented.
+  const [mediaConsentLoadFailed, setMediaConsentLoadFailed] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
@@ -163,7 +173,7 @@ export default function SettingsPage() {
       // and nobody else. Adding the column to the select above would not leak
       // anything by itself; it would simply return nothing, and the grant that
       // "fixed" it would be the leak.
-      const mine = await getMyCompetitionCategory();
+      const [mine, media] = await Promise.all([getMyCompetitionCategory(), getMyMediaConsent()]);
       if (data) {
         setPlayerId(data.id);
         setAvatarUrl(data.avatar_url);
@@ -182,6 +192,12 @@ export default function SettingsPage() {
         setPhone(data.phone || '');
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
+        if (media.ok) {
+          setMediaConsent(media.data.consent);
+          setMediaConsentChangedAt(media.data.changedAt);
+        } else {
+          setMediaConsentLoadFailed(true);
+        }
         setNotifPrefs(normalizeNotificationPreferences(data.notification_preferences));
         setEmailPrefs(normalizeEmailPreferences(data.notification_preferences));
         const mins = getReminderLeadMinutes(data.notification_preferences);
@@ -344,6 +360,25 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleMediaConsentToggle(value: boolean) {
+    const previous = { consent: mediaConsent, changedAt: mediaConsentChangedAt };
+    setMediaConsent(value); // optimistic
+    const res = await setMyMediaConsent({ media_consent: value });
+    if (!res.ok) {
+      setMediaConsent(previous.consent); // revert
+      setMediaConsentChangedAt(previous.changedAt);
+      toast(res.error, 'error');
+      return;
+    }
+    setMediaConsent(res.data.consent);
+    setMediaConsentChangedAt(res.data.changedAt);
+    setMediaConsentLoadFailed(false);
+    toast(
+      res.data.consent ? 'Photo and video consent turned on' : 'Photo and video consent turned off',
+      res.data.consent ? 'success' : 'info',
+    );
+  }
+
   async function handleNotifPrefToggle(category: NotificationCategory, value: boolean) {
     const previous = notifPrefs;
     const next = { ...notifPrefs, [category]: value };
@@ -356,12 +391,7 @@ export default function SettingsPage() {
   }
 
   async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    // The library's own sign-out only clears the cookie on its configured
-    // scope; a leftover host-only copy from before the switch would still be a
-    // valid session. No-op once no such copy exists.
-    clearHostOnlyAuthCookies();
+    await signOutThisDevice(createClient().auth);
     router.push('/login');
   }
 
@@ -376,9 +406,7 @@ export default function SettingsPage() {
       }
       // Best-effort sign out, then a hard redirect — router state is stale
       // after the account is scheduled for deletion.
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      clearHostOnlyAuthCookies();
+      await signOutEverywhere(createClient().auth);
       window.location.href = '/';
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to delete account', 'error');
@@ -538,15 +566,15 @@ export default function SettingsPage() {
             </form>
           </Section>
 
-          <Section icon={Receipt} title="Fees & Dues">
+          <Section icon={Receipt} title="Membership & dues">
             <Link
-              href="/fees"
+              href="/membership"
               className="settings-row settings-row-nav"
               style={{ textDecoration: 'none', color: 'inherit' }}
             >
               <div>
                 <div className="settings-row-label">View what I owe</div>
-                <div className="settings-row-hint">Club and tournament fees for the current season.</div>
+                <div className="settings-row-hint">Your membership, club and event fees, and how to pay them.</div>
               </div>
               <div className="settings-row-control">
                 <ChevronRight size={16} className="text-[var(--mute)]" />
@@ -782,11 +810,47 @@ export default function SettingsPage() {
             <DataExport />
           </Section>
 
+          {/* Not behind isApproved: withdrawing consent must always be possible,
+              whatever the account's standing. */}
+          <Section icon={Camera} title="Photos and video">
+            <Switch
+              checked={mediaConsent}
+              onChange={handleMediaConsentToggle}
+              label="Photos and video of me"
+              description="Let the club use photos or video of you from club activities on its website and social media. This is off unless you turn it on, and it never affects your membership."
+            />
+            <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              {mediaConsentLoadFailed
+                ? 'Your photo and video choice could not be loaded. Reload to check it.'
+                : mediaConsent && mediaConsentChangedAt
+                  ? `Allowed since ${clubDate(mediaConsentChangedAt)}.`
+                  : mediaConsentChangedAt
+                    ? `Turned off ${clubDate(mediaConsentChangedAt)}.`
+                    : 'Not turned on.'}
+            </p>
+          </Section>
+
           <Section icon={KeyRound} title="Passkeys">
             <PasskeyManager />
           </Section>
 
           <Section icon={MessageSquareWarning} title="Help & Feedback">
+            {/* A replay. The member tour host sees ?tour=member on the feed and
+                opens the tour whether or not it has been seen, and a replay
+                never records anything. */}
+            <Link
+              href="/feed?tour=member"
+              className="settings-row settings-row-nav"
+              style={{ textDecoration: 'none', color: 'inherit' }}
+            >
+              <div>
+                <div className="settings-row-label">Take the app tour</div>
+                <div className="settings-row-hint">A one-minute look at where everything is.</div>
+              </div>
+              <div className="settings-row-control">
+                <ChevronRight size={16} className="text-[var(--mute)]" />
+              </div>
+            </Link>
             <Link
               href="/feedback"
               className="settings-row settings-row-nav"
@@ -828,6 +892,7 @@ export default function SettingsPage() {
                 </button>
               </div>
             </div>
+            <SignOutOtherDevices />
           </Section>
 
           <div className="danger-zone">

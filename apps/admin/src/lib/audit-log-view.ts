@@ -389,3 +389,52 @@ export function isDegradedEntry(log: Pick<AuditLogEntry, 'reason'>): boolean {
 export function countDegraded(logs: readonly Pick<AuditLogEntry, 'reason'>[]): number {
   return logs.reduce((n, log) => (isDegradedEntry(log) ? n + 1 : n), 0);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Who wrote the entry                                                         */
+/* -------------------------------------------------------------------------- */
+
+export type AuditEntryKind = 'console' | 'self-service' | 'auth';
+
+/**
+ * WHO PRODUCED THIS ROW: an officer at the console, a member acting on their
+ * own account, or the authentication layer.
+ *
+ * This column is the difference between "34 people did admin actions" and the
+ * true console figure, which is 2. `audit_logs` is one table holding three
+ * different trails: an exec banning somebody, a member seeding their own rating
+ * or asking for their account to be deleted during onboarding, and a passkey
+ * being enrolled or verified. Counting the table gives the onboarding wave the
+ * shape of administrative activity, and somebody reading an export to ask "who
+ * is actually using the console" would be answered by the wrong number with
+ * nothing on the page to say so. The same exclusion is written by hand in the
+ * auth log export script's exec roster query, and this is that rule in one
+ * place instead of two.
+ *
+ * MATCHED ON THE FIRST WORD, through the same splitter tones and groups use,
+ * rather than with startsWith: `selfie_uploaded` would be a member's own act to
+ * a prefix match and is not one, and a word test cannot be fooled that way.
+ *
+ * `passkey` COVERS MORE THAN THE THREE NAMED TYPES on purpose.
+ * `passkey_verified`, `passkey_login` and `passkey_registered` are the ones
+ * written today; `passkey_counter_anomaly` is also authentication and also not
+ * console work, and a first-word rule files it correctly without this function
+ * having to be edited when the next one lands.
+ *
+ * AN UNRECOGNISED TYPE IS `console`, and that is the same refusal the header of
+ * this file makes: `action_type` is free text with no registry, so "I have not
+ * seen this" must never become "therefore leave it out". Nothing filters on
+ * this value; it is a column in an export, and every row carries one.
+ *
+ * `auto_marked_inactive` and `auto_purged_inactive` land in `console` with a
+ * null actor, which reads as `System` in the actor column. That is not a
+ * misclassification: they are acts ON members rather than BY them, the actor
+ * column already says no person did it, and a fourth kind for two nightly jobs
+ * would split the console trail rather than clarify it.
+ */
+export function entryKind(actionType: string): AuditEntryKind {
+  const w = words(actionType);
+  if (w[0] === 'passkey') return 'auth';
+  if (w[0] === 'self') return 'self-service';
+  return 'console';
+}

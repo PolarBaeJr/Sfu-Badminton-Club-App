@@ -25,6 +25,7 @@ documents.
 | [`rate-limits.md`](ops/rate-limits.md) | Rate limiting happens at the edge, in the proxy, not in the app. This is the only record in the repo of what those limits are. |
 | [`audit-policy.md`](ops/audit-policy.md) | What the audit trail actually guarantees, so the promise and the code agree. |
 | [`discord-bot-bringup.md`](ops/discord-bot-bringup.md) | The steps for the bot that *cannot* be done from a code change — Developer Portal settings, tokens, role positions. |
+| [`ERROR-CODES.md`](../packages/shared/ERROR-CODES.md) | What each error code on an error screen or toast means, and how to find the occurrence in the server logs. Generated from the registry in `packages/shared`. |
 
 ## `guides/` — for the people using the app
 

@@ -10,18 +10,11 @@ interface CardProps {
 }
 
 /**
- * `rounded-xl` HERE IS ALREADY ZERO. Do not "fix" it, and do not pass
- * `rounded-none` to flatten it.
- *
- * Both apps replace `theme.borderRadius` outright in their tailwind.config.ts
- * (replace, not extend), so the whole named scale compiles to 0 in each of
- * them — verified in the built CSS, where admin and player alike emit
- * `.rounded-lg,.rounded-md,.rounded-none,.rounded-xl{border-radius:0}`. Only
- * `full` (9999px) and arbitrary values like `rounded-[8px]` survive that.
- *
- * Four separate agents have read this line as a live 12px corner and hand-rolled
- * a `rounded-none` around it or a bordered div instead of it. It has never
- * rendered a corner in either app.
+ * `rounded-xl` is a live 16px corner in both apps. The named radius scale was
+ * zeroed for a sharp-cornered design until 2026-09-17, when the owner asked for
+ * rounded boxes and both tailwind.config.ts files got real values back (md 8px,
+ * xl 16px). Pass `rounded-none` only where a corner must stay square on
+ * purpose.
  */
 export function Card({ children, className, padding = true }: CardProps) {
   return (

@@ -95,11 +95,14 @@ async function assertPasskeyVerified(
   // knowing it is not, and only one of those readings is safe.
   if (error) {
     Sentry.captureException(error, { tags: { gate: 'assertPasskeyVerified' } });
-    throw new ExpectedError('Cannot verify your passkey enrolment right now — please try again shortly');
+    throw new ExpectedError(
+      'Cannot verify your passkey enrolment right now — please try again shortly',
+      'AUTH-103',
+    );
   }
   if ((count ?? 0) >= 1) {
     Sentry.setUser(null);
-    throw new ExpectedError('Passkey verification required');
+    throw new ExpectedError('Passkey verification required', 'AUTH-102');
   }
 }
 
@@ -121,7 +124,7 @@ async function getAuthenticatedConsolePlayer(
     // Clear any Sentry user context left over from a previous request handler
     // sharing this Node process — avoids misattributing the next error.
     Sentry.setUser(null);
-    throw new ExpectedError('Not authenticated');
+    throw new ExpectedError('Not authenticated', 'AUTH-101');
   }
 
   const adminClient = createAdminClient();
@@ -133,7 +136,7 @@ async function getAuthenticatedConsolePlayer(
 
   if (!player) {
     Sentry.setUser(null);
-    throw new ExpectedError('No player record found');
+    throw new ExpectedError('No player record found', 'ACC-105');
   }
   // STANDING first, then level. Banning an exec used to leave their console
   // access completely intact: banPlayer writes only players.is_banned, and
@@ -147,19 +150,20 @@ async function getAuthenticatedConsolePlayer(
   // same rule, and it should have been in both places from the start.
   if (player.is_banned) {
     Sentry.setUser(null);
-    throw new ExpectedError('Account suspended pending reinstatement');
+    throw new ExpectedError('Account suspended pending reinstatement', 'ACC-103');
   }
   if (player.status === 'suspended' || player.status === 'pending_approval') {
     Sentry.setUser(null);
     throw new ExpectedError(
-      player.status === 'suspended' ? 'Account suspended' : 'Account pending approval'
+      player.status === 'suspended' ? 'Account suspended' : 'Account pending approval',
+      player.status === 'suspended' ? 'ACC-102' : 'ACC-101',
     );
   }
   // deleteMyAccount clears active_flag; a pending deletion should not keep the
   // console open either.
   if (player.active_flag === false) {
     Sentry.setUser(null);
-    throw new ExpectedError('Account is inactive');
+    throw new ExpectedError('Account is inactive', 'ACC-104');
   }
 
   // Same resolution the middleware gets from admin_console_access(), through
@@ -175,7 +179,7 @@ async function getAuthenticatedConsolePlayer(
   const denial = authorize(accessLevelFor(player), permissionsOf(accessLevelFor(player), player));
   if (denial !== null) {
     Sentry.setUser(null);
-    throw new ExpectedError(denial);
+    throw new ExpectedError(denial, 'AUTH-104');
   }
 
   if (!options.skipPasskey) {

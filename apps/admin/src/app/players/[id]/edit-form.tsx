@@ -263,7 +263,7 @@ export function PlayerEditForm({
           a new officer up is now two steps on two screens. That is the shape the
           club owner asked for, not a gap. */}
       {isAdmin && (
-      <div className="border border-[var(--border)] p-3 space-y-1">
+      <div className="rounded-md border border-[var(--border)] p-3 space-y-1">
         {isExec && (
           <>
             <Input

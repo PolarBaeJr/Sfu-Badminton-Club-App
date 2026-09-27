@@ -132,24 +132,25 @@ input, textarea, select, button, a {
   --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
   --mono: var(--font-mono), ui-monospace, monospace;
 
-  /* Corner radius on shared form controls — Input, Textarea and the
-     SearchFilter field, which all carry rounded-[var(--r-control,8px)].
-     0 here, because this console is radius 0 outside dialog panels.
+  /* Corner radius on shared form controls: Input, Textarea and the
+     SearchFilter field carry rounded-[var(--r-control,8px)], and Switch's
+     focus ring does too. 8px, the same as the rounded-md scale step in
+     tailwind.config.ts: the console was square until the owner asked for
+     rounded boxes on 2026-09-17, and this token was the last place still
+     holding the old 0. It stays a token because an arbitrary rounded-[8px]
+     bypasses the scale, and SearchFilter's field takes no className, so this
+     is the only way to reach those three controls from the console.
 
-     Why a token and not tailwind.config.ts: that config already zeroes the
-     whole NAMED radius scale (rounded-md, rounded-lg, rounded-xl … all
-     compile to 0 in both apps), but an ARBITRARY value like rounded-[8px]
-     bypasses the scale entirely, so those three controls were the last 8px
-     corners in the console and could not be reached from here at all.
-     SearchFilter's field in particular takes no className, so a caller could
-     not override it either.
+     The player app does not define it and gets the same 8px from the
+     fallback baked into the class. */
+  --r-control: 8px;
 
-     The player app deliberately does NOT define this: it falls through to the
-     8px fallback baked into the class, which is exactly what it renders today.
-     Its own --r-sm/md/lg/xl are all 0, so those controls are arguably a
-     leftover there too — but flattening them is a player-side design decision
-     and not this token's business. */
-  --r-control: 0;
+  /* The sticky console header (components/sidebar.tsx): one 52px row plus its
+     1px bottom border, measured at 768 and 1440 wide on /ratings, /settings,
+     /accounts and /permissions. Sticky rails and asides sit --sticky-gap below
+     it, so they stop under the header instead of scrolling beneath it. */
+  --console-header-h: 53px;
+  --sticky-gap: 16px;
 }
 [data-theme="light"] { --surface-3: #eee; }
 
@@ -227,8 +228,9 @@ input, textarea, select, button, a {
    casualty: fourteen loading.tsx routes.
 
    Not a copy of the player's rules. The contract each class provides is the
-   same, but the console is flat and sharp: hairline border, radius 0, no
-   shadow, depth from the --surface step over --bg. The dimensions are chosen
+   same, but the console is flat: hairline border, a 16px corner (rounded-xl,
+   the card radius since 2026-09-17), no shadow, depth from the --surface step
+   over --bg. The dimensions are chosen
    to land exactly on the hand-rolled card chrome already shipped on /legal
    and /fees (`border border-[var(--line)] bg-[var(--surface)] p-5`), so a
    Section and a hand-rolled panel are indistinguishable side by side.
@@ -236,7 +238,7 @@ input, textarea, select, button, a {
 .card-base {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: 16px;
   padding: 20px;
   position: relative;
 }
@@ -275,7 +277,7 @@ input, textarea, select, button, a {
    alike, and they are the tone this console already draws its edges in. */
 .skeleton {
   background: var(--line);
-  border-radius: 0;
+  border-radius: 6px;
   animation: admin-skeleton-pulse 1.6s ease-in-out infinite;
 }
 @keyframes admin-skeleton-pulse {
@@ -323,6 +325,7 @@ input, textarea, select, button, a {
 /* Danger zone — red-hairline box, red heading, row-per-action */
 .danger-zone {
   border: 1px solid var(--red-border);
+  border-radius: 16px;
   padding: 20px;
 }
 .danger-zone .danger-title {
@@ -336,6 +339,7 @@ input, textarea, select, button, a {
 /* Dialog inset group panel — hairline border + uppercase micro-label */
 .dialog-group {
   border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 14px;
 }
 .dialog-group-label {
@@ -348,11 +352,12 @@ input, textarea, select, button, a {
   margin-bottom: 10px;
 }
 
-/* Square hairline −/+ stepper buttons */
+/* Hairline −/+ stepper buttons */
 .stepper-btn {
   width: 32px; height: 32px;
   display: inline-grid; place-items: center;
   border: 1px solid var(--line);
+  border-radius: 8px;
   background: transparent;
   color: var(--ink-2);
   font-size: 15px;
@@ -411,6 +416,7 @@ input, textarea, select, button, a {
 .settings-input {
   background: var(--bg-primary);
   border: 1px solid var(--line);
+  border-radius: 8px;
   color: var(--ink);
   font-size: 13px;
   padding: 8px 12px;
@@ -428,7 +434,7 @@ input, textarea, select, button, a {
    profile content beneath its sticky position. */
 .settings-rail {
   position: sticky;
-  top: 120px;
+  top: calc(var(--console-header-h) + var(--sticky-gap));
   align-self: start;
 }
 .settings-rail a {
@@ -455,6 +461,118 @@ input, textarea, select, button, a {
   color: var(--mute);
   margin-top: 2px;
 }
+
+/* The pill variant of the rail (/accounts): rounded items, a count beside the
+   label, and an inset bar instead of the left border. Layout lives here, not in
+   utilities, because `.settings-rail a` above sets `display: block` and would
+   outrank a `flex` class on the anchor. */
+.settings-rail.is-pill a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-left: 0;
+  border-radius: 8px;
+}
+.settings-rail.is-pill a.active {
+  box-shadow: inset 2px 0 0 var(--red);
+  background: var(--surface);
+}
+.settings-rail.is-pill .rail-badge {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+}
+.settings-rail.is-pill .rail-badge.is-success { color: var(--color-success); }
+.settings-rail.is-pill .rail-badge.is-warning { color: var(--color-warning); }
+
+/* A settings row as a two-column grid: label and hint left, a fixed-width
+   control column right. The grouped layout of PlatformSettingsForm. */
+.settings-grid-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 24px;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  max-width: 760px;
+}
+.settings-grid-row:last-child { border-bottom: 0; }
+.settings-grid-row .settings-input { width: 100%; }
+
+/* The redesigned /accounts layouts size themselves by the CARD, not the
+   viewport: at 1024px the middle column is far narrower than the window, and
+   viewport breakpoints squeezed Account rules to one word per line. */
+.settings-cq { container-type: inline-size; }
+@container (max-width: 520px) {
+  .settings-grid-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}
+
+/* Account rules: a sub-nav beside the groups once the card has room for it. */
+.settings-grouped { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); }
+.settings-grouped-nav { display: none; flex-direction: column; gap: 2px; align-self: start; }
+@container (min-width: 760px) {
+  .settings-grouped { grid-template-columns: 200px minmax(0, 1fr); }
+  .settings-grouped-nav { display: flex; }
+}
+
+/* Club links: two columns once each input gets a usable width. */
+.settings-links { display: grid; column-gap: 24px; row-gap: 20px; grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 560px) {
+  .settings-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-links-wide { grid-column: span 2; }
+}
+
+/* The Member pages switches: two columns once the card is 640px wide, one below, each cell
+   drawing its own hairline so an odd count leaves no gap-coloured hole. Bleeds
+   24px either side to reach the edges of a card body padded by px-6, and draws
+   no bottom border so the last row sits flush on the card's own. */
+.setting-tiles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin-inline: -24px;
+}
+.setting-tile {
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+}
+@container (min-width: 640px) {
+  .setting-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .setting-tile:nth-child(odd) { border-right: 1px solid var(--line); }
+}
+
+/* A URL input with its fixed prefix drawn in a cell to the left (Club links).
+   The stored value is still the whole URL; see lib/prefixed-url.ts. */
+.settings-adorned {
+  display: flex;
+  align-items: stretch;
+  min-height: 40px;
+  background: var(--bg-primary);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.settings-adorned:focus-within { border-color: var(--line-2); }
+.settings-adorned-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-right: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--mute);
+}
+.settings-adorned-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.settings-adorned-input:focus { outline: none; }
 
 /* ═══════════════════════════════════════════════════════════
    MOBILE OVERFLOW GUARD

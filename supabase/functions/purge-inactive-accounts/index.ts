@@ -45,6 +45,7 @@ import {
   DELINKED_TABLES,
   PERSONAL_ARTIFACT_TABLES,
 } from '../_shared/anonymize.ts';
+import { eraseFeeProofs } from '../_shared/fee-proofs.ts';
 
 Deno.serve(async (req) => {
   const denied = requireCronSecret(req);
@@ -138,6 +139,13 @@ Deno.serve(async (req) => {
     }
     if (depError) {
       errors.push(`${player.id}: ${depError.message}`);
+      continue;
+    }
+
+    // Payment screenshots (00248), while user_id still names their folder.
+    const proofError = await eraseFeeProofs(supabase, player.id, player.user_id);
+    if (proofError) {
+      errors.push(`${player.id} fee proofs: ${proofError.message}`);
       continue;
     }
 

@@ -107,12 +107,25 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   // back into the admin-only group with it — an exec with a link that bounces
   // them is a bug that has shipped before.
   { path: '/fees', admin: true, exec: true, trainer: false },
+  // Who allows photos. Legal, so an exec's and not a trainer's, even though the
+  // members half of it is roster data a trainer can otherwise read.
+  { path: '/legal/media-consent', admin: true, exec: true, trainer: false },
+  // Which version each member last signed. Legal, like the consent list above.
+  { path: '/legal/signatures', admin: true, exec: true, trainer: false },
 
   // Admin territory.
   { path: '/audit', admin: true, exec: false, trainer: false },
+  // The audit log's CSV download. A route rather than a server action because a
+  // file has to arrive as a response with its own headers, and its own row here
+  // because isUnder() is segment-aware: '/audit' never matches
+  // '/api/audit/export', so this path would otherwise fall through to the
+  // admin-only safety net and pass for the wrong reason.
+  { path: '/api/audit/export', admin: true, exec: false, trainer: false },
   { path: '/disputes', admin: true, exec: false, trainer: false },
   { path: '/walkovers', admin: true, exec: false, trainer: false },
   { path: '/challenges', admin: true, exec: false, trainer: false },
+  { path: '/events', admin: true, exec: false, trainer: false },
+  { path: '/events/abc-123', admin: true, exec: false, trainer: false },
   // Platform configuration, split out of /settings. /settings itself stays
   // trainer-level for passkey enrolment, so these two MUST be listed
   // separately — the club owner's rule was that execs cannot edit them, and
@@ -212,6 +225,13 @@ describe('a page-level capability matches what its route resolves to', () => {
     { path: '/disputes', capability: 'disputes.page' },
     { path: '/walkovers', capability: 'walkovers.page' },
     { path: '/audit', capability: 'audit.page' },
+    // The guest waiver list. Prefix-matched to '/legal', the same way: it is
+    // the Legal section read from another page, not a section of its own.
+    { path: '/legal/guests', capability: 'legal.page' },
+    // The photo and video consent list, prefix-matched to '/legal' the same way.
+    { path: '/legal/media-consent', capability: 'legal.page' },
+    // The members' signatures list, prefix-matched to '/legal' the same way.
+    { path: '/legal/signatures', capability: 'legal.page' },
   ];
 
   it.each(PAGE_GATES)('$path is $capability at every level', ({ path, capability }) => {

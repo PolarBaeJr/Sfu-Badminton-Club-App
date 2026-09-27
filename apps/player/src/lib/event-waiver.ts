@@ -26,6 +26,7 @@
 import { headers } from 'next/headers';
 import {
   ExpectedError,
+  raise,
   resolveEventWaiverText,
   eventWaiverStatus,
   type AcceptedEventWaiver,
@@ -66,7 +67,7 @@ export async function loadTournamentWaiverContext(
     .select('waiver_text')
     .eq('id', tournamentId)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) throw raise('TRN-102', error);
 
   const text = resolveEventWaiverText(tournament);
   if (!text) return { requiredHash: null, acceptances: [] };
@@ -75,7 +76,7 @@ export async function loadTournamentWaiverContext(
     .from('event_waiver_acceptances')
     .select('player_id, waiver_hash, accepted_at')
     .eq('tournament_id', tournamentId);
-  if (rowsError) throw new Error(rowsError.message);
+  if (rowsError) throw raise('TRN-102', rowsError);
 
   return {
     requiredHash: eventWaiverHash(text),
@@ -99,7 +100,7 @@ export async function loadMyEventWaiver(
     .select('waiver_text')
     .eq('id', tournamentId)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) throw raise('TRN-102', error);
 
   const text = resolveEventWaiverText(tournament);
   if (!text) {
@@ -112,7 +113,7 @@ export async function loadMyEventWaiver(
     .select('player_id, waiver_hash, accepted_at')
     .eq('tournament_id', tournamentId)
     .eq('player_id', playerId);
-  if (rowsError) throw new Error(rowsError.message);
+  if (rowsError) throw raise('TRN-102', rowsError);
 
   return {
     text,

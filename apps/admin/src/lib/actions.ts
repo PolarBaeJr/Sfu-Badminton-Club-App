@@ -26,6 +26,8 @@
 //                        updatePlatformSettings (/ratings + /accounts)
 //   - bulk.ts          — one decision applied to several records: a loop over
 //                        the single-record actions above, never a batched write
+//   - fee-paste.ts     - previewFeePaste (the /fees "Paste a list" read)
+//   - tour.ts          - markConsoleTourSeen (the console tour, 00246)
 //   - _shared.ts       — requireCapability (NOT 'use server' — internal helper)
 export {
   approvePlayer,
@@ -116,6 +118,7 @@ export {
   markFeeUnpaid,
   addManualFee,
   removeManualFee,
+  attachNamedPayment,
 } from './actions/fees';
 
 // Non-fee money ledgers (00073): donations/grants in, shuttles/courts out,
@@ -170,4 +173,9 @@ export {
   bulkMarkFeesUnpaid,
   bulkMarkTournamentFeesPaid,
   bulkMarkTournamentFeesUnpaid,
+  bulkAddManualFees,
 } from './actions/bulk';
+
+export { previewFeePaste } from './actions/fee-paste';
+
+export { markConsoleTourSeen } from './actions/tour';

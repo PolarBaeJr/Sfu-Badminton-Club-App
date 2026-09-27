@@ -5,7 +5,7 @@
 import * as Sentry from '@sentry/nextjs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PostHog } from 'posthog-node';
-import { getMissingLegalDocuments, isPushCategoryEnabled, isSelfReactivatable, ExpectedError, isExpectedFailure, type NotificationCategory } from '@badminton/shared';
+import { getMissingLegalDocuments, isPushCategoryEnabled, isSelfReactivatable, ExpectedError, isAppError, isExpectedFailure, type NotificationCategory } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 import { reactivateLapsedMember } from '../reactivate';
@@ -13,7 +13,7 @@ import { evaluateLegalGate } from '../legal-gate';
 
 export type ActionResult<T = void> =
   | { ok: true; data: T }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: string; ref?: string };
 
 // Next.js control-flow errors (redirect/notFound) throw and MUST propagate.
 const NEXT_CONTROL_FLOW = /^NEXT_(REDIRECT|NOT_FOUND|HTTP_ERROR_FALLBACK)/;
@@ -35,7 +35,14 @@ export async function runAction<T>(fn: () => Promise<T>): Promise<ActionResult<T
     // isExpectedFailure also matches an allowlisted guard message arriving as a
     // plain Error, which is how score-format rejections were reaching Sentry.
     if (!isExpectedFailure(err)) Sentry.captureException(err);
-    return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
+    // A coded error also hands back its code and ref, so the toast can show
+    // what to report. Next never logs an error returned as a value, so a coded
+    // fault is logged here, under the same CODE.ref the member sees.
+    if (!isAppError(err)) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
+    }
+    if (!isExpectedFailure(err)) console.error('[action]', err.digest, err);
+    return { ok: false, error: err.message, code: err.code, ref: err.ref };
   }
 }
 
@@ -68,22 +75,22 @@ export async function requirePlayer() {
     // Clear any Sentry user context left over from a previous request handler
     // sharing this Node process — avoids misattributing the next error.
     Sentry.setUser(null);
-    throw new ExpectedError('Not authenticated');
+    throw new ExpectedError('Not authenticated', 'AUTH-101');
   }
   if (player.status === 'pending_approval') {
     Sentry.setUser(null);
-    throw new ExpectedError('Account pending approval');
+    throw new ExpectedError('Account pending approval', 'ACC-101');
   }
   if (player.status === 'suspended') {
     Sentry.setUser(null);
-    throw new ExpectedError('Account suspended');
+    throw new ExpectedError('Account suspended', 'ACC-102');
   }
   // is_banned is an independent column, not folded into status — without this
   // a banned player could still create/accept challenges, check into sessions
   // and submit rated results (tournament register/check-in already re-check it).
   if (player.is_banned) {
     Sentry.setUser(null);
-    throw new ExpectedError('Account suspended pending reinstatement');
+    throw new ExpectedError('Account suspended pending reinstatement', 'ACC-103');
   }
   // active_flag, last, and the ordering above is doing real work. By the time
   // we get here the pending / suspended / banned rows have already thrown, so
@@ -104,7 +111,7 @@ export async function requirePlayer() {
   if (player.active_flag === false) {
     if (!isSelfReactivatable(player)) {
       Sentry.setUser(null);
-      throw new ExpectedError('Account scheduled for deletion');
+      throw new ExpectedError('Account scheduled for deletion', 'ACC-104');
     }
     // getCurrentPlayer() already returned this row, so hand the caller the
     // state it now has rather than the stale copy it was fetched with.

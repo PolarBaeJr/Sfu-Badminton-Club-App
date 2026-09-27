@@ -22,6 +22,7 @@ import {
   recordEventWaiverAcceptance,
 } from './event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
+import { assertFeatureOn } from './feature-gate';
 import { refuseClosedTournament } from './tournament-closed';
 
 // Revalidate every surface that surfaces tournament_participants /
@@ -81,6 +82,7 @@ export async function registerForEvent(eventId: string, opts?: RegisterOptions):
 
 async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
   if (player.is_banned) {
     throw new ExpectedError('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
   }
@@ -389,6 +391,7 @@ export async function acceptEventWaiver(
 
 async function acceptEventWaiverImpl(tournamentId: string, opts: { accepted: boolean }) {
   const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
   const service = createServiceRoleClient();
 
   // The tick box is a UI affordance and this is the server's copy of the same
@@ -434,6 +437,7 @@ export async function withdrawFromEvent(eventId: string): Promise<ActionResult> 
 
 async function withdrawFromEventImpl(eventId: string) {
   const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
   const service = createServiceRoleClient();
 
   // ONE STATEMENT, NOT READ-THEN-UPDATE (00193). This used to read the
@@ -490,6 +494,7 @@ export async function selfCheckIn(eventId: string): Promise<ActionResult> {
 
 async function selfCheckInImpl(eventId: string) {
   const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
   if (player.is_banned) {
     throw new ExpectedError('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
   }
@@ -601,6 +606,7 @@ export async function setMyMatchReady(matchId: string, ready: boolean): Promise<
 
 async function setMyMatchReadyImpl(matchId: string, ready: boolean) {
   const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
   const service = createServiceRoleClient();
 
   const { data: match } = await service

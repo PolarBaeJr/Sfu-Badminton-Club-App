@@ -71,8 +71,8 @@ export function CheckinClient({ token }: { token: string }) {
           </>
         )}
 
-        <Link href="/sessions" className="btn btn-ghost btn-lg" style={{ marginTop: 20, width: '100%', justifyContent: 'center' }}>
-          Go to sessions
+        <Link href="/feed" className="btn btn-ghost btn-lg" style={{ marginTop: 20, width: '100%', justifyContent: 'center' }}>
+          Go to the schedule
         </Link>
       </div>
     </div>

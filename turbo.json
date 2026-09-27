@@ -50,7 +50,12 @@
         // effective date leaves the cache untouched and the guard replays a PASS
         // against the previous text, which is the exact failure the guard exists
         // to catch.
-        "$TURBO_ROOT$/docs/legal/**"
+        "$TURBO_ROOT$/docs/legal/**",
+        // Admin tests import and read packages/ui source off disk
+        // (multi-select.test.tsx and select.test.tsx pin lines in the
+        // components), and packages/ui is outside the admin package, so a ui
+        // edit changed no hash and those tests replayed a cached PASS.
+        "$TURBO_ROOT$/packages/ui/src/**"
       ]
     },
     "lint": {},

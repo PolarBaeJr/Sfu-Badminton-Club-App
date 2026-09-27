@@ -1,9 +1,18 @@
 import { NextResponse } from 'next/server';
-import { buildICSCalendar, clubToday } from '@badminton/shared';
+import {
+  buildICSCalendar,
+  clubToday,
+  featureAccessFor,
+  featureGate,
+  wallClockToUtc,
+  type FeatureId,
+  type ICSClubEventFields,
+} from '@badminton/shared';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { getCheckinSettings } from '@/lib/checkin-settings';
 import { onVisibleTracks } from '@/lib/session-track-filter';
+import { getFeatureFlags } from '@/lib/feature-gate';
 
 // Next 14 caches GET route handlers by default; the feed must always reflect
 // the current schedule (and the token check must always run).
@@ -45,9 +54,13 @@ export async function GET(
 
   // is_banned is not readable by `authenticated` after 00032, and this route is
   // token-authenticated with no user session anyway.
+  //
+  // The role and permission columns are for featureAccessFor below, and the
+  // three permission columns go together: permissionsOf refuses a row with a
+  // role and only some of its deltas, and featureAccessFor then fails closed.
   const { data: player } = await createServiceRoleClient()
     .from('players')
-    .select('status, active_flag, is_banned')
+    .select('status, active_flag, is_banned, role, is_exec, is_trainer, permission_role, permission_grants, permission_revokes')
     .eq('id', tokenRow.player_id)
     .maybeSingle();
   if (!player || player.is_banned || !player.active_flag) {
@@ -64,16 +77,44 @@ export async function GET(
   const [y, m, d] = todayClub.split('-').map(Number) as [number, number, number];
   const cutoff = new Date(Date.UTC(y, m - 1, d - 60)).toISOString().slice(0, 10);
 
-  const { data: sessions, error: sessionsError } = await onVisibleTracks(
-    supabase
-      .from('sessions')
-      .select('id, name, date, start_time, end_time, location, notes, updated_at')
-      .in('status', ['open', 'closed'])
-      .gte('date', cutoff),
-    player.status,
-  )
-    .order('date')
-    .limit(200);
+  // THE CLUB FEATURE SWITCHES, for the token's owner, decided exactly as the
+  // app decides them for that member. A switched-off feature is left out of the
+  // calendar, not answered with a 503: a subscriber's calendar then drops those
+  // events on its next refresh, which is what "off" means. Neither read runs
+  // while its switch is off.
+  const flags = await getFeatureFlags();
+  const access = featureAccessFor(player);
+  const on = (id: FeatureId) => featureGate(flags[id], access.includes(id)) !== 'redirect';
+  const empty = Promise.resolve({ data: [] as never[], error: null });
+
+  const [{ data: sessions, error: sessionsError }, { data: clubEvents, error: clubEventsError }] =
+    await Promise.all([
+      on('sessions')
+        ? onVisibleTracks(
+            supabase
+              .from('sessions')
+              .select('id, name, date, start_time, end_time, location, notes, updated_at')
+              .in('status', ['open', 'closed'])
+              .gte('date', cutoff),
+            player.status,
+          )
+            .order('date')
+            .limit(200)
+        : empty,
+      // The status filter is load-bearing: this is the service role, which
+      // club_events_member_read does not apply to, so without it a draft would
+      // reach every subscriber's calendar. Same 60-day look-back as sessions;
+      // wallClockToUtc rolls the day overflow.
+      on('events')
+        ? supabase
+            .from('club_events')
+            .select('id, title, kind, description, location, starts_at, ends_at, status, cancelled_reason, updated_at')
+            .in('status', ['published', 'cancelled'])
+            .gte('starts_at', wallClockToUtc(y, m, d - 60, 0, 0).toISOString())
+            .order('starts_at')
+            .limit(200)
+        : empty,
+    ]);
 
   // A REFUSED READ MUST NOT BECOME A VALID EMPTY CALENDAR, and this route is the
   // one place where that distinction outlives the request. The old `?? []` here
@@ -97,6 +138,17 @@ export async function GET(
       headers: { 'Cache-Control': 'no-store' },
     });
   }
+  // The same 503 for the same reason: a 200 without its club events would make
+  // every subscriber's calendar delete them.
+  if (clubEventsError) {
+    Sentry.captureException(new Error(clubEventsError.message), {
+      extra: { action: 'calendar:clubEvents', details: clubEventsError.details },
+    });
+    return new NextResponse('Calendar temporarily unavailable', {
+      status: 503,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  }
 
   // Same service-role client the feed already uses: this route has no user
   // session, so the settings read has to go through it.
@@ -106,6 +158,7 @@ export async function GET(
     buildICSCalendar(sessions ?? [], {
       baseUrl: process.env.NEXT_PUBLIC_PLAYER_URL,
       settings: checkinSettings,
+      clubEvents: (clubEvents ?? []) as ICSClubEventFields[],
     }),
     {
       headers: {

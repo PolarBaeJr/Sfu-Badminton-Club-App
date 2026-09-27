@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getViewer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getStreakDisplay, getPointDifferential, clubDate, formatRelativeTime, clubToday, formatMemberCode, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { getWinRate, getStreakDisplay, getPointDifferential, clubDate, formatRelativeTime, clubToday, formatMemberCode, TOURNAMENT_EVENT_TYPE_LABELS, featureAccessFor, playerPathVisible } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
 import { buildRatingSeries, buildOverallFormFlags, deriveAttendance, deriveSessionCadence, type RatingSourceRow, type FormSourceRow } from '@/lib/stats-charts';
@@ -11,6 +11,8 @@ import { seasonPickerOptions, summarizeSeason, type HistorySeason } from '@/lib/
 import { PastSeasonStats } from './past-season';
 import { LiveRating } from '@/components/live-rating';
 import { LiveMyStats } from '@/components/live-matches';
+import { PaidBadge } from '@/components/paid-badge';
+import { getFeatureFlags } from '@/lib/feature-gate';
 
 // The rating line, the form strip and the history table all read one window of
 // the member's matches. 200 is a season and a half of heavy play — deep enough
@@ -100,6 +102,10 @@ async function CurrentSeasonStats() {
   const supabase = await createServerSupabaseClient();
   const activeSeason = await getActiveSeason();
   const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
+  const features = await getFeatureFlags();
+  const featureAccess = featureAccessFor(player);
+  const showPaid = playerPathVisible('/fees', features, featureAccess);
+  const showMembership = playerPathVisible('/membership', features, featureAccess);
 
   // The club's today, not UTC's. `toISOString().slice(0, 10)` is already
   // tomorrow in Vancouver from about 5pm, so from dinner onwards it would pull
@@ -556,7 +562,15 @@ async function CurrentSeasonStats() {
                 {seasonRecord.singles.currentStreak > 0 && (
                   <span className="pill pill-out">W{seasonRecord.singles.currentStreak} singles</span>
                 )}
+                {showPaid && <PaidBadge playerId={player.id} />}
               </div>
+              {showMembership && (
+                <div className="mono" style={{ fontSize: 12, marginTop: 8 }}>
+                  <a href="/membership" style={{ color: 'var(--mute)', textDecoration: 'underline' }}>
+                    Membership
+                  </a>
+                </div>
+              )}
             </div>
           </div>
 

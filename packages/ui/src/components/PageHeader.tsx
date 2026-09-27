@@ -31,7 +31,7 @@ export function PageHeader({ eyebrow, title, sub, actions, watermark, className 
         {sub && <div className="page-sub">{sub}</div>}
       </div>
       {actions && (
-        <div className="row" style={{ gap: 10 }}>
+        <div className="row relative z-[1]" style={{ gap: 10 }}>
           {actions}
         </div>
       )}

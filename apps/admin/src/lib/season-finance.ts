@@ -198,7 +198,7 @@ export async function getSeasonExpenses(
   // query DOES fail, so this is the normal path on the day of the deploy, not a
   // hypothetical.
   return summariseExpenseRows(
-    unwrap(expenses as { data: ExpenseRow[] | null; error: { message: string } | null }),
+    unwrap(expenses as { data: ExpenseRow[] | null; error: { message: string } | null }, 'FEE-103'),
   );
 }
 

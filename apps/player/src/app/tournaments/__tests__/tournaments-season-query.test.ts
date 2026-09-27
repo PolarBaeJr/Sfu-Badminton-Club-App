@@ -19,6 +19,10 @@
 // because they are one refactor away from being collapsed into a single call
 // that "does the same thing".
 //
+// It also pins that neither branch ever lists a draft: tournaments_select is
+// USING (TRUE), so the status filter in the query is the only thing keeping an
+// unpublished tournament off a member's calendar.
+//
 // Nothing else catches it. Select strings are unchecked string literals
 // (supabase-server.ts: "typed clients are deliberately off"), and a PostgREST
 // read that comes back 400/403 RESOLVES rather than rejecting, so a wrong or
@@ -30,7 +34,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
-import { scopeToActiveSeason } from '@badminton/shared';
+import { tournamentCalendarQuery } from '@/lib/tournament-index';
 
 const ACTIVE = '11111111-1111-4111-8111-111111111111';
 const PICKED = '22222222-2222-4222-8222-222222222222';
@@ -67,31 +71,29 @@ function onlyQuery(urls: readonly string[]): URLSearchParams {
 }
 
 /**
- * The calendar read, reproduced exactly as page.tsx builds it.
- *
- * Reproduced rather than imported because it is inline in a React Server
- * Component that a unit test cannot render. The loose branch calls the REAL
- * scopeToActiveSeason, so a change to activeSeasonOrFilter lands here rather
- * than being papered over by a hand-written copy of the string it emits.
+ * The calendar read, imported from lib/tournament-index.ts, the same builder
+ * page.tsx calls, so what is pinned here is the code that runs and not a copy.
  */
 function calendarRead(
   client: ReturnType<typeof recordingClient>['client'],
   season: { pickedId: string | null; activeId: string | null },
 ) {
-  const calendar = client
-    .from('tournaments')
-    .select(
-      'id, name, start_date, status, suspended_at, ' +
-      'tournament_events(id, event_type, status, max_participants), ' +
-      'tournament_fee_tiers(id, name, amount_cents, is_default, sort_order, applies_to)',
-    );
-  const scoped = season.pickedId
-    ? calendar.eq('season_id', season.pickedId)
-    : scopeToActiveSeason(calendar, season.activeId);
-  return scoped.order('start_date', { ascending: true });
+  return tournamentCalendarQuery(client, season);
 }
 
 describe('the tournament calendar read', () => {
+  it('never lists a draft, on either branch', async () => {
+    for (const season of [
+      { pickedId: null, activeId: ACTIVE },
+      { pickedId: PICKED, activeId: ACTIVE },
+      { pickedId: null, activeId: null },
+    ]) {
+      const { client, urls } = recordingClient();
+      await calendarRead(client, season);
+      expect(onlyQuery(urls).get('status')).toBe('neq.draft');
+    }
+  });
+
   it('is loose on the bare path, including rows with no season', async () => {
     const { client, urls } = recordingClient();
     await calendarRead(client, { pickedId: null, activeId: ACTIVE });
