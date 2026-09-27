@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
-import { getEventRules, tallyGames, isLegalGameScore, isLegalGameCount, resolveMatchShape, describeMatchShape } from '@badminton/shared';
+import { getEventRules, tallyGames, isLegalGameScore, isLegalGameCount, resolveMatchShape, describeMatchShape, eventRatingLine } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
@@ -850,20 +850,12 @@ function OutcomeSummary({ summary, onClose }: { summary: MatchOutcomeSummary; on
 
 function EntrySummaryCard({ entry, doubles }: { entry: EntryEventSummary; doubles: boolean }) {
   // THE DELTA IS DERIVED FROM THE TWO RATINGS BESIDE IT, not read from
-  // elo_change, so the three figures on the row always reconcile.
-  //
-  // They usually agree — applyPlacementBonuses credits elo_change and elo_after
-  // together — but not always: the bonus is CLAMPED into elo_after and not into
-  // elo_change, so at the rating ceiling the stored change can exceed the
-  // movement it describes. "1114 -> 1190 (+108)" is precisely the row 00083 and
-  // the elo_after fix exist to have stopped appearing, and a confirmation panel
-  // is the last place to reintroduce it.
-  //
-  // When there is no elo_after at all — an entry that has been credited but
-  // never rated — the arrow is dropped rather than pointed at a question mark,
-  // and the stored change is shown on its own.
-  const hasBoth = entry.eloBefore != null && entry.eloAfter != null;
-  const delta = hasBoth ? entry.eloAfter! - entry.eloBefore! : entry.eloChange;
+  // elo_change, so the three figures on the row always reconcile. The rule, and
+  // why the two can differ at the rating ceiling, is on eventRatingLine in
+  // @badminton/shared, which the member's own event page uses as well.
+  const rating = eventRatingLine(entry.eloBefore, entry.eloAfter, entry.eloChange);
+  const hasBoth = rating?.before != null && rating.after != null;
+  const delta = rating?.delta ?? null;
   const up = (delta ?? 0) > 0;
   const down = (delta ?? 0) < 0;
 
@@ -895,7 +887,7 @@ function EntrySummaryCard({ entry, doubles }: { entry: EntryEventSummary; double
           <div className="flex justify-between gap-2">
             <dt className="text-[var(--text-muted)]">Rating</dt>
             <dd className="font-mono text-[var(--text-secondary)]">
-              {hasBoth && <>{entry.eloBefore} &rarr; {entry.eloAfter} </>}
+              {hasBoth && <>{rating.before} &rarr; {rating.after} </>}
               <span className={up ? 'text-[var(--color-success)]' : down ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}>
                 <span className="sr-only">{up ? 'gained' : down ? 'lost' : 'no change'} </span>
                 ({up ? '+' : ''}{delta})
