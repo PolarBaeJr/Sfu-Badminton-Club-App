@@ -21,7 +21,9 @@ import type { HistorySeason } from '@/lib/season-history';
  * nothing else.
  *
  * Renders nothing when there is only the current term to look at, so a club in
- * its first season never sees a control with one option in it.
+ * its first season never sees a control with one option in it. `showAlone`
+ * overrides that for /my-stats, whose every card is scoped to the season the
+ * control names, so the control stays as the label of what is being shown.
  *
  * `basePath` is required rather than defaulted to /my-stats. Three screens are
  * season-scoped now (/my-stats, /leaderboard and /tournaments) and each is the
@@ -34,6 +36,7 @@ export function SeasonPick({
   options,
   selectedId,
   basePath,
+  showAlone = false,
 }: {
   /** Active season first, then the member's past terms, newest first. */
   options: HistorySeason[];
@@ -41,11 +44,13 @@ export function SeasonPick({
   selectedId: string | null;
   /** The screen this control belongs to, e.g. `/my-stats`. No trailing slash. */
   basePath: string;
+  /** Render with a single option rather than nothing. */
+  showAlone?: boolean;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  if (options.length < 2) return null;
+  if (options.length < (showAlone ? 1 : 2)) return null;
 
   function choose(id: string) {
     const chosen = options.find((s) => s.id === id);
