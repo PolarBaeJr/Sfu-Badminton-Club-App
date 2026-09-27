@@ -43,9 +43,7 @@ class EmailCode(
         }
         if (error == null) return SendCodeResult.Sent
         if (isUnknownAccountError(error.message, error.code)) return SendCodeResult.UnknownAccount
-        return SendCodeResult.Failed(
-            withErrorCode(friendlyAuthError(error.message), authErrorCode(error.message, error.code, error.status)),
-        )
+        return SendCodeResult.Failed(failureMessage(error.message, error.code, error.status))
     }
 
     /**
@@ -67,10 +65,7 @@ class EmailCode(
         if (session == null) {
             val message = lastError?.message ?: ""
             return VerifyCodeResult.Failed(
-                withErrorCode(
-                    friendlyAuthError(message.ifEmpty { "That code did not work. Request a new one." }),
-                    authErrorCode(message, lastError?.code, lastError?.status),
-                ),
+                failureMessage(message.ifEmpty { "That code did not work. Request a new one." }, lastError?.code, lastError?.status),
             )
         }
 
@@ -80,6 +75,20 @@ class EmailCode(
             VerifyCodeResult.Unfinished
         }
     }
+
+    /**
+     * Status 0 is a request that never got a response, and its message is the
+     * JVM's own ("Unable to resolve host ..."), which the shared rules pass
+     * through untouched because on the web it is a short "Failed to fetch".
+     * Found on the emulator: the member was shown the raw exception. Said the
+     * way PasskeyApi says it instead.
+     */
+    private fun failureMessage(message: String, code: String?, status: Int?): String =
+        if (status == 0) {
+            withErrorCode("Could not reach the club server. Check your connection and try again.", "AUTH-205")
+        } else {
+            withErrorCode(friendlyAuthError(message), authErrorCode(message, code, status))
+        }
 
     private companion object {
         const val RETRY_DELAY_MS = 900L

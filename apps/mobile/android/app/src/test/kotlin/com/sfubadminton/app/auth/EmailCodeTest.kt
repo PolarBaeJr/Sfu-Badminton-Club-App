@@ -67,6 +67,14 @@ class EmailCodeTest {
     }
 
     @Test
+    fun `never shows the JVM's own text for a request with no response`() = runTest {
+        val h = harness { HttpResponse(0, "", "Unable to resolve host \"project.example.invalid\"") }
+        val expected = "Could not reach the club server. Check your connection and try again. (AUTH-205)"
+        assertEquals(SendCodeResult.Failed(expected), h.code.send("m@example.invalid"))
+        assertEquals(VerifyCodeResult.Failed(expected), h.code.verify("m@example.invalid", "123456"))
+    }
+
+    @Test
     fun `reads otp_disabled as an unknown account`() = runTest {
         val h = harness { status(422, """{"code":"otp_disabled","msg":"Signups not allowed for otp"}""", "2024-01-01") }
         assertEquals(SendCodeResult.UnknownAccount, h.code.send("m@example.invalid"))
