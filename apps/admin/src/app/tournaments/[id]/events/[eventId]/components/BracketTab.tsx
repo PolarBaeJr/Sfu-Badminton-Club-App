@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   getRoundName, eventIsPlaying, computeDrawLayout, fitScale, splitPairLabel, courtLabel,
-  SKIP_SLOT_LABEL, SKIP_STATUS_LABEL,
+  SKIP_SLOT_LABEL, SKIP_STATUS_LABEL, groupDrawRounds, focusRoundIndex, ALL_OPEN_MAX_ROUNDS,
 } from '@badminton/shared';
 import type { DrawSide } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { RoundLadder } from './RoundLadder';
-import { Trophy } from 'lucide-react';
+import { Trophy, ChevronDown } from 'lucide-react';
 import { getName } from './entry-name';
+import { buildEntryMaps } from '@/lib/live-desk';
 import type {
   TournamentEventRow,
   TournamentMatchRow,
@@ -207,28 +208,10 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
 
   const layout = computeDrawLayout(treeMatches, GEOMETRY, { thirdPlace: !!thirdPlace });
 
-  // Build name lookup
-  const nameMap: Record<string, string> = {};
-  if (isDoubles) {
-    for (const p of pairs) nameMap[p.id] = getName(p, isDoubles);
-  } else {
-    for (const p of participants) nameMap[p.id] = getName(p, isDoubles);
-  }
-
-  // Seed lookup
-  const seedMap: Record<string, number> = {};
+  // Names, seeds, and the candidates the slot editor may place into an orphaned
+  // bracket position, built the same way the Court Management tab builds them.
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
-
-  // Candidates the slot editor may place into an orphaned bracket position.
-  // Withdrawn and disqualified entries are excluded here and refused again
-  // server-side — the client list is a convenience, not the rule.
-  const placeableEntries = entries
-    .filter((e) => e.status !== 'withdrawn' && e.status !== 'disqualified')
-    .map((e) => ({ id: e.id, name: nameMap[e.id] ?? 'Unknown' }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  for (const p of entries) {
-    if (p.seed_number) seedMap[p.id] = p.seed_number;
-  }
+  const { nameMap, seedMap, placeableEntries } = buildEntryMaps(entries, (e) => getName(e, isDoubles));
 
   function getEntryName(id: string | null) {
     if (!id) return 'TBD';
@@ -303,6 +286,15 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
     return side === 'centre' ? name : `${name}, ${side === 'left' ? 'top' : 'bottom'} half`;
   };
 
+  // THE PHONE'S DRAW: one list a round, the same fallback the player app has
+  // and on the same shared rule for which round opens (draw-rounds.ts). The
+  // chart below is `hidden md:block`, so its viewport measures 0 wide on a
+  // phone, which fitScale and fitWidth both already read as "not measured"
+  // and answer with 1 rather than dividing by it.
+  const phoneRounds = groupDrawRounds(layout);
+  const phoneAllOpen = phoneRounds.length <= ALL_OPEN_MAX_ROUNDS;
+  const phoneFocus = focusRoundIndex(phoneRounds, (m) => m.status);
+
   return (
     <>
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4" role="region" aria-label="Tournament bracket">
@@ -324,137 +316,190 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
 
         {/* THE DRAW READS INWARDS FROM BOTH EDGES, which is not how anybody
             expects a bracket to read until they are told once. */}
-        <p className="mb-3 text-[11px] text-[var(--text-muted)]">
+        <p className="hidden md:block mb-3 text-[11px] text-[var(--text-muted)]">
           {layout.mode === 'converging'
             ? 'The top half runs inwards from the left, the bottom half inwards from the right, and they meet at the final in the middle.'
             : 'This draw’s rounds do not halve, so it is shown as a plain left-to-right ladder.'}
         </p>
+        <p className="md:hidden mb-3 text-[11px] text-[var(--text-muted)]">
+          On a phone the draw is a list, one round at a time. Tap a match to score or correct it.
+        </p>
 
-        <ZoomBar zoom={zoom} onZoom={setUserZoom} fitBoth={fitBoth} fitWidth={fitWidth} />
-
-        {/* Two nested boxes because a CSS transform does not change layout size:
-            the scaled diagram would still reserve its FULL width and height, so
-            a zoomed-out bracket left a screen of blank card behind it and the
-            scrollbars never shrank. The outer box scrolls, the middle box is
-            sized to the SCALED dimensions, and only the inner one is
-            transformed.
-
-            The height cap is unconditional and costs a short draw nothing: a
-            max-height only bites once the content exceeds it, so an eight-player
-            bracket still flows with the page and grows no inner scrollbar. */}
-        <div
-          ref={viewportRef}
-          className="bracket-viewport overflow-auto"
-          style={{ maxHeight: `${Math.round(VIEWPORT_H_SHARE * 100)}vh` }}
-        >
-          <div style={{ width: layout.width * zoom, height: layout.height * zoom }}>
-            <div
-              className="relative"
-              style={{
-                width: layout.width,
-                height: layout.height,
-                transform: `scale(${zoom})`,
-                transformOrigin: 'top left',
-              }}
+        <div className="md:hidden space-y-2">
+          {phoneRounds.map((r, i) => (
+            <PhoneRound
+              key={r.roundNumber}
+              title={roundNameOf(r.roundNumber)}
+              count={r.nodes.length}
+              open={phoneAllOpen || i === phoneFocus}
             >
-              {/* Round headings. One per column, so a converging draw names
-                  each round over both of its halves. */}
-              {layout.columns.map((col) => (
-                <div
-                  key={col.key}
-                  className="absolute flex items-center justify-center"
-                  style={{ left: col.x, top: 0, width: COL_W, height: HEAD_H }}
-                >
-                  <h3
-                    className={`text-[11px] font-bold uppercase tracking-[0.12em] ${
-                      col.side === 'centre' ? 'text-[var(--color-warning)]' : 'text-[var(--text-muted)]'
-                    }`}
-                  >
-                    {roundsInOrder.find((r) => r.roundNumber === col.roundNumber)?.name
-                      ?? getRoundName(col.roundNumber, lastRoundNumber)}
-                  </h3>
-                </div>
+              {r.nodes.map((node) => (
+                <MatchCard
+                  key={node.id}
+                  m={node.match}
+                  // "left" for the layout only: a list row is never mirrored.
+                  // The spoken label still names the node's real half.
+                  side="left"
+                  roundLabel={roundLabelOf(node.roundNumber, node.side)}
+                  isDoubles={isDoubles}
+                  isLive={isLive}
+                  getEntryName={getEntryName}
+                  getSeed={getSeed}
+                  onEnterScore={() => setScoreMatch(node.match)}
+                />
               ))}
+            </PhoneRound>
+          ))}
+          {thirdPlace && (
+            <PhoneRound
+              title="3rd Place Playoff"
+              count={1}
+              open={phoneAllOpen || phoneFocus === phoneRounds.length - 1}
+            >
+              <MatchCard
+                m={thirdPlace}
+                side="left"
+                roundLabel="3rd Place Playoff"
+                isDoubles={isDoubles}
+                isLive={isLive}
+                getEntryName={getEntryName}
+                getSeed={getSeed}
+                onEnterScore={() => setScoreMatch(thirdPlace)}
+              />
+              <p className="text-[11px] leading-snug text-[var(--text-muted)]">
+                The two beaten semi-finalists, one from each half. The winner does not advance to the final.
+              </p>
+            </PhoneRound>
+          )}
+        </div>
 
-              {/* The connector work, as flat boxes the engine positioned. */}
-              <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
-                {/* The two axes grow independently, not as an either/or: a
-                    stub or an entry is a hairline in h with a real w, a riser
-                    the other way round, and nothing guarantees a segment can
-                    only ever be one of the two. See LINK_PX. */}
-                {layout.connectors.map((c) => (
-                  <span
-                    key={c.key}
-                    className="absolute bg-[var(--draw-link)]"
-                    style={{
-                      left: c.w === 1 ? c.x - (LINK_PX - 1) / 2 : c.x,
-                      top: c.h === 1 ? c.y - (LINK_PX - 1) / 2 : c.y,
-                      width: c.w === 1 ? LINK_PX : c.w,
-                      height: c.h === 1 ? LINK_PX : c.h,
-                    }}
-                  />
-                ))}
-              </div>
+        <div className="hidden md:block">
+          <ZoomBar zoom={zoom} onZoom={setUserZoom} fitBoth={fitBoth} fitWidth={fitWidth} />
 
-              <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }}>
-                {layout.nodes.map((node) => (
+          {/* Two nested boxes because a CSS transform does not change layout size:
+              the scaled diagram would still reserve its FULL width and height, so
+              a zoomed-out bracket left a screen of blank card behind it and the
+              scrollbars never shrank. The outer box scrolls, the middle box is
+              sized to the SCALED dimensions, and only the inner one is
+              transformed.
+
+              The height cap is unconditional and costs a short draw nothing: a
+              max-height only bites once the content exceeds it, so an eight-player
+              bracket still flows with the page and grows no inner scrollbar. */}
+          <div
+            ref={viewportRef}
+            className="bracket-viewport overflow-auto"
+            style={{ maxHeight: `${Math.round(VIEWPORT_H_SHARE * 100)}vh` }}
+          >
+            <div style={{ width: layout.width * zoom, height: layout.height * zoom }}>
+              <div
+                className="relative"
+                style={{
+                  width: layout.width,
+                  height: layout.height,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: 'top left',
+                }}
+              >
+                {/* Round headings. One per column, so a converging draw names
+                    each round over both of its halves. */}
+                {layout.columns.map((col) => (
                   <div
-                    key={node.id}
-                    className="absolute"
-                    style={{ left: node.x, top: node.y, width: COL_W }}
+                    key={col.key}
+                    className="absolute flex items-center justify-center"
+                    style={{ left: col.x, top: 0, width: COL_W, height: HEAD_H }}
                   >
-                    <MatchCard
-                      m={node.match}
-                      side={node.side}
-                      roundLabel={roundLabelOf(node.roundNumber, node.side)}
-                      isDoubles={isDoubles}
-                      isLive={isLive}
-                      getEntryName={getEntryName}
-                      getSeed={getSeed}
-                      onEnterScore={() => setScoreMatch(node.match)}
-                    />
-                  </div>
-                ))}
-
-                {/* THE 3RD PLACE PLAYOFF, in the clear space under the final.
-                    The centre column carries one card, so a converging draw has
-                    a whole column of room exactly where the reader is already
-                    looking — and it is the other match that ends somebody's
-                    tournament, decided on the same day.
-
-                    NO LINE TOUCHES IT, and that is a change from the linear
-                    draw, which reached a dashed elbow back to the semi-finals.
-                    In a converging draw the two beaten semi-finalists are on
-                    OPPOSITE sides of the final, so there is no single path back
-                    to draw and any line long enough to reach one of them has to
-                    cross the final — which would say something about the final.
-                    The caption does the work instead, and now has to, since a
-                    reader can no longer infer "leads nowhere" from a line that
-                    is not there. */}
-                {thirdPlace && layout.thirdPlace && (
-                  <div
-                    className="absolute"
-                    style={{ left: layout.thirdPlace.x, top: layout.thirdPlace.y, width: COL_W }}
-                  >
-                    <MatchCard
-                      m={thirdPlace}
-                      side="centre"
-                      roundLabel="3rd Place Playoff"
-                      isDoubles={isDoubles}
-                      isLive={isLive}
-                      getEntryName={getEntryName}
-                      getSeed={getSeed}
-                      onEnterScore={() => setScoreMatch(thirdPlace)}
-                    />
-                    <h3 className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-secondary)]">
-                      3rd Place Playoff
+                    <h3
+                      className={`text-[11px] font-bold uppercase tracking-[0.12em] ${
+                        col.side === 'centre' ? 'text-[var(--color-warning)]' : 'text-[var(--text-muted)]'
+                      }`}
+                    >
+                      {roundsInOrder.find((r) => r.roundNumber === col.roundNumber)?.name
+                        ?? getRoundName(col.roundNumber, lastRoundNumber)}
                     </h3>
-                    <p className="text-[11px] leading-snug text-[var(--text-muted)]">
-                      The two beaten semi-finalists, one from each half. Decides 3rd and 4th — the
-                      winner does not advance to the final.
-                    </p>
                   </div>
-                )}
+                ))}
+
+                {/* The connector work, as flat boxes the engine positioned. */}
+                <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
+                  {/* The two axes grow independently, not as an either/or: a
+                      stub or an entry is a hairline in h with a real w, a riser
+                      the other way round, and nothing guarantees a segment can
+                      only ever be one of the two. See LINK_PX. */}
+                  {layout.connectors.map((c) => (
+                    <span
+                      key={c.key}
+                      className="absolute bg-[var(--draw-link)]"
+                      style={{
+                        left: c.w === 1 ? c.x - (LINK_PX - 1) / 2 : c.x,
+                        top: c.h === 1 ? c.y - (LINK_PX - 1) / 2 : c.y,
+                        width: c.w === 1 ? LINK_PX : c.w,
+                        height: c.h === 1 ? LINK_PX : c.h,
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }}>
+                  {layout.nodes.map((node) => (
+                    <div
+                      key={node.id}
+                      className="absolute"
+                      style={{ left: node.x, top: node.y, width: COL_W }}
+                    >
+                      <MatchCard
+                        m={node.match}
+                        side={node.side}
+                        roundLabel={roundLabelOf(node.roundNumber, node.side)}
+                        isDoubles={isDoubles}
+                        isLive={isLive}
+                        getEntryName={getEntryName}
+                        getSeed={getSeed}
+                        onEnterScore={() => setScoreMatch(node.match)}
+                      />
+                    </div>
+                  ))}
+
+                  {/* THE 3RD PLACE PLAYOFF, in the clear space under the final.
+                      The centre column carries one card, so a converging draw has
+                      a whole column of room exactly where the reader is already
+                      looking — and it is the other match that ends somebody's
+                      tournament, decided on the same day.
+
+                      NO LINE TOUCHES IT, and that is a change from the linear
+                      draw, which reached a dashed elbow back to the semi-finals.
+                      In a converging draw the two beaten semi-finalists are on
+                      OPPOSITE sides of the final, so there is no single path back
+                      to draw and any line long enough to reach one of them has to
+                      cross the final — which would say something about the final.
+                      The caption does the work instead, and now has to, since a
+                      reader can no longer infer "leads nowhere" from a line that
+                      is not there. */}
+                  {thirdPlace && layout.thirdPlace && (
+                    <div
+                      className="absolute"
+                      style={{ left: layout.thirdPlace.x, top: layout.thirdPlace.y, width: COL_W }}
+                    >
+                      <MatchCard
+                        m={thirdPlace}
+                        side="centre"
+                        roundLabel="3rd Place Playoff"
+                        isDoubles={isDoubles}
+                        isLive={isLive}
+                        getEntryName={getEntryName}
+                        getSeed={getSeed}
+                        onEnterScore={() => setScoreMatch(thirdPlace)}
+                      />
+                      <h3 className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-secondary)]">
+                        3rd Place Playoff
+                      </h3>
+                      <p className="text-[11px] leading-snug text-[var(--text-muted)]">
+                        The two beaten semi-finalists, one from each half. Decides 3rd and 4th — the
+                        winner does not advance to the final.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -473,6 +518,36 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
         />
       )}
     </>
+  );
+}
+
+/**
+ * ONE COLLAPSIBLE ROUND of the phone list, as a native <details>, for the
+ * reasons the player app's RoundDisclosure gives: the keyboard behaviour, the
+ * expanded state and find-in-page come with it. `open` is re-applied when the
+ * prop changes, so the open round follows play as results land.
+ */
+function PhoneRound({
+  title, count, open, children,
+}: {
+  title: string;
+  count: number;
+  open: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details open={open} className="group rounded-md border border-[var(--border)] overflow-hidden">
+      <summary className="flex items-center justify-between gap-2 px-3 min-h-[44px] cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+        <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-muted)]">{title}</span>
+        <span className="flex items-center gap-2">
+          <span className="font-mono text-[11px] text-[var(--text-muted)]">
+            {count} {count === 1 ? 'match' : 'matches'}
+          </span>
+          <ChevronDown aria-hidden className="w-3.5 h-3.5 text-[var(--text-muted)] transition-transform group-open:rotate-180" />
+        </span>
+      </summary>
+      <div className="space-y-2 px-3 pb-3 pt-1">{children}</div>
+    </details>
   );
 }
 

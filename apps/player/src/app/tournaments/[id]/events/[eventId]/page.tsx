@@ -16,6 +16,8 @@ import {
   courtLabelOrTbc,
   SKIP_SLOT_LABEL,
   membershipUnpaidMessage,
+  eventRecordFor,
+  eventRatingLine,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -34,6 +36,7 @@ import { MatchReady } from './MatchReady';
 import { loadMyMembershipScreen } from '@/lib/membership-screen';
 import { getFeatureFlags } from '@/lib/feature-gate';
 import { refuseClosedTournament } from '@/lib/tournament-closed';
+import { YourEventSoFar } from './YourEventSoFar';
 
 /**
  * The match's own state, said to a member rather than to a database.
@@ -422,6 +425,39 @@ export default async function EventDetailPage({
   const drawMatches = bracketMatches.map(toDrawMatch);
   const drawThirdPlace = thirdPlaceMatch ? toDrawMatch(thirdPlaceMatch) : null;
 
+  // THE VIEWER'S OWN RECORD, over EVERY match in the event (pool, knockout and
+  // the third-place playoff), since each of those is a match they played. phase
+  // rides along so the last match is the knockout one on a pool_to_bracket
+  // event, where round_number restarts.
+  const myRecord = playerEntryId
+    ? eventRecordFor(
+        allMatches.map((m) => ({ ...toDrawMatch(m), phase: (m.phase as string | null) ?? null })),
+        playerEntryId,
+      )
+    : null;
+  const myLastOpponent = myRecord?.last?.opponentId
+    ? participantNameMap[myRecord.last.opponentId] || 'TBD'
+    : 'TBD';
+
+  // THE VIEWER'S OWN RATING LINE, singles only (a pair has no rating row), read
+  // on its own rather than by widening either participant read above. Adding
+  // elo_before/elo_after to the all-participants select would ship every
+  // entrant's absolute rating to every visitor; adding them to `regRes` would put
+  // them behind `unwrap`, so a failed read would 500 the page. This one fails
+  // soft, like the partner lookup: an error costs the rating line and nothing
+  // else. Asked only once there is a result to put a rating beside.
+  let myRating: ReturnType<typeof eventRatingLine> = null;
+  if (!doubles && currentPlayer && playerEntryId && myRecord && myRecord.played > 0) {
+    const ratingRes = await supabase
+      .from('tournament_participants')
+      .select('elo_before, elo_after, elo_change')
+      .eq('id', playerEntryId)
+      .eq('player_id', currentPlayer.id)
+      .maybeSingle();
+    const mine = ratingRes.data;
+    if (mine) myRating = eventRatingLine(mine.elo_before, mine.elo_after, mine.elo_change);
+  }
+
   return (
     <div className="space-y-5 pb-28 px-4 sm:px-0">
       {/* THE SCREEN THIS WHOLE CHANGE IS FOR. An entrant sits courtside with
@@ -548,6 +584,14 @@ export default async function EventDetailPage({
               </p>
             )}
             <div className="px-4 pb-4 space-y-2">
+              {myRecord && myRecord.played > 0 && (
+                <YourEventSoFar
+                  record={myRecord}
+                  opponentName={myLastOpponent}
+                  doubles={doubles}
+                  rating={myRating}
+                />
+              )}
               {allMatches
                 .filter((m) => {
                   const aId = doubles ? m.pair_a_id : m.participant_a_id;

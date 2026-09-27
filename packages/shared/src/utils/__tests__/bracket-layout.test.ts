@@ -207,6 +207,29 @@ describe('computeDrawLayout — the awkward draws', () => {
     expect(l.nodes.filter((n) => n.depth === 0)).toHaveLength(8);
   });
 
+  it('lays a seed skip out as an ordinary card, not a hole in the tree', () => {
+    // A seed skip is not a shape of its own. generateBracket (admin
+    // tournament-actions/brackets.ts) writes every round-one row of the
+    // nextPowerOf2 tree, and a round-one row with one empty slot becomes
+    // is_bye + completed with its entrant already advanced. Six entrants in an
+    // 8 draw: getStandardSeedPositions(8) is [1,8,4,5,2,7,3,6] and ranks 7 and 8
+    // are empty, so the two top seeds skip at bracket_position 0 and 2, one a
+    // half. Those rows stay in the draw and still feed their round-two card.
+    const draw = drawOf(6).map((m) => ({
+      ...m,
+      is_bye: m.round_number === 1 && (m.bracket_position === 0 || m.bracket_position === 2),
+    }));
+    const l = computeDrawLayout(draw, GEO);
+    expect(l.mode).toBe('converging');
+    expect(l.nodes).toHaveLength(7);
+    expect(at(l, 'r1p0').side).toBe('left');
+    expect(at(l, 'r1p2').side).toBe('right');
+    // The round-two card a skip feeds sits at the midpoint of its two feeders,
+    // exactly as if both had been played.
+    expect(at(l, 'r2p0').y).toBeCloseTo((at(l, 'r1p0').y + at(l, 'r1p1').y) / 2, 6);
+    expect(at(l, 'r2p1').y).toBeCloseTo((at(l, 'r1p2').y + at(l, 'r1p3').y) / 2, 6);
+  });
+
   it('falls back to a linear stack, with no guessed lines, when the rounds do not halve', () => {
     // Three first-round matches feeding one final: nothing here says which two
     // of the three meet, so no elbow can be honest about it.

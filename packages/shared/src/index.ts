@@ -63,6 +63,8 @@ export * from './utils/season';
 export * from './utils/standings';
 export * from './utils/tournament-phases';
 export * from './utils/bracket-layout';
+export * from './utils/draw-rounds';
+export * from './utils/event-record';
 export * from './utils/match-court';
 export * from './utils/account-standing';
 export * from './utils/tours';

@@ -17,12 +17,14 @@ import {
   ExpectedError,
   eventIsPlaying,
   resolveMatchShape,
+  eventRecordFor,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
   TournamentMatchFormat,
   EventMatchShape,
   MatchShapeOverride,
+  EventRecordMatch,
 } from '@badminton/shared';
 import {
   requireCapability,
@@ -1872,25 +1874,27 @@ async function getMatchOutcomeSummaryImpl(matchId: string): Promise<MatchOutcome
   const winnerId = (doubles ? match.winner_pair_id : match.winner_participant_id) as string | null;
 
   // Every match in the event, so the record is counted the same way for both
-  // sides in one round trip. An event holds at most a few hundred rows.
+  // sides in one round trip. An event holds at most a few hundred rows. Counted
+  // by the shared eventRecordFor, the same rule the member's own page uses.
   const { data: all } = await adminClient.from('tournament_matches')
-    .select('status, is_bye, participant_a_id, participant_b_id, winner_participant_id, pair_a_id, pair_b_id, winner_pair_id')
+    .select('id, status, is_bye, scores, round_number, bracket_position, phase, round_name, participant_a_id, participant_b_id, winner_participant_id, pair_a_id, pair_b_id, winner_pair_id')
     .eq('event_id', eventId);
+  const flat: EventRecordMatch[] = (all ?? []).map((m) => ({
+    id: m.id,
+    status: m.status,
+    is_bye: !!m.is_bye,
+    scores: (m.scores as Array<{ a: number; b: number }> | null) ?? null,
+    round_number: m.round_number,
+    bracket_position: m.bracket_position,
+    phase: m.phase,
+    round_name: m.round_name,
+    aId: doubles ? m.pair_a_id : m.participant_a_id,
+    bId: doubles ? m.pair_b_id : m.participant_b_id,
+    winnerId: doubles ? m.winner_pair_id : m.winner_participant_id,
+  }));
 
   const record = (entryId: string) => {
-    let played = 0;
-    let won = 0;
-    for (const m of all ?? []) {
-      // A bye is not a match somebody played, and a voided one is a match that
-      // no longer happened — neither belongs in a record.
-      if (m.is_bye) continue;
-      if (m.status !== 'completed' && m.status !== 'walkover') continue;
-      const a = doubles ? m.pair_a_id : m.participant_a_id;
-      const b = doubles ? m.pair_b_id : m.participant_b_id;
-      if (a !== entryId && b !== entryId) continue;
-      played++;
-      if ((doubles ? m.winner_pair_id : m.winner_participant_id) === entryId) won++;
-    }
+    const { played, won } = eventRecordFor(flat, entryId);
     return { played, won };
   };
 
