@@ -2,7 +2,9 @@ package com.sfubadminton.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,23 +18,27 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.sfubadminton.app.Services
 import com.sfubadminton.app.data.Viewer
 import com.sfubadminton.app.data.isApproved
 import com.sfubadminton.app.data.loadStatement
 import com.sfubadminton.app.data.statementHeadline
+import com.sfubadminton.app.shared.BadgeTone
 import com.sfubadminton.app.shared.FeeLine
-import com.sfubadminton.app.shared.FeeStatus
+import com.sfubadminton.app.shared.headlineBadge
 import com.sfubadminton.app.shared.money
+import com.sfubadminton.app.ui.theme.JetBrainsMono
 import com.sfubadminton.app.ui.theme.LocalPalette
+import com.sfubadminton.app.ui.theme.Type
 
 @Composable
 fun MembershipScreen(services: Services, viewer: Viewer) {
     if (!isApproved(viewer)) {
-        Column(Modifier.fillMaxSize().background(LocalPalette.current.background).padding(16.dp)) {
+        Column(Modifier.fillMaxSize().background(LocalPalette.current.background).padding(horizontal = 16.dp)) {
+            PageHeader("Membership", padding = PaddingValues(top = 20.dp, bottom = 20.dp))
             Card { Body("Your statement appears here once your membership is approved.", muted = true) }
         }
         return
@@ -47,41 +53,59 @@ private fun Statement(services: Services, viewer: Viewer) {
     val loader = rememberLoader(viewer) { loadStatement(services.postgrest, viewer) }
 
     when (val state = loader.state) {
-        LoadState.Loading -> Loading()
-        is LoadState.Error -> ErrorState(state.message, loader.reload)
+        LoadState.Loading -> Column(Modifier.fillMaxSize()) {
+            PageHeader("Membership")
+            Box(Modifier.weight(1f)) { Loading() }
+        }
+        is LoadState.Error -> Column(Modifier.fillMaxSize()) {
+            PageHeader("Membership")
+            Box(Modifier.weight(1f)) { ErrorState(state.message, loader.reload) }
+        }
         is LoadState.Ready -> PullToRefreshBox(isRefreshing = loader.refreshing, onRefresh = loader.reload) {
             val summary = state.data.summary
             val season = state.data.season
             val headline = statementHeadline(summary)
-            Column(Modifier.fillMaxSize().background(p.background).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .background(p.background)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                PageHeader("Membership", sub = season?.name, padding = PaddingValues(top = 20.dp, bottom = 6.dp))
+
                 Card {
                     Label("Outstanding")
                     Row(
-                        Modifier.padding(bottom = 6.dp),
+                        Modifier.padding(top = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.Bottom,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(headline.amount, color = p.text, fontSize = 36.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            headline.label,
-                            color = if (summary.status == FeeStatus.OWING) p.danger else p.muted,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp,
-                            modifier = Modifier.padding(bottom = 8.dp),
-                        )
+                        Text(headline.amount, color = p.text, style = Type.figure)
+                        val (bg, fg) = when (headlineBadge(summary).tone) {
+                            BadgeTone.SUCCESS -> p.win.copy(alpha = 0.2f) to p.win
+                            BadgeTone.WARNING -> p.warning.copy(alpha = 0.2f) to p.warning
+                            BadgeTone.NEUTRAL -> p.line2 to p.muted
+                        }
+                        Pill(headline.label, background = bg, color = fg)
                     }
                     if (summary.unknownCount > 0) {
                         val noun = if (summary.unknownCount == 1) "entry" else "entries"
-                        Body("Plus ${summary.unknownCount} $noun with no price recorded yet.", muted = true)
+                        Text(
+                            "Plus ${summary.unknownCount} $noun with no price recorded yet.",
+                            color = p.muted,
+                            fontSize = 13.sp,
+                            lineHeight = 19.sp,
+                            modifier = Modifier.padding(top = 14.dp),
+                        )
                     }
-                    season?.let { Body(it.name, muted = true) }
                 }
 
                 if (summary.outstanding.isNotEmpty()) {
                     Card {
                         Label("To pay")
-                        for (line in summary.outstanding) LineRow(line, money(line.owedCents))
+                        for (line in summary.outstanding) OwedRow(line)
                         Column(Modifier.padding(top = 8.dp)) {
                             Body("Send a payment receipt from the Membership page on the club website.", muted = true)
                         }
@@ -93,13 +117,7 @@ private fun Statement(services: Services, viewer: Viewer) {
                     if (summary.receipts.isEmpty()) {
                         Body("No payments recorded yet.", muted = true)
                     } else {
-                        for (line in summary.receipts) {
-                            LineRow(
-                                line,
-                                if (line.waived) "Waived" else money(line.recordedCents),
-                                line.paidAt?.take(10),
-                            )
-                        }
+                        for (line in summary.receipts) ReceiptRow(line)
                     }
                 }
             }
@@ -108,18 +126,46 @@ private fun Statement(services: Services, viewer: Viewer) {
 }
 
 @Composable
-private fun LineRow(line: FeeLine, amount: String, detail: String? = null) {
+private fun OwedRow(line: FeeLine) {
     val p = LocalPalette.current
     HorizontalDivider(color = p.line)
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(line.name, color = p.ink2, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Text(money(line.owedCents), color = p.text, fontFamily = JetBrainsMono, fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun ReceiptRow(line: FeeLine) {
+    val p = LocalPalette.current
+    HorizontalDivider(color = p.line)
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(line.name, color = p.text, fontSize = 15.sp)
-            if (!detail.isNullOrEmpty()) Text(detail, color = p.muted, fontSize = 13.sp)
+            line.paidAt?.take(10)?.takeIf { it.isNotEmpty() }?.let {
+                Text(
+                    it.uppercase(),
+                    color = p.muted,
+                    fontFamily = JetBrainsMono,
+                    fontSize = 10.sp,
+                    letterSpacing = 0.1.em,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
-        Text(amount, color = p.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            if (line.waived) "Waived" else money(line.recordedCents),
+            color = p.text,
+            fontFamily = JetBrainsMono,
+            fontSize = 15.sp,
+        )
     }
 }

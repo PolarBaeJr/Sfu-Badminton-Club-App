@@ -1,26 +1,37 @@
 package com.sfubadminton.app.ui
 
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sfubadminton.app.AppContainer
 import com.sfubadminton.app.R
@@ -31,6 +42,7 @@ import com.sfubadminton.app.config.SupabaseConfig
 import com.sfubadminton.app.data.Viewer
 import com.sfubadminton.app.data.loadViewer
 import com.sfubadminton.app.ui.theme.LocalPalette
+import com.sfubadminton.app.ui.theme.Type
 
 @Composable
 fun AppRoot(container: AppContainer) {
@@ -80,38 +92,14 @@ private enum class Tab(val title: String, @param:DrawableRes val icon: Int) {
     MEMBERSHIP("Membership", R.drawable.ic_tab_membership),
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Tabs(services: Services, viewer: Viewer) {
     val p = LocalPalette.current
     var tab by rememberSaveable { mutableStateOf(Tab.LEADERBOARD) }
     Scaffold(
         containerColor = p.background,
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text(tab.title) },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = p.surface, titleContentColor = p.text),
-            )
-        },
-        bottomBar = {
-            NavigationBar(containerColor = p.surface) {
-                for (t in Tab.entries) {
-                    NavigationBarItem(
-                        selected = tab == t,
-                        onClick = { tab = t },
-                        icon = { Icon(painterResource(t.icon), contentDescription = null) },
-                        label = { Text(t.title) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = p.accent,
-                            selectedTextColor = p.accent,
-                            unselectedIconColor = p.muted,
-                            unselectedTextColor = p.muted,
-                            indicatorColor = p.highlight,
-                        ),
-                    )
-                }
-            }
-        },
+        topBar = { BrandBar() },
+        bottomBar = { TabBar(tab) { tab = it } },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (tab) {
@@ -119,6 +107,55 @@ private fun Tabs(services: Services, viewer: Viewer) {
                 Tab.MY_STATS -> MyStatsScreen(services, viewer)
                 Tab.SESSIONS -> SessionsScreen(services, viewer)
                 Tab.MEMBERSHIP -> MembershipScreen(services, viewer)
+            }
+        }
+    }
+}
+
+/** The site header: the red tile and the club's name. Each page carries its own title. */
+@Composable
+private fun BrandBar() {
+    val p = LocalPalette.current
+    Column(Modifier.fillMaxWidth().background(p.background).windowInsetsPadding(WindowInsets.statusBars)) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BrandTile(size = 30.dp, corner = 8.dp, markSize = 20.dp)
+            Text("SFU Badminton", color = p.text, style = Type.brand)
+        }
+        HorizontalDivider(color = p.line)
+    }
+}
+
+/** The web's mobile tab bar: line icons over small labels, red for the open tab. */
+@Composable
+private fun TabBar(tab: Tab, onSelect: (Tab) -> Unit) {
+    val p = LocalPalette.current
+    Column(Modifier.fillMaxWidth().background(p.background)) {
+        HorizontalDivider(color = p.line)
+        Row(
+            Modifier
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .selectableGroup()
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+        ) {
+            for (t in Tab.entries) {
+                val selected = tab == t
+                val color = if (selected) p.accent else p.muted
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .selectable(selected = selected, role = Role.Tab) { onSelect(t) }
+                        .padding(horizontal = 4.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(painterResource(t.icon), contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+                    Text(t.title, color = color, style = Type.tabLabel, maxLines = 1)
+                }
             }
         }
     }
