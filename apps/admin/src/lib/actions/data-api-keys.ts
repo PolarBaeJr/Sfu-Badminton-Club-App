@@ -1,8 +1,9 @@
 'use server';
 
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { ExpectedError } from '@badminton/shared';
+import { DATA_API_KEY_PREFIX, hashDataApiKey } from '@badminton/shared/src/utils/data-api-key';
 import { createAdminClient } from '../supabase-server';
 import { requireCapability } from './_shared';
 import { logAdminAudit } from '../audit';
@@ -47,9 +48,6 @@ import { runAction, type ActionResult } from '../action-result';
 const DATA_API_SCOPES = ['players:read', 'matches:read', 'ratings:history:read'] as const;
 
 type DataApiScope = (typeof DATA_API_SCOPES)[number];
-
-/** `sfubad_` + 43 base64url characters of 32 random bytes. */
-const KEY_PREFIX_LABEL = 'sfubad_';
 
 export interface MintDataApiKeyInput {
   consumerName: string;
@@ -104,12 +102,12 @@ async function mintImpl(input: MintDataApiKeyInput): Promise<MintedDataApiKey> {
   // than of something guessable. base64url because the key travels in an
   // Authorization header and must survive a URL and a shell without quoting.
   const secret = randomBytes(32).toString('base64url');
-  const plaintext = `${KEY_PREFIX_LABEL}${secret}`;
-  const keyHash = createHash('sha256').update(plaintext).digest('hex');
+  const plaintext = `${DATA_API_KEY_PREFIX}${secret}`;
+  const keyHash = hashDataApiKey(plaintext);
   // Enough to tell three keys apart in the panel and nowhere near enough to
   // reconstruct one. The plaintext is gone after this call, so without it an
   // admin cannot tell which key they are about to revoke.
-  const keyPrefix = `${KEY_PREFIX_LABEL}${secret.slice(0, 6)}`;
+  const keyPrefix = `${DATA_API_KEY_PREFIX}${secret.slice(0, 6)}`;
 
   const { data, error } = await adminClient
     .from('data_api_keys')

@@ -11,7 +11,7 @@ import {
   type PublicKeyCredentialCreationOptionsJSON,
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
-import * as Sentry from '@sentry/nextjs';
+import { reportAuthFailure, errorName, errorMessage } from './auth-telemetry';
 
 export type PasskeyResult = { ok: true } | { ok: false; error: string };
 
@@ -255,27 +255,6 @@ export function refreshPasskeyEnrollment(): void {
   primePasskeyEnrollment();
 }
 
-// Why a tap produced no passkey, sent without any user identifier. The member
-// sees nothing for a cancellation, so without this an iOS refusal and a genuine
-// "changed my mind" are indistinguishable. `prefetched` says which path ran.
-function reportCeremonyError(flow: 'signin' | 'enrol', err: unknown, prefetched: boolean): void {
-  try {
-    const e = err as { name?: string; message?: string } | null;
-    // The global scope carries the player id once signed in (enrol runs signed
-    // in); this diagnostic is sent without it.
-    Sentry.withScope((scope) => {
-      scope.setUser(null);
-      Sentry.captureMessage(`passkey ${flow} ceremony did not complete`, {
-        level: isUserCancellation(err) ? 'info' : 'warning',
-        tags: { passkey: flow, passkey_error: e?.name ?? 'unknown' },
-        extra: { message: e?.message ?? String(err), prefetched },
-      });
-    });
-  } catch {
-    // Reporting must never break the flow.
-  }
-}
-
 export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
   if (!supportsPasskeys()) {
     return { ok: false, error: 'This device does not support passkeys.' };
@@ -288,21 +267,28 @@ export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
   // so a second tap there does work.
   const cached = optionsCaches.register.takeFresh();
   let credential;
+  const startedAt = Date.now();
   try {
     if (cached) {
       credential = await startRegistration({ optionsJSON: cached });
     } else {
       const optionsJSON = await optionsCaches.register.prime();
       if (!optionsJSON) {
-        return {
-          ok: false,
-          error: lastOptionsError.register ?? 'Could not start passkey setup.',
-        };
+        const error = lastOptionsError.register ?? 'Could not start passkey setup.';
+        reportAuthFailure({ flow: 'passkey_enrol', stage: 'options', error: 'fetch', message: error });
+        return { ok: false, error };
       }
       credential = await startRegistration({ optionsJSON });
     }
   } catch (err) {
-    reportCeremonyError('enrol', err, cached !== null);
+    reportAuthFailure({
+      flow: 'passkey_enrol',
+      stage: 'ceremony',
+      error: errorName(err),
+      message: errorMessage(err),
+      elapsedMs: Date.now() - startedAt,
+      extra: { prefetched: cached !== null },
+    });
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: 'Your device did not complete passkey setup.' };
   }
@@ -316,9 +302,11 @@ export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
     body: JSON.stringify({ credential, nickname }),
   });
   if (!verifyRes.ok) {
+    const error = await errorFrom(verifyRes, 'Could not save that passkey.');
+    reportAuthFailure({ flow: 'passkey_enrol', stage: 'verify', error: String(verifyRes.status), message: error });
     // That challenge is spent. Fetch the next now, so a retry starts from the tap.
     primePasskeyEnrollment();
-    return { ok: false, error: await errorFrom(verifyRes, 'Could not save that passkey.') };
+    return { ok: false, error };
   }
   return { ok: true };
 }
@@ -339,21 +327,28 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
   // everywhere except iOS, and leaves the options cached for a second tap.
   const cached = optionsCaches.login.takeFresh();
   let credential;
+  const startedAt = Date.now();
   try {
     if (cached) {
       credential = await startAuthentication({ optionsJSON: cached });
     } else {
       const optionsJSON = await optionsCaches.login.prime();
       if (!optionsJSON) {
-        return {
-          ok: false,
-          error: lastOptionsError.login ?? 'Could not start passkey sign-in.',
-        };
+        const error = lastOptionsError.login ?? 'Could not start passkey sign-in.';
+        reportAuthFailure({ flow: 'passkey_signin', stage: 'options', error: 'fetch', message: error });
+        return { ok: false, error };
       }
       credential = await startAuthentication({ optionsJSON });
     }
   } catch (err) {
-    reportCeremonyError('signin', err, cached !== null);
+    reportAuthFailure({
+      flow: 'passkey_signin',
+      stage: 'ceremony',
+      error: errorName(err),
+      message: errorMessage(err),
+      elapsedMs: Date.now() - startedAt,
+      extra: { prefetched: cached !== null },
+    });
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: 'No passkey was used.' };
   }
@@ -366,10 +361,12 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
     body: JSON.stringify({ credential }),
   });
   if (!verifyRes.ok) {
+    const error = await errorFrom(verifyRes, 'Passkey sign-in failed.');
+    reportAuthFailure({ flow: 'passkey_signin', stage: 'verify', error: String(verifyRes.status), message: error });
     // That challenge is spent. Fetch the next now, so a retry starts from the tap.
     // Not on success: the page redirects.
     primePasskeySignIn();
-    return { ok: false, error: await errorFrom(verifyRes, 'Passkey sign-in failed.') };
+    return { ok: false, error };
   }
   return { ok: true };
 }

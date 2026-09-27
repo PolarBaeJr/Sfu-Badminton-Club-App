@@ -12,7 +12,7 @@ import {
   type AuthenticationResponseJSON,
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
-import * as Sentry from '@sentry/nextjs';
+import { reportAuthFailure, errorName, errorMessage } from './auth-telemetry';
 import { friendlyPasskeyError } from './passkey/errors';
 import { withBase } from './base-path';
 
@@ -181,23 +181,6 @@ export function keepPasskeySignInFresh(): () => void {
   return onPageReturn(primePasskeySignIn);
 }
 
-// No user identifier is attached. `prefetched` says which path ran.
-function reportCeremonyError(err: unknown, prefetched: boolean): void {
-  try {
-    const e = err as { name?: string; message?: string } | null;
-    Sentry.withScope((scope) => {
-      scope.setUser(null);
-      Sentry.captureMessage('passkey signin ceremony did not complete', {
-        level: isUserCancellation(err) ? 'info' : 'warning',
-        tags: { passkey: 'signin', passkey_error: e?.name ?? 'unknown' },
-        extra: { message: e?.message ?? String(err), prefetched },
-      });
-    });
-  } catch {
-    // Reporting must never break the flow.
-  }
-}
-
 export async function signInWithPasskey(): Promise<PasskeyResult> {
   if (!supportsPasskeys()) {
     return { ok: false, error: 'This device does not support passkeys.' };
@@ -213,18 +196,28 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
   // options cached for a second tap.
   const cached = loginOptions.takeFresh();
   let credential;
+  const startedAt = Date.now();
   try {
     if (cached) {
       credential = await startAuthentication({ optionsJSON: cached });
     } else {
       const optionsJSON = await loginOptions.prime();
       if (!optionsJSON) {
-        return { ok: false, error: lastOptionsError ?? 'Could not start passkey sign-in.' };
+        const error = lastOptionsError ?? 'Could not start passkey sign-in.';
+        reportAuthFailure({ flow: 'passkey_signin', stage: 'options', error: 'fetch', message: error });
+        return { ok: false, error };
       }
       credential = await startAuthentication({ optionsJSON });
     }
   } catch (err) {
-    reportCeremonyError(err, cached !== null);
+    reportAuthFailure({
+      flow: 'passkey_signin',
+      stage: 'ceremony',
+      error: errorName(err),
+      message: errorMessage(err),
+      elapsedMs: Date.now() - startedAt,
+      extra: { prefetched: cached !== null },
+    });
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: friendlyPasskeyError(err, 'No passkey was used.') };
   }
@@ -237,10 +230,12 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
     body: JSON.stringify({ credential }),
   });
   if (!verifyRes.ok) {
+    const error = await errorFrom(verifyRes, 'Passkey sign-in failed.');
+    reportAuthFailure({ flow: 'passkey_signin', stage: 'verify', error: String(verifyRes.status), message: error });
     // That challenge is spent. Fetch the next now, so a retry starts from the tap.
     // Not on success: the page redirects.
     primePasskeySignIn();
-    return { ok: false, error: await errorFrom(verifyRes, 'Passkey sign-in failed.') };
+    return { ok: false, error };
   }
   return { ok: true };
 }

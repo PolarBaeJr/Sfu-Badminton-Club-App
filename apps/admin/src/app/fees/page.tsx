@@ -14,6 +14,7 @@ import { foldLedgerRows } from '@/lib/season-income';
 import { outstandingClubFeeCents } from '@/lib/fees-outstanding';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 import { BulkFeeActions } from './bulk-fee-actions';
+import { PastePayments } from './paste-payments';
 import { ReinstatementsCard } from './reinstatements-card';
 import { LedgerCard } from './ledger-card';
 import { NetPositionStrip } from './net-position-strip';
@@ -273,6 +274,11 @@ export default async function FeesPage({
   // land outside the season the club is actually collecting for. Named here
   // because the withheld message below has to describe the control truthfully.
   const showAddManualFee = tab === 'fees' && may('fees.clubfees.addmanual.write') && !isPast;
+  // Paste a list reads the roster (so the club-fee read) and marks members paid
+  // (so markpaid). Offered on a finished term too, like the bulk bar below, but
+  // keeping a stranger as a named payment is Add a name's decision and follows
+  // its test.
+  const showPastePayments = showClubFees && tab === 'fees' && may('fees.clubfees.markpaid.write');
 
   // THE THREE BULK CONTROLS ARE THE THREE CAPABILITIES, one apiece, the same
   // rule /players and /sessions follow. Which of the three buttons appears is
@@ -445,9 +451,22 @@ export default async function FeesPage({
               : undefined
         }
         actions={
-          showAddManualFee
-            ? <AddManualFee seasonId={season.id} seasonName={season.name} />
-            : undefined
+          showAddManualFee || showPastePayments ? (
+            <>
+              {showPastePayments && (
+                <PastePayments
+                  seasonId={season.id}
+                  seasonName={season.name}
+                  competitiveFeeCents={season.competitive_fee_cents}
+                  recreationalFeeCents={season.recreational_fee_cents}
+                  canKeep={showAddManualFee}
+                  canAttach={may('fees.clubfees.addmanual.write')}
+                  canRemove={may('fees.clubfees.removemanual.write')}
+                />
+              )}
+              {showAddManualFee && <AddManualFee seasonId={season.id} seasonName={season.name} />}
+            </>
+          ) : undefined
         }
       />
 

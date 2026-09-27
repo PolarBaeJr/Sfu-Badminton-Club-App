@@ -14,6 +14,7 @@ import {
   type AuditLogEntry,
   isDegradedEntry,
   countDegraded,
+  entryKind,
 } from '../audit-log-view';
 
 // The screen's job is to lose nothing. Most of what follows is a test that some
@@ -394,5 +395,45 @@ describe('audit health', () => {
     ])).toBe(2);
     expect(countDegraded([entry('ordinary'), entry(null)])).toBe(0);
     expect(countDegraded([])).toBe(0);
+  });
+});
+
+describe('entryKind', () => {
+  it('files the authentication trail under auth', () => {
+    expect(entryKind('passkey_verified')).toBe('auth');
+    expect(entryKind('passkey_login')).toBe('auth');
+    expect(entryKind('passkey_registered')).toBe('auth');
+    // Covered by the first-word rule rather than by being named, which is the
+    // point of matching a word instead of three literals.
+    expect(entryKind('passkey_counter_anomaly')).toBe('auth');
+  });
+
+  it('files what a member did to their own account under self-service', () => {
+    expect(entryKind('self_rating_seeded')).toBe('self-service');
+    expect(entryKind('self_deletion_requested')).toBe('self-service');
+    expect(entryKind('self_deletion_cancelled')).toBe('self-service');
+    expect(entryKind('self_reactivated')).toBe('self-service');
+  });
+
+  it('leaves the console trail as console, the nightly jobs included', () => {
+    expect(entryKind('player_banned')).toBe('console');
+    expect(entryKind('fee_waived')).toBe('console');
+    // A null actor renders as System in the actor column, so these are not
+    // hidden by being filed here.
+    expect(entryKind('auto_marked_inactive')).toBe('console');
+    expect(entryKind('auto_purged_inactive')).toBe('console');
+  });
+
+  it('calls a type it has never seen console rather than dropping it', () => {
+    // `action_type` is free text with no registry. An export that omitted a
+    // row because a classifier missed would be the worst bug this feature can
+    // have, so the unknown answer is a real value and never an absence.
+    for (const type of UNKNOWN) expect(entryKind(type)).toBe('console');
+    expect(entryKind('')).toBe('console');
+  });
+
+  it('is not fooled by a prefix that is not the word', () => {
+    expect(entryKind('selfie_uploaded')).toBe('console');
+    expect(entryKind('passkeys_reviewed')).toBe('console');
   });
 });

@@ -3,8 +3,16 @@
 import { createClient } from '@/lib/supabase-browser';
 import { shouldRetryOtpSend, shouldTryNextOtpType } from '@badminton/shared';
 import { authSuffix } from '@/lib/auth-intent';
+// Aliased: shared's authErrorCode is the AUTH-xxx banner code, this one is
+// GoTrue's raw code for Sentry.
+import { reportAuthFailure, authErrorCode as gotrueErrorCode, secondsSince } from '@/lib/auth-telemetry';
 
 type OtpType = 'recovery' | 'signup';
+
+// When the last code was emailed, so a failed code can report its age: the
+// difference between "expired" and "typed wrong" is mostly this number. Module
+// level because the send and the verify are separate calls from one page.
+let codeSentAt: number | null = null;
 export type SendCodeError = { message: string; code?: string; status?: number };
 
 /**
@@ -34,7 +42,17 @@ export async function sendEmailCode(
     await new Promise((r) => setTimeout(r, 900));
     ({ error } = await send());
   }
-  if (!error) return { error: null };
+  if (!error) {
+    codeSentAt = Date.now();
+    return { error: null };
+  }
+  reportAuthFailure({
+    flow: 'email_code_send',
+    stage: 'send',
+    error: gotrueErrorCode(error),
+    message: error.message,
+    extra: { mode: opts.createUser ? 'signup' : 'signin' },
+  });
   return { error: { message: error.message, code: error.code, status: error.status } };
 }
 
@@ -56,7 +74,9 @@ export async function verifyEmailCode(
   let message = '';
   let code: string | undefined;
   let status: number | undefined;
+  let typesTried = 0;
   for (const type of order) {
+    typesTried += 1;
     const { error } = await supabase.auth.verifyOtp({ email, token, type });
     if (!error) return { ok: true };
     message = error.message ?? '';
@@ -64,5 +84,17 @@ export async function verifyEmailCode(
     status = error.status;
     if (!shouldTryNextOtpType(message)) break;
   }
+  reportAuthFailure({
+    flow: 'email_code_verify',
+    stage: 'verify',
+    error: gotrueErrorCode({ code, status }),
+    message,
+    extra: {
+      mode: order[0] === 'signup' ? 'signup' : 'signin',
+      types_tried: typesTried,
+      code_length: token.length,
+      seconds_since_sent: secondsSince(codeSentAt),
+    },
+  });
   return { ok: false, message: message || 'That code did not work. Request a new one.', code, status };
 }

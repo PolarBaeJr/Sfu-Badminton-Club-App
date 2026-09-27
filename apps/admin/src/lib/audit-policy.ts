@@ -52,6 +52,7 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'fee_marked_unpaid',
   'manual_fee_added',
   'manual_fee_removed',
+  'manual_fee_attached',
   'season_fees_updated',
   'expense_added',
   'expense_updated',

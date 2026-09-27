@@ -1,0 +1,15 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // key.test.ts imports the console's minting helper from packages/shared to
+    // prove both sides hash a key the same way. That file is outside this
+    // package, so without this line a change to it left this task's hash alone
+    // and the one test that exists to catch the change replayed a cached PASS.
+    // Replaces the root `test.inputs` for this package; none of the root's
+    // extra inputs (migrations, docs/legal, packages/ui) are read here.
+    "test": {
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/shared/src/utils/data-api-key.ts"]
+    }
+  }
+}

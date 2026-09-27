@@ -449,9 +449,36 @@ export const CAPABILITIES = [
 
   // ---- audit / ratings / accounts ----------------------------------------
   // Sections whose whole content is their page, which was true of all three
-  // until /accounts grew the data API's key panel below. Each is its own area
-  // so that opening one to somebody does not open the others.
+  // until /accounts grew the data API's key panel below and /audit grew the
+  // export just under this line. `ratings` is the last one the sentence still
+  // describes. Each is its own area so that opening one to somebody does not
+  // open the others.
   'audit.page',
+
+  // THE LOG EXPORT ON /audit: a log-type selector over console edits, sign-ins,
+  // tournament actions and in-app notifications, and a CSV download of the type
+  // selected.
+  //
+  // TWO CAPABILITIES AND NOT ONE, because running a download and seeing the
+  // sign-in trail are different questions. The console trail says what an
+  // officer DID. The sign-in trail is the identity log: account email addresses
+  // and login times, for members as well as officers, including accounts with
+  // no console access at all. The club's case is somebody who may export the
+  // console's edits without being handed the record of who signed in and when,
+  // so the source has its own key and the page hides the option without it.
+  //
+  // NO THIRD STRING FOR THE PANEL. `audit.page` already decides who opens
+  // /audit, and the selector is drawn inside it. A capability whose only job is
+  // to gate a control on a page somebody is already looking at would be a
+  // second name for a door that is already shut.
+  //
+  // BOTH ARE READS because nothing here writes: a download is a SELECT and a
+  // file. What `audit.export.read` bounds is not the sight of the rows, which
+  // `audit.page` already grants, but the production of a FILE, which leaves the
+  // console, outlives the session and gets forwarded.
+  'audit.export.read',
+  'audit.signins.read',
+
   'ratings.page',
   'accounts.page',
 

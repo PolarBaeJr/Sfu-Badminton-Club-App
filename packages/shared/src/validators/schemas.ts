@@ -597,6 +597,16 @@ export const manualFeeSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 
+// The /fees "Paste a list" preview: free text pasted by an exec (an e-transfer
+// export, a column out of a spreadsheet) against the season it applies to. The
+// cap is on the text; the parser caps the entries it will read out of it.
+export const feePastePreviewSchema = z
+  .object({
+    season_id: z.string().uuid(),
+    text: z.string().min(1).max(50000),
+  })
+  .strict();
+
 export const feeTierSchema = z.object({
   tournament_id: z.string().uuid(),
   name: z.string().min(1).max(40),
@@ -890,6 +900,7 @@ export type SeasonFeeInput = z.infer<typeof seasonFeeSchema>;
 export type SeasonCreateInput = z.infer<typeof seasonCreateSchema>;
 export type SessionGroupInput = z.infer<typeof sessionGroupSchema>;
 export type ManualFeeInput = z.infer<typeof manualFeeSchema>;
+export type FeePastePreviewInput = z.infer<typeof feePastePreviewSchema>;
 export type FeeTierInput = z.infer<typeof feeTierSchema>;
 export type TournamentFeeMarkInput = z.infer<typeof tournamentFeeMarkSchema>;
 export type ReinstatementInput = z.infer<typeof reinstatementSchema>;

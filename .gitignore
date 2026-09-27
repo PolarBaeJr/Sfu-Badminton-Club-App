@@ -114,6 +114,20 @@ scripts/*
 # maintenance habit, and untracked nobody can see what the retention jobs do.
 !scripts/run-edge-fn.sh
 
+# auth-log-export.sh answers "who actually signs in" without anyone
+# hand-writing the SQL, and getting that SQL wrong is silent: counting the
+# token-refresh rows, or reading UTC as local time, returns a plausible wrong
+# number rather than an error. Untracked, every operator re-derives those four
+# corrections from scratch. It is read-only, and it names no host or credential
+# that db-migrate.sh does not already carry. Its OUTPUT is the personal data,
+# and that is excluded separately below.
+!scripts/auth-log-export.sh
+
+# auth-log-xlsx.py is the formatting half of the export, split out so the CSV
+# path needs no Python at all. Tracked with the script that invokes it by path:
+# on its own, --xlsx is broken on every fresh checkout.
+!scripts/auth-log-xlsx.py
+
 # Internal working notes / security findings — keep out of the public repo
 docs/sensitive/
 
@@ -130,3 +144,9 @@ auth-logs/
 # repo is public (see docs/ops/CREDENTIALS.md), so it must never be committable.
 supabase/.branches/
 supabase/.temp/
+
+# auth-log-export.sh output. Holds member names, account emails and IP
+# addresses. This repo is public, so these must never be committable. The
+# script defaults here deliberately: an ignored directory inside the repo is
+# harder to leak than a stray file in Downloads.
+auth-logs/

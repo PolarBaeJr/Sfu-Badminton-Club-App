@@ -75,10 +75,12 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
     strategy:
       matrix:
-        app: [player, admin, bot]
+        app: [player, admin, bot, data-api]
         include:
           - app: admin
             base_path: /admin
+          - app: data-api
+            dockerfile: apps/data-api/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -129,6 +131,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ matrix.dockerfile || 'Dockerfile' }}
           target: runner-${{ matrix.app }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -161,7 +164,7 @@ jobs:
 
   # THE DEPLOY. Everything above only publishes immutable sha- tags, which
   # nothing on the Pi watches; moving `latest` is what the auto-updater sees, and
-  # this job moves all THREE of them or none. `needs: build` covers the whole
+  # this job moves all FOUR of them or none. `needs: build` covers the whole
   # matrix, so one failed leg leaves EVERY staging deploy reference where it was
   # rather than half-advancing the set — which matters more now that the bot is
   # in it, because the bot and the player app talk to each other over a shared
@@ -206,7 +209,7 @@ jobs:
           # place the raw value would have leaked through as a 404 on push.
           owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
           tag="$TAG"
-          for app in player admin bot; do
+          for app in player admin bot data-api; do
             image="ghcr.io/${owner}/badminton-${app}-staging"
             echo "promoting ${image}:${tag} -> ${image}:latest"
             docker buildx imagetools create -t "${image}:latest" "${image}:${tag}"

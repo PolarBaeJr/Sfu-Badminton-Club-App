@@ -92,6 +92,27 @@ export function normalizeBulkIds(ids: unknown): string[] {
 }
 
 /**
+ * The same bound for a list of payloads rather than ids: an array, of objects,
+ * within the cap. What each object holds is the looped action's schema's
+ * business, checked per record so one bad row fails alone. Not de-duplicated:
+ * two rows are two records, and the action's own unique index refuses a repeat.
+ */
+export function normalizeBulkPayloads(payloads: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(payloads) || payloads.length === 0) {
+    throw new Error('Nothing was selected.');
+  }
+  if (payloads.length > MAX_BULK_TARGETS) {
+    throw new Error(`A single request may act on at most ${MAX_BULK_TARGETS} records.`);
+  }
+  for (const p of payloads) {
+    if (typeof p !== 'object' || p === null || Array.isArray(p)) {
+      throw new Error('That selection could not be read. Reload the page and try again.');
+    }
+  }
+  return payloads as Record<string, unknown>[];
+}
+
+/**
  * Walk the ids, running the single-record action on each, and report what
  * happened to every one of them.
  *

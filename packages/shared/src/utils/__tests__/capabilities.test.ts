@@ -100,9 +100,23 @@ describe('the capability vocabulary', () => {
   //
   // 141 BECAME 142 with the guest waivers switch (00254), whose key is
   // `page.access.guest_waivers`.
-  it('is exactly 142 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(142);
-    expect(new Set(CAPABILITIES).size).toBe(142);
+  //
+  // 142 BECAME 144 with the audit log's CSV export (00256): `audit.export.read`
+  // and `audit.signins.read`. Two rather than one because running a download
+  // and reading the sign-in trail are different questions. The console trail
+  // says what an officer DID; the sign-in trail is the identity log, carrying
+  // account email addresses and login times for members as well as officers,
+  // including accounts with no console access at all. The club's case is
+  // somebody who may export the console's edits without being handed that.
+  //
+  // THERE IS NO THIRD STRING FOR THE PANEL. `audit.page` already decides who
+  // opens /audit, and the selector is drawn inside it, so a capability whose
+  // only job was to gate a control on a page somebody is already looking at
+  // would be a second name for a door that is already shut. Not a new area
+  // either: both live under `audit` and sit behind that area's page key.
+  it('is exactly 144 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(144);
+    expect(new Set(CAPABILITIES).size).toBe(144);
   });
 
   // 16 BECAME 17 with `page`, the keys to switched-off features, and 17
@@ -324,16 +338,24 @@ describe('CAPABILITY_GATES', () => {
   //
   // 183 BECAME 185 with photo and video consent (00255): `legal.page` gains the
   // console's consent list, and `players.read` its fetch of the members on it.
-  it('names 185 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 185 BECAME 188 with the audit export, and the arithmetic is 1 + 2 rather
+  // than 1 + 1. `audit.export.read` is one gate, the route handler's GET.
+  // `audit.signins.read` is two: the handler serving that source, and the page
+  // deciding whether to offer the type at all. They merge because offering the
+  // sign-ins option and serving it are one authority over the same rows, asked
+  // once where the control is drawn so it is not drawn, and once at the
+  // download so it cannot simply be typed into the URL.
+  it('names 188 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(185);
-    expect(new Set(sites).size).toBe(185);
-    expect(ENFORCEMENT_POINTS).toBe(185);
+    expect(sites.length).toBe(188);
+    expect(new Set(sites).size).toBe(188);
+    expect(ENFORCEMENT_POINTS).toBe(188);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -1006,6 +1028,12 @@ describe('EDITOR_OFFERABLE', () => {
       'permissions.write',
       'permissions.page',
       'audit.page',
+      // THE EXPORT FOLLOWS THE PAGE IT BELONGS TO. `audit.page` is withheld, so
+      // offering either of these would hand somebody a download from a section
+      // they cannot open. Whichever way that page moves one day, these move
+      // with it, and neither goes first.
+      'audit.export.read',
+      'audit.signins.read',
       'ratings.page',
       'accounts.page',
       // THE DATA API'S KEYS ARE WITHHELD HERE TOO, and they are the reason the
@@ -1049,17 +1077,17 @@ describe('permits', () => {
   // 121 BECAME 124 with the data API's three key capabilities, and 124 BECAME
   // 131 with the seven keys to switched-off features, and 131 BECAME 139 with
   // club events, and 139 BECAME 141 with the membership and socials switches,
-  // and 141 BECAME 142 with the guest waivers switch.
-  // This number
+  // and 141 BECAME 142 with the guest waivers switch, and 142 BECAME 144 with
+  // the audit export's two. This number
   // tracks CAPABILITIES.length by construction (admin is a superuser BY LEVEL,
   // so every capability added is automatically theirs), and it is written as a
   // literal anyway, because a count derived from the list it is checking would
   // pass for an empty list.
-  it('makes an admin a superuser BY LEVEL, holding all 142', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 144', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(142);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(144);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {
