@@ -3,7 +3,12 @@
 import { useEffect, useState } from 'react';
 import { KeyRound, Loader2, X } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
-import { enrollPasskey, supportsPasskeys } from '@/lib/passkey-client';
+import {
+  enrollPasskey,
+  keepPasskeyEnrollmentFresh,
+  primePasskeyEnrollment,
+  supportsPasskeys,
+} from '@/lib/passkey-client';
 import { listPasskeys } from '@/lib/actions/passkeys';
 
 // Everyone who signed up before passkeys existed skipped the onboarding offer,
@@ -47,12 +52,22 @@ export function PasskeyNudge() {
       const res = await listPasskeys();
       if (cancelled) return;
       // Only for people with none. Anyone already enrolled never sees this.
-      if (res.ok && res.data.length === 0) setVisible(true);
+      // Primed now, so "Set up a passkey" can start synchronously (iOS).
+      if (res.ok && res.data.length === 0) {
+        primePasskeyEnrollment();
+        setVisible(true);
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // Left open in a background tab, the primed options go stale; refresh on return.
+  useEffect(() => {
+    if (!visible) return;
+    return keepPasskeyEnrollmentFresh();
+  }, [visible]);
 
   function dismiss() {
     try {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
@@ -11,10 +11,15 @@ import {
   supportsPasskeys,
   beginConditionalPasskeySignIn,
   cancelPasskeyCeremony,
+  primePasskeySignIn,
+  keepPasskeySignInFresh,
   PASSKEY_AUTOFILL_AUTOCOMPLETE,
 } from '@/lib/passkey-client';
 import { SIGNIN_OTP_TYPES, shouldTryNextOtpType, isUnknownAccountError } from '@/lib/auth-otp';
 import { withBase } from '@/lib/base-path';
+// Aliased: shared's authErrorCode is the AUTH-xxx banner code, this one is
+// GoTrue's raw code for Sentry. Same name, different questions.
+import { reportAuthFailure, authErrorCode as gotrueErrorCode, secondsSince } from '@/lib/auth-telemetry';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,6 +27,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
+  // When the last code was emailed, so a failed code can report its age.
+  const codeSentAt = useRef<number | null>(null);
   const [sent, setSent] = useState(false);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
@@ -63,11 +70,15 @@ export default function LoginPage() {
   useEffect(() => {
     if (checkingSession || sent) return;
     let live = true;
+    // The button needs its options before the tap (iOS). Shares the fetch below.
+    primePasskeySignIn();
+    const stopRefreshing = keepPasskeySignInFresh();
     void beginConditionalPasskeySignIn().then((signedIn) => {
       if (signedIn && live) window.location.href = withBase('/dashboard');
     });
     return () => {
       live = false;
+      stopRefreshing();
       cancelPasskeyCeremony();
     };
   }, [checkingSession, sent]);
@@ -119,12 +130,19 @@ export default function LoginPage() {
       options: { shouldCreateUser: false },
     });
     if (authError) {
+      reportAuthFailure({
+        flow: 'email_code_send',
+        stage: 'send',
+        error: gotrueErrorCode(authError),
+        message: authError.message,
+      });
       setError(
         isUnknownAccountError(authError.message)
           ? 'No account uses that email. The console cannot create one: sign up in the player app first, then ask an admin for access.'
           : withErrorCode(friendlyAuthError(authError.message), authErrorCode(authError))
       );
     } else {
+      codeSentAt.current = Date.now();
       setCode('');
       setSent(true);
     }
@@ -143,8 +161,10 @@ export default function LoginPage() {
     const supabase = createClient();
     const token = code.trim();
     let authError: { message: string; code?: string; status?: number } | null = null;
+    let typesTried = 0;
     // See lib/auth-otp for why this is a list and not a single type.
     for (const type of SIGNIN_OTP_TYPES) {
+      typesTried += 1;
       const { error: verifyError } = await supabase.auth.verifyOtp({ email, token, type });
       if (!verifyError) {
         // withBase, and a full navigation: an unprefixed /dashboard is not a
@@ -155,6 +175,17 @@ export default function LoginPage() {
       authError = verifyError;
       if (!shouldTryNextOtpType(verifyError.message)) break;
     }
+    reportAuthFailure({
+      flow: 'email_code_verify',
+      stage: 'verify',
+      error: gotrueErrorCode(authError),
+      message: authError?.message,
+      extra: {
+        types_tried: typesTried,
+        code_length: token.length,
+        seconds_since_sent: secondsSince(codeSentAt.current),
+      },
+    });
     setError(
       withErrorCode(
         friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'),
