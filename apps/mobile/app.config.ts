@@ -10,10 +10,10 @@ const config: ExpoConfig = {
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   android: {
-    // PLACEHOLDER. The owner decides the real application id. It becomes
-    // permanent the moment a build is uploaded to Google Play (Play never lets
-    // it change), and the passkey assetlinks.json file will name it.
-    package: 'com.example.badminton.placeholder',
+    // Chosen by the owner. It becomes permanent the moment a build is uploaded
+    // to Google Play (Play never lets it change), and the passkey
+    // assetlinks.json file will name it.
+    package: 'com.sfubadminton.app',
   },
   plugins: ['expo-status-bar', 'expo-secure-store'],
 };
