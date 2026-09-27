@@ -1,24 +1,36 @@
-# Android app expansion
+# Android app
 
-Empty. The native Android project is generated, not hand written, so nothing is
-committed here until the app is initialised.
+The native Android app: Kotlin, Jetpack Compose, application id
+`com.sfubadminton.app`. Building and configuring it is in
+`../docs/05-development.md`; how it signs in and keeps a session is in
+`../docs/02-auth.md`.
 
-What will live here once it is:
+| | |
+|---|---|
+| Gradle | 9.7.0 (wrapper) |
+| Android Gradle Plugin | 9.3.1 |
+| Kotlin | 2.4.20 |
+| compileSdk / targetSdk / minSdk | 36 / 36 / 28 |
+| Compose BOM | 2026.06.01 |
+| Lifecycle | 2.10.0 |
 
-- the Gradle project, `AndroidManifest.xml`
-- the Digital Asset Links intent filter that native passkeys require
-- signing configuration (the upload key is a secret and never lands in this repo,
-  which is public)
+Compose and lifecycle are held at those versions because their next releases need
+compileSdk 37.
 
-## Before this directory can be filled
+Libraries are kept few on purpose: Compose, activity and lifecycle, coroutines and
+kotlinx.serialization. No Supabase SDK and no HTTP client library; networking is
+`HttpURLConnection`. The unsigned release APK is about 2.4 MB (about 1.2 MB to
+download).
+
+It has not yet been run on a device or emulator.
+
+## Before it can ship
 
 1. A Google Play Console account, 25 USD once. Same governance question as iOS: see
    `../ios/README.md`.
-2. `https://sfubadminton.com/.well-known/assetlinks.json`, carrying the app's package
-   name and the signing certificate SHA-256 fingerprint. Credential Manager reads it
-   over the network, so it must be reachable without a redirect.
-3. The passkey token change described in `../README.md`.
-
-Note that the signing fingerprint differs between a local build and Play App Signing.
-`assetlinks.json` has to list both, or passkeys work in testing and fail in
-production, which is the classic way this is discovered late.
+2. Release signing. The upload key is a secret and never lands in this repo, which is
+   public.
+3. For passkeys, `https://sfubadminton.com/.well-known/assetlinks.json` listing the
+   package name and **every** signing certificate SHA-256: debug, upload key and Play
+   App Signing. The route that serves it is on `feat/passkey-native-app`; see
+   `../docs/02-auth.md`.
