@@ -10,6 +10,7 @@ import {
   type AuthenticationResponseJSON,
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
+import { reportAuthFailure, errorName, errorMessage } from './auth-telemetry';
 
 export type PasskeyResult = { ok: true } | { ok: false; error: string };
 
@@ -78,13 +79,23 @@ export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
 
   const optionsRes = await fetch('/api/passkey/register/options', { method: 'POST' });
   if (!optionsRes.ok) {
-    return { ok: false, error: await errorFrom(optionsRes, 'Could not start passkey setup.') };
+    const error = await errorFrom(optionsRes, 'Could not start passkey setup.');
+    reportAuthFailure({ flow: 'passkey_enrol', stage: 'options', error: String(optionsRes.status), message: error });
+    return { ok: false, error };
   }
 
   let credential;
+  const startedAt = Date.now();
   try {
     credential = await startRegistration({ optionsJSON: await optionsRes.json() });
   } catch (err) {
+    reportAuthFailure({
+      flow: 'passkey_enrol',
+      stage: 'ceremony',
+      error: errorName(err),
+      message: errorMessage(err),
+      elapsedMs: Date.now() - startedAt,
+    });
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: 'Your device did not complete passkey setup.' };
   }
@@ -95,7 +106,9 @@ export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
     body: JSON.stringify({ credential, nickname }),
   });
   if (!verifyRes.ok) {
-    return { ok: false, error: await errorFrom(verifyRes, 'Could not save that passkey.') };
+    const error = await errorFrom(verifyRes, 'Could not save that passkey.');
+    reportAuthFailure({ flow: 'passkey_enrol', stage: 'verify', error: String(verifyRes.status), message: error });
+    return { ok: false, error };
   }
   return { ok: true };
 }
@@ -112,13 +125,23 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
 
   const optionsRes = await fetch('/api/passkey/login/options', { method: 'POST' });
   if (!optionsRes.ok) {
-    return { ok: false, error: await errorFrom(optionsRes, 'Could not start passkey sign-in.') };
+    const error = await errorFrom(optionsRes, 'Could not start passkey sign-in.');
+    reportAuthFailure({ flow: 'passkey_signin', stage: 'options', error: String(optionsRes.status), message: error });
+    return { ok: false, error };
   }
 
   let credential;
+  const startedAt = Date.now();
   try {
     credential = await startAuthentication({ optionsJSON: await optionsRes.json() });
   } catch (err) {
+    reportAuthFailure({
+      flow: 'passkey_signin',
+      stage: 'ceremony',
+      error: errorName(err),
+      message: errorMessage(err),
+      elapsedMs: Date.now() - startedAt,
+    });
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: 'No passkey was used.' };
   }
@@ -129,7 +152,9 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
     body: JSON.stringify({ credential }),
   });
   if (!verifyRes.ok) {
-    return { ok: false, error: await errorFrom(verifyRes, 'Passkey sign-in failed.') };
+    const error = await errorFrom(verifyRes, 'Passkey sign-in failed.');
+    reportAuthFailure({ flow: 'passkey_signin', stage: 'verify', error: String(verifyRes.status), message: error });
+    return { ok: false, error };
   }
   return { ok: true };
 }

@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
 import { CHECKIN_TOKEN_REGEX, DISCORD_LINK_TOKEN_REGEX, friendlyAuthError } from '@badminton/shared';
 import { Mail, CheckCircle2, ChevronRight, Loader2, KeyRound } from 'lucide-react';
 import { ShuttleMark } from '@/components/shuttle-mark';
+import { reportAuthFailure, authErrorCode, secondsSince } from '@/lib/auth-telemetry';
 import {
   signInWithPasskey,
   supportsPasskeys,
@@ -51,6 +52,9 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [seasonName, setSeasonName] = useState('');
   const [passkeyLoading, setPasskeyLoading] = useState(false);
+  // When the last code was emailed, so a failed code can report its age: the
+  // difference between "expired" and "typed wrong" is mostly this number.
+  const codeSentAt = useRef<number | null>(null);
   // Resolved in an effect, never during render: browserSupportsWebAuthn()
   // touches window, so deciding this inline would mismatch the server HTML.
   const [canUsePasskeys, setCanUsePasskeys] = useState(false);
@@ -146,8 +150,16 @@ export default function LoginPage() {
       ({ error: authError } = await send());
     }
     if (authError) {
+      reportAuthFailure({
+        flow: 'email_code_send',
+        stage: 'send',
+        error: authErrorCode(authError),
+        message: authError.message,
+        extra: { mode },
+      });
       setError(friendlyAuthError(authError.message));
     } else {
+      codeSentAt.current = Date.now();
       setSent(true);
     }
     setLoading(false);
@@ -175,7 +187,9 @@ export default function LoginPage() {
       : (['recovery', 'signup'] as const);
 
     let authError: { message: string } | null = null;
+    let typesTried = 0;
     for (const type of typeOrder) {
+      typesTried += 1;
       const { error } = await supabase.auth.verifyOtp({ email, token, type });
       if (!error) {
         window.location.href = `/auth/post-login${authSuffix()}`;
@@ -188,6 +202,18 @@ export default function LoginPage() {
       // Anything else (a rate limit, a network failure) surfaces immediately.
       if (!/verification type|not found|expired or is invalid/i.test(authError.message ?? '')) break;
     }
+    reportAuthFailure({
+      flow: 'email_code_verify',
+      stage: 'verify',
+      error: authErrorCode(authError),
+      message: authError?.message,
+      extra: {
+        mode,
+        types_tried: typesTried,
+        code_length: token.length,
+        seconds_since_sent: secondsSince(codeSentAt.current),
+      },
+    });
     setError(friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'));
     setLoading(false);
   }
