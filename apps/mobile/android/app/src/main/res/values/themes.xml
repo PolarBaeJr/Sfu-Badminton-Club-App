@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A platform theme, not Theme.Material3.*: that one lives in the Material
+     Components library, which Compose does not need. It only colours the
+     window before the first frame; Compose draws everything after. -->
+<resources>
+    <style name="Theme.SfuBadminton" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+</resources>
