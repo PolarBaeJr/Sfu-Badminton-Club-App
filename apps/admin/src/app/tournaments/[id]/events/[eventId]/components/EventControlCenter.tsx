@@ -38,6 +38,8 @@ import { RoundRobinTab } from './RoundRobinTab';
 import { ResultsTab } from './ResultsTab';
 import { LeaderboardTab } from './LeaderboardTab';
 import { CourtManagementTab } from './CourtManagementTab';
+import { LiveStrip } from './LiveStrip';
+import { hasCourtsTab } from '@/lib/live-desk';
 
 // 'pool' is a tab of its own rather than a mode of 'bracket' (00107). On a
 // pool_to_bracket event BOTH halves exist at once from the moment the knockout
@@ -118,8 +120,9 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
 
   // ONLY WHILE THERE IS SOMETHING TO CALL. A completed event has no next match,
   // and a court set on one is history — the tab would be a working list with no
-  // work in it.
-  if (hasDraw && status !== 'completed') {
+  // work in it. hasCourtsTab is also what shows the live strip, so the strip's
+  // button can never point at a tab that is not in this list.
+  if (hasCourtsTab(status)) {
     // LONGER LABEL THAN THE REST, and it fits by construction rather than by
     // luck: the tab row is `overflow-x-auto` with `min-w-fit` and every button is
     // `whitespace-nowrap`, so a long label scrolls the row horizontally and can
@@ -255,6 +258,18 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
           </div>
         </div>
       )}
+
+      {/* What is on court and what is next, above whichever tab is open. It
+          renders nothing unless the courts tab exists and has work in it. */}
+      <LiveStrip
+        matches={matches}
+        event={event}
+        participants={participants}
+        pairs={pairs}
+        isDoubles={isDoubles}
+        canEnterResult={drawCapabilities.enterResult}
+        onOpenCourts={() => setActiveTab('courts')}
+      />
 
       {/* Tab Navigation */}
       <div className="overflow-x-auto -mx-1 px-1">

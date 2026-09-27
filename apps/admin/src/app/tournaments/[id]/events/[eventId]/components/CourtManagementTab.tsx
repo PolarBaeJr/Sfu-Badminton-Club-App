@@ -3,8 +3,11 @@
 import { useState, useTransition, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, Check, Loader2, AlertCircle, Play, Square, ArrowRight } from 'lucide-react';
-import { courtLabel, isPlayedMatch, eventIsPlaying } from '@badminton/shared';
+import { courtLabel } from '@badminton/shared';
 import { setMatchCourt, setMatchReadyForPlayer, setMatchLive } from '@/lib/tournament-actions';
+import {
+  deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, type DeskState,
+} from '@/lib/live-desk';
 import type {
   TournamentMatchRow,
   TournamentEventRow,
@@ -34,37 +37,9 @@ import { ScoreEntryDialog } from './ScoreEntryDialog';
 // nest interactive elements. This row therefore follows RoundRobinTab's pattern
 // instead — a plain <div> with its own inline controls.
 //
-// ---------------------------------------------------------------------------
-// THE ORDER: THE DRAW'S OWN SEQUENCE, AND NOTHING ELSE
-// ---------------------------------------------------------------------------
-// This list used to sort uncourted matches first, on the theory that "which
-// matches still need a court" was the working question. In practice the owner's
-// screenshot read "95 of 98 unplayed matches have no court yet — they are listed
-// first", which is the sort admitting it does nothing: on any real draw almost
-// everything is uncourted, so the rule never differentiates and its only effect
-// is to hide the sequence the desk actually works in.
-//
-// It was also quietly hostile. Saving a court moved that row from the top group
-// to the bottom one, so the reward for typing "3" was watching the row you were
-// looking at jump off screen.
-//
-// So: phase, then round, then match number. Nothing about a match's STATE touches
-// the order, which means no row ever moves under the desk's hands — not when a
-// court is saved, not when someone is marked ready, not when a result lands
-// elsewhere and the whole list repaints. The states are shown as badges on rows
-// that stay put. That is the property that makes this safe to type into.
-//
-// PHASE OUTRANKS ROUND, and it has to (00107). This tab is given the whole event
-// rather than one half of it, because the desk calls matches from both halves of
-// a pool_to_bracket event out of one queue — but `round_number` restarts at 1 in
-// the bracket, so ordering on it alone would interleave a pool round 1 with a
-// quarter-final.
-//
-// MATCH NUMBER RATHER THAN bracket_position, because the number is what the desk
-// and the entrant both say out loud — the row prints "ROUND OF 128 · M4" and
-// M4 is the ordinal in that round. bracket_position is the layout's coordinate
-// and can differ. It falls back to bracket_position where match_number is null,
-// which is how a draw generated before 00080's renumbering still sorts sanely.
+// THE ORDER, THE STATES AND "NEXT" are worked out in lib/live-desk.ts, with the
+// reasoning, because the live strip above the event's tabs shows the same list
+// and has to agree with this tab about it.
 // ---------------------------------------------------------------------------
 
 interface Props {
@@ -91,19 +66,6 @@ interface DeskSide {
   label: string;
   players: DeskPlayer[];
 }
-
-/**
- * The three states an unplayed match can be in, which is the whole information
- * content of this screen.
- *
- *   live     BEING PLAYED RIGHT NOW. Occupying a court, so it is what the desk
- *            needs to know about before anything else — and, until 00136, a state
- *            nothing in either app could produce.
- *   callable Both entrants known and not started. Can be sent on now.
- *   waiting  An entrant is still TBD, because a feeder match has not been played.
- *            Not callable however free the courts are.
- */
-type DeskState = 'live' | 'callable' | 'waiting';
 
 /**
  * A TINTED SURFACE THAT ACTUALLY RENDERS.
@@ -189,17 +151,7 @@ export function CourtManagementTab({
   // its doubles label has to match the bracket's.
   const { nameMap, seedMap, placeableEntries } = useMemo(() => {
     const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
-    const nameMap: Record<string, string> = {};
-    const seedMap: Record<string, number> = {};
-    for (const e of entries) {
-      nameMap[e.id] = getName(e, isDoubles);
-      if (e.seed_number) seedMap[e.id] = e.seed_number;
-    }
-    const placeableEntries = entries
-      .filter((e) => e.status !== 'withdrawn' && e.status !== 'disqualified')
-      .map((e) => ({ id: e.id, name: nameMap[e.id] ?? 'Unknown' }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    return { nameMap, seedMap, placeableEntries };
+    return buildEntryMaps(entries, (e) => getName(e, isDoubles));
   }, [isDoubles, pairs, participants]);
 
   /**
@@ -221,79 +173,21 @@ export function CourtManagementTab({
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
 
-  // Only while the event is actually being played — but the UNION of what the two
-  // half-tabs ask, not a copy of one of them.
-  //
-  // BracketTab uses `eventIsPlaying || 'bracket_generated'` and RoundRobinTab adds
-  // `'pool_generated'`, because a pool is drawn and played before a knockout
-  // exists. This tab is deliberately given the WHOLE event so the desk works one
-  // queue across both halves, so taking either tab's predicate alone would have
-  // hidden Enter score here while the other tab still offered it — sending the desk
-  // back to the screen this tab exists to replace, on exactly the format
-  // (pool_to_bracket) where one queue matters most.
-  const eventPlaying =
-    eventIsPlaying(event.status) ||
-    event.status === 'bracket_generated' ||
-    event.status === 'pool_generated';
-
-  const phaseRank = (m: TournamentMatchRow) => (m.phase === 'bracket' ? 1 : 0);
-  const ordinal = (m: TournamentMatchRow) => m.match_number ?? m.bracket_position ?? 0;
+  // The union of what the two half-tabs ask. See deskEventPlaying for why.
+  const eventPlaying = deskEventPlaying(event.status);
 
   const rows = useMemo(() => {
-    const sideOf = (entryId: unknown): DeskSide =>
+    const sideOf = (entryId: string | null): DeskSide =>
       (typeof entryId === 'string' ? sides.get(entryId) : undefined) ??
       { entryId: null, label: 'TBD', players: [] };
 
-    return matches
-      .filter((m) => !isPlayedMatch(m) && !m.is_bye && m.status !== 'voided')
-      .map((m) => {
-        const a = sideOf(isDoubles ? m.pair_a_id : m.participant_a_id);
-        const b = sideOf(isDoubles ? m.pair_b_id : m.participant_b_id);
-        const bothKnown = !!a.entryId && !!b.entryId;
-        const state: DeskState =
-          m.status === 'live' ? 'live' : bothKnown ? 'callable' : 'waiting';
-        return { match: m, a, b, state };
-      })
-      .sort((x, y) => {
-        if (phaseRank(x.match) !== phaseRank(y.match)) return phaseRank(x.match) - phaseRank(y.match);
-        if (x.match.round_number !== y.match.round_number) return x.match.round_number - y.match.round_number;
-        return ordinal(x.match) - ordinal(y.match);
-      });
+    return deskRows(matches, sideOf, isDoubles);
   }, [matches, sides, isDoubles]);
 
-  /**
-   * WHICH ONE IS "NEXT", AND WHY IT IS ONE AND NOT A SET.
-   *
-   * The earliest `callable` row in the order above. Three decisions in that:
-   *
-   * A `live` MATCH DOES NOT OUTRANK IT — it is excluded. "Next" means the one to
-   * send on now, and a match already being played is not something you call; it is
-   * something you wait for. Live matches carry their own ON COURT badge and are
-   * counted separately, which is the fact the desk needs from them (how many
-   * courts are busy).
-   *
-   * TBD IS NOT CALLABLE. A round-of-64 slot fed by unplayed round-of-128 matches
-   * has no names in it, so however many courts are free it cannot be sent
-   * anywhere. Those rows say what they are waiting for instead.
-   *
-   * ONE, THOUGH SEVERAL COURTS RUN AT ONCE — and the owner's "next one" is right
-   * even though his need is plural. Several matches genuinely ARE callable: on a
-   * fresh round of 128, all 64 of them. Badging 64 rows "callable now" would be
-   * badging the whole list, which is not information. And the app CANNOT compute
-   * "the next four", because nothing in this schema knows how many courts the club
-   * has — `sessions` has no court column and nothing else counts them, which is
-   * written down in two places already (admin dashboard/page.tsx, sessions/page.tsx).
-   *
-   * What makes one badge sufficient is the ordering above: the rows immediately
-   * BELOW the one marked NEXT are, by construction, the ones after next. The desk
-   * reads down. That is the whole reason ordering by the draw's own sequence and
-   * marking a single next are the same feature rather than two.
-   */
-  const nextRow = rows.find((r) => r.state === 'callable') ?? null;
+  // One "next", never a live match and never a TBD one. See nextCallable.
+  const nextRow = nextCallable(rows);
 
-  const liveCount = rows.filter((r) => r.state === 'live').length;
-  const callableCount = rows.filter((r) => r.state === 'callable').length;
-  const uncourted = rows.filter((r) => !courtLabel(r.match.court)).length;
+  const { live: liveCount, callable: callableCount, waiting: waitingCount, uncourted } = deskCounts(rows);
 
   if (rows.length === 0) {
     return (
@@ -340,7 +234,7 @@ export function CourtManagementTab({
             {/* THE UNCOURTED COUNT SURVIVED THE SORT CHANGE, because it is
                 genuinely useful — it just no longer decides the order. */}
             <p role="status">
-              {liveCount} on court · {callableCount} ready to call · {rows.length - liveCount - callableCount} waiting
+              {liveCount} on court · {callableCount} ready to call · {waitingCount} waiting
               {uncourted > 0 && ` · ${uncourted} with no court yet (entrants see “Court TBC”)`}
             </p>
           </div>
