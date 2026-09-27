@@ -1,0 +1,6 @@
+{
+  "name": "@badminton/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Scaffold for the iOS and Android app expansion. No scripts yet: see README.md."
+}
