@@ -226,6 +226,12 @@ export const ERROR_CODES = {
     meaning: 'The list of unpaid fees could not be read.',
     cause: 'The roster or club_fees read behind the outstanding fees count failed.',
   },
+  'FEE-105': {
+    area: 'FEE',
+    title: 'Pasted list could not be checked',
+    meaning: 'The pasted list could not be checked against the roster. Nothing was recorded. Try again in a moment.',
+    cause: 'A season, players or club_fees read behind the paste-a-list preview failed.',
+  },
 
   'SES-000': {
     area: 'SES',
