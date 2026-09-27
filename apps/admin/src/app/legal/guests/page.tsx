@@ -2,15 +2,17 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Badge, Input, PageHeader } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
+import { guestSearchFilter } from '@/lib/legal-signatures';
 
-// WHO SIGNED AS A GUEST (00254). Read-only: a signing is never edited, voided
+// WHO SIGNED AS AN EXTERNAL (00254). Read-only: a signing is never edited, voided
 // or deleted from here.
 //
 // legal.page opens it, the key that opens /legal; SECTION_CAPABILITY matches
 // the longest prefix, so this page inherits it with no map entry. It shows
-// guests' emails, which the owner may later want behind players.read as well.
+// externals' emails, which the owner may later want behind players.read as well.
 //
-// Read with the service role, the only role 00254 grants SELECT to.
+// Read with the service role, the only role 00254 grants SELECT to. The search
+// matches the name or either version signed (see guestSearchFilter).
 
 // TODO: replace with Tables<'guest_waiver_signings'> once prod has 00254 and
 // database.gen.ts is regenerated.
@@ -23,11 +25,6 @@ type GuestSigningRow = {
 };
 
 const LIMIT = 500;
-
-// ilike treats % and _ as wildcards and \ as their escape.
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
-}
 
 const TH =
   'px-5 pb-2 pt-4 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]';
@@ -46,7 +43,7 @@ export default async function GuestWaiversPage({
     .select('full_name, email, accepted_at, waiver_version, privacy_version')
     .order('accepted_at', { ascending: false })
     .limit(LIMIT);
-  if (q) query = query.ilike('full_name', `%${escapeLike(q)}%`);
+  if (q) query = query.or(guestSearchFilter(q));
 
   const [{ data, error }, { data: documents }] = await Promise.all([
     query,
@@ -54,21 +51,21 @@ export default async function GuestWaiversPage({
   ]);
   // A failed PostgREST read arrives as an empty list unless it is looked at,
   // and "nobody has signed" is exactly the wrong thing to show instead.
-  if (error) console.error('[legal/guests] could not read the guest signings:', error.message);
+  if (error) console.error('[legal/guests] could not read the external signings:', error.message);
   const rows = (data ?? []) as GuestSigningRow[];
   const current = new Map((documents ?? []).map((d) => [d.document as string, d.version as string]));
 
   return (
     <div>
       <PageHeader
-        eyebrow={`GUEST WAIVERS · ${rows.length}${rows.length === LIMIT ? '+' : ''}`}
-        title="Guest waivers"
-        sub="Non-members who signed the waiver and privacy policy to play as a guest."
+        eyebrow={`EXTERNAL WAIVERS · ${rows.length}${rows.length === LIMIT ? '+' : ''}`}
+        title="External waivers"
+        sub="Non-members who signed the waiver and privacy policy to play as an external."
         watermark="G"
       />
 
       <form method="get" className="mb-4 flex max-w-md gap-2">
-        <Input name="q" defaultValue={q} placeholder="Search by name" aria-label="Search by name" />
+        <Input name="q" defaultValue={q} placeholder="Search by name or version" aria-label="Search by name or version" />
         <button
           type="submit"
           className="shrink-0 rounded-md border border-[var(--line)] px-4 text-sm text-[var(--text-primary)]"
@@ -82,11 +79,11 @@ export default async function GuestWaiversPage({
       <div className="overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--surface)]">
         {error ? (
           <p role="alert" className="p-5 text-sm text-[var(--color-accent)]">
-            The guest signings could not be loaded: {error.message}
+            The external signings could not be loaded: {error.message}
           </p>
         ) : rows.length === 0 ? (
           <p className="p-5 text-sm text-[var(--text-muted)]">
-            {q ? `No guest signings match "${q}".` : 'No guest has signed yet.'}
+            {q ? `No external signings match "${q}".` : 'No external has signed yet.'}
           </p>
         ) : (
           <table className="w-full text-sm">

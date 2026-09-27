@@ -346,16 +346,19 @@ describe('CAPABILITY_GATES', () => {
   // sign-ins option and serving it are one authority over the same rows, asked
   // once where the control is drawn so it is not drawn, and once at the
   // download so it cannot simply be typed into the URL.
-  it('names 188 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 188 BECAME 190 with the members' signatures page: legal.page gains the
+  // page and players.read its roster fetch.
+  it('names 190 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(188);
-    expect(new Set(sites).size).toBe(188);
-    expect(ENFORCEMENT_POINTS).toBe(188);
+    expect(sites.length).toBe(190);
+    expect(new Set(sites).size).toBe(190);
+    expect(ENFORCEMENT_POINTS).toBe(190);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

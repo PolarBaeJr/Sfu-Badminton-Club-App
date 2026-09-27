@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+import Link from 'next/link';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import { sortLegalDocuments, getMissingLegalDocuments } from '@badminton/shared';
@@ -150,6 +151,14 @@ export default async function LegalPage() {
         sub="What members agree to, and when they agreed to it."
         watermark="L"
       />
+
+      {canReadRoster && (
+        <p className="mb-4 text-sm text-[var(--text-secondary)]">
+          <Link href="/legal/signatures" className="underline hover:text-[var(--color-accent)]">
+            See which version every member last signed
+          </Link>
+        </p>
+      )}
 
       <LegalConsole
         documents={documents}
