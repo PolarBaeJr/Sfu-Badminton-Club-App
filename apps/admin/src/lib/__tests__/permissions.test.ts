@@ -110,6 +110,12 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
 
   // Admin territory.
   { path: '/audit', admin: true, exec: false, trainer: false },
+  // The audit log's CSV download. A route rather than a server action because a
+  // file has to arrive as a response with its own headers, and its own row here
+  // because isUnder() is segment-aware: '/audit' never matches
+  // '/api/audit/export', so this path would otherwise fall through to the
+  // admin-only safety net and pass for the wrong reason.
+  { path: '/api/audit/export', admin: true, exec: false, trainer: false },
   { path: '/disputes', admin: true, exec: false, trainer: false },
   { path: '/walkovers', admin: true, exec: false, trainer: false },
   { path: '/challenges', admin: true, exec: false, trainer: false },

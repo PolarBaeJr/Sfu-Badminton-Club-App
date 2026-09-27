@@ -654,6 +654,23 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     label: 'Open the Audit log', area: 'audit', group: null, mode: 'page',
     gate: 'route /audit',
   },
+  // THE EXPORT'S TWO KEYS. Both name a HANDLER rather than `route
+  // /api/audit/export`, and the difference is not cosmetic: the `route <path>`
+  // form is reserved for capabilities where the middleware's section match IS
+  // the whole gate, and here the handler re-asks. An audit surface names who
+  // did what to whom, so it is the last place that should rely on a route match
+  // having happened upstream, which is the rule app/audit/page.tsx already
+  // states for itself.
+  'audit.export.read': {
+    label: 'Download the audit log', area: 'audit', group: null, mode: 'read',
+    gate: 'app/api/audit/export/route.ts GET',
+  },
+  'audit.signins.read': {
+    label: 'The sign-in log', area: 'audit', group: null, mode: 'read',
+    gate: 'app/api/audit/export/route.ts sign-ins source',
+    also: ['app/audit/page.tsx sign-ins export option'],
+    merged: 'Offering the sign-ins type and serving it are one authority over the same rows, asked once on the page so the option is not drawn and once at the download so it cannot be typed into the URL.',
+  },
   'ratings.page': {
     label: 'Open Ratings', area: 'ratings', group: null, mode: 'page',
     gate: 'app/ratings/page.tsx RatingsPage',

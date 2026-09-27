@@ -324,6 +324,16 @@ const TODAY: Row[] = [
 
   // ---- audit / ratings / accounts --------------------------------------
   { capability: 'audit.page',                         admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/audit'] = 'admin'" },
+  // THE AUDIT LOG'S CSV EXPORT. No prior gate to transcribe, so these two rows
+  // are a reason rather than a transcription, the way the three
+  // `accounts.apikey.*` rows below are. `exec: F` on both follows `audit.page`
+  // above: a download from a section somebody cannot open is not a coherent
+  // grant, and until that row moves neither of these can. The split into two is
+  // the sign-in trail, which carries account email addresses and login times
+  // for members as well as officers, and which the club may want to withhold
+  // from somebody who may still export what the console did.
+  { capability: 'audit.export.read',                  admin: T, exec: F, trainer: F, was: 'no prior gate: the log-type export on /audit is new, and it follows audit.page' },
+  { capability: 'audit.signins.read',                 admin: T, exec: F, trainer: F, was: 'no prior gate: the sign-in log was unreachable from the console before 00257' },
   { capability: 'ratings.page',                       admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — ratings/page.tsx:17' },
   { capability: 'accounts.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — accounts/page.tsx:12' },
   // THE DATA API'S KEYS, minted from a panel on that page. No prior gate, and

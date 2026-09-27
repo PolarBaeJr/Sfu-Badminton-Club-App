@@ -133,6 +133,17 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   // nearly did, and reusing this line is precisely what would have leaked it.
   '/fees': 'fees.page',
   '/audit': 'audit.page',
+  // The audit log's CSV download, which is a route rather than a server action
+  // because a file has to arrive as a response with its own headers. Listed
+  // EXPLICITLY rather than left to canAccess()'s admin-only fallthrough for an
+  // unmatched path: the fallthrough is a safety net for a section somebody
+  // forgot, and leaning on it here would make this row's answer depend on the
+  // absence of a line instead of on the presence of one. It also keeps the
+  // capability offerable one day without a second edit.
+  //
+  // isUnder() is segment-aware, so '/audit' never matches '/api/audit/export'
+  // and this is a real entry rather than a narrowing of the one above.
+  '/api/audit/export': 'audit.export.read',
   // Execs open the documents and may require a re-signature; only admins edit
   // the text. That split is three separate capabilities under `legal`, enforced
   // in the page and in the server actions — this line only decides who may open
