@@ -6,10 +6,11 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// The two public Supabase values come from local.properties (gitignored), or a
-// Gradle property of the same name for CI. A missing value builds anyway, as
-// an empty string: the app then shows its configuration screen rather than a
-// client pointed at nothing.
+// The two public Supabase values and the optional club website URL come from
+// local.properties (gitignored), or a Gradle property of the same name for CI.
+// A missing value builds anyway, as an empty string: a missing Supabase value
+// shows the configuration screen rather than a client pointed at nothing, and
+// a missing website URL only hides passkey sign-in.
 val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.isFile) file.inputStream().use { load(it) }
@@ -34,6 +35,7 @@ android {
 
         buildConfigField("String", "SUPABASE_URL", buildConfigString(configValue("badminton.supabaseUrl")))
         buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(configValue("badminton.supabaseAnonKey")))
+        buildConfigField("String", "SITE_URL", buildConfigString(configValue("badminton.siteUrl")))
     }
 
     buildFeatures {
@@ -77,6 +79,8 @@ dependencies {
     implementation(libs.lifecycle.process)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.credentials)
+    implementation(libs.credentials.play.services.auth)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

@@ -84,6 +84,7 @@ apps/mobile/
 
 ## Passkeys
 
-The app signs in by email code only. The server side of native passkeys exists on
-branch `feat/passkey-native-app` (token-returning routes and
-`/.well-known/assetlinks.json`); the app does not call it yet. See `docs/02-auth.md`.
+The Android app signs in by email code, or by a passkey already enrolled on the
+website, through Credential Manager. The server side of native passkeys is on branch
+`feat/passkey-native-app` (token-returning routes and
+`/.well-known/assetlinks.json`). See `docs/02-auth.md`.

@@ -1,8 +1,6 @@
 package com.sfubadminton.app.auth
 
 import com.sfubadminton.app.data.Postgrest
-import com.sfubadminton.app.data.PostgrestQuery
-import com.sfubadminton.app.data.PostgrestResult
 import com.sfubadminton.app.shared.SIGNIN_OTP_TYPES
 import com.sfubadminton.app.shared.authErrorCode
 import com.sfubadminton.app.shared.friendlyAuthError
@@ -52,10 +50,8 @@ class EmailCode(
 
     /**
      * Tries each token type GoTrue might have issued in turn (a wrong-type
-     * attempt does not consume the token), then makes the web login's check:
-     * players_self is scoped to the caller, so no row and no error means an
-     * account that never finished signing up. That session is ended on this
-     * device and never kept. A read error fails OPEN, as it does on the web.
+     * attempt does not consume the token), then makes the web login's check
+     * for an unfinished account ([keepIfFinished], shared with passkeys).
      */
     suspend fun verify(email: String, token: String): VerifyCodeResult {
         var lastError: GoTrueError? = null
@@ -78,13 +74,11 @@ class EmailCode(
             )
         }
 
-        val check = postgrest.getWithToken(PostgrestQuery.select("players_self", "id"), session.accessToken)
-        if (check is PostgrestResult.Ok && check.rows.isEmpty()) {
-            api.logout(session.accessToken)
-            return VerifyCodeResult.Unfinished
+        return if (keepIfFinished(session, api, sessions, postgrest)) {
+            VerifyCodeResult.SignedIn
+        } else {
+            VerifyCodeResult.Unfinished
         }
-        sessions.signedIn(session)
-        return VerifyCodeResult.SignedIn
     }
 
     private companion object {

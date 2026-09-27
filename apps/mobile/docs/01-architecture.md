@@ -31,7 +31,7 @@ There is no Supabase SDK in the app. It makes plain HTTPS calls
 | Fees, sessions, auth rules | `packages/shared` | hand ported to `shared/`, kept in step by hand |
 | Elo | Postgres and `packages/shared` | none, ratings are read, never computed |
 | Screens and navigation | Compose, `ui/` | four tabs behind sign in |
-| Auth glue | `auth/` | email code today, passkeys next (`02-auth.md`) |
+| Auth glue | `auth/` | email code and passkey sign-in (`02-auth.md`) |
 | Push notifications | not built | see `03-push.md` |
 
 No realtime: every screen loads on open and refreshes by pull to refresh.
