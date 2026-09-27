@@ -2,9 +2,13 @@
   "name": "badminton-platform",
   "private": true,
   "version": "1.1.0",
+  "//workspaces": "Listed one by one rather than apps/* so that apps/mobile stays OUT. The overrides below force one react (19.2.8) across the tree, and the Expo SDK's react-native needs the exact react it was built against, so the phone app keeps its own lockfile and node_modules. Being outside also keeps it out of the Dockerfile's deps stage, which copies every workspace manifest for npm ci, and out of CI, where turbo runs every workspace's scripts. A new app has to be added here by name.",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/admin",
+    "apps/player",
+    "apps/bot",
+    "apps/data-api"
   ],
   "scripts": {
     "dev:player": "npm run dev --workspace=apps/player",
