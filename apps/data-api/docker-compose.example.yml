@@ -1,0 +1,42 @@
+# EXAMPLE ONLY. Not referenced by any deploy and not run by anything.
+#
+# Shows the shape of the staging service: the image CI pushes, the edge network,
+# and the proxy-manager labels that route api.polardev.org to it.
+#
+# ENVIRONMENT VALUES ARE NEVER WRITTEN HERE. On a centrally managed host the
+# three variables are set through the proxy dashboard (set_service_env /
+# replace_service) as `ref:NAME` references into that host's secrets file,
+# never as literals. `ref:` is a dashboard feature only: compose does NOT
+# resolve it, so if this file is ever used with compose directly, the values
+# come from an --env-file via the ${VAR:?} guards below, which refuse to start
+# rather than boot with an empty credential.
+
+networks:
+  edge:
+    external: true
+
+services:
+  data-api:
+    image: ghcr.io/polarbaejr/badminton-data-api-staging:latest
+    networks: [edge]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL:?set SUPABASE_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?set SUPABASE_ANON_KEY}
+      # role: data_api_reader. The service refuses to start on any other role,
+      # which is the guard against the service_role key being pasted here.
+      DATA_API_DB_JWT: ${DATA_API_DB_JWT:?set DATA_API_DB_JWT}
+      PORT: "8080"
+    restart: unless-stopped
+    labels:
+      proxy.enable: "true"
+      proxy.host: "api.polardev.org"
+      proxy.port: "8080"
+      proxy.service: "badminton-staging-data-api"
+      # Replicas are safe (no shared state), but the verification cache and the
+      # rate-limit buckets are per process, so each replica adds its own budget.
+      proxy.unscalable: "false"
+      # Without this the proxy health check is a bare TCP dial and failover
+      # never fires on an unhealthy-but-listening process.
+      proxy.health: "/health"
