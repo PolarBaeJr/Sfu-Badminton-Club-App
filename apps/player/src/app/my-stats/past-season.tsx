@@ -17,6 +17,16 @@ import {
   type HistorySeason,
   type SeasonMatchRow,
 } from '@/lib/season-history';
+import {
+  deriveSeasonHeadToHead,
+  deriveSeasonPartners,
+  memberSeasonIds,
+  seasonMatchCountQuery,
+  seasonMatchesQuery,
+  seasonsToProbe,
+  type OwnSeasonMatch,
+  type SeasonParticipantRow,
+} from '@/lib/my-stats-season';
 import { SeasonPick } from '@/components/my-stats/season-pick';
 import { PastRatingCard } from '@/components/my-stats/past-rating-card';
 
@@ -54,6 +64,7 @@ type MatchRow = {
   rated_flag: boolean | null;
   completed_flag: boolean | null;
   result_status: string | null;
+  walkover_type: string | null;
   score_summary: string | null;
   participants: unknown;
 };
@@ -107,22 +118,9 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
       .from('season_final_ratings')
       .select('season_id, singles_elo, doubles_elo, archived_at')
       .eq('player_id', player.id),
-    // Parent-first, exactly as the live screen's window is, and for the same
-    // reason: PostgREST cannot order parent rows by a column of a to-one embed,
-    // so a participant-first query takes an arbitrary N rows and calls them the
-    // season. `!inner` plus the filter on the embed drops matches this member
-    // was not in; `player_id` is selected anyway so nothing here depends on the
-    // embed also being narrowed.
-    supabase
-      .from('matches')
-      .select(
-        'id, played_at, match_type, rated_flag, completed_flag, result_status, score_summary, participants:match_participants!inner(player_id, win_flag, rating_delta, post_rating, team_side, points_scored, points_allowed)'
-      )
-      .eq('season_id', seasonId)
-      .eq('participants.player_id', player.id)
-      .not('played_at', 'is', null)
-      .order('played_at', { ascending: false })
-      .limit(SEASON_MATCH_CAP),
+    // The same builder the live screen reads its term through, so the two
+    // cannot disagree about what a season's matches are.
+    seasonMatchesQuery(supabase, player.id, seasonId, SEASON_MATCH_CAP),
     supabase
       .from('session_attendance')
       .select('status, session:sessions!inner(id)')
@@ -142,6 +140,12 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
   // which is exactly the population that could still link straight to it.
   if (!season || season.active_flag || season.hidden_flag === true) {
     redirect('/my-stats');
+  }
+
+  // A refused read is not an empty term. "Nothing on record for this season"
+  // drawn over a failed read would tell a member their season never happened.
+  if (matchRowsRes.error) {
+    throw new Error(`Could not read the season's matches: ${matchRowsRes.error.message}`);
   }
 
   const archivedRows = (archivedRes.data ?? []) as {
@@ -209,18 +213,29 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
   // so the lookup is chunked against the measured request-line limit — the
   // shared helper, not this file's own constant, since the same defect was live
   // at a dozen other call sites.
+  //
+  // The picker's probes run beside it: which other finished terms the member
+  // played in without an archived rating (see seasonsToProbe).
   const matchIds = matchRows.map((m) => m.id);
-  const { data: opponentRows } = await selectInChunks<{
-    match_id: string;
-    player_id: string;
-    team_side: string | null;
-    player: unknown;
-  }>(matchIds, (ids) =>
-    supabase
-      .from('match_participants')
-      .select('match_id, player_id, team_side, player:players(id, full_name, avatar_url)')
-      .in('match_id', ids) as never
-  );
+  const [{ data: opponentRows, error: opponentError }, probeResults] = await Promise.all([
+    selectInChunks<{
+      match_id: string;
+      player_id: string;
+      team_side: string | null;
+      player: unknown;
+    }>(matchIds, (ids) =>
+      supabase
+        .from('match_participants')
+        .select('match_id, player_id, team_side, player:players(id, full_name, avatar_url)')
+        .in('match_id', ids) as never
+    ),
+    Promise.all(
+      seasonsToProbe(seasons, archivedIds).map(async (id) => {
+        const res = await seasonMatchCountQuery(supabase, player.id, id);
+        return { seasonId: id, count: res.count, failed: Boolean(res.error) };
+      })
+    ),
+  ]);
   const othersByMatch = new Map<string, OtherPlayer[]>();
   for (const row of opponentRows ?? []) {
     if (row.player_id === player.id) continue;
@@ -245,6 +260,27 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
     return known.filter((o) => o.team_side !== myTeamSide);
   };
 
+  // The term's head-to-head and partners, derived exactly as the live screen
+  // derives its own. Null when the participant read failed, so the cards are
+  // left out rather than drawn empty.
+  const participantRows: SeasonParticipantRow[] = (opponentRows ?? []).map((row) => {
+    const raw = row.player;
+    const p = (Array.isArray(raw) ? raw[0] : raw) as SeasonParticipantRow['player'] | undefined;
+    return { match_id: row.match_id, player_id: row.player_id, team_side: row.team_side, player: p ?? null };
+  });
+  const ownSeasonMatches: OwnSeasonMatch[] = matchRows.map((m) => {
+    const p = ownParticipant(m);
+    return {
+      id: m.id,
+      match_type: m.match_type,
+      result_status: m.result_status,
+      walkover_type: m.walkover_type,
+      own: p ? { team_side: p.team_side, win_flag: p.win_flag } : null,
+    };
+  });
+  const h2h = opponentError ? null : deriveSeasonHeadToHead(ownSeasonMatches, participantRows, player.id);
+  const partners = opponentError ? null : deriveSeasonPartners(ownSeasonMatches, participantRows, player.id);
+
   // Club time, both sides. players.created_at is a TIMESTAMPTZ and the season
   // columns are DATEs; comparing them through a Date parses the DATE as UTC
   // midnight and lands on the previous evening in Vancouver, which is how a
@@ -265,7 +301,7 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
 
   const picker = (
     <SeasonPick
-      options={seasonPickerOptions(seasons, archivedIds, seasonId)}
+      options={seasonPickerOptions(seasons, memberSeasonIds(archivedIds, probeResults), seasonId)}
       selectedId={seasonId}
       basePath="/my-stats"
     />
@@ -509,6 +545,66 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
               ATTENDANCE RATES ARE ONLY KEPT FOR THE CURRENT TERM
             </div>
           </div>
+          )}
+
+          {/* Only for a term with matches in it: an empty term already has the
+              empty-season card saying why, and two more empty cards would only
+              repeat it. */}
+          {emptyReason === 'has-matches' && h2h && (
+            <div className="card-base">
+              <div className="card-head">
+                <h3 className="card-title">Head-to-head</h3>
+                <span className="tag">{season.name}</span>
+              </div>
+              {h2h.length === 0 ? (
+                <div className="empty" style={{ padding: '28px 20px' }}>
+                  <div className="empty-title">No counted matches against anyone</div>
+                  <div className="empty-hint">
+                    Forfeits and unconfirmed results in {season.name} do not count toward a record.
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {h2h.map((h) => (
+                    <div key={`${h.opponent.id}:${h.match_type}`} className="list-row">
+                      <AvatarChip name={h.opponent.full_name} id={h.opponent.id} src={h.opponent.avatar_url} size="sm" />
+                      <div style={{ flex: 1 }}>
+                        <div className="row-title">{h.opponent.full_name}</div>
+                        <div className="row-sub">{h.match_type.toUpperCase()}</div>
+                      </div>
+                      <span className="mono" style={{ fontWeight: 600 }}>
+                        <span style={{ color: 'var(--win)' }}>{h.wins}W</span>
+                        <span className="muted" style={{ margin: '0 4px' }}>·</span>
+                        <span style={{ color: 'var(--loss)' }}>{h.losses}L</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {emptyReason === 'has-matches' && partners && partners.length > 0 && (
+            <div className="card-base">
+              <div className="card-head">
+                <h3 className="card-title">Best partners</h3>
+                <span className="tag tag-gold">DOUBLES</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {partners.map((p) => (
+                  <div key={p.partner.id} className="list-row">
+                    <AvatarChip name={p.partner.full_name} id={p.partner.id} src={p.partner.avatar_url} size="sm" />
+                    <div style={{ flex: 1 }}>
+                      <div className="row-title">{p.partner.full_name}</div>
+                      <div className="row-sub">
+                        {p.wins}W-{p.losses}L
+                      </div>
+                    </div>
+                    <span className="tag tag-gold">{Math.round(p.winRate)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>
