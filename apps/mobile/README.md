@@ -1,7 +1,8 @@
 # apps/mobile
 
-Scaffold only. No app code yet. This directory exists so the iOS app expansion and
-the Android app expansion have a settled home before either is started.
+The members' phone app. Milestone 1 is Android, run through Expo Go: sign in by
+email code, the ladder, your own stats, upcoming sessions and your membership
+statement, all read only. How to run it is in `docs/05-development.md`.
 
 ## What this is, and what it is not
 
@@ -95,15 +96,41 @@ apps/mobile/
   docs/         the decisions, written down before the code
 ```
 
-## Note on the package.json in this directory
+## Outside the npm workspaces, on purpose
 
-The repository root declares workspaces as `packages/*` and `apps/*`, so a bare
-directory here changes what `npm install` and turbo see. The `package.json` beside
-this file is deliberately minimal and private, and declares **no** `build`, `test` or
-`type-check` script, so turbo has nothing to run and CI is unaffected while this is
-still a scaffold.
+The root `package.json` lists its workspaces by name and leaves this directory
+out. The root forces one `react` across the web apps through `overrides`, and the
+Expo SDK's `react-native` needs the exact `react` it was built against, which is a
+different patch. One install cannot satisfy both. So this app has its own
+`package-lock.json` and its own `node_modules`, installed from here:
 
-This is the same class of trap as the blanket `scripts/*` entry in `.gitignore`: a
-new directory that silently changes tooling behaviour, with no error to tell you.
-When real code lands here, wire the scripts up deliberately and check the root
-`npm run type-check` and `npm test` still behave.
+```
+cd apps/mobile
+npm install
+```
+
+Check `npm prefix` prints this directory before the first install. If it prints the
+repository root, npm will install into the web apps' tree instead.
+
+Being outside also means:
+
+- **No CI yet.** turbo, the root `npm run type-check` and the Dockerfile never see
+  this app. Run its gates by hand: `npm run type-check && npm test && npx expo
+  install --check`.
+- **`@badminton/shared` is not a dependency.** Metro resolves it by path
+  (`metro.config.js`), and TypeScript by `paths` (`tsconfig.json`).
+
+## Importing from packages/shared: deep imports only
+
+Never `import ... from '@badminton/shared'`. The barrel re-exports the email sender,
+and a few shared files use node crypto; none of that exists on a phone. Import the
+one pure file you need by its path:
+
+```ts
+import { SIGNIN_OTP_TYPES } from '@badminton/shared/src/utils/auth-otp';
+```
+
+`metro.config.js` refuses the barrel, `src/email/`, `src/push/`,
+`utils/event-waiver` and `utils/data-api-key` at bundle time, and
+`src/__tests__/import-guard.test.ts` checks the same list, including every shared
+file reached through relative imports, in `npm test`.

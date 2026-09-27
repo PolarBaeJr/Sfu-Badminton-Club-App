@@ -1230,11 +1230,13 @@ describe('every third-party processor is disclosed to the member', () => {
       'Gated on NEXT_PUBLIC_POSTHOG_KEY, which is not set in prod. lib/posthog.ts and lib/actions/_shared.ts both short-circuit when it is absent, so neither the browser nor the server client is constructed.',
   };
 
-  const WORKSPACE_ROOTS = ['apps/player', 'apps/admin', 'apps/bot', 'packages/shared'];
+  // apps/mobile is outside the npm workspaces (it keeps its own lockfile), but it
+  // ships to members' phones, so an SDK it adds is shipped all the same.
+  const WORKSPACE_ROOTS = ['apps/player', 'apps/admin', 'apps/bot', 'packages/shared', 'apps/mobile'];
 
   /**
    * THE ROOTS THAT RESOLVED ARE RETURNED ALONGSIDE THE TEXT, AND THE CALLER
-   * ASSERTS ALL FOUR. An earlier version swallowed a missing path on the
+   * ASSERTS EVERY ONE. An earlier version swallowed a missing path on the
    * grounds that repo layout is another test's business. That reasoning is
    * wrong here in a specific way: this guard concludes "not shipped" from the
    * ABSENCE of a string, so a manifest that fails to load is indistinguishable

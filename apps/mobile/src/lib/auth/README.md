@@ -15,10 +15,15 @@ account that has never confirmed its email gets `signup`, and the `type: 'email'
 documentation suggests matches neither and always fails with "Invalid email
 verification type".
 
-`apps/admin/src/lib/auth-otp.ts:23` already encodes the answer as `SIGNIN_OTP_TYPES`
-and explains why trying both in turn is safe (a wrong type attempt reads a different
-token column and returns not found without consuming the real token). Import that
-constant. Do not rediscover it.
+`packages/shared/src/utils/auth-otp.ts` already encodes the answer as
+`SIGNIN_OTP_TYPES` and explains why trying both in turn is safe (a wrong type attempt
+reads a different token column and returns not found without consuming the real
+token). Import that constant. Do not rediscover it.
+
+Built in `email-code.ts`, which imports it by that path (never through the shared
+barrel; see the app README). It sends with `shouldCreateUser: false` and no redirect,
+retries a send once on a gateway 503, and after a good code drops the session on this
+device when the account has no player row, as the web login does.
 
 ## Passkeys: this one needs the server to change
 
