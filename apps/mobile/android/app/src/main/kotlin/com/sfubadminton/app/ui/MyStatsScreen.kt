@@ -146,7 +146,7 @@ private fun StatsCards(stats: MyStats) {
     Card {
         Label("Recent matches")
         if (stats.recent.isEmpty()) {
-            Body("No matches yet.", muted = true)
+            Body(stats.seasonName?.let { "No matches in $it yet." } ?: "No matches yet.", muted = true)
         } else {
             for (m in stats.recent) {
                 HorizontalDivider(color = p.line)
