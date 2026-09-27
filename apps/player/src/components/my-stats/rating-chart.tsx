@@ -33,6 +33,8 @@ export interface RatingChartProps {
   seasonStart: string | null;
   /** Ratings below the provisional threshold are still settling; the chart says so. */
   provisional: boolean;
+  /** The season the points belong to, named in the empty state when given. */
+  seasonName?: string | null;
   label: string;
   /**
    * What to call the last point on the line. "CURRENT" is right on the live
@@ -59,6 +61,7 @@ export function RatingChart({
   priorSeasonName,
   seasonStart,
   provisional,
+  seasonName,
   label,
   currentLabel = 'CURRENT',
 }: RatingChartProps) {
@@ -67,7 +70,7 @@ export function RatingChart({
   if (windowed.length === 0) {
     return (
       <div className="empty" style={{ padding: '32px 20px' }}>
-        <div className="empty-title">No rating history yet</div>
+        <div className="empty-title">No rating history{seasonName ? ` in ${seasonName}` : ''} yet</div>
         <div className="empty-hint">
           Play a rated {label.toLowerCase()} match to start your chart. Every confirmed
           result adds a point.

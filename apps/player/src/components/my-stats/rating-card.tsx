@@ -22,6 +22,8 @@ export interface RatingCardProps {
   doubles: DisciplineStats;
   priorSeasonName: string | null;
   seasonStart: string | null;
+  /** The season the points belong to, for the chart's empty state. */
+  seasonName?: string | null;
 }
 
 /**
@@ -41,7 +43,7 @@ export interface RatingCardProps {
  * is one question whichever discipline the member happened to play. On a phone
  * the two cards are still adjacent, in this order.
  */
-export function RatingCard({ singles, doubles, priorSeasonName, seasonStart }: RatingCardProps) {
+export function RatingCard({ singles, doubles, priorSeasonName, seasonStart, seasonName }: RatingCardProps) {
   // Doubles is the default when the member has never played a rated singles
   // match, so the card does not open on an empty chart for the many members who
   // only ever play doubles.
@@ -104,6 +106,7 @@ export function RatingCard({ singles, doubles, priorSeasonName, seasonStart }: R
         priorRating={active.priorRating}
         priorSeasonName={priorSeasonName}
         seasonStart={seasonStart}
+        seasonName={seasonName}
         provisional={active.provisional}
         label={label}
       />

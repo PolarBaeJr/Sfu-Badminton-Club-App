@@ -3922,6 +3922,7 @@ export type Database = {
         Returns: undefined
       }
       assign_member_code: { Args: { p_player_id: string }; Returns: string }
+      auto_rollover_season: { Args: Record<PropertyKey, never>; Returns: Json }
       auto_seed_field_by_rating: {
         Args: { p_event_id: string; p_is_pair: boolean }
         Returns: Json
