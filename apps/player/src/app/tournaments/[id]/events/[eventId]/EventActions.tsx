@@ -10,6 +10,7 @@ import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
 import { StandingNote } from '@/components/standing-notice';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { UserPlus, UserMinus, CheckCircle } from 'lucide-react';
 
 interface Props {
@@ -28,9 +29,14 @@ interface Props {
   isDoubles: boolean;
   suspended?: boolean;
   eventWaiverText?: string | null;
+  /**
+   * The member cannot enter until this season's club fee is paid (00260).
+   * Replaces the way IN only; an existing entry keeps its controls.
+   */
+  membershipBlocked?: { message: string; receiptPending: boolean; payHref: string | null } | null;
 }
 
-export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText }: Props) {
+export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
@@ -147,6 +153,21 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
 
   if (!playerRegistration) {
     if (eventStatus === 'registration' && !suspended) {
+      if (membershipBlocked) {
+        return (
+          <div className="space-y-1" role="status">
+            <p className="text-xs text-[var(--text-secondary)]">
+              {membershipBlocked.message}
+              {membershipBlocked.receiptPending && ' Your receipt is waiting for an exec to confirm it.'}
+            </p>
+            {membershipBlocked.payHref && (
+              <Link href={membershipBlocked.payHref} className="text-xs font-medium text-[var(--color-accent)]">
+                Go to Membership
+              </Link>
+            )}
+          </div>
+        );
+      }
       if (needsDialog) {
         return (
           <>

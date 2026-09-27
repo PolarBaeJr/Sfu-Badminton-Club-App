@@ -1,6 +1,14 @@
 export const dynamic = 'force-dynamic';
 import Link from 'next/link';
-import { scopeToActiveSeason, selectInChunks, quoteEntryFee, type PricingTier, clubToday } from '@badminton/shared';
+import {
+  scopeToActiveSeason,
+  selectInChunks,
+  quoteEntryFee,
+  loadEntryMemberships,
+  type MembershipType,
+  type PricingTier,
+  clubToday,
+} from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import {
@@ -215,7 +223,8 @@ export default async function TournamentsPage({
 
   // ---- ENTRY MONEY. Both reads are inside the capability, not beside it. ----
   const feeTiersByTournament = new Map<string, PricingTier[]>();
-  let feesDueCents = 0;
+  // Null when the dues read behind the pricing failed: no figure beats a wrong one.
+  let feesDueCents: number | null = 0;
   let featuredPaid = 0;
   let featuredUnpaid = 0;
   if (canSeeFees && tournamentIds.length) {
@@ -286,7 +295,21 @@ export default async function TournamentsPage({
     // every entrant, not only the liable ones, because the quote below is keyed
     // by player id and a missing entry would silently quote the default tier —
     // the exact fallback this change exists to remove.
-    const membershipById = new Map(payers.map((p) => [p.id, p.membership_type]));
+    //
+    // AND CORRECTED BY THIS SEASON'S CLUB FEE (00260): an entry is priced by the
+    // group the member enters as, so the quote is too. Per tournament season,
+    // because that is the season ensureEntryFees looks the dues up in.
+    const tournamentSeason = new Map(tournaments.map((t) => [t.id, t.season_id ?? null]));
+    const groupsBySeason = new Map<string | null, Map<string, MembershipType>>();
+    let groupsFailed = false;
+    for (const key of new Set(tournamentSeason.values())) {
+      const groups = await loadEntryMemberships(supabase, key, payers);
+      if (!groups) {
+        groupsFailed = true;
+        break;
+      }
+      groupsBySeason.set(key, groups);
+    }
 
     // Per tournament, the distinct liable players entered in any of its events.
     const payersByTournament = new Map<string, Set<string>>();
@@ -317,6 +340,7 @@ export default async function TournamentsPage({
       payersByTournament.set(fee.tournament_id, set);
     }
 
+    if (groupsFailed) feesDueCents = null;
     for (const [tid, tournamentPayers] of payersByTournament) {
       const tournamentTiers = feeTiersByTournament.get(tid) ?? [];
       for (const playerId of tournamentPayers) {
@@ -332,13 +356,14 @@ export default async function TournamentsPage({
         // A null amount means nobody has said this tournament costs anything.
         // That is not a debt of $0, it is an absence, and it contributes
         // nothing either way.
-        const owed = quoteEntryFee(membershipById.get(playerId), tournamentTiers, fee).amountCents;
+        const group = groupsBySeason.get(tournamentSeason.get(tid) ?? null)?.get(playerId);
+        const owed = quoteEntryFee(group, tournamentTiers, fee).amountCents;
         const paid = Boolean(fee?.paid_at);
         if (featured && tid === featured.id) {
           if (paid) featuredPaid += 1;
           else featuredUnpaid += 1;
         }
-        if (!paid && owed != null) feesDueCents += owed;
+        if (!paid && owed != null && feesDueCents !== null) feesDueCents += owed;
       }
     }
   }
@@ -469,7 +494,7 @@ export default async function TournamentsPage({
           >
             <StatCell
               label="Entry fees due"
-              value={<Atomic>{formatDollars(feesDueCents)}</Atomic>}
+              value={feesDueCents === null ? '-' : <Atomic>{formatDollars(feesDueCents)}</Atomic>}
               money
               tone="var(--color-warning)"
             />

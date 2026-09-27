@@ -24,9 +24,15 @@ interface Props {
   isDoubles: boolean;
   suspended?: boolean;
   eventWaiverText?: string | null;
+  /**
+   * Shown instead of the entry button when the member cannot enter until this
+   * season's club fee is paid (00260). Only replaces the way IN: an existing
+   * entry keeps its Withdraw and Check In.
+   */
+  membershipBlocked?: string | null;
 }
 
-export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended, eventWaiverText }: Props) {
+export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended, eventWaiverText, membershipBlocked }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
@@ -91,6 +97,11 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
 
   if (!registration) {
     if (eventStatus === 'registration' && !suspended && standing.ok) {
+      if (membershipBlocked) {
+        return (
+          <span className="text-[10px] text-[var(--text-muted)]" role="status">{membershipBlocked}</span>
+        );
+      }
       if (needsDialog) {
         return (
           <>

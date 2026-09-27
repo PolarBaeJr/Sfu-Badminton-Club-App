@@ -1,5 +1,13 @@
 import { NextResponse } from 'next/server';
-import { CLUB_TIMEZONE, clubToday, readFeatureFlags } from '@badminton/shared';
+import {
+  CLUB_TIMEZONE,
+  clubToday,
+  entryMembership,
+  isFeeExempt,
+  loadPaidDues,
+  readFeatureFlags,
+  resolveEntrySeasonId,
+} from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
@@ -25,6 +33,10 @@ export const dynamic = 'force-dynamic';
 // member should still see that the internal-only tournament exists, the same as
 // on the website — so it is reported as a note rather than used to hide rows.
 // Telling somebody why they cannot enter beats them finding out at the click.
+//
+// The group is the one the member ENTERS as (00260): internal means this
+// season's club fee is paid, so the note is computed per tournament season
+// from the caller's dues, exactly as registerForEvent will decide it.
 //
 // DRAFTS ARE EXCLUDED. RLS on tournaments is USING (TRUE) so a draft is
 // technically readable, but draft is where an exec assembles one before anyone
@@ -53,7 +65,16 @@ interface Row {
   start_date: string;
   end_date: string | null;
   allowed_memberships: string[] | null;
+  season_id: string | null;
   tournament_events: { event_type: string; status: string }[] | null;
+}
+
+/** The linked member asking, with what entryMembership needs. */
+interface Caller {
+  id: string;
+  membership_type: string | null;
+  is_exec: boolean | null;
+  fee_exempt: boolean | null;
 }
 
 function clubLocalToday(): string {
@@ -81,13 +102,13 @@ export async function GET(request: Request) {
   // Discord user id there is a per-person identifier in a log nobody thinks of
   // as personal data. Absent is a real answer, not a missing one.
   const discordUserId = request.headers.get('x-discord-user-id');
-  let membership: string | null = null;
+  let caller: Caller | null = null;
   let linked = false;
 
   if (discordUserId) {
     const { data, error: linkError } = await supabase
       .from('player_discord_links')
-      .select('players!inner(membership_type)')
+      .select('players!inner(id, membership_type, is_exec, fee_exempt)')
       .eq('discord_user_id', discordUserId)
       .maybeSingle();
 
@@ -99,10 +120,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'link_lookup_failed' }, { status: 503 });
     }
 
-    const player = data?.players as { membership_type?: string } | undefined;
+    const player = data?.players as Caller | undefined;
     if (player) {
       linked = true;
-      membership = player.membership_type ?? null;
+      caller = player;
     }
   }
 
@@ -128,7 +149,7 @@ export async function GET(request: Request) {
   const { data, error } = await supabase
     .from('tournaments')
     .select(
-      'id, name, start_date, end_date, allowed_memberships, tournament_events(event_type, status)'
+      'id, name, start_date, end_date, allowed_memberships, season_id, tournament_events(event_type, status)'
     )
     .eq('status', 'active')
     .is('suspended_at', null)
@@ -177,6 +198,30 @@ export async function GET(request: Request) {
   );
   const pageRows = matched.slice((page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE);
 
+  // The caller's group per tournament season, one dues read per distinct
+  // season on the page. A failed read is a 503 like the link lookup above,
+  // not a guess: "you cannot enter" to a paid member is the worse wrong answer.
+  const groupBySeason = new Map<string | null, string>();
+  if (caller) {
+    for (const key of new Set(pageRows.map((t) => t.season_id ?? null))) {
+      const season = await resolveEntrySeasonId(supabase, key);
+      const paid = season.error ? null : await loadPaidDues(supabase, season.seasonId, [caller.id]);
+      if (!paid) {
+        console.error('[discord] tournaments dues lookup failed');
+        return NextResponse.json({ error: 'dues_lookup_failed' }, { status: 503 });
+      }
+      groupBySeason.set(
+        key,
+        entryMembership({
+          stored: caller.membership_type,
+          exempt: isFeeExempt(caller),
+          paid: paid.has(caller.id),
+          hasSeason: season.seasonId !== null,
+        }),
+      );
+    }
+  }
+
   const tournaments = pageRows.map((t) => {
     const allowed = t.allowed_memberships ?? [];
     return {
@@ -191,7 +236,9 @@ export async function GET(request: Request) {
       registrationOpen: (t.tournament_events ?? []).some((e) => e.status === 'registration'),
       // null for an unlinked caller — "we do not know", which is a different
       // thing from "not eligible" and the bot renders it differently.
-      eligible: membership ? allowed.length === 0 || allowed.includes(membership) : null,
+      eligible: caller
+        ? allowed.length === 0 || allowed.includes(groupBySeason.get(t.season_id ?? null) ?? '')
+        : null,
     };
   });
 
