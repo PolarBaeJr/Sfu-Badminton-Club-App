@@ -30,6 +30,7 @@ export function ComposerSwitch({
   channels,
   roles,
   ambiguousRoleNames,
+  canDelete,
 }: {
   modes: ComposerMode[];
   pushReachable: number | null;
@@ -39,6 +40,8 @@ export function ComposerSwitch({
   roles: DiscordRoleOption[];
   /** Server roles the picker had to drop. Passed through: see DiscordSend. */
   ambiguousRoleNames: string[];
+  /** For the website composer's Delete while editing. UI only: see Composer. */
+  canDelete: boolean;
 }) {
   // MODE IS NOT LOCAL STATE ANY MORE. The list card in the right column follows
   // it (right-rail.tsx), and the provider is the only boundary that spans both
@@ -85,7 +88,7 @@ export function ComposerSwitch({
           this card exists to fix. Spacing belongs on the root above. */}
       {modes.includes('website') && (
         <div hidden={mode !== 'website'}>
-          <Composer pushReachable={pushReachable} discord={discord} />
+          <Composer pushReachable={pushReachable} discord={discord} canDelete={canDelete} />
         </div>
       )}
 

@@ -1,13 +1,9 @@
 'use client';
 
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import type {
-  AnnouncementStatus,
-  AnnouncementType,
-  ComposerMode,
-  PostedMapping,
-  TargetAudience,
-} from './announcement-shape';
+import type { ComposerMode, PendingWebsiteEdit } from './announcement-shape';
+
+export type { PendingWebsiteEdit } from './announcement-shape';
 
 // The state each composer shares with the list its Edit button lives in: the
 // Discord one, and now the website one too.
@@ -57,33 +53,11 @@ export interface PendingDiscordEdit {
   buttonSet: string | null;
 }
 
-export interface PendingWebsiteEdit {
-  /** The announcement row somebody pressed Edit on. */
-  id: string;
-  title: string;
-  body: string;
-  type: AnnouncementType;
-  target_audience: TargetAudience;
-  pinned: boolean;
-  send_push: boolean;
-  status: AnnouncementStatus;
-  expires_at: string | null;
-  /**
-   * The row's Discord mapping, or null when Discord has never had this post.
-   *
-   * Carried rather than looked up because the composer is SHARED: it has no row
-   * of its own to read a mapping off, and the preview it draws needs one to say
-   * whether the channel is already holding an older version of these words. The
-   * page threads the same mapping into the row that hands this over, so the two
-   * cannot answer differently.
-   */
-  posted: PostedMapping | null;
-}
-
-// The fields above are declared here rather than imported as `RowAnnouncement`
-// from `actions.tsx`, which is where that shape lives: `actions.tsx` imports
-// this file, so reaching back for the row type would be an import cycle. Only
-// leaf types from `announcement-shape.ts` come in.
+// THE PENDING WEBSITE EDIT IS DECLARED IN `announcement-shape.ts`, beside the
+// pure helper that builds it (`toPendingWebsiteEdit`). This file imports from
+// that one, so the helper cannot reach back here for the type without the two
+// importing each other; the leaf module has to own it. It is re-exported here
+// for the callers that already read it off the context.
 
 interface DiscordConsoleValue {
   /**

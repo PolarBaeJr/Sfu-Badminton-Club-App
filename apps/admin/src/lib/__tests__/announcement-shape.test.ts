@@ -9,8 +9,11 @@ import {
   hasWebsiteComposer,
   reachPercent,
   relayChip,
+  rowEditActions,
+  showsComposerDelete,
   showsModeSelector,
   tallyOpens,
+  toPendingWebsiteEdit,
   typeBadge,
 } from '../../app/announcements/announcement-shape';
 
@@ -314,5 +317,113 @@ describe('composerModes', () => {
       'website',
       'discord',
     ]);
+  });
+});
+
+// WHICH CONTROLS A POSTED ROW DRAWS, across every combination of the two keys
+// and whether a website composer is on screen. Nothing here mounts the row, so
+// this is the only check that Delete never disappears for somebody who holds it
+// and never shows up twice.
+describe('rowEditActions', () => {
+  it('fills the composer and draws no Delete in the row or a dialog, with every key and a composer', () => {
+    // THE CASE THAT MOVED. Delete used to sit beside Edit here; it now lives in
+    // the composer's edit mode, which Edit leads to.
+    expect(rowEditActions({ canUpdate: true, canDelete: true, hasWebsiteComposer: true })).toEqual({
+      edit: 'inline',
+      rowDelete: false,
+      dialogDelete: false,
+    });
+  });
+
+  it('fills the composer with no Delete anywhere for update alone', () => {
+    expect(rowEditActions({ canUpdate: true, canDelete: false, hasWebsiteComposer: true })).toEqual({
+      edit: 'inline',
+      rowDelete: false,
+      dialogDelete: false,
+    });
+  });
+
+  it('opens the dialog, with Delete inside it, for update and delete with no composer', () => {
+    expect(rowEditActions({ canUpdate: true, canDelete: true, hasWebsiteComposer: false })).toEqual({
+      edit: 'dialog',
+      rowDelete: false,
+      dialogDelete: true,
+    });
+  });
+
+  it('opens the dialog without Delete for update alone with no composer', () => {
+    expect(rowEditActions({ canUpdate: true, canDelete: false, hasWebsiteComposer: false })).toEqual({
+      edit: 'dialog',
+      rowDelete: false,
+      dialogDelete: false,
+    });
+  });
+
+  it('keeps the standalone row Delete for delete alone, composer or not', () => {
+    // A composer on screen does not help this viewer: without update there is
+    // no Edit to lead them into it, so the row is the only place Delete can be.
+    expect(rowEditActions({ canUpdate: false, canDelete: true, hasWebsiteComposer: true })).toEqual({
+      edit: null,
+      rowDelete: true,
+      dialogDelete: false,
+    });
+    expect(rowEditActions({ canUpdate: false, canDelete: true, hasWebsiteComposer: false })).toEqual({
+      edit: null,
+      rowDelete: true,
+      dialogDelete: false,
+    });
+  });
+
+  it('offers nothing without either key, composer or not', () => {
+    // The row falls through to its "View only" label.
+    for (const hasWebsiteComposer of [true, false]) {
+      expect(rowEditActions({ canUpdate: false, canDelete: false, hasWebsiteComposer })).toEqual({
+        edit: null,
+        rowDelete: false,
+        dialogDelete: false,
+      });
+    }
+  });
+});
+
+describe('showsComposerDelete', () => {
+  it('draws Delete only while editing a row, and only for a viewer holding the key', () => {
+    expect(showsComposerDelete({ editing: true, canDelete: true })).toBe(true);
+    expect(showsComposerDelete({ editing: true, canDelete: false })).toBe(false);
+    // A fresh post has nothing to delete.
+    expect(showsComposerDelete({ editing: false, canDelete: true })).toBe(false);
+    expect(showsComposerDelete({ editing: false, canDelete: false })).toBe(false);
+  });
+});
+
+describe('toPendingWebsiteEdit', () => {
+  const row = {
+    id: 'a1',
+    title: 'Courts closed',
+    body: 'No session on Friday.',
+    type: 'warning' as const,
+    target_audience: 'competitive' as const,
+    pinned: true,
+    send_push: false,
+    status: 'published' as const,
+    expires_at: '2026-10-01',
+  };
+  const posted = { syncedTitle: 'Courts closed', syncedBody: 'Old body', syncedType: 'info' };
+
+  it('copies all nine row fields and carries the mapping', () => {
+    expect(toPendingWebsiteEdit(row, posted)).toEqual({ ...row, posted });
+  });
+
+  it('carries a null mapping as null', () => {
+    expect(toPendingWebsiteEdit(row, null).posted).toBeNull();
+  });
+
+  it('hands over a new object on every call', () => {
+    // The composer refills on the pending edit's IDENTITY, so a second press on
+    // the same row must produce a different object with the same contents.
+    const first = toPendingWebsiteEdit(row, posted);
+    const second = toPendingWebsiteEdit(row, posted);
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
   });
 });
