@@ -2,15 +2,15 @@
 -- 00256 THE VOCABULARY LEARNS THE AUDIT EXPORT
 --
 -- WHAT IS ADDED: two strings, `audit.export.read` and `audit.signins.read`,
--- taking the vocabulary from 141 to 143.
+-- taking the vocabulary from 142 to 144.
 --
 -- WHY IT IS A MIGRATION AT ALL. The two CHECKs below enumerate every valid
 -- capability string, on players.permission_grants / permission_revokes and on
 -- permission_baselines.capabilities. A string the CHECK does not know is a
 -- string the database REFUSES, so shipping the code without this means the
--- capability exists in TypeScript and every row naming it fails on save. 00247
+-- capability exists in TypeScript and every row naming it fails on save. 00254
 -- is the last file to have moved these lists; this one supersedes it, and each
--- list below is 00247's copied verbatim with the two appended.
+-- list below is 00254's copied verbatim with the two appended.
 --
 -- WHAT THE CAPABILITIES ARE. /audit grows a log-type selector and a CSV
 -- download covering console edits, sign-ins, tournament actions and in-app
@@ -64,8 +64,8 @@
 -- drops it, but a capability deleted from the code while a stored REVOKE still
 -- names it is a revoke that silently stops biting, and that is the one way this
 -- model can widen somebody by accident. The same claim 00089, 00097, 00098,
--- 00105, 00223, 00232, 00238, 00243, 00244 and 00247 made, held by the same
--- chained test in capability-storage.test.ts.
+-- 00105, 00223, 00232, 00238, 00243, 00244, 00247 and 00254 made, held by the
+-- same chained test in capability-storage.test.ts.
 --
 -- NOBODY'S ACCESS CHANGES WHEN THIS IS APPLIED. No row is written. The two
 -- strings are in no baseline, in no ROLE_DEFAULTS and in no grant, so no
@@ -87,7 +87,7 @@
 
 -- 1. THE PLAYER COLUMNS ----------------------------------------------------
 --
--- Dropped by name and re-added, never edited in place: 00247 is recorded as
+-- Dropped by name and re-added, never edited in place: 00254 is recorded as
 -- applied, so an in-place edit there would never re-run and the two would
 -- diverge. The predicate is 00089's, unchanged.
 ALTER TABLE public.players DROP CONSTRAINT IF EXISTS players_permission_vocabulary_check;
@@ -144,6 +144,7 @@ ALTER TABLE public.players ADD CONSTRAINT players_permission_vocabulary_check
     'events.manage.cancel.write', 'events.manage.delete.write',
     'page.access.events',
     'page.access.membership', 'page.access.socials',
+    'page.access.guest_waivers',
     'audit.export.read', 'audit.signins.read'
     ]::TEXT[]
   );
@@ -217,6 +218,7 @@ ALTER TABLE public.permission_baselines
     'events.manage.cancel.write', 'events.manage.delete.write',
     'page.access.events',
     'page.access.membership', 'page.access.socials',
+    'page.access.guest_waivers',
     'audit.export.read', 'audit.signins.read'
     ]::TEXT[]
   );
