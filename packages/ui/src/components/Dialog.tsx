@@ -7,6 +7,12 @@ interface DialogProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  /** 'wide' is max-w-3xl, for a dialog that reviews a list. Default max-w-lg. */
+  size?: 'default' | 'wide';
+  /** Pinned under the title while the body scrolls. */
+  header?: React.ReactNode;
+  /** Pinned to the bottom while the body scrolls. */
+  footer?: React.ReactNode;
 }
 
 // Anything the browser will stop on with Tab. :not([disabled]) matters because a
@@ -18,7 +24,7 @@ interface DialogProps {
 export const FOCUSABLE =
   'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
-export function Dialog({ open, onClose, title, children }: DialogProps) {
+export function Dialog({ open, onClose, title, children, size = 'default', header, footer }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   // The children container, so initial focus can skip the header's close button.
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -95,6 +101,24 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
 
   if (!open) return null;
 
+  const framed = header !== undefined || footer !== undefined;
+  const titleRow = (
+    <div className={`flex items-center justify-between ${framed ? '' : 'mb-4'}`}>
+      <h2 id="dialog-title" className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
+      <button
+        onClick={onClose}
+        aria-label="Close dialog"
+        // ring-inset: the panel scrolls (overflow-y-auto), so an outset ring
+        // on a control flush against the corner is drawn outside the panel's
+        // rounded border and reads as a rendering fault. Inset keeps it on
+        // the button.
+        className="text-[var(--text-muted)] hover:text-[var(--text-primary)] min-w-[44px] min-h-[44px] flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]"
+      >
+        &times;
+      </button>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/60" onClick={onClose} />
@@ -124,25 +148,31 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
         // property. Set here rather than on the cell: a dialog can be triggered
         // from any aligned container, and the panel is the one place that knows
         // it is no longer in that container's layout.
-        className="relative bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[16px] p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto whitespace-normal break-words text-left"
+        //
+        // FRAMED (a header or a footer passed): the panel stops scrolling and
+        // only the body between them does. min-h-0 on the body is what lets a
+        // flex child shrink below its content and scroll at all. Every dialog
+        // that passes neither renders exactly as before.
+        className={`relative bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[16px] w-full mx-4 max-h-[90vh] whitespace-normal break-words text-left ${
+          size === 'wide' ? 'max-w-3xl' : 'max-w-lg'
+        } ${framed ? 'flex flex-col overflow-hidden' : 'p-6 overflow-y-auto'}`}
       >
-        <div className="flex items-center justify-between mb-4">
-          <h2 id="dialog-title" className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
-          <button
-            onClick={onClose}
-            aria-label="Close dialog"
-            // ring-inset: the panel scrolls (overflow-y-auto), so an outset ring
-            // on a control flush against the corner is drawn outside the panel's
-            // rounded border and reads as a rendering fault. Inset keeps it on
-            // the button.
-            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] min-w-[44px] min-h-[44px] flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]"
-          >
-            &times;
-          </button>
-        </div>
+        {framed ? (
+          <div className="shrink-0 px-4 sm:px-6 pt-4 sm:pt-5 pb-3 border-b border-[var(--border)]">
+            {titleRow}
+            {header}
+          </div>
+        ) : (
+          titleRow
+        )}
         {/* Wrapper exists so initial focus can target the first control in the
             BODY rather than the close button above it. */}
-        <div ref={bodyRef}>{children}</div>
+        <div ref={bodyRef} className={framed ? 'flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4' : undefined}>
+          {children}
+        </div>
+        {footer && (
+          <div className="shrink-0 px-4 sm:px-6 py-3 border-t border-[var(--border)]">{footer}</div>
+        )}
       </div>
     </div>
   );

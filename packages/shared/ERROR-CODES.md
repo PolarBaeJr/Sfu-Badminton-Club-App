@@ -59,6 +59,7 @@ had no code of its own, and the digits are the digest Next printed in the log.
 | `FEE-102` | Payment submissions could not load | The payment submissions could not be read. Try again in a moment. | A read in the fee submissions loader failed. |
 | `FEE-103` | Season finances could not load | The season income or expense totals could not be read. | The season finance or season income ledger read failed. |
 | `FEE-104` | Outstanding fees could not load | The list of unpaid fees could not be read. | The roster or club_fees read behind the outstanding fees count failed. |
+| `FEE-105` | Pasted list could not be checked | The pasted list could not be checked against the roster. Nothing was recorded. Try again in a moment. | A season, players or club_fees read behind the paste-a-list preview failed. |
 
 ## SES: Sessions
 

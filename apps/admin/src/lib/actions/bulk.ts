@@ -20,12 +20,12 @@ import {
   updatePlayer,
 } from './players';
 import { archiveSession, deleteSession, patchSession } from './sessions';
-import { markFeePaid, markFeeUnpaid, waiveFee } from './fees';
+import { addManualFee, markFeePaid, markFeeUnpaid, waiveFee } from './fees';
 import { markTournamentFeePaid, markTournamentFeeUnpaid } from './tournament-fees';
 import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
-import { normalizeBulkIds, runBulk, type BulkOutcome } from '../bulk';
-import type { AdminPlayerUpdateInput, SessionPatchInput } from '@badminton/shared';
+import { normalizeBulkIds, normalizeBulkPayloads, runBulk, type BulkOutcome } from '../bulk';
+import { manualFeeSchema, parseOrThrow, type AdminPlayerUpdateInput, type SessionPatchInput } from '@badminton/shared';
 
 /**
  * Let in several pending signups at once.
@@ -197,6 +197,10 @@ export async function bulkDeleteSessions(
 //
 // method AND reference DO belong in bulk, because they are genuinely shared:
 // "cash, collected at the door" is one sentence about the whole selection.
+//
+// ONE EXCEPTION TO "NO AMOUNT", AND IT IS NOT A SELECTION: bulkAddManualFees
+// takes an amount per entry. A named payment has no member row to take a rate
+// from, and each entry is one person's payment as the exec confirmed it.
 
 /**
  * Record the season fee as paid for several members.
@@ -256,6 +260,35 @@ export async function bulkMarkFeesUnpaid(
     const targets = normalizeBulkIds(playerIds);
     await requireCapability('fees.clubfees.markunpaid.write');
     return runBulk(targets, (id) => runAction(() => markFeeUnpaid(id, seasonId)));
+  });
+}
+
+/**
+ * Keep several people off a pasted list as named payments.
+ *
+ * THE ONE BULK FEE ACTION THAT TAKES AN AMOUNT, and it has to: a named payment
+ * has no member row to take a status rate from, and addManualFee refuses one
+ * without it. Each entry is one person's payment as the exec confirmed it on
+ * the paste, which is a statement about that person rather than a shared figure
+ * laid over a selection.
+ *
+ * The season is forced from the argument onto every entry, server-side, so a
+ * crafted entry cannot file itself against a different term. Each entry is
+ * parsed inside its own runAction, so a malformed one fails alone. The failure
+ * ids are the entries' indexes in THIS call, as strings.
+ */
+export async function bulkAddManualFees(
+  seasonId: string,
+  entries: unknown,
+): Promise<ActionResult<BulkOutcome>> {
+  return runAction(async () => {
+    const payloads = normalizeBulkPayloads(entries);
+    await requireCapability('fees.clubfees.addmanual.write');
+    return runBulk(payloads.map((_, i) => String(i)), (i) =>
+      runAction(() =>
+        addManualFee(parseOrThrow(manualFeeSchema, { ...payloads[Number(i)], season_id: seasonId })),
+      ),
+    );
   });
 }
 

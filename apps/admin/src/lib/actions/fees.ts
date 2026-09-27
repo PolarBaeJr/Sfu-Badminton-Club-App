@@ -3,6 +3,7 @@
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
 import {
   parseOrThrow,
   feeMarkSchema,
@@ -16,6 +17,7 @@ import {
   type PlayerFlagsInput,
 } from '@badminton/shared';
 import { isWaivedFee } from '../fee-status';
+import { runAction, type ActionResult } from '../action-result';
 import { requireCapability } from './_shared';
 
 // The club-fee marker: fee_exempt exempts a member from the club fee. It does
@@ -114,8 +116,8 @@ export async function markFeePaid(input: FeeMarkInput) {
 
   // Refuse rather than overwrite. Reversing a season fee is markFeeUnpaid, which
   // keeps the amount and audits it; /fees renders "Mark Unpaid" for a paid row
-  // and "Remove waiver" for a waived one, so the Mark Paid dialog is never
-  // offered over either and no rendered control reaches this branch.
+  // and "Unwaive" for a waived one, so the Mark Paid dialog is never offered
+  // over either and no rendered control reaches this branch.
   //
   // A waived row is refused on paid_at alone — see the matching note in
   // tournament-fees.ts. Recording a PAYMENT over a waiver replaces the club's
@@ -525,4 +527,145 @@ export async function removeManualFee(id: string) {
   });
 
   revalidatePath('/fees');
+}
+
+/**
+ * Move a named payment onto the member it belongs to.
+ *
+ * A named payment waits for its member to sign up with the email on it (00252).
+ * When they signed up with another address, or it carried none, it sits beside
+ * their own row and the season counts them twice; "Paste a list" finds those and
+ * this settles one. Both capabilities, because it is both halves: it takes a
+ * named payment away and records the member as paid.
+ *
+ * NO DUES ROW FOR THE MEMBER: the named row itself becomes theirs, which is
+ * exactly the claim trigger's UPDATE (player_id set, the name and email cleared,
+ * as club_fees_check wants). AN UNPAID ONE: the payment is copied onto it and
+ * the named row deleted, in that order, so a failure between the two leaves the
+ * money counted twice rather than lost. A PAID OR WAIVED ONE is refused: the
+ * named payment is then the second record of one payment, and removing it is
+ * the exec's call.
+ */
+export async function attachNamedPayment(
+  feeId: unknown,
+  playerId: unknown,
+): Promise<ActionResult<{ playerName: string; moved: 'attached' | 'merged' }>> {
+  return runAction(async () => {
+    const id = parseOrThrow(z.string().uuid(), feeId);
+    const memberId = parseOrThrow(z.string().uuid(), playerId);
+    const admin = await requireCapability('fees.clubfees.addmanual.write');
+    await requireCapability('fees.clubfees.markpaid.write');
+    const adminClient = createAdminClient();
+
+    const { data: named, error: namedError } = await adminClient
+      .from('club_fees')
+      .select('id, season_id, player_id, manual_name, manual_email, paid_at, marked_by, amount_cents, method, reference')
+      .eq('id', id)
+      .eq('fee_type', 'dues')
+      .is('player_id', null)
+      .maybeSingle();
+    if (namedError) throw new Error(namedError.message);
+    if (!named || named.manual_name == null) {
+      throw new ExpectedError('That named payment is no longer there, or has already moved onto a member. Reload and check.');
+    }
+
+    const { data: player, error: playerError } = await adminClient
+      .from('players')
+      .select('id, full_name, email')
+      .eq('id', memberId)
+      .maybeSingle();
+    if (playerError) throw new Error(playerError.message);
+    if (!player || (player.email ?? '').toLowerCase().endsWith('@deleted.invalid')) {
+      throw new ExpectedError('That member no longer exists. Reload and check.');
+    }
+    const playerName = player.full_name || 'the member';
+
+    const { data: existing, error: existingError } = await adminClient
+      .from('club_fees')
+      .select('id, player_id, season_id, amount_cents, paid_at, method, reference')
+      .eq('player_id', memberId)
+      .eq('season_id', named.season_id)
+      .eq('fee_type', 'dues')
+      .maybeSingle();
+    if (existingError) throw new Error(existingError.message);
+
+    if (existing?.paid_at) {
+      throw new ExpectedError(
+        `${playerName}'s fee is already recorded as ${isWaivedFee(existing) ? 'waived' : 'paid'}, so moving this payment onto them would count it twice. ` +
+          'Remove the named payment instead if it is the same payment.',
+      );
+    }
+
+    const payment = {
+      paid_at: named.paid_at,
+      marked_by: named.marked_by,
+      amount_cents: named.amount_cents,
+      method: named.method,
+      reference: named.reference,
+    };
+    const audit = (targetId: string, moved: 'attached' | 'merged') =>
+      logAdminAudit(adminClient, {
+        actor_id: admin.id,
+        action_type: 'manual_fee_attached',
+        target_type: 'club_fee',
+        target_id: targetId,
+        old_value: { named_fee: named, member_fee: existing ?? null },
+        new_value: { player_id: memberId, season_id: named.season_id, fee_id: targetId, moved, ...payment },
+      }, { playerId: memberId });
+
+    if (!existing) {
+      const { data: attached, error } = await adminClient
+        .from('club_fees')
+        .update({ player_id: memberId, manual_name: null, manual_email: null })
+        .eq('id', named.id)
+        .is('player_id', null)
+        .select('id')
+        .maybeSingle();
+      if (error?.code === '23505') {
+        throw new ExpectedError(
+          `A fee was recorded for ${playerName} while you were moving this payment. Reload and check before trying again.`,
+        );
+      }
+      if (error) throw new Error(error.message);
+      if (!attached) {
+        throw new ExpectedError('That named payment was changed while you were moving it. Reload and check.');
+      }
+      await audit(named.id, 'attached');
+      revalidatePath('/fees');
+      return { playerName, moved: 'attached' as const };
+    }
+
+    // Onto their unpaid row first, only while it is still unpaid.
+    const { data: paid, error: payError } = await adminClient
+      .from('club_fees')
+      .update(payment)
+      .eq('id', existing.id)
+      .is('paid_at', null)
+      .select('id')
+      .maybeSingle();
+    if (payError) throw new Error(payError.message);
+    if (!paid) {
+      throw new ExpectedError(
+        `${playerName}'s fee was recorded while you were moving this payment. Nothing was moved. Reload and check.`,
+      );
+    }
+
+    // Then the named row. Matching nothing is not an error in PostgREST, so the
+    // returned rows are what say it went.
+    const { data: removed, error: removeError } = await adminClient
+      .from('club_fees')
+      .delete()
+      .eq('id', named.id)
+      .is('player_id', null)
+      .select('id');
+    await audit(existing.id, 'merged');
+    revalidatePath('/fees');
+    if (removeError || !removed || removed.length === 0) {
+      throw new Error(
+        `The payment is now on ${playerName}'s fee, but the named payment "${named.manual_name}" could not be removed, ` +
+          'so it is counted twice. Remove it from the named payments on /fees.',
+      );
+    }
+    return { playerName, moved: 'merged' as const };
+  });
 }

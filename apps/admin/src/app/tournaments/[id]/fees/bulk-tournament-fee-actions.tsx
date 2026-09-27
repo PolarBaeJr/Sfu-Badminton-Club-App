@@ -24,7 +24,7 @@ import {
  *
  * NEITHER AN AMOUNT NOR A TIER, and this is the design point rather than an
  * omission. bulkMarkTournamentFeesPaid sends neither, so markTournamentFeePaid
- * keeps the price already on each entrant's row — the one ensureEntryFees seeded
+ * keeps the price already on each entrant's row: the one ensureEntryFees seeded
  * from their real membership tier. One shared tier across a thirty-person
  * selection is exactly the overwrite e6f71300 closed on the single-record path:
  * a $15 internal member recorded as having paid the $25 external default,
@@ -33,17 +33,18 @@ import {
  *
  * THE ONE ENTRANT THAT IS NOT TRUE OF, known and left as it is: somebody entered
  * with no club_fees row (or a row carrying no price) has no snapshot to keep, so
- * markTournamentFeePaid prices them from the tournament's is_default tier — not
+ * markTournamentFeePaid prices them from the tournament's is_default tier, not
  * from their membership, which is what their own row's dialog would prefill. The
- * paragraph in the Mark Paid dialog below therefore overstates it for that one
- * case. actions/bulk.ts says why fixing it would cost more than it buys, and a
- * test in lib/__tests__/bulk-actions.test.ts pins the behaviour.
+ * Mark Paid dialog below says so rather than claiming every entrant keeps a
+ * price they may not have. actions/bulk.ts says why fixing the behaviour itself
+ * would cost more than it buys, and a test in lib/__tests__/bulk-actions.test.ts
+ * pins it.
  *
  * NO BULK WAIVE, matching the page: the entry-fee desk has never had a Waive
  * control of its own. "Unwaive" here is Mark Unpaid, which is the same action.
  *
  * `states` says how many of the selection each dialog will really touch and is
- * used for nothing else — see lib/fee-bulk-eligibility. Every selected id is
+ * used for nothing else. See lib/fee-bulk-eligibility. Every selected id is
  * sent, and the server refuses the rest per record, by name.
  */
 export function BulkTournamentFeeActions({
@@ -147,7 +148,7 @@ export function BulkTournamentFeeActions({
         )}
       </SelectionBar>
 
-      {/* Outside the bar — it is `sticky z-20` and therefore a stacking context,
+      {/* Outside the bar, because it is `sticky z-20` and therefore a stacking context,
           so a `fixed z-50` overlay nested inside it would sit under the console's
           own chrome. */}
       <Dialog open={paidOpen} onClose={() => setPaidOpen(false)} title="Mark entry fees paid">
@@ -156,10 +157,11 @@ export function BulkTournamentFeeActions({
             Records the entry fee as paid for everyone on this list.{' '}
             <strong className="text-[var(--text-primary)]">
               Each entrant is charged their own rate
-            </strong>{' '}
-            — the price already on their entry, from the tier their membership put
-            them in. There is no amount or tier to pick here on purpose; to record
-            a different figure for somebody, use Mark Paid on their own row.
+            </strong>
+            : the price already on their entry, where they have one. An entrant
+            with no price yet is charged this tournament&rsquo;s default tier.
+            There is no amount or tier to pick here on purpose; to record a
+            different figure for somebody, use Mark Paid on their own row.
           </p>
           <p className="text-sm text-[var(--text-muted)]">{scope(willMarkPaid, 'already paid or waived')}</p>
           <SelectionSummary noun="entrant" />
@@ -179,7 +181,7 @@ export function BulkTournamentFeeActions({
         <div className="space-y-4">
           <p className="text-[var(--text-secondary)]">
             Reverses the entry fee for everyone on this list, whether it was paid
-            or waived. The entry itself stays on the books and so does its price —
+            or waived. The entry itself stays on the books and so does its price:
             only the payment is cleared.
           </p>
           <p className="text-sm text-[var(--text-muted)]">{scope(willMarkUnpaid, 'already unpaid')}</p>

@@ -17,6 +17,7 @@ import {
   seasonFeeSchema,
   sessionGroupSchema,
   manualFeeSchema,
+  feePastePreviewSchema,
   feeTierSchema,
   tournamentFeeMarkSchema,
   reinstatementSchema,
@@ -528,6 +529,27 @@ describe('sessionGroupSchema', () => {
   });
   it('rejects an unknown group', () => {
     expect(sessionGroupSchema.safeParse('varsity').success).toBe(false);
+  });
+});
+
+describe('feePastePreviewSchema', () => {
+  it('accepts pasted text against a season', () => {
+    expect(feePastePreviewSchema.safeParse({ season_id: UUID_A, text: 'jane@sfu.ca' }).success).toBe(true);
+  });
+  it('rejects empty text', () => {
+    expect(feePastePreviewSchema.safeParse({ season_id: UUID_A, text: '' }).success).toBe(false);
+  });
+  it('rejects text over 50,000 characters', () => {
+    expect(feePastePreviewSchema.safeParse({ season_id: UUID_A, text: 'x'.repeat(50001) }).success).toBe(false);
+    expect(feePastePreviewSchema.safeParse({ season_id: UUID_A, text: 'x'.repeat(50000) }).success).toBe(true);
+  });
+  it('rejects a non-UUID season_id', () => {
+    expect(feePastePreviewSchema.safeParse({ season_id: 'nope', text: 'jane@sfu.ca' }).success).toBe(false);
+  });
+  it('rejects an unknown key, being strict', () => {
+    expect(
+      feePastePreviewSchema.safeParse({ season_id: UUID_A, text: 'jane@sfu.ca', player_ids: [UUID_B] }).success,
+    ).toBe(false);
   });
 });
 
