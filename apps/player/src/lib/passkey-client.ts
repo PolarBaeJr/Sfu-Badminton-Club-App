@@ -10,6 +10,7 @@ import {
   type AuthenticationResponseJSON,
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
+import { reportAuthFailure, errorName, errorMessage } from './auth-telemetry';
 
 export type PasskeyResult = { ok: true } | { ok: false; error: string };
 
@@ -20,6 +21,27 @@ export function supportsPasskeys(): boolean {
     return false;
   }
 }
+
+/**
+ * True inside another app's built-in browser (Instagram, Facebook, a plain
+ * WKWebView on iOS, an Android WebView).
+ *
+ * Those views report WebAuthn as supported, but the OS only shows a passkey
+ * sheet to an app entitled for this domain, so the call rejects at once with a
+ * NotAllowedError, which is indistinguishable from the member cancelling. The
+ * result was a button that did nothing at all. Safari, SFSafariViewController
+ * and Chrome on iOS all carry "Safari/" in the user agent; the bare webviews
+ * do not, and Android marks its WebView with "; wv)".
+ */
+export function isEmbeddedWebView(
+  ua: string = typeof navigator === 'undefined' ? '' : navigator.userAgent
+): boolean {
+  if (/\b(iPhone|iPad|iPod)\b/.test(ua)) return !/Safari\//.test(ua);
+  return /Android/.test(ua) && /; wv\)/.test(ua);
+}
+
+export const EMBEDDED_WEBVIEW_ERROR =
+  "Passkeys don't work in this app's built-in browser. Open this page in Safari, or use an email code.";
 
 /**
  * The `autocomplete` value the sign-in email field MUST carry for conditional
@@ -75,16 +97,27 @@ export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
   if (!supportsPasskeys()) {
     return { ok: false, error: 'This device does not support passkeys.' };
   }
+  if (isEmbeddedWebView()) return { ok: false, error: EMBEDDED_WEBVIEW_ERROR };
 
   const optionsRes = await fetch('/api/passkey/register/options', { method: 'POST' });
   if (!optionsRes.ok) {
-    return { ok: false, error: await errorFrom(optionsRes, 'Could not start passkey setup.') };
+    const error = await errorFrom(optionsRes, 'Could not start passkey setup.');
+    reportAuthFailure({ flow: 'passkey_enrol', stage: 'options', error: String(optionsRes.status), message: error });
+    return { ok: false, error };
   }
 
   let credential;
+  const startedAt = Date.now();
   try {
     credential = await startRegistration({ optionsJSON: await optionsRes.json() });
   } catch (err) {
+    reportAuthFailure({
+      flow: 'passkey_enrol',
+      stage: 'ceremony',
+      error: errorName(err),
+      message: errorMessage(err),
+      elapsedMs: Date.now() - startedAt,
+    });
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: 'Your device did not complete passkey setup.' };
   }
@@ -95,7 +128,9 @@ export async function enrollPasskey(nickname?: string): Promise<PasskeyResult> {
     body: JSON.stringify({ credential, nickname }),
   });
   if (!verifyRes.ok) {
-    return { ok: false, error: await errorFrom(verifyRes, 'Could not save that passkey.') };
+    const error = await errorFrom(verifyRes, 'Could not save that passkey.');
+    reportAuthFailure({ flow: 'passkey_enrol', stage: 'verify', error: String(verifyRes.status), message: error });
+    return { ok: false, error };
   }
   return { ok: true };
 }
@@ -104,6 +139,7 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
   if (!supportsPasskeys()) {
     return { ok: false, error: 'This device does not support passkeys.' };
   }
+  if (isEmbeddedWebView()) return { ok: false, error: EMBEDDED_WEBVIEW_ERROR };
 
   // The speculative conditional request (below) may still be waiting in the
   // email field's autofill. Kill it BEFORE minting a new challenge, or the
@@ -112,13 +148,23 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
 
   const optionsRes = await fetch('/api/passkey/login/options', { method: 'POST' });
   if (!optionsRes.ok) {
-    return { ok: false, error: await errorFrom(optionsRes, 'Could not start passkey sign-in.') };
+    const error = await errorFrom(optionsRes, 'Could not start passkey sign-in.');
+    reportAuthFailure({ flow: 'passkey_signin', stage: 'options', error: String(optionsRes.status), message: error });
+    return { ok: false, error };
   }
 
   let credential;
+  const startedAt = Date.now();
   try {
     credential = await startAuthentication({ optionsJSON: await optionsRes.json() });
   } catch (err) {
+    reportAuthFailure({
+      flow: 'passkey_signin',
+      stage: 'ceremony',
+      error: errorName(err),
+      message: errorMessage(err),
+      elapsedMs: Date.now() - startedAt,
+    });
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: 'No passkey was used.' };
   }
@@ -129,7 +175,9 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
     body: JSON.stringify({ credential }),
   });
   if (!verifyRes.ok) {
-    return { ok: false, error: await errorFrom(verifyRes, 'Passkey sign-in failed.') };
+    const error = await errorFrom(verifyRes, 'Passkey sign-in failed.');
+    reportAuthFailure({ flow: 'passkey_signin', stage: 'verify', error: String(verifyRes.status), message: error });
+    return { ok: false, error };
   }
   return { ok: true };
 }
@@ -203,7 +251,7 @@ const browserConditionalSteps: ConditionalSignInSteps = {
   // Wraps PublicKeyCredential.isConditionalMediationAvailable() and answers
   // false — rather than throwing — when PublicKeyCredential itself is absent,
   // so this single call is the whole feature detection.
-  autofillAvailable: () => browserSupportsWebAuthnAutofill(),
+  autofillAvailable: async () => !isEmbeddedWebView() && (await browserSupportsWebAuthnAutofill()),
 
   requestOptions: async () => {
     const res = await fetch('/api/passkey/login/options', { method: 'POST' });
