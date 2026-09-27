@@ -60,7 +60,8 @@ key into that page. The salt stays on the club's side, so:
   so datasets from separate keys cannot be cross-joined.
 - Nobody outside the club can turn a `player_ref` back into a person.
 
-Treat `player_ref` as an opaque string. Do not parse it.
+Treat `player_ref` as an opaque string. Do not parse it. Today it is 64
+lowercase hex characters; that is not a promise.
 
 ---
 
@@ -128,7 +129,7 @@ leaderboard, and it is not the same as the club's membership.
   "count": 39,
   "players": [
     {
-      "player_ref": "p_8f14e45fceea167a",
+      "player_ref": "e5367d32519f898ef2707e19890ec501031e23d027b6eb3172faa710e508707d",
       "singles_elo": 1180,
       "doubles_elo": 1042,
       "singles_provisional": false,
