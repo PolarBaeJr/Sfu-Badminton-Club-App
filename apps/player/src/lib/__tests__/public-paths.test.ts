@@ -63,6 +63,23 @@ describe('isPublicPath', () => {
       expect(isPublicPath('/api/passkey/login/options')).toBe(true);
       expect(isPublicPath('/api/passkey/register/options')).toBe(false);
     });
+
+    // Only the app's login pair. Anything else under /api/passkey/app/ stays
+    // gated until it is deliberately listed.
+    it('lets the native app passkey sign-in through, and nothing else under app/', () => {
+      expect(isPublicPath('/api/passkey/app/login/options')).toBe(true);
+      expect(isPublicPath('/api/passkey/app/login/verify')).toBe(true);
+      expect(isPublicPath('/api/passkey/app/register/options')).toBe(false);
+      expect(isPublicPath('/api/passkey/app/loginx')).toBe(false);
+      expect(isPublicPath('/api/passkey/app')).toBe(false);
+    });
+
+    // Android and Apple fetch these anonymously and follow no redirect.
+    it('lets the native app trust files through', () => {
+      expect(isPublicPath('/.well-known/assetlinks.json')).toBe(true);
+      expect(isPublicPath('/.well-known/apple-app-site-association')).toBe(true);
+      expect(isPublicPath('/.well-knownx/assetlinks.json')).toBe(false);
+    });
   });
 
   describe('public pages', () => {
