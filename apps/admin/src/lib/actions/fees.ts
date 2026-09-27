@@ -114,8 +114,8 @@ export async function markFeePaid(input: FeeMarkInput) {
 
   // Refuse rather than overwrite. Reversing a season fee is markFeeUnpaid, which
   // keeps the amount and audits it; /fees renders "Mark Unpaid" for a paid row
-  // and "Remove waiver" for a waived one, so the Mark Paid dialog is never
-  // offered over either and no rendered control reaches this branch.
+  // and "Unwaive" for a waived one, so the Mark Paid dialog is never offered
+  // over either and no rendered control reaches this branch.
   //
   // A waived row is refused on paid_at alone — see the matching note in
   // tournament-fees.ts. Recording a PAYMENT over a waiver replaces the club's

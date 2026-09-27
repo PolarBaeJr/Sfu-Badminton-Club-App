@@ -187,7 +187,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         Back to Tournament
       </Link>
 
-      <PageHeader className="no-period" title={`${tournament.name} — Fees`} watermark="F" />
+      <PageHeader className="no-period" title={`${tournament.name}: Fees`} watermark="F" />
 
       <TournamentFeeActions mode="tiers" tournamentId={id} tiers={tiers} />
 
