@@ -12,6 +12,7 @@ import {
   type AuthenticationResponseJSON,
   type PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
+import { reportAuthFailure, errorName, errorMessage } from './auth-telemetry';
 import { friendlyPasskeyError } from './passkey/errors';
 import { withBase } from './base-path';
 
@@ -89,13 +90,23 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
 
   const optionsRes = await fetch(withBase('/api/passkey/login/options'), { method: 'POST' });
   if (!optionsRes.ok) {
-    return { ok: false, error: await errorFrom(optionsRes, 'Could not start passkey sign-in.') };
+    const error = await errorFrom(optionsRes, 'Could not start passkey sign-in.');
+    reportAuthFailure({ flow: 'passkey_signin', stage: 'options', error: String(optionsRes.status), message: error });
+    return { ok: false, error };
   }
 
   let credential;
+  const startedAt = Date.now();
   try {
     credential = await startAuthentication({ optionsJSON: await optionsRes.json() });
   } catch (err) {
+    reportAuthFailure({
+      flow: 'passkey_signin',
+      stage: 'ceremony',
+      error: errorName(err),
+      message: errorMessage(err),
+      elapsedMs: Date.now() - startedAt,
+    });
     if (isUserCancellation(err)) return { ok: false, error: '' };
     return { ok: false, error: friendlyPasskeyError(err, 'No passkey was used.') };
   }
@@ -106,7 +117,9 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
     body: JSON.stringify({ credential }),
   });
   if (!verifyRes.ok) {
-    return { ok: false, error: await errorFrom(verifyRes, 'Passkey sign-in failed.') };
+    const error = await errorFrom(verifyRes, 'Passkey sign-in failed.');
+    reportAuthFailure({ flow: 'passkey_signin', stage: 'verify', error: String(verifyRes.status), message: error });
+    return { ok: false, error };
   }
   return { ok: true };
 }
