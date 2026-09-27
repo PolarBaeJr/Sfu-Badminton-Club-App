@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   getRoundName, computeDrawLayout, drawHalves, drawQuarters, drawLastRounds, splitPairLabel,
-  SKIP_SLOT_LABEL, SKIP_STATUS_LABEL,
+  SKIP_SLOT_LABEL, SKIP_STATUS_LABEL, groupDrawRounds, focusRoundIndex, ALL_OPEN_MAX_ROUNDS,
 } from '@badminton/shared';
 import type { DrawSide, DrawLayout } from '@badminton/shared';
 import { DrawScroller, type DrawView } from './DrawScroller';
@@ -906,43 +906,12 @@ function DrawRounds({
   /** The card's heading, on the widths where the chart above is display:none. */
   heading?: ReactNode;
 }) {
-  const rounds: Array<{ roundNumber: number; nodes: typeof layout.nodes }> = [];
-  for (const node of layout.nodes) {
-    const found = rounds.find((r) => r.roundNumber === node.roundNumber);
-    if (found) found.nodes.push(node);
-    else rounds.push({ roundNumber: node.roundNumber, nodes: [node] });
-  }
-  rounds.sort((a, b) => a.roundNumber - b.roundNumber);
-  // Within a round, the top half first and then the bottom, each in draw order
-  // — the same order they appear down the chart's two columns.
-  for (const r of rounds) {
-    r.nodes.sort((a, b) => a.match.bracket_position - b.match.bracket_position);
-  }
-
-  // WHICH ROUNDS OPEN. A 128-entrant draw is 127 matches, and every one of them
-  // stacked open is a list nobody scrolls to the bottom of — the first round
-  // alone is 64 rows, so "the final" is 3,000px below the fold on the one screen
-  // that has the least of it.
-  //
-  // The rule is "the round somebody is here for", in three fallbacks:
-  //   * whatever is being PLAYED (live, or ready to start),
-  //   * failing that the LAST round with a result, which on a finished event is
-  //     the final and on a half-played one is where the draw has got to,
-  //   * failing both, round one — nothing has happened yet, so the fixtures are
-  //     the news.
-  //
-  // A SHORT DRAW OPENS WHOLE. Three rounds is at most seven matches; collapsing
-  // that buys nothing and costs a reader two taps, so an eight-entry event
-  // behaves exactly as it did before this existed.
-  const isPlaying = (r: { nodes: typeof layout.nodes }) =>
-    r.nodes.some((n) => n.match.status === 'live' || n.match.status === 'ready');
-  const hasResult = (r: { nodes: typeof layout.nodes }) =>
-    r.nodes.some((n) => n.match.status === 'completed' || n.match.status === 'walkover');
-
-  const allOpen = rounds.length <= 3;
-  let focusIndex = rounds.findIndex(isPlaying);
-  if (focusIndex === -1) focusIndex = rounds.map(hasResult).lastIndexOf(true);
-  if (focusIndex === -1) focusIndex = 0;
+  // Grouping and the rule for which round opens live in @badminton/shared
+  // (draw-rounds.ts), with the reasoning, because the console's phone list
+  // opens on the same round by the same rule.
+  const rounds = groupDrawRounds(layout);
+  const allOpen = rounds.length <= ALL_OPEN_MAX_ROUNDS;
+  const focusIndex = focusRoundIndex(rounds, (m) => m.status);
 
   return (
     <div className="draw-rounds px-4 pt-4 pb-4 space-y-2">
