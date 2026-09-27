@@ -7,8 +7,12 @@ import { revalidatePath } from 'next/cache';
 import {
   ensureEntryFees,
   isDoublesEvent,
-  isMembershipAllowed,
+  isFeeExempt,
+  loadPaidDues,
   membershipRefusalMessage,
+  membershipUnpaidMessage,
+  resolveEntrySeasonId,
+  screenMembershipEntry,
   screenSelfEntry,
   categoryRefusalMessage,
   toCompetitionCategory,
@@ -22,7 +26,7 @@ import {
   recordEventWaiverAcceptance,
 } from './event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
-import { assertFeatureOn } from './feature-gate';
+import { assertFeatureOn, getFeatureFlags } from './feature-gate';
 import { refuseClosedTournament } from './tournament-closed';
 
 // Revalidate every surface that surfaces tournament_participants /
@@ -54,6 +58,12 @@ function pickAllowedMemberships(embed: unknown): string[] | null {
   const row = Array.isArray(embed) ? embed[0] : embed;
   const value = (row as { allowed_memberships?: string[] | null } | null)?.allowed_memberships;
   return Array.isArray(value) ? value : null;
+}
+
+// Same unwrap again, for the season the entry's dues are looked up in.
+function pickSeasonId(embed: unknown): string | null {
+  const row = Array.isArray(embed) ? embed[0] : embed;
+  return (row as { season_id?: string | null } | null)?.season_id ?? null;
 }
 
 /**
@@ -94,7 +104,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, existingPairRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships)')
+      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships, season_id)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -149,9 +159,40 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   //
   // Admin-added participants deliberately skip this: adding someone by hand in
   // the admin app is an explicit override, not a loophole.
+  //
+  // The group is the one the member ENTERS as (00260): internal means this
+  // season's club fee is paid, so the stored membership_type alone decides
+  // nothing. Only asked when the event restricts entry at all.
   const allowedMemberships = pickAllowedMemberships(event.tournament);
-  if (!isMembershipAllowed(player.membership_type, allowedMemberships)) {
-    throw new ExpectedError(membershipRefusalMessage(allowedMemberships));
+  if (allowedMemberships && allowedMemberships.length > 0) {
+    const season = await resolveEntrySeasonId(service, pickSeasonId(event.tournament));
+    const paidDues = season.error ? null : await loadPaidDues(service, season.seasonId, [player.id]);
+    // FAIL CLOSED, like every other prerequisite above. A failed dues read is
+    // not "unpaid" (that would refuse a paid member) and not "paid" (that
+    // would admit an unpaid one); it is a read to retry.
+    if (!paidDues) {
+      Sentry.captureException(season.error ?? new Error('dues read failed'), {
+        tags: { action: 'registerForEvent', read: 'dues' },
+      });
+      throw new ExpectedError('Cannot process your entry right now, please try again shortly');
+    }
+    const membershipScreen = screenMembershipEntry(
+      {
+        stored: player.membership_type,
+        exempt: isFeeExempt(player),
+        paid: paidDues.has(player.id),
+        hasSeason: season.seasonId !== null,
+      },
+      allowedMemberships,
+    );
+    if (!membershipScreen.ok) {
+      // Only point at the Membership page while it is switched on.
+      throw new ExpectedError(
+        membershipScreen.reason === 'membership_unpaid'
+          ? membershipUnpaidMessage(allowedMemberships, (await getFeatureFlags()).membership)
+          : membershipScreen.message,
+      );
+    }
   }
 
   if (event.status !== 'registration') throw new ExpectedError('Registration is closed');
@@ -321,6 +362,14 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
         throw new ExpectedError(
           membershipRefusalMessage(Array.isArray(entered.allowed) ? entered.allowed : null),
         );
+      // The club fee was marked unpaid between the screen above and the lock.
+      case 'membership_unpaid':
+        throw new ExpectedError(
+          membershipUnpaidMessage(
+            Array.isArray(entered.allowed) ? entered.allowed : null,
+            (await getFeatureFlags()).membership,
+          ),
+        );
       case 'player_suspended':
         throw new ExpectedError(
           'Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.',
@@ -355,8 +404,8 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
     }
   }
 
-  // What this entry costs, on the club's fee ledger, priced from the member's
-  // membership_type. Deliberately AFTER the participant row and deliberately
+  // What this entry costs, on the club's fee ledger, priced from the group the
+  // member enters as (their membership_type, corrected by this season's dues). Deliberately AFTER the participant row and deliberately
   // not awaited for its success: the member is registered either way, and
   // ensureEntryFees never throws for exactly that reason. Per tournament, not
   // per event, so entering a second event here finds the existing row.

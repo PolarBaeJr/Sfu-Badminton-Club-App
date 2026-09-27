@@ -1,7 +1,7 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { Card, Badge, AvatarChip, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
-import { unwrap, quoteEntryFee, selectInChunks } from '@badminton/shared';
+import { unwrap, quoteEntryFee, selectInChunks, loadEntryMemberships, formatMembershipType, AppError } from '@badminton/shared';
 import { RowSelectCheckbox, SelectAllCheckbox, SelectionProvider } from '@/components/selection';
 import { isWaivedFee } from '@/lib/fee-status';
 import type { FeeRowState } from '@/lib/fee-bulk-eligibility';
@@ -48,7 +48,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   const canReview = may('tournaments.fees.markpaid.write');
   const supabase = createAdminClient();
 
-  const { data: tournament } = await supabase.from('tournaments').select('id, name').eq('id', id).single();
+  const { data: tournament } = await supabase.from('tournaments').select('id, name, season_id').eq('id', id).single();
   if (!tournament) notFound();
 
   const tiers = unwrap(
@@ -162,6 +162,23 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
     (p) => feeByPlayer.has(p.id) || (!p.is_exec && !p.fee_exempt),
   );
 
+  // THE GROUP EACH MEMBER ENTERS AS (00260), which is what prices an entry that
+  // has no ledger row yet: membership_type corrected by this season's club fee.
+  // The dialogs opened from each row get it too, so the price they prefill is
+  // the price ensureEntryFees would have written.
+  const effectiveById = await loadEntryMemberships(supabase, tournament.season_id, players);
+  if (!effectiveById) throw new AppError('TRN-105');
+  const groupOf = (p: (typeof players)[number]) => effectiveById.get(p.id) ?? p.membership_type;
+  // Said beside the tier when the club fee changed the group, so the price is
+  // not a mystery to the exec reading it. Only for a quote, never a ledger row:
+  // a recorded price is a snapshot and the group today did not set it.
+  const groupNote = (p: (typeof players)[number], source: string) => {
+    const group = groupOf(p);
+    if (source === 'ledger' || group === (p.membership_type ?? 'internal')) return null;
+    if (group !== 'internal') return `Fee unpaid: priced as ${formatMembershipType(group)}`;
+    return p.is_exec || p.fee_exempt ? 'Exempt: priced as Internal' : 'Club fee paid: priced as Internal';
+  };
+
   // WAIVED IS NOT PAID, and this page was the last fee surface in the app that
   // said otherwise — a waiver is stored as a paid row with amount_cents 0 and
   // method 'waived' (fee-status.ts), so `Boolean(paid_at)` rendered a green
@@ -260,9 +277,10 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
             // fallback was the tournament's default tier regardless of who the
             // member is; quoteEntryFee asks selectFeeTier, which is the rule the
             // fee was actually written by.
-            const quote = quoteEntryFee(player.membership_type, tiers, fee);
+            const quote = quoteEntryFee(groupOf(player), tiers, fee);
             const tier = quote.tierId ? tierById.get(quote.tierId) : null;
             const owedCents = quote.amountCents;
+            const note = groupNote(player, quote.source);
             return (
               <TableCard
                 key={player.id}
@@ -286,6 +304,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                       {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
                     </Badge>
                     {submissionByPlayer.has(player.id) && <Badge variant="neutral">Submitted</Badge>}
+                    {note && <Badge variant="neutral">{note}</Badge>}
                   </>
                 }
                 fields={[
@@ -303,7 +322,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                       tiers={tiers}
                       paid={paid}
                       waived={waived}
-                      membershipType={player.membership_type}
+                      membershipType={groupOf(player)}
                       fee={fee ?? null}
                     />
                   </>
@@ -333,9 +352,10 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                 const fee = feeByPlayer.get(player.id);
                 const { paid, waived } = stateOf(fee);
                 // Same derivation as the card above — see the note there.
-                const quote = quoteEntryFee(player.membership_type, tiers, fee);
+                const quote = quoteEntryFee(groupOf(player), tiers, fee);
                 const tier = quote.tierId ? tierById.get(quote.tierId) : null;
                 const owedCents = quote.amountCents;
+                const note = groupNote(player, quote.source);
                 return (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     {canBulk && (
@@ -366,6 +386,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                     </td>
                     <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                       {tier?.name ?? '-'}
+                      {note && <p className="text-xs text-[var(--text-muted)]">{note}</p>}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className="font-mono text-[var(--text-primary)]">
@@ -385,7 +406,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                         tiers={tiers}
                         paid={paid}
                         waived={waived}
-                        membershipType={player.membership_type}
+                        membershipType={groupOf(player)}
                         fee={fee ?? null}
                       />
                     </td>

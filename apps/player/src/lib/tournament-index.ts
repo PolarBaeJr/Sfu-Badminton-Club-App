@@ -32,7 +32,7 @@ export function tournamentCalendarQuery(
   const calendar = supabase
     .from('tournaments')
     .select(
-      'id, name, start_date, status, suspended_at, ' +
+      'id, name, start_date, status, suspended_at, season_id, ' +
       'tournament_events(id, event_type, status, max_participants), ' +
       'tournament_fee_tiers(id, name, amount_cents, is_default, sort_order, applies_to)',
     )
@@ -56,6 +56,8 @@ export type IndexTournament = {
   start_date: string;
   status: string;
   suspended_at: string | null;
+  /** The season the hero's price looks dues up in (00260). */
+  season_id?: string | null;
   tournament_events: IndexEvent[];
 };
 

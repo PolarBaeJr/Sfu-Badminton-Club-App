@@ -14,9 +14,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // per-caller part and it says which membership type the caller holds.
 
 let tournaments: Record<string, unknown>[] = [];
-let link: { players: { membership_type: string } } | null = null;
+type Caller = { id: string; membership_type: string; is_exec: boolean; fee_exempt: boolean };
+let link: { players: Caller } | null = null;
 let linkError: { message: string } | null = null;
 let readError: { message: string } | null = null;
+// This season's club fee rows (00260). Internal means paid.
+let dues: { player_id: string; paid_at: string | null }[] = [];
+let duesError: { message: string } | null = null;
+let activeSeason: { id: string } | null = null;
+
+function caller(membership_type: string, over: Partial<Caller> = {}): { players: Caller } {
+  return { players: { id: "p1", membership_type, is_exec: false, fee_exempt: false, ...over } };
+}
 
 // The date filter is deliberately NOT stubbed, because the route no longer asks
 // the database to do it. Expressing "coalesce(end_date, start_date) >= today" in
@@ -27,7 +36,7 @@ let readError: { message: string } | null = null;
 // these tests reach it.
 function thenable(data: unknown, error: unknown = null) {
   const builder: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "is", "or", "gte", "order", "limit"]) builder[m] = () => builder;
+  for (const m of ["select", "eq", "is", "or", "gte", "order", "limit", "in"]) builder[m] = () => builder;
   builder.maybeSingle = () => Promise.resolve({ data, error });
   builder.then = (resolve: (v: unknown) => unknown) =>
     Promise.resolve({ data, error }).then(resolve);
@@ -39,6 +48,8 @@ vi.mock("@/lib/supabase-server", () => ({
     from: (table: string) => {
       if (table === "player_discord_links") return thenable(link, linkError);
       if (table === "tournaments") return thenable(tournaments, readError);
+      if (table === "seasons") return thenable(activeSeason);
+      if (table === "club_fees") return thenable(duesError ? null : dues, duesError);
       throw new Error(`unexpected table ${table}`);
     },
   }),
@@ -97,6 +108,9 @@ beforeEach(() => {
   link = null;
   linkError = null;
   readError = null;
+  dues = [{ player_id: "p1", paid_at: "2026-09-01T00:00:00Z" }];
+  duesError = null;
+  activeSeason = null;
   tournaments = [
     {
       id: "t1",
@@ -104,6 +118,7 @@ beforeEach(() => {
       start_date: clubDay(18),
       end_date: clubDay(19),
       allowed_memberships: ["internal"],
+      season_id: "s1",
       tournament_events: [
         { event_type: "mens_singles", status: "registration" },
         { event_type: "womens_doubles", status: "bracket_generated" },
@@ -123,7 +138,8 @@ describe("GET /api/discord/tournaments", () => {
 
   it("SHOWS a tournament the caller cannot enter, marked as such", async () => {
     // Not hidden. The website shows it, and finding out at the click is worse.
-    link = { players: { membership_type: "external" } };
+    link = caller("external");
+    dues = [];
     const { body } = await list("d1");
 
     expect(only(body.tournaments).eligible).toBe(false);
@@ -131,7 +147,7 @@ describe("GET /api/discord/tournaments", () => {
   });
 
   it("marks one the caller can enter", async () => {
-    link = { players: { membership_type: "internal" } };
+    link = caller("internal");
     expect(only((await list("d1")).body.tournaments).eligible).toBe(true);
   });
 
@@ -146,13 +162,14 @@ describe("GET /api/discord/tournaments", () => {
 
   it("treats an empty allowed_memberships as open to everyone", async () => {
     tournaments = [{ ...(tournaments[0] as object), allowed_memberships: [] }];
-    link = { players: { membership_type: "external" } };
+    link = caller("external");
+    dues = [];
 
     expect(only((await list("d1")).body.tournaments).eligible).toBe(true);
   });
 
   it("reports registration as open when any event is taking entries", async () => {
-    link = { players: { membership_type: "internal" } };
+    link = caller("internal");
     expect(only((await list("d1")).body.tournaments).registrationOpen).toBe(true);
   });
 
@@ -199,6 +216,42 @@ describe("GET /api/discord/tournaments", () => {
 
     const rows = (await list()).body.tournaments as Summary[];
     expect(rows.map((r) => r.id)).toEqual(["today"]);
+  });
+
+  // ---- internal means this season's club fee is paid (00260) ------------
+  it("marks an unpaid internal member as unable to enter an internal-only tournament", async () => {
+    link = caller("internal");
+    dues = [];
+    expect(only((await list("d1")).body.tournaments).eligible).toBe(false);
+  });
+
+  it("marks a paid member whose stored group is external as able to enter", async () => {
+    link = caller("external");
+    expect(only((await list("d1")).body.tournaments).eligible).toBe(true);
+  });
+
+  it("marks an exec as able to enter without a dues row", async () => {
+    link = caller("internal", { is_exec: true });
+    dues = [];
+    expect(only((await list("d1")).body.tournaments).eligible).toBe(true);
+  });
+
+  it("uses the active season when the tournament has none", async () => {
+    tournaments = [{ ...(tournaments[0] as object), season_id: null }];
+    link = caller("internal");
+    activeSeason = { id: "s-active" };
+    dues = [];
+    expect(only((await list("d1")).body.tournaments).eligible).toBe(false);
+    // ...and with no season anywhere, nothing could have been paid, so the
+    // stored group stands.
+    activeSeason = null;
+    expect(only((await list("d1")).body.tournaments).eligible).toBe(true);
+  });
+
+  it("does NOT guess when the dues read fails", async () => {
+    link = caller("internal");
+    duesError = { message: "boom" };
+    expect((await list("d1")).status).toBe(503);
   });
 
   it("names a failed tournament read rather than reporting an empty schedule", async () => {

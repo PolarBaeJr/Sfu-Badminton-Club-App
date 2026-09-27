@@ -6,7 +6,17 @@ import { accessLevelFor, effectiveCapabilities, permissionsOf, permits } from '@
 import { PermissionEditor } from '@/app/permissions/permission-editor';
 import { customBaselinesFrom, personRowFrom } from '@/lib/person-row';
 import { Badge, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
-import { clubDate, readFeatureFlags, seasonDuesState, type SeasonDuesState } from '@badminton/shared';
+import {
+  clubDate,
+  readFeatureFlags,
+  seasonDuesState,
+  type SeasonDuesState,
+  entryMembership,
+  isFeeExempt,
+  loadPaidDues,
+  resolveEntrySeasonId,
+  formatMembershipType,
+} from '@badminton/shared';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode, summarizeSeason } from '@badminton/shared';
 import type { SeasonMatchRow } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -273,6 +283,32 @@ export default async function PlayerDetailPage({
             .eq('fee_type', 'dues')
             .maybeSingle();
           return seasonDuesState(dues, { isExec: Boolean(player.is_exec), feeExempt: Boolean(player.fee_exempt) });
+        })()
+      : null;
+
+  // THE GROUP THIS MEMBER ENTERS TOURNAMENTS AS THIS SEASON (00260): Internal
+  // means the club fee is paid, so it can differ from Type above. Shown only to
+  // a holder of the capability that already sees dues state, since "club fee
+  // unpaid" is exactly that; unlike the dues badge it does not wait on the fees
+  // switch, because the entry gate does not either. Null on a failed read.
+  const entryGroup: string | null =
+    canRead && viewerSet.has('fees.clubfees.markpaid.write')
+      ? await (async () => {
+          const season = await resolveEntrySeasonId(supabase, null);
+          if (season.error) return null;
+          const paid = await loadPaidDues(supabase, season.seasonId, [player.id]);
+          if (!paid) return null;
+          const exempt = isFeeExempt(player);
+          const group = entryMembership({
+            stored: (player as { membership_type?: string | null }).membership_type,
+            exempt,
+            paid: paid.has(player.id),
+            hasSeason: season.seasonId !== null,
+          });
+          if (group === 'internal' && exempt) return 'Internal (exempt)';
+          if (group === 'internal' && paid.has(player.id)) return 'Internal (club fee paid)';
+          if (group === 'external' && season.seasonId !== null) return 'External (club fee unpaid)';
+          return formatMembershipType(group);
         })()
       : null;
 
@@ -802,6 +838,7 @@ export default async function PlayerDetailPage({
             {[
               { label: 'Type', value: membershipLabel },
               { label: 'Joined', value: day(player.joined_at) },
+              ...(entryGroup ? [{ label: 'Entry group (this season)', value: entryGroup }] : []),
             ].map((f) => (
               <div key={f.label} className="min-w-0">
                 <dt className="dialog-group-label !mb-1">{f.label}</dt>

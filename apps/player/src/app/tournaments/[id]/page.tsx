@@ -9,8 +9,12 @@ import {
   getAccountStanding,
   resolveEventWaiverText,
   TOURNAMENT_EVENT_FORMAT_LABELS,
+  membershipUnpaidMessage,
 } from '@badminton/shared';
 import { loadMyEventWaiver } from '@/lib/event-waiver';
+import { loadMyMembershipScreen } from '@/lib/membership-screen';
+import { getFeatureFlags } from '@/lib/feature-gate';
+import { refuseClosedTournament } from '@/lib/tournament-closed';
 import { EventWaiverGate } from './EventWaiverGate';
 import { StandingNote } from '@/components/standing-notice';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
@@ -159,6 +163,23 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // the event being paused for everyone.
   const standing = getAccountStanding(currentPlayer);
 
+  // INTERNAL MEANS THIS SEASON'S CLUB FEE IS PAID (00260). Only the refusal
+  // paying would fix is surfaced here; a failed read shows nothing and leaves
+  // the decision to registerForEvent. Only asked while there is an event this
+  // member could still enter, so a past tournament never asks for a fee.
+  const couldEnter =
+    !!currentPlayer &&
+    !tournament.suspended_at &&
+    refuseClosedTournament(tournament.status, 'enter this event') === null &&
+    (events ?? []).some((e) => e.status === 'registration' && !registrationMap[e.id]);
+  const [membership, flags] = couldEnter
+    ? await Promise.all([loadMyMembershipScreen(supabase, tournament, currentPlayer), getFeatureFlags()])
+    : [null, null];
+  const feeNeeded =
+    flags && membership && !membership.screen.ok && membership.screen.reason === 'membership_unpaid'
+      ? { receiptPending: membership.receiptPending, payOnline: flags.membership }
+      : null;
+
   return (
     <div data-screen-label="Tournament">
       {/* The event list below prints each event's status and its entry count,
@@ -229,6 +250,25 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             Registration and check-in are paused
             {tournament.suspension_reason ? `: ${tournament.suspension_reason}` : ' until further notice.'}
           </p>
+        </div>
+      )}
+
+      {feeNeeded && (
+        <div className="card-base" style={{ marginBottom: 20 }} role="status">
+          <div className="card-head" style={{ marginBottom: 0 }}>
+            <h3 className="card-title">Club fee needed</h3>
+            {feeNeeded.receiptPending && <span className="tag">RECEIPT UNDER REVIEW</span>}
+          </div>
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+            {membershipUnpaidMessage(tournament.allowed_memberships, feeNeeded.payOnline)}
+            {feeNeeded.receiptPending && ' Your receipt is waiting for an exec to confirm it.'}
+          </p>
+          {feeNeeded.payOnline && (
+            <Link href="/membership" className="row press" style={{ gap: 6, fontSize: 13, marginTop: 10 }}>
+              Go to Membership
+              <ChevronRight size={14} />
+            </Link>
+          )}
         </div>
       )}
 
@@ -321,6 +361,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     isDoubles={doubles}
                     suspended={!!tournament.suspended_at}
                     eventWaiverText={tournament.waiver_text}
+                    membershipBlocked={feeNeeded ? 'Club fee needed' : null}
                   />
                 </div>
               </div>

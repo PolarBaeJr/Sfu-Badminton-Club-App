@@ -15,6 +15,7 @@ import {
   courtLabel,
   courtLabelOrTbc,
   SKIP_SLOT_LABEL,
+  membershipUnpaidMessage,
   eventRecordFor,
   eventRatingLine,
 } from '@badminton/shared';
@@ -32,6 +33,9 @@ import { ParticipantsList, type ParticipantEntry } from './ParticipantsList';
 import { LiveTournament } from '../../../live-tournament';
 import { Draw, type DrawMatch } from './Draw';
 import { MatchReady } from './MatchReady';
+import { loadMyMembershipScreen } from '@/lib/membership-screen';
+import { getFeatureFlags } from '@/lib/feature-gate';
+import { refuseClosedTournament } from '@/lib/tournament-closed';
 import { YourEventSoFar } from './YourEventSoFar';
 
 /**
@@ -257,6 +261,27 @@ export default async function EventDetailPage({
   }
 
   const playerOutOfEvent = isOutOfEvent(playerRegistration?.status);
+
+  // The club-fee refusal registerForEvent would make (00260), said before the
+  // click. Only asked of somebody not already in the event, and a failed read
+  // says nothing: see lib/membership-screen.
+  let membershipBlocked: { message: string; receiptPending: boolean; payHref: string | null } | null = null;
+  if (
+    currentPlayer && !playerRegistration && eventStatus === 'registration' &&
+    !tournament.suspended_at && refuseClosedTournament(tournament.status, 'enter this event') === null
+  ) {
+    const [membership, flags] = await Promise.all([
+      loadMyMembershipScreen(supabase, tournament, currentPlayer),
+      getFeatureFlags(),
+    ]);
+    if (membership && !membership.screen.ok && membership.screen.reason === 'membership_unpaid') {
+      membershipBlocked = {
+        message: membershipUnpaidMessage(tournament.allowed_memberships, flags.membership),
+        receiptPending: membership.receiptPending,
+        payHref: flags.membership ? '/membership' : null,
+      };
+    }
+  }
 
   const participantNameMap: Record<string, string> = {};
   const participantSeedMap: Record<string, number | null> = {};
@@ -520,6 +545,7 @@ export default async function EventDetailPage({
               isDoubles={doubles}
               suspended={!!tournament.suspended_at}
               eventWaiverText={tournament.waiver_text}
+              membershipBlocked={membershipBlocked}
             />
           </div>
         </div>

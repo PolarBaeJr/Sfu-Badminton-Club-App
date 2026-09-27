@@ -44,6 +44,17 @@ export function isPublicPath(pathname: string): boolean {
     // Passkey sign-in. Necessarily reachable without a session — completing it
     // is what creates one. Only the /login pair; /register still needs one.
     pathname.startsWith('/api/passkey/login') ||
+    // The native app's passkey sign-in pair, same reason. Only app/login, with
+    // the trailing slash; never /api/passkey/app/ wholesale, so anything added
+    // under it later (an app enrolment route, say) is gated until someone
+    // decides otherwise here.
+    pathname.startsWith('/api/passkey/app/login/') ||
+    // assetlinks.json and apple-app-site-association. Android and Apple fetch
+    // these anonymously and neither follows a redirect, so behind the gate the
+    // 307 to /login reads as "no app is trusted" and passkeys stop working in
+    // the native app with nothing logged. The matcher in middleware.ts excludes
+    // the prefix too; this is the testable guard.
+    pathname.startsWith('/.well-known/') ||
     // The Discord bot's surface. It authenticates as a SERVICE (constant-time
     // bearer compare in isAuthorizedDiscordService, which fails closed when the
     // secret is unset) and has no session cookie at all.

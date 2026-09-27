@@ -12,6 +12,7 @@ import {
 import { AvatarChip, Badge } from '@badminton/ui';
 import { clubDayKey, dayLabel } from '@/lib/feed-activity';
 import { SeasonPick } from '@/components/my-stats/season-pick';
+import { loadMyMembershipScreen } from '@/lib/membership-screen';
 import { finishedSeasonIds, seasonPickerOptions, type HistorySeason } from '@/lib/season-history';
 import {
   countEnteredPlayers,
@@ -311,14 +312,22 @@ export default async function TournamentsPage({
   // with the page that sent them there.
   //
   // quoteEntryFee is the one derivation every fee surface shares; here it is
-  // asked without a ledger row, so it answers purely from membership_type via
-  // selectFeeTier. A member who has already entered sees their snapshotted
-  // price on /fees, which is the row that actually binds.
+  // asked without a ledger row, so it answers from the group the member would
+  // enter as: membership_type corrected by this season's club fee (00260), the
+  // same group ensureEntryFees prices by. A member who has already entered sees
+  // their snapshotted price on /fees, which is the row that actually binds.
+  //
+  // No price at all when the dues read fails, rather than a guess at a group.
   const heroTiers = (
     (hero as unknown as { tournament_fee_tiers?: PricingTier[] } | null)
       ?.tournament_fee_tiers ?? []
   );
-  const heroFeeCents = quoteEntryFee(player?.membership_type, heroTiers).amountCents;
+  const heroMembership = hero && player
+    ? await loadMyMembershipScreen(supabase, { season_id: hero.season_id ?? null, allowed_memberships: null }, player)
+    : null;
+  const heroFeeCents = player && !heroMembership
+    ? null
+    : quoteEntryFee(heroMembership?.screen.effective ?? player?.membership_type, heroTiers).amountCents;
   const heroFee = heroFeeCents === null ? null : `$${(heroFeeCents / 100).toFixed(2).replace(/\.00$/, '')}`;
   const heroIAmIn = hero ? liveEntries.some((e) => e.event?.tournament?.id === hero.id) : false;
 
