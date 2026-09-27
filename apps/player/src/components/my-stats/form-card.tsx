@@ -10,6 +10,8 @@ export interface FormCardProps {
    * way the rating line is.
    */
   winFlags: (boolean | null)[];
+  /** The season those matches belong to, for the empty state. */
+  seasonName?: string | null;
 }
 
 /**
@@ -21,7 +23,7 @@ export interface FormCardProps {
  * and the cells drawn there can never disagree about which ten matches they
  * are describing.
  */
-export function FormCard({ winFlags }: FormCardProps) {
+export function FormCard({ winFlags, seasonName }: FormCardProps) {
   const form = deriveForm(winFlags, WINDOW);
 
   return (
@@ -38,7 +40,7 @@ export function FormCard({ winFlags }: FormCardProps) {
         // still renders — a rail that appears only once a member has played is
         // a rail that is missing on exactly the account that looks emptiest.
         <div className="empty" style={{ padding: '28px 20px' }}>
-          <div className="empty-title">No results yet</div>
+          <div className="empty-title">No results{seasonName ? ` in ${seasonName}` : ''} yet</div>
           <div className="empty-hint">
             Play a match and confirm the result — your last ten land here, newest on
             the right.
