@@ -9,6 +9,7 @@ import {
 } from '@/lib/permissions';
 import { PASSKEY_VERIFIED_COOKIE } from '@/lib/passkey/config';
 import { verifyPayload } from '@/lib/passkey/cookie';
+import { isPasswordOnlySession } from '@/lib/password-session';
 import {
   AUTH_COOKIE_OPTIONS,
   hostOnlyAuthCookieClears,
@@ -255,7 +256,22 @@ export async function middleware(request: NextRequest) {
               url.searchParams.set('next', pathname + request.nextUrl.search);
               return finish(NextResponse.redirect(url));
             }
-            // No enrolled passkeys → grace period, proceed.
+            // No enrolled passkeys: grace period, but not for a password.
+            // The member app's password sign-in shares this cookie, and a
+            // password alone must not open the console (see password-session).
+            // Decodes the token getUser() already validated; no network call.
+            // A failure here throws into the catch below, which holds the door.
+            const { data: aal, error: aalError } =
+              await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+            if (aalError) throw new Error(aalError.message);
+            if (isPasswordOnlySession(aal?.currentAuthenticationMethods)) {
+              const url = request.nextUrl.clone();
+              url.pathname = '/login';
+              url.search = '';
+              url.searchParams.set('reason', 'code-required');
+              return finish(NextResponse.redirect(url));
+            }
+            // Any other sign-in method: grace period, proceed.
           }
         } catch (err) {
           // console, not Sentry: this file runs in the edge runtime and has no

@@ -3,18 +3,27 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
-import { SIGNUP_OTP_TYPES, authErrorCode, friendlyAuthError, withErrorCode } from '@badminton/shared';
+import { SIGNUP_OTP_TYPES, authErrorCode, friendlyAuthError, passwordProblem, withErrorCode, PASSWORD_MIN_LENGTH } from '@badminton/shared';
 import { Mail, Loader2 } from 'lucide-react';
 import { authSuffix, clearLoginIntentCookieString, parseSignupNotice } from '@/lib/auth-intent';
 import { sendEmailCode, verifyEmailCode } from '@/lib/email-code-client';
+import { passwordSaveMessage, setMemberPassword } from '@/lib/password-client';
 import { AuthCard } from '@/components/auth/auth-card';
 import { CodeStep } from '@/components/auth/code-step';
 import { GoogleIcon } from '@/components/auth/google-icon';
+import { PasswordField } from '@/components/auth/password-field';
+import { SetPasswordStep } from '@/components/auth/set-password-step';
 
 // Create an account. No passkey button: a passkey proves an account that
 // already exists, so it is the one route that cannot work here. After a code
 // verifies, /auth/post-login creates or claims the player row and the
 // middleware sends the new member on to onboarding.
+//
+// The password is applied only AFTER the code verifies, with updateUser, and
+// never through GoTrue's signUp({ email, password }): that one attaches a
+// password before anyone has proven they own the address, and it handles an
+// address that already exists differently from version to version. The
+// password lives in React state only, never in storage, a URL or telemetry.
 //
 // Reads window.location and sessionStorage only inside effects and handlers,
 // for the same reasons as /login.
@@ -23,7 +32,8 @@ export function SignupForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [step, setStep] = useState<'email' | 'code' | 'password'>('email');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [sentNotice, setSentNotice] = useState<string | null>(null);
@@ -87,10 +97,15 @@ export function SignupForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
 
   async function handleSendCode(e: React.FormEvent) {
     e.preventDefault();
+    const problem = passwordProblem(password);
+    if (problem) {
+      setError(withErrorCode(problem, 'AUTH-212'));
+      return;
+    }
     setLoading(true);
     setError('');
     setSentNotice(null);
-    if (await sendCode()) setSent(true);
+    if (await sendCode()) setStep('code');
     setLoading(false);
   }
 
@@ -112,19 +127,47 @@ export function SignupForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
       setLoading(false);
       return;
     }
+    // Signed in now. A refused password must never be dropped silently: the
+    // member would believe they have one. They choose again, or skip knowingly.
+    await savePassword(password);
+  }
+
+  async function savePassword(pw: string) {
+    setLoading(true);
+    setError('');
+    const saved = await setMemberPassword(pw);
+    if (saved.ok) {
+      goToPostLogin();
+      return;
+    }
+    setError(passwordSaveMessage(saved));
+    setStep('password');
+    setLoading(false);
+  }
+
+  function goToPostLogin() {
     window.location.href = `/auth/post-login${authSuffix(window.location.search)}`;
   }
 
   return (
     <AuthCard subtitle={seasonName || 'Join the club'}>
-      {sent ? (
+      {step === 'password' ? (
+        <SetPasswordStep
+          onSubmit={(pw) => void savePassword(pw)}
+          loading={loading}
+          error={error}
+          submitLabel="Save password"
+          lead="Your account is created, but that password could not be saved. Choose a different one, or skip and set one later in Settings. Email codes always work."
+          onSkip={goToPostLogin}
+        />
+      ) : step === 'code' ? (
         <CodeStep
           email={email}
           code={code}
           onCodeChange={setCode}
           onSubmit={handleVerifyCode}
           onResend={handleResend}
-          onChangeEmail={() => { setSent(false); setCode(''); setError(''); setSentNotice(null); }}
+          onChangeEmail={() => { setStep('email'); setCode(''); setError(''); setSentNotice(null); }}
           loading={loading}
           resending={resending}
           error={error}
@@ -137,7 +180,7 @@ export function SignupForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
             <div className="page-eyebrow"><span className="bar" /> NEW PLAYER</div>
             <h2>Create your account</h2>
             <div className="page-sub" style={{ marginTop: 6, marginInline: 'auto' }}>
-              Join the club roster. Sign up with Google or your email, then set up your profile.
+              Join the club roster. Sign up with Google or your email and a password, then set up your profile.
             </div>
           </div>
 
@@ -181,6 +224,14 @@ export function SignupForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
                 style={{ paddingLeft: 38 }}
               />
             </div>
+            <PasswordField
+              id="password"
+              value={password}
+              onChange={setPassword}
+              autoComplete="new-password"
+              required
+              hint={`At least ${PASSWORD_MIN_LENGTH} characters. We email you a code to confirm the address first.`}
+            />
             {error && <div className="alert-danger" role="alert">{error}</div>}
             <button type="submit" disabled={loading} className="btn btn-primary btn-lg signin-cta">
               {loading ? <Loader2 size={16} className="animate-spin" /> : <Mail size={14} />}

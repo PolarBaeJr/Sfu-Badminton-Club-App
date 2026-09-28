@@ -115,6 +115,9 @@ export async function POST(request: Request) {
       .from('passkey_credentials')
       .select('id, credential_id, public_key, counter, transports, player_id')
       .eq('credential_id', body.credential.id)
+      // Two tiers (00051): a passkey added in the members' app never opens the
+      // console. Only one enrolled here does.
+      .eq('enrolled_via', 'admin')
       .maybeSingle();
     stored = data;
   } catch {

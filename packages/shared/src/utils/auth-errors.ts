@@ -11,6 +11,12 @@ export function friendlyAuthError(message: string): string {
   if (!msg || msg === '{}' || msg === '[object Object]') {
     return 'Something went wrong reaching the server. Please try again in a moment.';
   }
+  if (/invalid login credentials/i.test(msg)) {
+    return 'That email and password do not match. Try again, or sign in with an email code.';
+  }
+  if (/email not confirmed/i.test(msg)) {
+    return 'This email is not confirmed yet. Sign in with an email code instead.';
+  }
   // GoTrue allows one email per address per minute and says how long is left
   // ("you can only request this after 32 seconds"). That refusal means a code
   // WAS sent moments ago, so point at the inbox and keep the countdown.
@@ -37,6 +43,11 @@ const AUTH_CODES: Record<string, ErrorCode> = {
   flow_state_not_found: 'AUTH-206',
   bad_code_verifier: 'AUTH-206',
   user_banned: 'AUTH-207',
+  invalid_credentials: 'AUTH-210',
+  email_not_confirmed: 'AUTH-211',
+  weak_password: 'AUTH-212',
+  reauthentication_needed: 'AUTH-213',
+  reauthentication_not_valid: 'AUTH-213',
 };
 
 // The registry code for an auth failure, so a banner can say which one it was.
@@ -52,6 +63,12 @@ export function authErrorCode(
   if (typeof e.status === 'number' && e.status >= 500) return 'AUTH-205';
   const msg = (e.message ?? '').trim();
   if (!msg || msg === '{}' || msg === '[object Object]') return 'AUTH-205';
+  // Password errors, read by message for GoTrue builds that send no `code`.
+  // Ahead of the rate-limit regex so none of them can land on AUTH-202.
+  if (/invalid login credentials/i.test(msg)) return 'AUTH-210';
+  if (/email not confirmed/i.test(msg)) return 'AUTH-211';
+  if (/password (should|is known|must)|weak password/i.test(msg)) return 'AUTH-212';
+  if (/reauthentication/i.test(msg)) return 'AUTH-213';
   if (/after \d+ seconds?/i.test(msg)) return 'AUTH-201';
   if (/rate|security purposes|too many/i.test(msg)) return 'AUTH-202';
   if (/token has expired or is invalid/i.test(msg)) return 'AUTH-203';
