@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { selectSteps } from '@badminton/ui/src/tour';
+import { flattenEntries } from '@badminton/ui/src/nav-groups';
 import { ALL_FEATURES_ENABLED, FEATURES, type FeatureFlags } from '@badminton/shared/src/utils/features';
 import { NAV_LAYOUT } from '../../components/nav-sections';
 import {
+  canAccess,
   effectiveCapabilities,
   featureAccessCapability,
   isCapability,
@@ -106,19 +108,30 @@ describe('the exec tour stays tied to the console', () => {
     }
   });
 
-  it('names only nav groups the top bar has', () => {
-    const groups = new Set(NAV_LAYOUT.flatMap((e) => (e.kind === 'group' ? [e.group.id] : [])));
-    const named = all.flatMap((s) => s.targets).flatMap((t) => [...t.matchAll(/data-nav-group="([^"]+)"/g)].map((m) => m[1]!));
-    expect(named.length).toBeGreaterThan(0);
-    for (const id of named) expect(groups, id).toContain(id);
+  it('visits only pages the top bar offers', () => {
+    const offered = new Set(flattenEntries(NAV_LAYOUT).map((item) => item.href));
+    const hrefs = all.flatMap((s) => (s.href ? [s.href] : []));
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const href of hrefs) expect(offered, href).toContain(href);
   });
 
-  // The member tour no longer targets data-nav-group, so this tour is its only
-  // reader and the attribute would look dead to anyone tidying NavMenu.
-  it('NavMenu still carries data-nav-group', () => {
-    expect(
-      readFileSync(join(__dirname, '../../../../../packages/ui/src/components/NavMenu.tsx'), 'utf8'),
-    ).toContain('data-nav-group={id}');
+  // A step whose page bounces the reader costs a page trip and a wait before it
+  // is skipped, so every step a reader is given must be on a page they can open.
+  it('gives each reader only steps on pages they can open', () => {
+    const readers: [string, AccessLevel, Permissions][] = [
+      ['admin', 'admin', UNRESTRICTED],
+      ['exec on the baseline', 'exec', UNRESTRICTED],
+      ['trainer', 'trainer', UNRESTRICTED],
+      ['internal', 'exec', role('internal')],
+      ['external', 'exec', role('external')],
+      ['tournaments', 'exec', role('tournaments')],
+    ];
+    for (const [name, level, permissions] of readers) {
+      for (const step of stepsFor(level, permissions)) {
+        if (!step.href) continue;
+        expect(canAccess(level, permissions, step.href), `${name}: ${step.id} on ${step.href}`).toBe(true);
+      }
+    }
   });
 
   it('names only features that exist', () => {
@@ -126,7 +139,7 @@ describe('the exec tour stays tied to the console', () => {
     for (const f of all.flatMap((s) => s.requires?.featuresAny ?? [])) expect(features, f).toContain(f);
   });
 
-  it('has no em dash and no emoji in what it says, and says where to go', () => {
+  it('has no em dash and no emoji in what it says, and visits a page for each step', () => {
     const everyHeld = execTourSteps(new Set(effectiveCapabilities('admin', UNRESTRICTED)));
     for (const step of [...all, ...everyHeld]) {
       for (const text of [step.title, step.body]) {
@@ -134,8 +147,52 @@ describe('the exec tour stays tied to the console', () => {
         expect(/\p{Extended_Pictographic}/u.test(text), `${step.id}: ${text}`).toBe(false);
       }
     }
+    for (const step of [...all, ...everyHeld]) {
+      expect(step.body, step.id).not.toMatch(/\bOpen [A-Z]\w+, then\b/);
+    }
     for (const step of all.filter((s) => s.id !== 'welcome' && s.id !== 'done')) {
-      expect(step.body, step.id).toMatch(/Open [A-Z]/);
+      expect(step.href, step.id).toBeDefined();
+    }
+  });
+});
+
+// THE SELECTORS ARE STRINGS, and nothing but this ties them to the attributes
+// they name. Rename an attribute and the step silently skips.
+describe('the exec tour selectors still match the markup', () => {
+  const src = (rel: string) => readFileSync(join(__dirname, '..', '..', rel), 'utf8');
+  const named = execTourSteps(new Set())
+    .flatMap((s) => s.targets)
+    .flatMap((t) => [...t.matchAll(/data-tour="([^"]+)"/g)].map((m) => m[1]!));
+  const carriers: Record<string, string[]> = {
+    'pending-approvals': ['app/dashboard/page.tsx'],
+    'sessions-upcoming': ['app/sessions/page.tsx'],
+    'checkin-qr': ['app/sessions/actions.tsx'],
+    'door-tonight': ['app/sessions/page.tsx'],
+    // Both branches of the players page: the table, and the card shown to a
+    // reader without players.read.
+    roster: ['app/players/roster-table.tsx', 'app/players/page.tsx'],
+    'events-upcoming': ['app/events/page.tsx'],
+    'announcement-composer': ['app/announcements/page.tsx'],
+    'member-pages': ['app/accounts/page.tsx'],
+    passkeys: ['app/settings/page.tsx'],
+  };
+
+  it('every data-tour value is on the element expected to carry it', () => {
+    expect(named.length).toBeGreaterThan(0);
+    for (const value of named) {
+      const files = carriers[value];
+      expect(files, `no carrier recorded for data-tour="${value}"`).toBeDefined();
+      for (const file of files!) {
+        expect(src(file), `${file} no longer carries ${value}`).toContain(`data-tour="${value}"`);
+      }
+    }
+  });
+
+  it('every data-tour anchor in these files is targeted by a step', () => {
+    for (const file of new Set(Object.values(carriers).flat())) {
+      for (const m of src(file).matchAll(/data-tour="([^"]+)"/g)) {
+        expect(named, `${file} carries data-tour="${m[1]}" and no step targets it`).toContain(m[1]);
+      }
     }
   });
 });

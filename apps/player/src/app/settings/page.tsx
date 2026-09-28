@@ -646,6 +646,7 @@ export default function SettingsPage() {
               "challenges, results, and announcements" — which meant the only way
               to stop one kind of buzz was to stop all of them, while email had
               had per-category control for a while. Two channels, one list. */}
+          <div data-tour="settings-notifications">
           <Section icon={Bell} title="Notifications">
             <p className="muted" style={{ fontSize: 12, marginTop: 0, marginBottom: 14 }}>
               Everything here starts off. Turn on whatever you want to hear about —
@@ -760,6 +761,7 @@ export default function SettingsPage() {
               </div>
             ))}
           </Section>
+          </div>
 
           <Section icon={Shield} title="Privacy">
             <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>Saved when you tap <strong>Save profile</strong>.</p>

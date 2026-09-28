@@ -374,7 +374,7 @@ export default async function AccountsPage() {
         {/* MIDDLE */}
         <div className="flex min-w-0 flex-col gap-5">
           {showPlatformSettings && (
-            <section id="member-pages" className="scroll-mt-32">
+            <section id="member-pages" className="scroll-mt-32" data-tour="member-pages">
               <Card className="overflow-hidden p-0">
                 <SectionCardHeader
                   title="Member pages"

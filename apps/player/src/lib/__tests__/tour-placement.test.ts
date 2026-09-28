@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { placePopover } from '@badminton/ui/src/tour';
+import { clampRectToViewport, placePopover } from '@badminton/ui/src/tour';
 
 // WHERE THE TOUR CARD GOES. Pure arithmetic; nothing here proves a real
 // browser measures the same rectangles.
@@ -62,5 +62,40 @@ describe('placePopover', () => {
     const p = placePopover({ top: 300, left: 20, width: 350, height: 200 }, tall, PHONE, NO_BARS);
     expect(p.top).toBeGreaterThanOrEqual(12);
     expect(p.top + tall.height).toBeLessThanOrEqual(PHONE.height - 12);
+  });
+
+  it('places the wider desktop card on a 1280px screen', () => {
+    const wide = { width: 460, height: 240 };
+    const p = placePopover({ top: 120, left: 1100, width: 150, height: 40 }, wide, DESKTOP, NO_BARS);
+    expect(p.side).toBe('below');
+    expect(p.left).toBe(1280 - 12 - 460);
+    expect(p.left + wide.width).toBeLessThanOrEqual(1280 - 12);
+  });
+});
+
+describe('clampRectToViewport', () => {
+  it('cuts a tall table on a phone to what is above the tab bar', () => {
+    const table = { top: 200, left: 12, width: 366, height: 2000 };
+    expect(clampRectToViewport(table, PHONE, TAB_BAR)).toEqual({ top: 200, left: 12, width: 366, height: PHONE.height - TAB_BAR.bottom - 200 });
+  });
+
+  it('cuts a tall table on a desktop to the screen', () => {
+    const table = { top: -300, left: 40, width: 800, height: 3000 };
+    expect(clampRectToViewport(table, DESKTOP, NO_BARS)).toEqual({ top: 0, left: 40, width: 800, height: 800 });
+  });
+
+  it('leaves a target that fits alone', () => {
+    const r = { top: 100, left: 20, width: 200, height: 40 };
+    expect(clampRectToViewport(r, DESKTOP, NO_BARS)).toEqual(r);
+  });
+
+  it('keeps the tab bar itself, which sits inside the bottom band', () => {
+    const bar = { top: PHONE.height - TAB_BAR.bottom, left: 0, width: 390, height: TAB_BAR.bottom };
+    expect(clampRectToViewport(bar, PHONE, TAB_BAR)).toEqual(bar);
+  });
+
+  it('is null for a target entirely off screen', () => {
+    expect(clampRectToViewport({ top: 900, left: 0, width: 100, height: 50 }, DESKTOP, NO_BARS)).toBeNull();
+    expect(clampRectToViewport({ top: -200, left: 0, width: 100, height: 50 }, DESKTOP, NO_BARS)).toBeNull();
   });
 });

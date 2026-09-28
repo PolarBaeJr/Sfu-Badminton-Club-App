@@ -86,6 +86,18 @@ describe('the member tour steps', () => {
   it('uses the member key', () => {
     expect(MEMBER_TOUR_KEY).toBe('member_v1');
   });
+
+  it('visits only the feed, Membership and Settings', () => {
+    const hrefs = memberTourSteps(ctx()).flatMap((s) => (s.href ? [s.href] : []));
+    expect(hrefs).toContain('/membership');
+    for (const href of hrefs) expect(['/feed', '/membership', '/settings'], href).toContain(href);
+  });
+
+  it('starts the welcome card where the tour opens, and every later step names its page', () => {
+    const [first, ...rest] = memberTourSteps(ctx());
+    expect(first!.href).toBeUndefined();
+    for (const step of rest) expect(step.href, step.id).toBeDefined();
+  });
 });
 
 describe('resolveTarget', () => {
@@ -158,10 +170,10 @@ describe('the tour selectors still match the markup', () => {
     'month-calendar': 'app/feed/page.tsx',
     'up-next': 'app/feed/page.tsx',
     'next-session': 'app/sessions/session-card.tsx',
-    'settings-chip': 'components/top-bar.tsx',
     'top-nav': 'components/top-bar.tsx',
     'tab-bar': 'components/bottom-nav.tsx',
-    'membership-link': 'components/top-bar.tsx',
+    'membership-statement': 'app/membership/member-section.tsx',
+    'settings-notifications': 'app/settings/page.tsx',
   };
 
   it('every data-tour value is on the element expected to carry it', () => {

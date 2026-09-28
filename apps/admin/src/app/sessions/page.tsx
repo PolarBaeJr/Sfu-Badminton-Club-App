@@ -767,7 +767,7 @@ export default async function SessionsPage({
               boundary the page draws between them. `visibleIds` is the whole
               list because this table has no client-side filter: everything it
               holds is on screen. */}
-          <div id="upcoming" className="scroll-mt-6">
+          <div id="upcoming" className="scroll-mt-6" data-tour="sessions-upcoming">
             <SelectionProvider
               items={selectableSessions(upcomingRows)}
               visibleIds={upcomingRows.map((r) => r.id)}
@@ -836,7 +836,7 @@ export default async function SessionsPage({
               door, not the season's. Inert until 00112 is applied. */}
           <LiveAttendance sessionIds={tonightSessions.map((s) => s.id as string)} />
 
-          <div id="tonight" className="scroll-mt-6">
+          <div id="tonight" className="scroll-mt-6" data-tour="door-tonight">
             <Card padding={false}>
               <TonightCheckin
                 heading={tonightHeading}

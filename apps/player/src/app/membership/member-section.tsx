@@ -149,7 +149,7 @@ export async function MemberSection({
   return (
     <>
       {/* ── OUTSTANDING ───────────────────────────────────────────── */}
-      <section className="card-base fees-outstanding">
+      <section className="card-base fees-outstanding" data-tour="membership-statement">
         <div className="fees-label">Outstanding</div>
         <div className="fees-figure-row">
           <div className="fees-figure">{headlineAmount(summary)}</div>
