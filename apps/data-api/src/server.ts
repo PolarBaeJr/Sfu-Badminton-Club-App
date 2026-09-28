@@ -1,16 +1,19 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
 import { KeyVerifier, type VerifiedKey } from './auth.js';
+import { DOCS_CSP, DOCS_HTML } from './docs-page.js';
 import { TokenBuckets } from './rate-limit.js';
 import { UpstreamError, type Upstream } from './upstream.js';
 
 // The request handler. Everything it needs is passed in, so tests drive it with
 // a mocked upstream and a hand-moved clock rather than a spawned process.
 //
-// ORDER OF CHECKS: route (404), method (405), key (401), scope (403), ref
-// format (404), database. A caller learns nothing about keys from a route that
-// does not exist, and a malformed ref never costs a database call: the by-ref
-// function rehashes the whole eligible roster on every call.
+// ORDER OF CHECKS: route (404), the public docs page (served here, GET and HEAD
+// only, 405 otherwise), method (405), key (401, or 429 from the per-address
+// failed-auth bucket), per-key rate (429), scope (403), ref format (404),
+// database. A caller learns nothing about keys from a route that does not
+// exist, and a malformed ref never costs a database call: the by-ref function
+// rehashes the whole eligible roster on every call.
 
 export interface HandlerDeps {
   upstream: Upstream;
@@ -21,6 +24,7 @@ export interface HandlerDeps {
 
 type Route =
   | { name: 'health'; template: '/health' }
+  | { name: 'docs'; template: '/documentations' }
   | { name: 'players'; template: '/v1/players' }
   | { name: 'player'; template: '/v1/players/:ref'; ref: string }
   | { name: 'matches'; template: '/v1/matches' };
@@ -44,11 +48,16 @@ const PLAYER_FIELDS = [
   'updated_at',
 ] as const;
 
+const DOCS_BODY = Buffer.from(DOCS_HTML, 'utf8');
+
 const KEY_RATE = { capacity: 60, windowMs: 60_000 };
 const FAILED_AUTH_RATE = { capacity: 30, windowMs: 60_000 };
 
 function matchRoute(pathname: string): Route | null {
   if (pathname === '/health') return { name: 'health', template: '/health' };
+  if (pathname === '/documentations' || pathname === '/documentations/') {
+    return { name: 'docs', template: '/documentations' };
+  }
   if (pathname === '/v1/players') return { name: 'players', template: '/v1/players' };
   if (pathname === '/v1/matches') return { name: 'matches', template: '/v1/matches' };
   const m = /^\/v1\/players\/([^/]+)$/.exec(pathname);
@@ -121,6 +130,20 @@ export function createHandler(deps: HandlerDeps) {
     res.end(payload);
   }
 
+  // Static and public, so it is cacheable, unlike every JSON response. Node
+  // drops the body of a HEAD response by itself.
+  function sendDocs(res: ServerResponse): void {
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300',
+      'Content-Security-Policy': DOCS_CSP,
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Length': String(DOCS_BODY.length),
+    });
+    res.end(DOCS_BODY);
+  }
+
   // ONE body and ONE header set for all five 401 cases, so nothing about the
   // response says which of missing, malformed, unknown, expired or revoked it was.
   function unauthorized(res: ServerResponse): number {
@@ -163,6 +186,14 @@ export function createHandler(deps: HandlerDeps) {
       return 404;
     }
     ctx.path = matched.template;
+    if (matched.name === 'docs') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        send(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET, HEAD' });
+        return 405;
+      }
+      sendDocs(res);
+      return 200;
+    }
     if (req.method !== 'GET') {
       send(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET' });
       return 405;
