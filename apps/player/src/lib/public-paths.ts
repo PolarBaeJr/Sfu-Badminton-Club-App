@@ -49,6 +49,11 @@ export function isPublicPath(pathname: string): boolean {
     // under it later (an app enrolment route, say) is gated until someone
     // decides otherwise here.
     pathname.startsWith('/api/passkey/app/login/') ||
+    // The native app's routes. They carry the member's Supabase access token as
+    // a bearer and check it themselves (resolveAppActor); the app has no cookie
+    // for the gate to see, and a 307 to /login would reach it as HTML. Trailing
+    // slash so /api/appx can never match.
+    pathname.startsWith('/api/app/') ||
     // assetlinks.json and apple-app-site-association. Android and Apple fetch
     // these anonymously and neither follows a redirect, so behind the gate the
     // 307 to /login reads as "no app is trusted" and passkeys stop working in

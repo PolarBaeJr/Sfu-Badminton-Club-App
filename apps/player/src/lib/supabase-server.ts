@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { cache } from 'react';
 import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
+import { appActorStore } from './app-actor';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied to the clients here — typed clients flip many `select('*, foo(*)')`
@@ -19,6 +20,11 @@ export function createServiceRoleClient() {
 }
 
 export async function createServerSupabaseClient() {
+  // A native app request (/api/app/*): the member's bearer client, and no
+  // cookies at all. Checked first, so cookies() is never touched for it.
+  const actor = appActorStore.getStore();
+  if (actor) return actor.supabase;
+
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -98,8 +104,13 @@ export async function getExecutives(): Promise<{
 const PLAYER_SELECT = '*, ratings(*), waiver_acceptances(document, version, accepted_at)';
 
 async function loadViewer() {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // The native app's user was verified by resolveAppActor. Its client carries
+  // the bearer as a global header and has no session, so an arg-less getUser()
+  // on it would find nobody.
+  const actor = appActorStore.getStore();
+  const user = actor
+    ? actor.user
+    : (await (await createServerSupabaseClient()).auth.getUser()).data.user;
   if (!user) return { user: null, player: null };
 
   // Service role for the full row: migration 00032 revokes blanket SELECT on
