@@ -92,7 +92,7 @@ describe('isPublicPath', () => {
   });
 
   describe('public pages', () => {
-    it.each(['/', '/login', '/signup', '/auth/callback', '/exec', '/legal/privacy', '/leaderboard', '/membership', '/socials'])(
+    it.each(['/', '/login', '/login/forgot', '/signup', '/auth/callback', '/exec', '/legal/privacy', '/leaderboard', '/membership', '/socials'])(
       'treats %s as public',
       (path) => {
         expect(isPublicPath(path)).toBe(true);

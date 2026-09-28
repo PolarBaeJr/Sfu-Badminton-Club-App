@@ -23,7 +23,9 @@ export async function POST(request: Request) {
   const { data: credentials } = await adminClient
     .from('passkey_credentials')
     .select('credential_id, transports')
-    .eq('player_id', player.id);
+    .eq('player_id', player.id)
+    // Only console passkeys are offered: a members'-app one would be refused.
+    .eq('enrolled_via', 'admin');
 
   if (!credentials || credentials.length === 0) {
     return NextResponse.json({ error: 'No passkeys enrolled' }, { status: 400 });

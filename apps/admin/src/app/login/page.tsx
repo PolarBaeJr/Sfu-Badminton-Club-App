@@ -39,8 +39,17 @@ export default function LoginPage() {
   // is already signed in (e.g. via the player app), forward them straight in
   // instead of making them sign in a second time.
   const [checkingSession, setCheckingSession] = useState(true);
+  // Set by the middleware when the session came from a password alone, which
+  // does not open the console. That session still passes is_admin, so the
+  // forward below must be skipped or the two redirect into each other forever.
+  const [codeRequired, setCodeRequired] = useState(false);
 
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('reason') === 'code-required') {
+      setCodeRequired(true);
+      setCheckingSession(false);
+      return;
+    }
     const supabase = createClient();
     supabase.auth
       .getSession()
@@ -265,6 +274,21 @@ export default function LoginPage() {
               Admin Portal
             </p>
           </div>
+
+          {codeRequired && !sent && (
+            <div
+              role="status"
+              className="flex items-center gap-2 px-3 py-2.5 mb-6 rounded-lg text-sm"
+              style={{
+                background: 'rgba(233,69,96,0.08)',
+                border: '1px solid rgba(233,69,96,0.2)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-accent)' }} />
+              <span>A password does not open the console. Open the console with an email code or passkey.</span>
+            </div>
+          )}
 
           {sent ? (
             <div className="space-y-5">

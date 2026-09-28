@@ -7,6 +7,7 @@ import {
   ACTIVE_CHALLENGE_STATUSES,
   partitionChallenges,
   challengeSearchKeys,
+  challengeRowText,
 } from '../challenge-rules';
 
 const HOUR = 3_600_000;
@@ -244,5 +245,117 @@ describe('challengeSearchKeys', () => {
         { full_name: 'Kiera Watanabe', handle: 'kiera' },
       ]),
     ).toEqual(['Kiera Watanabe', 'kiera']);
+  });
+});
+
+describe('challengeRowText', () => {
+  const ME = { id: 'me', full_name: 'Viewer Person', avatar_url: null };
+  const ADA = { id: 'ada', full_name: 'Ada Lindqvist', avatar_url: 'https://example.test/a.png' };
+  const BO = { id: 'bo', full_name: 'Bo Ferreira', avatar_url: null };
+  const CY = { id: 'cy', full_name: 'Cy Marlowe', avatar_url: null };
+  const base = {
+    viewerId: 'me',
+    type: 'singles',
+    shape: 'Best of 3 to 21',
+    rated: true,
+    when: '2d ago',
+  };
+
+  it('names the opponent once, by display name, and says who issued it', () => {
+    const row = challengeRowText({
+      ...base,
+      createdBy: 'ada',
+      creator: ADA,
+      participants: [
+        { team_side: 'a', person: ADA },
+        { team_side: 'b', person: ME },
+      ],
+    });
+    expect(row.title).toBe('vs Ada Lindqvist');
+    expect(row.faces).toEqual([ADA]);
+    expect(row.meta).toEqual(['Challenged you', 'Singles', 'Best of 3 to 21', 'Rated', '2d ago']);
+  });
+
+  it('never prints a handle, even when the people carry one', () => {
+    const row = challengeRowText({
+      ...base,
+      createdBy: 'me',
+      creator: ME,
+      participants: [
+        { team_side: 'a', person: ME },
+        { team_side: 'b', person: { ...ADA, handle: 'ada123' } as typeof ADA },
+      ],
+    });
+    expect(row.title).toBe('vs Ada Lindqvist');
+    expect([row.title, ...row.meta].join(' ')).not.toContain('@');
+    expect(row.meta[0]).toBe('You challenged');
+  });
+
+  it('reads doubles as both opponents and then the partner', () => {
+    const row = challengeRowText({
+      ...base,
+      type: 'doubles',
+      rated: false,
+      createdBy: 'ada',
+      creator: ADA,
+      participants: [
+        { team_side: 'a', person: ADA },
+        { team_side: 'a', person: BO },
+        { team_side: 'b', person: ME },
+        { team_side: 'b', person: CY },
+      ],
+    });
+    expect(row.title).toBe('vs Ada Lindqvist & Bo Ferreira, with Cy Marlowe');
+    expect(row.faces).toEqual([ADA, BO]);
+    expect(row.meta).toEqual(['Challenged you', 'Doubles', 'Best of 3 to 21', '2d ago']);
+  });
+
+  it('does not say "Challenged you" when the viewer\'s own partner issued it', () => {
+    const row = challengeRowText({
+      ...base,
+      type: 'doubles',
+      createdBy: 'cy',
+      creator: CY,
+      participants: [
+        { team_side: 'a', person: ADA },
+        { team_side: 'a', person: BO },
+        { team_side: 'b', person: ME },
+        { team_side: 'b', person: CY },
+      ],
+    });
+    expect(row.meta[0]).toBe('Your partner challenged');
+  });
+
+  it('falls back to "Awaiting roster" and the creator\'s face before the other side exists', () => {
+    const incoming = challengeRowText({
+      ...base,
+      createdBy: 'ada',
+      creator: ADA,
+      participants: [{ team_side: 'b', person: ME }],
+    });
+    expect(incoming.title).toBe('Awaiting roster');
+    expect(incoming.faces).toEqual([ADA]);
+
+    const mine = challengeRowText({
+      ...base,
+      createdBy: 'me',
+      creator: ME,
+      participants: [{ team_side: 'a', person: ME }],
+    });
+    expect(mine.faces).toEqual([]);
+  });
+
+  it('skips people whose player row did not come back', () => {
+    const row = challengeRowText({
+      ...base,
+      createdBy: 'me',
+      creator: ME,
+      participants: [
+        { team_side: 'a', person: ME },
+        { team_side: 'b', person: null },
+        { team_side: 'b', person: BO },
+      ],
+    });
+    expect(row.title).toBe('vs Bo Ferreira');
   });
 });

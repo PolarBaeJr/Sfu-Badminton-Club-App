@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
 import { verifyPayload } from './passkey/cookie';
+import { isPasswordOnlySession } from './password-session';
 import { AUTH_COOKIE_OPTIONS, ExpectedError } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
 import {
@@ -271,6 +272,22 @@ export async function requireCapability(
       permits(level, permissions, capability) ? null : denialFor(level, capability),
     options,
   );
+}
+
+// True when this request's session was made with nothing but a password (see
+// password-session). The passkey enrolment routes use it: they are exempt from
+// the middleware gate, so without this a password alone could enrol a console
+// passkey and then open the console with it. Fails closed: a session this
+// cannot read is treated as password-only, and the caller asks for a code.
+export async function isPasswordOnlyConsoleSession(): Promise<boolean> {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) return true;
+    return isPasswordOnlySession(data?.currentAuthenticationMethods);
+  } catch {
+    return true;
+  }
 }
 
 // The bottom rung: anyone with any console access at all, asking no capability

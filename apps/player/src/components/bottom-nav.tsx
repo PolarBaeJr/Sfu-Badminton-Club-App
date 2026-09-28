@@ -262,7 +262,7 @@ export function BottomNav({
 
   return (
     <>
-      <nav className="mobile-tabbar" aria-label="Mobile navigation" data-tour="tab-bar">
+      <nav className="mobile-tabbar" aria-label="Mobile navigation">
         {slots.map((slot) => {
           if (slot.kind === 'group') {
             // A small menu that rises from the tab itself, not a dialog in

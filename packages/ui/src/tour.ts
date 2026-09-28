@@ -33,6 +33,12 @@ export interface TourStep {
   /** What to do when no target is visible: leave the step out, or show it as a centred card. */
   missingTarget: 'skip' | 'center';
   requires?: TourStepRequires;
+  /**
+   * The page the step is shown on, app-relative (no base path) and concrete
+   * (no `[param]`). A step without one stays on the page the step before it
+   * used, and the first step on the page the tour was opened on.
+   */
+  href?: string;
 }
 
 export interface TourContext {
@@ -148,6 +154,127 @@ export function placePopover(
   return roomBelow >= roomAbove
     ? { top: clamp(below, minTop, maxTop), left, side: 'below' }
     : { top: clamp(above, minTop, maxTop), left, side: 'above' };
+}
+
+/**
+ * The part of a spotlight that is on screen, between the top of the viewport
+ * (less `reserved.top`) and the bottom band. A table taller than the screen is
+ * cut to what is visible, so the card is placed against that. A target that
+ * starts inside the bottom band (the tab bar itself) is cut at the screen's
+ * edge instead, or it would vanish. Null when none of it is on screen.
+ */
+export function clampRectToViewport(
+  rect: TourRect,
+  viewport: { width: number; height: number },
+  reserved: { top: number; bottom: number },
+): TourRect | null {
+  const band = viewport.height - reserved.bottom;
+  const top = Math.max(rect.top, reserved.top);
+  const bottom = Math.min(rect.top + rect.height, rect.top >= band ? viewport.height : band);
+  if (bottom <= top) return null;
+  return { top, left: rect.left, width: rect.width, height: bottom - top };
+}
+
+// NAVIGATION. A step can name a page; the component opens it through the host's
+// router and waits for it. Every decision about that wait is here.
+
+/** How long a page may take to open before its step is skipped. Long, because the Pi renders on one thread. */
+export const TOUR_NAV_TIMEOUT_MS = 10000;
+/** How long a step waits for its target to appear once its page is open. */
+export const TOUR_TARGET_TIMEOUT_MS = 3000;
+
+/**
+ * An app-relative path: the base path removed (only as a whole segment, so
+ * `/admin` never strips `/administer`), the query and hash dropped, and no
+ * trailing slash. The root is `/`.
+ */
+export function stripBasePath(path: string, basePath: string): string {
+  let p = path.split(/[?#]/)[0] ?? '';
+  const base = basePath.replace(/\/+$/, '');
+  if (base && (p === base || p.startsWith(`${base}/`))) p = p.slice(base.length);
+  p = p.replace(/\/+$/, '');
+  return p === '' ? '/' : p;
+}
+
+const segments = (path: string) => path.split('/').filter(Boolean);
+
+/**
+ * Whether a pathname is on a step's page. A `[name]` segment in the pattern
+ * matches any one segment.
+ */
+export function pathMatches(pathname: string, pattern: string, basePath = ''): boolean {
+  const have = segments(stripBasePath(pathname, basePath));
+  const want = segments(stripBasePath(pattern, basePath));
+  if (have.length !== want.length) return false;
+  return want.every((seg, i) => /^\[[^\]]+\]$/.test(seg) || seg === have[i]);
+}
+
+/** The page each step is shown on: its own href, else the one before it, else where the tour started. */
+export function effectiveRoutes(steps: readonly TourStep[], startPath: string): string[] {
+  let previous = startPath;
+  return steps.map((step) => (previous = step.href ?? previous));
+}
+
+export interface RouteDecisionInput {
+  route: string;
+  pathname: string;
+  basePath: string;
+  /** The navigation this step started, or null if it has not started one. */
+  nav: null | { fromPath: string; arrived: boolean; elapsedMs: number };
+  timeoutMs: number;
+}
+
+/**
+ * What a step does about its page. On it: ready. Not on it and not yet asked
+ * for: navigate. Asked for and then left (a redirect after a loading screen),
+ * or landed somewhere else: skip. Still where it started after the time limit
+ * (a redirect back to the page it came from never changes the path): skip.
+ */
+export function routeDecision(input: RouteDecisionInput): 'ready' | 'navigate' | 'wait' | 'skip' {
+  const { route, pathname, basePath, nav, timeoutMs } = input;
+  if (pathMatches(pathname, route, basePath)) return 'ready';
+  if (nav === null) return 'navigate';
+  if (nav.arrived) return 'skip';
+  if (stripBasePath(pathname, basePath) !== stripBasePath(nav.fromPath, basePath)) return 'skip';
+  if (nav.elapsedMs >= timeoutMs) return 'skip';
+  return 'wait';
+}
+
+/**
+ * What a step does about its target once its page is open. A step with
+ * nothing to point at is a centred card at once; otherwise it waits for its
+ * target, and when time runs out it is a card or it is skipped, as it says.
+ */
+export function targetDecision(input: {
+  hasTargets: boolean;
+  found: boolean;
+  elapsedMs: number;
+  timeoutMs: number;
+  missingTarget: 'skip' | 'center';
+}): 'found' | 'wait' | 'center' | 'skip' {
+  if (!input.hasTargets) return 'center';
+  if (input.found) return 'found';
+  if (input.elapsedMs < input.timeoutMs) return 'wait';
+  return input.missingTarget;
+}
+
+/**
+ * The step to try after one is skipped, in the direction the reader was
+ * moving. Forward past the end finishes. Back past the front goes forward
+ * again from the step the reader pressed Back on (`backOrigin`).
+ */
+export function skipTo(input: {
+  index: number;
+  direction: 1 | -1;
+  length: number;
+  backOrigin: number | null;
+}): { index: number; direction: 1 | -1 } | 'finish' {
+  const next = input.index + input.direction;
+  if (next >= input.length) return 'finish';
+  if (next >= 0) return { index: next, direction: input.direction };
+  const origin = input.backOrigin ?? input.index;
+  if (origin >= input.length) return 'finish';
+  return { index: origin, direction: 1 };
 }
 
 export interface AutoStartInput {
