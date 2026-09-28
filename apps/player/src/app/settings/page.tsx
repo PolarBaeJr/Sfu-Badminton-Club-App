@@ -149,33 +149,44 @@ export default function SettingsPage() {
   useEffect(() => {
     async function load() {
       const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      // getSession, not getUser: this id is only a FILTER. Every read below is
+      // authorized by the database (RLS and players_self's auth.uid()) or by the
+      // server action, never by this value, so a GoTrue round trip to re-verify
+      // it bought nothing but one more wait before the form could fill in. The
+      // session is read from the cookie locally.
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
       if (!user) return;
-      // players_self is filtered to auth.uid() server-side, so it returns only
-      // this user's row — including the phone and notification preferences that
-      // 00032 withholds from the plain players grant.
-      const { data } = await supabase.from('players_self').select('*').maybeSingle();
-      // NOT from players_self. Postgres expands `SELECT *` when a view is
-      // CREATEd and freezes the column list into it, so the view still returns
-      // exactly the columns players had in 00032 — handle and member_code are
-      // not among them, and re-creating it would also undo 00060's deliberate
-      // exclusion of inactivity_notice_sent_at. Read the two from the base
-      // table instead: players_select opens the caller's own row to them, and
-      // 00092's column grant is what makes them public anyway.
-      const { data: identity } = await supabase
-        .from('players')
-        .select('handle, member_code')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      // NOT read here at all. competition_category (00111) has no SELECT grant
-      // for `authenticated` — on purpose, because players_select admits any
-      // member to any approved member's row, so a grant would hand everybody's
-      // category to everybody. The member's own value comes back through a
-      // server action that reads it with the service-role key for the caller
-      // and nobody else. Adding the column to the select above would not leak
-      // anything by itself; it would simply return nothing, and the grant that
-      // "fixed" it would be the leak.
-      const [mine, media] = await Promise.all([getMyCompetitionCategory(), getMyMediaConsent()]);
+      // ALL FOUR AT ONCE. They are independent, and awaiting them in turn made
+      // this page four browser round trips deep before a single field appeared.
+      const [{ data }, { data: identity }, mine, media] = await Promise.all([
+        // players_self is filtered to auth.uid() server-side, so it returns only
+        // this user's row — including the phone and notification preferences
+        // that 00032 withholds from the plain players grant.
+        supabase.from('players_self').select('*').maybeSingle(),
+        // NOT from players_self. Postgres expands `SELECT *` when a view is
+        // CREATEd and freezes the column list into it, so the view still returns
+        // exactly the columns players had in 00032 — handle and member_code are
+        // not among them, and re-creating it would also undo 00060's deliberate
+        // exclusion of inactivity_notice_sent_at. Read the two from the base
+        // table instead: players_select opens the caller's own row to them, and
+        // 00092's column grant is what makes them public anyway.
+        supabase
+          .from('players')
+          .select('handle, member_code')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+        // NOT read here at all. competition_category (00111) has no SELECT grant
+        // for `authenticated` — on purpose, because players_select admits any
+        // member to any approved member's row, so a grant would hand everybody's
+        // category to everybody. The member's own value comes back through a
+        // server action that reads it with the service-role key for the caller
+        // and nobody else. Adding the column to the select above would not leak
+        // anything by itself; it would simply return nothing, and the grant that
+        // "fixed" it would be the leak.
+        getMyCompetitionCategory(),
+        getMyMediaConsent(),
+      ]);
       if (data) {
         setPlayerId(data.id);
         setAvatarUrl(data.avatar_url);
