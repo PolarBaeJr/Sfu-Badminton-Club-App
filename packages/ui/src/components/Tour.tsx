@@ -464,7 +464,10 @@ export function Tour({
             left: spotlight.left,
             width: spotlight.width,
             height: spotlight.height,
-            boxShadow: `0 0 0 9999px ${SCRIM}`,
+            // The ring is what shows the spotlight on a dark page, where a dimmed
+            // near-black and an undimmed near-black look the same. A host sets
+            // its colour through --tour-ring; without one it draws nothing.
+            boxShadow: `0 0 0 2px var(--tour-ring, transparent), 0 0 0 9999px ${SCRIM}`,
             transition: motion,
           }}
         />

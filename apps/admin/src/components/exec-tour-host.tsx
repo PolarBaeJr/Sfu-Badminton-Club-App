@@ -36,7 +36,7 @@ const CLASS_NAMES = {
   popover: 'bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[16px] p-5 md:p-7 shadow-xl text-[var(--text-primary)]',
   primary: `${BUTTON} bg-[var(--color-accent)] text-white border-transparent hover:brightness-110`,
   secondary: `${BUTTON} bg-transparent text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--text-primary)]`,
-  spotlight: 'rounded-[8px]',
+  spotlight: 'rounded-[8px] [--tour-ring:var(--red)]',
 };
 
 // The same four the sidebar renders nothing on.

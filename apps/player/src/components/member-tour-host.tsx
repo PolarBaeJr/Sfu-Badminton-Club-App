@@ -37,7 +37,7 @@ const CLASS_NAMES = {
   popover: 'bg-[var(--surface)] border border-[var(--line)] rounded-[16px] p-5 md:p-7 shadow-xl text-[var(--ink)]',
   primary: 'btn btn-primary',
   secondary: 'btn btn-ghost',
-  spotlight: 'rounded-[8px]',
+  spotlight: 'rounded-[8px] [--tour-ring:var(--red)]',
 };
 
 export function MemberTourHost({
