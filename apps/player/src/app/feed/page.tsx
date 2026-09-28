@@ -124,7 +124,26 @@ function toPerson(raw: PlayerEmbed | null): RiverPerson | null {
 }
 
 export default async function FeedPage() {
-  const { player } = await getViewer();
+  const supabase = await createServerSupabaseClient();
+
+  // THE VIEWER, THE CLUB FEATURE SWITCHES AND THE ACTIVE SEASON, TOGETHER.
+  // None depends on another, and awaiting them in turn was two whole extra
+  // round trips on the app's landing page. A signed-out caller wastes two
+  // reads before the redirect, which is cheaper than every member paying the
+  // wait.
+  //
+  // The season scopes the header eyebrow, the schedule and the notice, exactly
+  // as /sessions and /announcements already scope themselves; it is needed
+  // before the batch below because three of its queries use the id.
+  const [{ player }, features, { data: activeSeason }] = await Promise.all([
+    getViewer(),
+    getFeatureFlags(),
+    supabase
+      .from('seasons')
+      .select('id, name, start_date, end_date')
+      .eq('active_flag', true)
+      .maybeSingle(),
+  ]);
   if (!player) redirect('/login');
 
   // THE CLUB FEATURE SWITCHES. A card belonging to a switched-off feature is
@@ -132,7 +151,6 @@ export default async function FeedPage() {
   // `page.access.<id>` key and can still open its pages. The older reads still
   // run and this only decides what is drawn; the schedule's own reads are
   // skipped outright while their switch is off.
-  const features = await getFeatureFlags();
   const access = featureAccessFor(player);
   const on = (id: FeatureId) => featureGate(features[id], access.includes(id)) !== 'redirect';
   const sessionsOn = on('sessions');
@@ -140,7 +158,6 @@ export default async function FeedPage() {
   const tournamentsOn = on('tournaments');
   const scheduleOn = sessionsOn || eventsOn || tournamentsOn;
 
-  const supabase = await createServerSupabaseClient();
   // ONE clock reading per render, and a PINNED club date from it. clubToday
   // applies the fixed UTC-7 from 2026-11-01 whatever tzdata the host carries,
   // so the agenda, the week strip, the month grid and the tournament banner all
@@ -148,15 +165,6 @@ export default async function FeedPage() {
   const now = new Date();
   const todayKey = clubToday(now);
   const nowIso = now.toISOString();
-
-  // The active season scopes the header eyebrow, the schedule and the notice,
-  // exactly as /sessions and /announcements already scope themselves. Fetched
-  // first because three of the queries below need its id.
-  const { data: activeSeason } = await supabase
-    .from('seasons')
-    .select('id, name, start_date, end_date')
-    .eq('active_flag', true)
-    .maybeSingle();
 
   const inActiveSeason = <T extends { or: (f: string) => T }>(q: T): T =>
     activeSeason ? q.or(`season_id.eq.${activeSeason.id},season_id.is.null`) : q;
@@ -511,6 +519,7 @@ export default async function FeedPage() {
       tournamentPairRows = (prRes.data ?? []) as typeof tournamentPairRows;
     }
   }
+
 
   /** The viewer's own standing in one running event, or null if they are not in
    *  it. `occupiesAPlace` rather than a fresh status check, so this agrees with
