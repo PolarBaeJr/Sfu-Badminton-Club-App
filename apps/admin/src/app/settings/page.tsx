@@ -86,6 +86,7 @@ export default async function SettingsPage() {
             </Link>
           </Card>
 
+          <div data-tour="passkeys">
           <Card className="overflow-hidden p-0">
             <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--line)] px-6 py-5">
               <div className="flex min-w-0 flex-col gap-1">
@@ -104,6 +105,7 @@ export default async function SettingsPage() {
             </div>
             <PasskeySection passkeys={passkeyList} />
           </Card>
+          </div>
 
           <Card className="overflow-hidden p-0">
             <div className="border-b border-[var(--line)] px-6 py-5">

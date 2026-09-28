@@ -102,7 +102,7 @@ export function TopBar({
           </div>
         </Link>
 
-        <nav className="nav" aria-label="Main navigation" data-tour="top-nav">
+        <nav className="nav" aria-label="Main navigation">
           {isAuthenticated ? (
             navEntries.map((entry) => {
               if (entry.kind === 'link') {
@@ -114,7 +114,6 @@ export function TopBar({
                     href={item.href}
                     className={cn('nav-item', active && 'active')}
                     aria-current={active ? 'page' : undefined}
-                    data-tour={item.href === '/membership' ? 'membership-link' : undefined}
                   >
                     {item.label}
                   </Link>
@@ -242,7 +241,7 @@ export function TopBar({
                   />
                 )}
               </Link>
-              <Link href="/settings" className="me-chip" aria-label="Profile and settings" data-tour="settings-chip">
+              <Link href="/settings" className="me-chip" aria-label="Profile and settings">
                 <span className="avatar" data-size="sm" data-tone="4" style={{ overflow: 'hidden' }}>
                   {avatarUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import * as Sentry from '@sentry/nextjs';
 import { Tour, selectSteps, shouldAutoStart, type TourFinishReason } from '@badminton/ui';
 import { tourSeenStorageKey } from '@badminton/shared/src/utils/tours';
@@ -9,9 +9,12 @@ import { FEATURES, type FeatureFlags } from '@badminton/shared/src/utils/feature
 import { featureAccessCapability, type AccessLevel } from '@badminton/shared/src/utils/access-level';
 import { EXEC_TOUR_KEY, execTourMayAutoStart, execTourSteps } from '@/lib/tours/exec-tour';
 import { markConsoleTourSeen } from '@/lib/actions/tour';
+import { BASE_PATH } from '@/lib/base-path';
 
 // Starts the console tour the first time an officer opens the console, on
-// whichever page they land, and replays it from Settings (?tour=exec).
+// whichever page they land, and replays it from Settings (?tour=exec). The tour
+// opens each step's page through the router, which applies the base path, and
+// Skip or Done leave the reader on whatever page they are on.
 //
 // Never by itself for a trainer: their console is the roster and varsity
 // notes, and almost nothing the tour points at is theirs. They can still replay
@@ -30,10 +33,10 @@ const LABELS = {
 const BUTTON = 'inline-flex items-center justify-center font-bold uppercase tracking-[0.16em] text-[11px] rounded-[8px] border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]';
 
 const CLASS_NAMES = {
-  popover: 'bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[16px] p-5 shadow-xl text-[var(--text-primary)]',
+  popover: 'bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[16px] p-5 md:p-7 shadow-xl text-[var(--text-primary)]',
   primary: `${BUTTON} bg-[var(--color-accent)] text-white border-transparent hover:brightness-110`,
   secondary: `${BUTTON} bg-transparent text-[var(--text-muted)] border-[var(--border)] hover:text-[var(--text-primary)]`,
-  spotlight: 'rounded-[8px]',
+  spotlight: 'rounded-[8px] [--tour-ring:var(--red)]',
 };
 
 // The same four the sidebar renders nothing on.
@@ -59,6 +62,7 @@ export function ExecTourHost({
   features: FeatureFlags;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const replayRef = useRef(false);
   const toursSeenRef = useRef(toursSeen);
@@ -115,5 +119,16 @@ export function ExecTourHost({
     markConsoleTourSeen().catch((err) => Sentry.captureException(err));
   }, []);
 
-  return <Tour open={open} steps={steps} onFinish={finish} labels={LABELS} classNames={CLASS_NAMES} />;
+  return (
+    <Tour
+      open={open}
+      steps={steps}
+      onFinish={finish}
+      labels={LABELS}
+      classNames={CLASS_NAMES}
+      pathname={pathname}
+      onNavigate={(href) => router.push(href)}
+      basePath={BASE_PATH}
+    />
+  );
 }
