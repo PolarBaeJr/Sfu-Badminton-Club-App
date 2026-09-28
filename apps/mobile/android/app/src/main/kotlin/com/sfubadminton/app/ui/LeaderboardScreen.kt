@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,6 +22,8 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -36,6 +39,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.sfubadminton.app.R
 import com.sfubadminton.app.Services
 import com.sfubadminton.app.data.LeaderboardTab
 import com.sfubadminton.app.data.RankedRow
@@ -81,7 +86,7 @@ private fun RanksHeader() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LeaderboardScreen(services: Services, viewer: Viewer) {
+fun LeaderboardScreen(services: Services, viewer: Viewer, onChallenge: ((String) -> Unit)? = null) {
     var tab by rememberSaveable { mutableStateOf(LeaderboardTab.OPEN_SINGLES) }
     // get_leaderboard() is the database's own filtered ladder. Nothing else
     // here reads another member's rating.
@@ -109,12 +114,12 @@ fun LeaderboardScreen(services: Services, viewer: Viewer) {
                         item { Box(Modifier.fillParentMaxWidth().height(240.dp)) { EmptyState("No ranked players yet.") } }
                     } else {
                         item {
-                            Podium(ranked.take(3), tab, viewer.id)
+                            Podium(ranked.take(3), tab, viewer.id, onChallenge)
                             Spacer(Modifier.height(14.dp))
                         }
                         item { LadderHead(tab) }
                         itemsIndexed(ranked, key = { _, it -> it.row.id }) { i, item ->
-                            LadderRow(item, me = item.row.id == viewer.id, first = i == 0, last = i == ranked.lastIndex)
+                            LadderRow(item, me = item.row.id == viewer.id, first = i == 0, last = i == ranked.lastIndex, onChallenge)
                         }
                     }
                 }
@@ -149,7 +154,7 @@ private fun Chips(tab: LeaderboardTab, onSelect: (LeaderboardTab) -> Unit) {
 }
 
 @Composable
-private fun Podium(top: List<RankedRow>, tab: LeaderboardTab, viewerId: String) {
+private fun Podium(top: List<RankedRow>, tab: LeaderboardTab, viewerId: String, onChallenge: ((String) -> Unit)?) {
     val p = LocalPalette.current
     Card(Modifier.padding(horizontal = 16.dp), padding = 0.dp) {
         Row(
@@ -215,6 +220,7 @@ private fun Podium(top: List<RankedRow>, tab: LeaderboardTab, viewerId: String) 
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,
                     )
+                    if (onChallenge != null && item.row.id != viewerId) ChallengeButton(item.row.name) { onChallenge(item.row.id) }
                 }
             }
         }
@@ -253,7 +259,7 @@ private fun LadderHead(tab: LeaderboardTab) {
  * every row, a divider above each after the first, rounded corners on the last.
  */
 @Composable
-private fun LadderRow(item: RankedRow, me: Boolean, first: Boolean, last: Boolean) {
+private fun LadderRow(item: RankedRow, me: Boolean, first: Boolean, last: Boolean, onChallenge: ((String) -> Unit)?) {
     val p = LocalPalette.current
     val shape = if (last) RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp) else RoundedCornerShape(0.dp)
     val line = p.line
@@ -304,5 +310,19 @@ private fun LadderRow(item: RankedRow, me: Boolean, first: Boolean, last: Boolea
         }
         Spacer(Modifier.width(8.dp))
         Text(fmtElo(item.elo), color = p.text, style = Type.lrValue)
+        if (onChallenge != null && !me) ChallengeButton(item.row.name) { onChallenge(item.row.id) }
+    }
+}
+
+/** The web's crosshair: opens the new-challenge form with this member picked. */
+@Composable
+private fun ChallengeButton(name: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+        Icon(
+            painterResource(R.drawable.ic_tab_challenges),
+            contentDescription = "Challenge $name",
+            tint = LocalPalette.current.muted,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }

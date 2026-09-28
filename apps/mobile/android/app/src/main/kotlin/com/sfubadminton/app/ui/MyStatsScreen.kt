@@ -41,6 +41,7 @@ import com.sfubadminton.app.data.MyStats
 import com.sfubadminton.app.data.Viewer
 import com.sfubadminton.app.data.fmtDelta
 import com.sfubadminton.app.data.fmtElo
+import com.sfubadminton.app.data.isApproved
 import com.sfubadminton.app.data.loadMyStats
 import com.sfubadminton.app.ui.theme.BarlowCondensed
 import com.sfubadminton.app.ui.theme.JetBrainsMono
@@ -99,6 +100,11 @@ fun MyStatsScreen(services: Services, viewer: Viewer) {
                     }
                 }
             }
+
+            // Only a member who can be challenged: anyone else's QR would open a
+            // form that clears itself.
+            val siteUrl = services.siteUrl
+            if (siteUrl != null && isApproved(viewer)) MemberQrCard(siteUrl, viewer.id)
 
             when (val state = loader.state) {
                 LoadState.Loading -> Column(Modifier.fillMaxWidth().height(160.dp)) { Loading() }

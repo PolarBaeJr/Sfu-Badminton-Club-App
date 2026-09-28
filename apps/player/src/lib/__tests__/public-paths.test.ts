@@ -74,6 +74,15 @@ describe('isPublicPath', () => {
       expect(isPublicPath('/api/passkey/app')).toBe(false);
     });
 
+    // The native app's bearer routes check the token themselves; a 307 to
+    // /login would reach the app as HTML. By whole segment only.
+    it('lets the native app routes through, by whole segment', () => {
+      expect(isPublicPath('/api/app/actions/x')).toBe(true);
+      expect(isPublicPath('/api/app/challenges/context')).toBe(true);
+      expect(isPublicPath('/api/appx')).toBe(false);
+      expect(isPublicPath('/api/ap')).toBe(false);
+    });
+
     // Android and Apple fetch these anonymously and follow no redirect.
     it('lets the native app trust files through', () => {
       expect(isPublicPath('/.well-known/assetlinks.json')).toBe(true);

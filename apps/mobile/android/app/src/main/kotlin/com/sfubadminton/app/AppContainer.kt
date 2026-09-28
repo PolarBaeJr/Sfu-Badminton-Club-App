@@ -10,8 +10,10 @@ import com.sfubadminton.app.auth.PasskeySignIn
 import com.sfubadminton.app.auth.SessionManager
 import com.sfubadminton.app.config.SiteConfig
 import com.sfubadminton.app.config.SupabaseConfig
+import com.sfubadminton.app.data.AppApi
 import com.sfubadminton.app.data.Postgrest
 import com.sfubadminton.app.net.UrlConnectionTransport
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
 /** The configured app: built once per process, so one session has one owner. */
@@ -29,6 +31,9 @@ class Services(context: Context, config: SupabaseConfig.Ok, val siteUrl: String?
 
     /** Null when the build names no club website: the sign-in screen then offers email codes only. */
     val passkey: PasskeySignIn? = siteUrl?.let { PasskeySignIn(PasskeyApi(it, transport), gotrue, sessions, postgrest, clock) }
+
+    /** Null with no club website: the app then reads but cannot write. */
+    val appApi: AppApi? = siteUrl?.let { AppApi(it, transport, sessions) }
 }
 
 class AppContainer(context: Context) {
@@ -38,4 +43,10 @@ class AppContainer(context: Context) {
     val services: Services? = (config as? SupabaseConfig.Ok)?.let {
         Services(context.applicationContext, it, SiteConfig.read(BuildConfig.SITE_URL))
     }
+
+    /**
+     * A club website URL Android handed the app (an App Link), waiting to be
+     * routed. It stays here while signed out and is routed after sign-in.
+     */
+    val pendingLink = MutableStateFlow<String?>(null)
 }
