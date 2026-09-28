@@ -21,6 +21,7 @@ had no code of its own, and the digits are the digest Next printed in the log.
 | `AUTH-102` | Passkey check needed | Confirm with your passkey, then try again. | The console passkey step-up gate refused: this session has not verified a passkey. |
 | `AUTH-103` | Passkey status unknown | We could not confirm your passkey setup. Try again in a moment. | The passkey enrolment lookup failed, so the step-up gate failed closed. |
 | `AUTH-104` | Not allowed | Your role does not allow this. | The console capability check refused this role for the page or action. |
+| `AUTH-105` | Console passkey needed | Add a console passkey to keep using the console. You can add one on the page the console sends you to. | The 14-day window for using the console without a console passkey has ended (00262). |
 | `AUTH-201` | Code already sent | A code was sent to this email moments ago. Check your inbox. | The auth server per-address email cooldown (over_email_send_rate_limit). |
 | `AUTH-202` | Too many attempts | Too many attempts. Wait a minute and try again. | A request rate limit at the auth server or the edge (over_request_rate_limit). |
 | `AUTH-203` | Code expired or wrong | That code has expired or is not right. Ask for a new one. | The auth server rejected the one-time code (otp_expired). |

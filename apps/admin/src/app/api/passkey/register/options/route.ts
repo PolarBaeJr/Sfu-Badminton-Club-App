@@ -50,7 +50,7 @@ export async function POST(request: Request) {
   // account takeover that survives the password.
   if (existingError) {
     return NextResponse.json(
-      { error: 'Cannot verify your passkey enrolment right now — please try again shortly' },
+      { error: 'Cannot verify your passkey enrolment right now. Please try again shortly.' },
       { status: 503 }
     );
   }
@@ -62,8 +62,8 @@ export async function POST(request: Request) {
   // gate — has_passkeys() (00051) and assertPasskeyVerified both filter on
   // enrolled_via, and this third copy of the question did not. A members'-app
   // passkey is a convenience that deliberately does not impose a second factor
-  // here, so an officer holding one and nothing else is in the grace period
-  // according to every gate, and was then refused by this route as though they
+  // here, so an officer holding one and nothing else has no console passkey
+  // according to every gate (and is inside or past the 14-day window, 00262), and was then refused by this route as though they
   // already had an admin credential to step up with. They had none, which made
   // the 403 unanswerable: the way to satisfy it is to log in with the passkey
   // this branch is claiming exists.

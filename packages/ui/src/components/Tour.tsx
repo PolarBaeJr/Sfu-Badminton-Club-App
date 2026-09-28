@@ -74,6 +74,17 @@ export interface TourProps {
   onNavigate?: (href: string) => void;
   /** Stripped from `pathname` before it is compared with a step's href. */
   basePath?: string;
+  /** The step to open on, for a tour resumed after a reload. Read at open. */
+  initialStep?: number;
+  /** The path the resumed tour was first opened on, so its steps' pages resolve as before. Read at open. */
+  initialStartPath?: string;
+  /** Called with every step shown, so the host can save the place for a reload. */
+  onStepChange?: (info: { index: number; stepId: string; startPath: string }) => void;
+}
+
+function clampIndex(i: number, length: number): number {
+  if (!Number.isFinite(i) || i < 0) return 0;
+  return Math.min(Math.floor(i), Math.max(length - 1, 0));
 }
 
 const Z_INDEX = 60;
@@ -115,8 +126,11 @@ export function Tour({
   pathname,
   onNavigate,
   basePath = '',
+  initialStep,
+  initialStartPath,
+  onStepChange,
 }: TourProps) {
-  const [index, setIndex] = React.useState(0);
+  const [index, setIndex] = React.useState(() => clampIndex(initialStep ?? 0, steps.length));
   // The step whose page and target have been settled, and the selector it
   // resolved to (null for a centred card). Until it matches `index` the step
   // is pending: the card is centred with the new step's words and no spotlight.
@@ -150,6 +164,12 @@ export function Tour({
   onFinishRef.current = onFinish;
   const onNavigateRef = React.useRef(onNavigate);
   onNavigateRef.current = onNavigate;
+  const onStepChangeRef = React.useRef(onStepChange);
+  onStepChangeRef.current = onStepChange;
+  const initialStepRef = React.useRef(initialStep);
+  initialStepRef.current = initialStep;
+  const initialStartPathRef = React.useRef(initialStartPath);
+  initialStartPathRef.current = initialStartPath;
   const navigates = onNavigate !== undefined && pathname !== undefined;
 
   React.useEffect(() => {
@@ -160,10 +180,15 @@ export function Tour({
     return () => query.removeEventListener('change', onChange);
   }, []);
 
-  // Every open starts at the first step, on the page it was opened on, and
-  // focus goes back where it came from when the tour closes. The step is reset
-  // on close as well, so the first pass after the next open cannot open the
-  // page of the step this one ended on.
+  // An open starts at the first step, on the page it was opened on, unless the
+  // host resumes one after a reload: then it opens at `initialStep`, with the
+  // start path the tour was first opened on, so each step's page resolves as
+  // it did before. The resumed step's page comes from effectiveRoutes and
+  // routeDecision navigates there; nothing has been shown yet, so that
+  // navigation is not mistaken for the reader leaving. Focus goes back where
+  // it came from when the tour closes. The step is reset on close as well, so
+  // the first pass after the next open cannot open the page of the step this
+  // one ended on.
   React.useEffect(() => {
     if (!open) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -171,8 +196,8 @@ export function Tour({
     backOriginRef.current = null;
     navRef.current = null;
     shownRef.current = null;
-    startPathRef.current = pathname ?? '';
-    setIndex(0);
+    startPathRef.current = initialStartPathRef.current ?? pathname ?? '';
+    setIndex(clampIndex(initialStepRef.current ?? 0, steps.length));
     setResolved(null);
     setPlacement(null);
     return () => {
@@ -387,6 +412,16 @@ export function Tour({
   // and focus() on a hidden element does nothing.
   const current = Math.min(index, Math.max(steps.length - 1, 0));
   const ready = placement !== null;
+
+  // Tell the host where the tour is, so a reload can resume it.
+  React.useEffect(() => {
+    if (!open || steps.length === 0) return;
+    const step = steps[current];
+    if (!step) return;
+    onStepChangeRef.current?.({ index: current, stepId: step.id, startPath: startPathRef.current });
+    // steps is read, not reacted to: a new array of the same steps is not a new step.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, current]);
   React.useEffect(() => {
     if (open && ready) headingRef.current?.focus({ preventScroll: true });
   }, [open, current, ready]);

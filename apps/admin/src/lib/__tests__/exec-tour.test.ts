@@ -88,7 +88,7 @@ describe('the exec tour steps', () => {
   });
 
   it('uses the exec key', () => {
-    expect(EXEC_TOUR_KEY).toBe('exec_v1');
+    expect(EXEC_TOUR_KEY).toBe('exec_v2');
   });
 });
 

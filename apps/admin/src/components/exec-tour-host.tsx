@@ -3,13 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import * as Sentry from '@sentry/nextjs';
-import { Tour, selectSteps, shouldAutoStart, type TourFinishReason } from '@badminton/ui';
-import { tourSeenStorageKey } from '@badminton/shared/src/utils/tours';
+import {
+  Tour,
+  parseTourProgress,
+  selectSteps,
+  serializeTourProgress,
+  shouldAutoStart,
+  type TourFinishReason,
+} from '@badminton/ui';
+import { tourProgressStorageKey, tourSeenStorageKey } from '@badminton/shared/src/utils/tours';
 import { FEATURES, type FeatureFlags } from '@badminton/shared/src/utils/features';
 import { featureAccessCapability, type AccessLevel } from '@badminton/shared/src/utils/access-level';
 import { EXEC_TOUR_KEY, execTourMayAutoStart, execTourSteps } from '@/lib/tours/exec-tour';
 import { markConsoleTourSeen } from '@/lib/actions/tour';
 import { BASE_PATH } from '@/lib/base-path';
+import { isChromelessRoute } from '@/lib/chromeless-routes';
 
 // Starts the console tour the first time an officer opens the console, on
 // whichever page they land, and replays it from Settings (?tour=exec). The tour
@@ -19,8 +27,12 @@ import { BASE_PATH } from '@/lib/base-path';
 // Never by itself for a trainer: their console is the roster and varsity
 // notes, and almost nothing the tour points at is theirs. They can still replay
 // it and get the steps they hold.
+//
+// A reload mid-tour resumes it at the same step, the same way the member tour
+// does: the place is kept in sessionStorage and removed when the tour ends.
 
 const STORAGE_KEY = tourSeenStorageKey(EXEC_TOUR_KEY);
+const PROGRESS_KEY = tourProgressStorageKey(EXEC_TOUR_KEY);
 
 const LABELS = {
   next: 'Next',
@@ -39,15 +51,8 @@ const CLASS_NAMES = {
   spotlight: 'rounded-[8px] [--tour-ring:var(--red)]',
 };
 
-// The same four the sidebar renders nothing on.
-function isPublicRoute(pathname: string): boolean {
-  return (
-    pathname === '/login' ||
-    pathname.startsWith('/auth') ||
-    pathname === '/unauthorized' ||
-    pathname === '/unavailable'
-  );
-}
+// The pages the sidebar renders nothing on.
+const isPublicRoute = isChromelessRoute;
 
 export function ExecTourHost({
   level,
@@ -65,6 +70,8 @@ export function ExecTourHost({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const replayRef = useRef(false);
+  // Where a resumed tour opens. Used by one open, then cleared.
+  const resumeRef = useRef<{ index: number; startPath: string } | null>(null);
   const toursSeenRef = useRef(toursSeen);
   toursSeenRef.current = toursSeen;
 
@@ -80,6 +87,31 @@ export function ExecTourHost({
 
   useEffect(() => {
     if (open || level === null || steps.length === 0 || isPublicRoute(pathname)) return;
+    // A tour open when the page reloaded wins over everything below.
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(PROGRESS_KEY);
+    } catch {
+      // Storage unavailable: nothing to resume.
+    }
+    const saved = parseTourProgress(raw, {
+      tourKey: EXEC_TOUR_KEY,
+      stepIds: steps.map((s) => s.id),
+      now: Date.now(),
+    });
+    if (!saved && raw !== null) {
+      try {
+        sessionStorage.removeItem(PROGRESS_KEY);
+      } catch {
+        // Non-fatal: it is refused again next time.
+      }
+    }
+    if (saved && (saved.replay || execTourMayAutoStart(level))) {
+      resumeRef.current = { index: saved.index, startPath: saved.startPath };
+      replayRef.current = saved.replay;
+      setOpen(true);
+      return;
+    }
     const forced = new URLSearchParams(window.location.search).get('tour') === 'exec';
     if (!forced && !execTourMayAutoStart(level)) return;
     let localSeen = false;
@@ -100,9 +132,40 @@ export function ExecTourHost({
     if (!start) return;
     replayRef.current = forced;
     setOpen(true);
-  }, [pathname, level, open, steps.length]);
+  }, [pathname, level, open, steps]);
+
+  // The Tour read the resume point in its own open effect, which runs before
+  // this one; clear it so it is used once.
+  useEffect(() => {
+    if (open) resumeRef.current = null;
+  }, [open]);
+
+  const saveProgress = useCallback((info: { index: number; stepId: string; startPath: string }) => {
+    try {
+      sessionStorage.setItem(
+        PROGRESS_KEY,
+        serializeTourProgress({
+          v: 1,
+          key: EXEC_TOUR_KEY,
+          stepId: info.stepId,
+          index: info.index,
+          startPath: info.startPath,
+          replay: replayRef.current,
+          savedAt: Date.now(),
+        }),
+      );
+    } catch {
+      // Storage unavailable: a reload starts the tour over, as before.
+    }
+  }, []);
 
   const finish = useCallback((_reason: TourFinishReason) => {
+    try {
+      sessionStorage.removeItem(PROGRESS_KEY);
+    } catch {
+      // Non-fatal: a stale place is refused after half an hour anyway.
+    }
+    resumeRef.current = null;
     setOpen(false);
     try {
       localStorage.setItem(STORAGE_KEY, new Date().toISOString());
@@ -129,6 +192,9 @@ export function ExecTourHost({
       pathname={pathname}
       onNavigate={(href) => router.push(href)}
       basePath={BASE_PATH}
+      initialStep={resumeRef.current?.index}
+      initialStartPath={resumeRef.current?.startPath}
+      onStepChange={saveProgress}
     />
   );
 }

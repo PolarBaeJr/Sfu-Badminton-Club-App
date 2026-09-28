@@ -1,7 +1,7 @@
 // A session made with nothing but a password. The member app offers password
 // sign-in and shares its auth cookie with the console, so without a check a
-// password alone would open the console for anyone in the passkey grace period
-// (no admin-enrolled passkey). The console accepts an email code, Google or a
+// password alone would open the console for anyone still inside the 14 days
+// without an admin-enrolled passkey (lib/passkey/grace.ts, 00262). The console accepts an email code, Google or a
 // passkey; a password is a weaker factor than owning the inbox.
 //
 // Reads the access token's `amr` claim, which auth-js hands back as

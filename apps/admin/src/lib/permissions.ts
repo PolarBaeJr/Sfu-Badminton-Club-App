@@ -210,7 +210,10 @@ const SECTION_PATTERNS: { pattern: RegExp; capability: Capability }[] = [
 // (app/page.tsx), but middleware runs BEFORE the redirect, so without it every
 // non-admin opening /admin — which is where the player app's "Exec Panel" link
 // points — was bounced to /unauthorized.
-const BASELINE_SECTIONS = ['/', '/dashboard', '/settings', '/api/passkey'];
+// /passkey-required is where the console sends someone whose 14 days without a
+// console passkey have run out (00262); it has to open for every level, or a
+// trainer would be bounced to /unauthorized instead of shown how to add one.
+const BASELINE_SECTIONS = ['/', '/dashboard', '/settings', '/api/passkey', '/passkey-required'];
 
 // Does this path sit inside this section? Segment-aware, so '/players' never
 // matches '/playersecret'. The one matching rule, shared by both maps.

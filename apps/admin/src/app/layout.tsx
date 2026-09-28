@@ -17,6 +17,7 @@ import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { ExecTourHost } from '@/components/exec-tour-host';
+import { PasskeyGraceBanner } from '@/components/passkey-grace-banner';
 import localFont from 'next/font/local';
 import { cn, ConfirmProvider, StaleBuildBanner } from '@badminton/ui';
 import { withBase } from '@/lib/base-path';
@@ -236,6 +237,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               features={features}
             />
             <MainContent>
+              <PasskeyGraceBanner />
               {children}
             </MainContent>
           </ConfirmProvider>

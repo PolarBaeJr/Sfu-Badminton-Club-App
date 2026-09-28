@@ -28,10 +28,11 @@ import { assembleMemberExport, type ExportClient } from '../data-export/assemble
 //
 // So the truth comes from the MIGRATIONS and the claim from the registry, and
 // the assertion that matters is a TOTAL PARTITION: every table the parser finds
-// must land in exactly one bucket. Not "every FK table is handled" -- four
+// must land in exactly one bucket. Not "every FK table is handled" -- five
 // tables in this schema name a member with NO foreign key (email_suppressions,
-// passkey_challenges, discord_role_revocations, tournament_bonus_grants), so an
-// FK-derived list is incomplete by construction and would have missed all four.
+// passkey_challenges, discord_role_revocations, tournament_bonus_grants,
+// console_passkey_grace), so an FK-derived list is incomplete by construction
+// and would have missed all five.
 //
 // WHY THIS PARSES SQL AS TEXT, and the limits of that. The alternative is
 // packages/shared/src/types/database.gen.ts, which is STALE -- the console's
@@ -346,10 +347,11 @@ describe('every table in the schema is considered for the member data export', (
     expect(drifted, 'player-referencing column(s) missing from the registry').toEqual([]);
   });
 
-  it('names the four tables that reference a member with no foreign key', () => {
-    // WHY THE PARTITION HAS TO BE TOTAL, in four concrete cases. An FK-only
+  it('names the five tables that reference a member with no foreign key', () => {
+    // WHY THE PARTITION HAS TO BE TOTAL, in five concrete cases. An FK-only
     // scan finds none of them and every one holds personal information.
     expect(Object.keys(NON_FK_PLAYER_TABLES).sort()).toEqual([
+      'console_passkey_grace',
       'discord_role_revocations',
       'email_suppressions',
       'passkey_challenges',
@@ -828,6 +830,7 @@ const FIXTURES: Record<string, StubRow[]> = {
   event_waiver_templates: [{ id: 'ewt1', updated_by: PLAYER_ID }],
   discord_outbox: [{ id: 'do1', requested_by: PLAYER_ID }],
   passkey_challenges: [{ id: 'pc1', user_id: AUTH_ID, challenge_hash: 'CHALLENGE-HASH' }],
+  console_passkey_grace: [{ user_id: AUTH_ID, started_at: '2026-09-20T00:00:00Z' }],
   varsity_notes: [{ id: 'vn1', player_id: PLAYER_ID, note: 'TRAINER NOTE TEXT', author_id: SENTINEL }],
   match_admin_notes: [{ match_id: 'match-1', note: 'OFFICER MATCH NOTE', author_id: SENTINEL }],
   tournament_participant_notes: [

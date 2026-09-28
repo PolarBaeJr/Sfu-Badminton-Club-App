@@ -74,7 +74,7 @@ describe('the member tour steps', () => {
   });
 
   it('uses the member key', () => {
-    expect(MEMBER_TOUR_KEY).toBe('member_v1');
+    expect(MEMBER_TOUR_KEY).toBe('member_v2');
   });
 
   it('visits only the feed, Challenges, Membership and Settings', () => {
@@ -118,11 +118,15 @@ describe('shouldAutoStart', () => {
   });
 
   it('does not start once the server has it as seen', () => {
-    expect(shouldAutoStart({ ...base, toursSeen: { member_v1: '2026-09-23T00:00:00Z' } })).toBe(false);
+    expect(shouldAutoStart({ ...base, toursSeen: { member_v2: '2026-09-23T00:00:00Z' } })).toBe(false);
   });
 
-  it('starts again for a new version of the tour', () => {
-    expect(shouldAutoStart({ ...base, toursSeen: { exec_v1: '2026-09-23T00:00:00Z' } })).toBe(true);
+  it('starts for the other app\'s tour being seen', () => {
+    expect(shouldAutoStart({ ...base, toursSeen: { exec_v2: '2026-09-23T00:00:00Z' } })).toBe(true);
+  });
+
+  it('starts again for someone who only saw the v1 tour', () => {
+    expect(shouldAutoStart({ ...base, toursSeen: { member_v1: '2026-09-23T00:00:00Z' } })).toBe(true);
   });
 
   it('does not start once this device has it as seen', () => {
@@ -139,7 +143,7 @@ describe('shouldAutoStart', () => {
 
   it('a replay starts anywhere, even when seen, but never behind a gate', () => {
     expect(
-      shouldAutoStart({ ...base, forced: true, pathname: '/settings', localSeen: true, toursSeen: { member_v1: 'x' } }),
+      shouldAutoStart({ ...base, forced: true, pathname: '/settings', localSeen: true, toursSeen: { member_v2: 'x' } }),
     ).toBe(true);
     expect(shouldAutoStart({ ...base, forced: true, blocked: true })).toBe(false);
   });
