@@ -391,6 +391,10 @@ polling every few minutes buys nothing. Pull `/v1/players` on a schedule
 measured in hours and cache it, and keep match history in sync with
 `updated_since` rather than re-reading it.
 
+Responses may be up to 15 seconds old: the service reuses a recent answer to
+the same request rather than asking the database again. `generated_at` is the
+time the response was sent, not the time the data was read.
+
 ---
 
 ## Versioning
