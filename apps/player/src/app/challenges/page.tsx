@@ -19,6 +19,7 @@ import {
   challengeQuota,
   partitionChallenges,
   challengeSearchKeys,
+  challengeRowText,
   ACTIVE_CHALLENGE_STATUSES,
   type ExpiryState,
 } from '@/lib/challenge-rules';
@@ -49,9 +50,11 @@ export default async function ChallengesPage() {
       // expires_at, scheduled_date and scheduled_time have been on challenges
       // since 00001 and were never selected, so the list could not say when a
       // challenge lapses or when it is being played — the two things a member
-      // opens this screen to find out. handle arrives with 00092 and is rendered
-      // beside every name.
-      .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, games_per_match, points_per_game, rated_flag, status, created_at, expires_at, scheduled_date, scheduled_time, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name, handle)))')
+      // opens this screen to find out. handle arrives with 00092; the rows show
+      // names only, so it is read for the search box (challengeSearchKeys).
+      // avatar_url on the participants too: the row leads with the OPPONENT's
+      // face, and on a challenge the viewer issued the creator is the viewer.
+      .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, games_per_match, points_per_game, rated_flag, status, created_at, expires_at, scheduled_date, scheduled_time, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name, handle, avatar_url)))')
       .eq('player_id', player.id)
       // No server-side order: challenge_participants has no timestamp of its own,
       // and the previous `referencedTable: 'challenges'` order sorted *within* the
@@ -137,7 +140,7 @@ export default async function ChallengesPage() {
   // missing, do not start refusing challenges on a figure nobody picked", and
   // repeating it back as "within 9999 Elo" would dress a non-limit up as a rule.
   //
-  // Deliberately NOT on the cards or the header: the check is creator-vs-
+  // Deliberately NOT on the rows or the header: the check is creator-vs-
   // opponent, so it only means something once there is a pair. That is
   // /challenges/new's job, and this screen has no opponent in hand.
   const NO_LIMIT = 9999;
@@ -145,7 +148,7 @@ export default async function ChallengesPage() {
     rules.ladderRange < NO_LIMIT ? `${rules.ladderRange} ladder positions` : null,
     rules.eloRange < NO_LIMIT ? `${rules.eloRange} Elo` : null,
   ].filter(Boolean);
-  const reachClause = reach.length ? ` — from opponents within ${reach.join(' and ')}` : '';
+  const reachClause = reach.length ? ` within ${reach.join(' and ')}` : '';
 
   /** The deadline chip. Absent entirely on a challenge that can no longer expire. */
   function ExpiryChip({ state }: { state: ExpiryState }) {
@@ -163,98 +166,66 @@ export default async function ChallengesPage() {
     );
   }
 
-  /** "Kiera Watanabe · @kiera" as elements, so the handle can be dimmed. */
-  function Named({ person, fallback = 'Unknown' }: { person: Person | null | undefined; fallback?: string }) {
-    const name = person?.full_name?.trim() || fallback;
-    return (
-      <>
-        {name}
-        {person?.handle && (
-          <span className="muted" style={{ fontWeight: 400 }}> · @{person.handle}</span>
-        )}
-      </>
-    );
-  }
-
-  function ChallengeCard({ c, awaitingYou }: { c: Challenge; awaitingYou: boolean }) {
-    const creator = pickOne(c.creator);
-    const isMine = c.created_by === player.id;
+  function ChallengeRow({ c, awaitingYou }: { c: Challenge; awaitingYou: boolean }) {
     const expiry = expiryState(c.expires_at, c.status, now);
-    const roster = c.challenge_participants
-      .map((p) => ({ ...p, person: pickOne(p.player) }))
-      .filter((p) => p.person);
-    const youSide = roster.find((p) => p.person?.id === player.id)?.team_side;
-    const opponents = roster.filter((p) => p.team_side !== youSide);
-    const teammates = roster.filter((p) => p.team_side === youSide && p.person?.id !== player.id);
+    const row = challengeRowText({
+      viewerId: player.id,
+      createdBy: c.created_by,
+      creator: pickOne(c.creator),
+      participants: c.challenge_participants.map((p) => ({ team_side: p.team_side, person: pickOne(p.player) })),
+      type: c.type || '',
+      shape: describeMatchShape({ match_format: c.format, games_per_match: c.games_per_match, points_per_game: c.points_per_game }),
+      rated: c.rated_flag,
+      when: formatRelativeTime(c.created_at),
+    });
 
     return (
       <Link
         href={`/challenges/${c.id}`}
-        className="press"
-        style={{
-          display: 'block',
-          padding: 18,
-          border: '1px solid var(--line)',
-          borderRadius: 'var(--r-lg)',
-          background: 'var(--surface)',
-          // The one card that is a question addressed to the reader gets the
-          // accent edge. Everything else on this screen is something they have
-          // already answered or are waiting on somebody else for.
-          ...(awaitingYou ? { borderLeft: '3px solid var(--red)' } : null),
-        }}
+        className="chal-row"
+        // The one row that is a question addressed to the reader gets the
+        // accent edge. Everything else on this screen is something they have
+        // already answered or are waiting on somebody else for.
+        data-awaiting={awaitingYou || undefined}
       >
-        <div className="row" style={{ marginBottom: 12, fontSize: 12, flexWrap: 'wrap', gap: 8 }}>
-          <span className="tag tag-red">{(c.type || '').toUpperCase()}</span>
-          <span className="tag">{describeMatchShape({ match_format: c.format, games_per_match: c.games_per_match, points_per_game: c.points_per_game })}</span>
-          {c.rated_flag && <span className="tag tag-gold">RATED</span>}
-          <ExpiryChip state={expiry} />
-          <span className="mono muted" style={{ marginLeft: 'auto' }}>
-            {formatRelativeTime(c.created_at)}
+        {/* Decorative: the names are spelled out in the title beside them, and
+            initials read aloud first would be noise. */}
+        <span className="chal-faces" aria-hidden="true">
+          {row.faces.length > 0 ? (
+            row.faces.map((f) => (
+              <AvatarChip key={f.id} name={f.full_name ?? '?'} id={f.id} src={f.avatar_url} size={row.faces.length > 1 ? 'sm' : 'md'} />
+            ))
+          ) : (
+            <AvatarChip name="?" size="md" />
+          )}
+        </span>
+        <span className="chal-main">
+          <span className="chal-title">{row.title}</span>
+          <span className="chal-meta">
+            {row.meta.join(' · ')}
+            {c.scheduled_date && (
+              // Only when the challenge actually carries one. Most do not:
+              // scheduled_date is nullable and the create form leaves it
+              // empty, so a "Not scheduled" line would be noise on the
+              // majority of rows.
+              <span className="chal-when">
+                <CalendarClock size={11} aria-hidden="true" />
+                {c.scheduled_date}
+                {c.scheduled_time && ` · ${c.scheduled_time.slice(0, 5)}`}
+              </span>
+            )}
           </span>
-        </div>
-
-        <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div className="row" style={{ gap: 10, flex: 1, minWidth: 200 }}>
-            <AvatarChip name={creator?.full_name ?? '?'} id={creator?.id} src={creator?.avatar_url} size="md" />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>
-                {isMine ? <>You challenged</> : <><Named person={creator} /> challenged you</>}
-              </div>
-              <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>
-                {opponents.length > 0 ? (
-                  <>vs {opponents.map((o, i) => (
-                    <span key={o.id}>{i > 0 && ' & '}<Named person={o.person} /></span>
-                  ))}</>
-                ) : (
-                  'Awaiting roster'
-                )}
-                {teammates.length > 0 && (
-                  <> · with {teammates.map((t, i) => (
-                    <span key={t.id}>{i > 0 && ', '}<Named person={t.person} /></span>
-                  ))}</>
-                )}
-              </div>
-              {c.scheduled_date && (
-                // Only when the challenge actually carries one. Most do not:
-                // scheduled_date is nullable and the create form leaves it
-                // empty, so a "Not scheduled" line would be noise on the
-                // majority of cards.
-                <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>
-                  <CalendarClock size={11} style={{ verticalAlign: '-1px', marginRight: 4 }} />
-                  {c.scheduled_date}
-                  {c.scheduled_time && ` · ${c.scheduled_time.slice(0, 5)}`}
-                </div>
-              )}
-            </div>
-          </div>
-          {/* The status the database holds, always — the expiry chip above is a
-              reading of the clock and never overrides it. Nothing in the system
-              actually moves a lapsed challenge to 'expired' (see
-              challenge-rules.ts), so a card can honestly read "Proposed" and
+        </span>
+        <span className="chal-end">
+          <ExpiryChip state={expiry} />
+          {/* The status the database holds, always. The expiry chip beside it
+              is a reading of the clock and never overrides it. Nothing in the
+              system actually moves a lapsed challenge to 'expired' (see
+              challenge-rules.ts), so a row can honestly read "Proposed" and
               "Expired" at once. */}
           <span className={CHALLENGE_STATUS_TAG[c.status] ?? 'tag'}>{CHALLENGE_STATUS_LABEL[c.status] ?? c.status}</span>
-          <ChevronRight size={16} className="text-[var(--mute)]" />
-        </div>
+        </span>
+        <ChevronRight size={16} className="chal-chevron" aria-hidden="true" />
       </Link>
     );
   }
@@ -266,29 +237,29 @@ export default async function ChallengesPage() {
   }
 
   const toItems = (list: { cp: CP; c: Challenge }[], awaitingYou = false) =>
-    list.map(({ cp, c }) => ({ id: cp.id, players: namesOn(c), card: <ChallengeCard c={c} awaitingYou={awaitingYou} /> }));
+    list.map(({ cp, c }) => ({ id: cp.id, players: namesOn(c), card: <ChallengeRow c={c} awaitingYou={awaitingYou} /> }));
 
+  // The live sections, in the order a member acts on them. Archived is passed
+  // separately because it renders differently: behind a disclosure, not as a
+  // section card.
   const sections = [
-    { title: 'Awaiting your answer', items: toItems(incoming, true) },
+    { title: 'Awaiting your answer', items: toItems(incoming, true), accent: true },
     { title: 'Active', items: toItems(active) },
     { title: 'Your challenges', items: toItems(outgoing) },
-    {
-      title: 'Archived',
-      // Completed and rejected/cancelled both live here; each card keeps its
-      // own status badge (Completed / Rejected / Cancelled) so they stay
-      // distinguishable within the single archived group.
-      //
-      // Sorted singles-then-doubles, newest first within each. Simply
-      // concatenating the two lists grouped by status instead, which is
-      // already on every card, and left the dates unordered.
-      items: toItems(
-        [...archived].sort((a, b) =>
-          a.c.type !== b.c.type
-            ? a.c.type === 'singles' ? -1 : 1
-            : new Date(b.c.created_at).getTime() - new Date(a.c.created_at).getTime())
-      ),
-    },
   ];
+  // Completed and rejected/cancelled both live here; each row keeps its
+  // own status badge (Completed / Rejected / Cancelled) so they stay
+  // distinguishable within the single archived group.
+  //
+  // Sorted singles-then-doubles, newest first within each. Simply
+  // concatenating the two lists grouped by status instead, which is
+  // already on every row, and left the dates unordered.
+  const archivedItems = toItems(
+    [...archived].sort((a, b) =>
+      a.c.type !== b.c.type
+        ? a.c.type === 'singles' ? -1 : 1
+        : new Date(b.c.created_at).getTime() - new Date(a.c.created_at).getTime())
+  );
 
   return (
     <div data-screen-label="Challenges">
@@ -329,12 +300,39 @@ export default async function ChallengesPage() {
       />
       <PageHeader
         title="Challenges"
-        sub="Issue, accept, and track challenges. Whatever is waiting on you sits at the top — answer it so the queue clears."
+        className="chal-header"
+        sub={
+          <>
+            Challenge a member to a rated match. Anything waiting on you is at the top.
+            {/* The club's rules, stated before they are hit rather than quoted
+                back as a refusal. All three numbers come from platform_settings,
+                which is what validate_challenge_creation reads, so what this
+                line says and what the server does cannot drift apart.
+
+                Withheld from a gated member: their limit is not the cap, it is
+                their standing, and the StandingBanner has already said so. */}
+            {standing.ok && (
+              <span className="chal-summary">
+                <span className="chal-quota" data-level={quota.full ? 'full' : quota.ratio >= 0.66 ? 'warn' : undefined}>
+                  <span className="capacity-bar" aria-hidden="true">
+                    <span
+                      className={`fill${quota.full ? ' full' : quota.ratio >= 0.66 ? ' warn' : ''}`}
+                      style={{ display: 'block', width: `${Math.round(quota.ratio * 100)}%` }}
+                    />
+                  </span>
+                  {quota.used} of {quota.max} open
+                </span>
+                <span>{incoming.length} waiting on you</span>
+                <span>{rules.expiryHours}h to reply</span>
+              </span>
+            )}
+          </>
+        }
         actions={
           standing.ok ? (
             canIssue ? (
-              <Link href="/challenges/new" className="btn btn-primary">
-                <Plus size={14} /> New challenge
+              <Link href="/challenges/new" className="btn btn-primary chal-new" data-tour="new-challenge">
+                <Plus size={16} /> New challenge
               </Link>
             ) : (
               // Not a disabled button: a control that cannot be pressed and does
@@ -349,68 +347,33 @@ export default async function ChallengesPage() {
         }
       />
 
-      {/* The club's rules, stated before they are hit rather than quoted back as
-          a refusal. All three numbers come from platform_settings, which is what
-          validate_challenge_creation reads — so what this strip says and what
-          the server does cannot drift apart.
-
-          Withheld from a gated member: their limit is not the cap, it is their
-          standing, and the StandingBanner has already said so. */}
-      {standing.ok && (
-        // .stat-strip is used bare elsewhere (my-stats, the admin dashboard) —
-        // it draws its own hairlines and cell padding, so wrapping it in a
-        // .card-base would double both.
-        <div className="stat-strip" style={{ marginBottom: 20 }}>
-          <div className="stat">
-            <span className="stat-label">Open challenges</span>
-            {/* --mono, not the .stat-value default of --display: these three are
-                quantities read against each other and a limit, and tabular
-                figures are what keeps "2 / 3" from shifting as the count does. */}
-            <span className="stat-value" style={{ fontFamily: 'var(--mono)' }}>
-              {quota.used}
-              <span className="muted" style={{ fontSize: '0.55em' }}> / {quota.max}</span>
-            </span>
-            <div className="capacity-bar" style={{ marginTop: 8 }}>
-              <div
-                className={`fill${quota.full ? ' full' : quota.ratio >= 0.66 ? ' warn' : ''}`}
-                style={{ width: `${Math.round(quota.ratio * 100)}%` }}
-              />
+      <ChallengeSections
+        sections={sections}
+        archived={archivedItems}
+        // Shown whenever nothing is live, including a member with no history at
+        // all: the page's job is to get them playing, and a screen of archived
+        // rows with no way forward is what this replaced.
+        empty={
+          <div className="chal-empty">
+            <div className="empty">
+              <span className="empty-icon"><Swords size={20} /></span>
+              <div className="empty-title">No open challenges</div>
+              <p className="empty-hint">
+                Pick an opponent{reachClause} and send one. They have {rules.expiryHours} hours to answer.
+              </p>
+              {canIssue ? (
+                <Link href="/challenges/new" className="btn btn-primary">
+                  <Plus size={14} /> New challenge
+                </Link>
+              ) : standing.ok ? (
+                <p className="mono muted" style={{ fontSize: 12, margin: 0 }} role="status">{quotaFullNote}</p>
+              ) : (
+                <StandingNote standing={standing} activity="New challenges" />
+              )}
             </div>
           </div>
-          <div className="stat">
-            <span className="stat-label">Awaiting you</span>
-            <span className="stat-value" style={{ fontFamily: 'var(--mono)' }}>{incoming.length}</span>
-          </div>
-          <div className="stat">
-            <span className="stat-label">Reply window</span>
-            <span className="stat-value" style={{ fontFamily: 'var(--mono)' }}>{rules.expiryHours}h</span>
-          </div>
-        </div>
-      )}
-
-      {all.length === 0 ? (
-        <div className="card-base">
-          <div className="empty">
-            <span className="empty-icon"><Swords size={20} /></span>
-            <div className="empty-title">No challenges yet</div>
-            <p className="empty-hint">
-              Pick someone from the ladder and send one. You can have {quota.max} open at a time,
-              and an unanswered challenge stands for {rules.expiryHours} hours{reachClause}.
-            </p>
-            {canIssue ? (
-              <Link href="/challenges/new" className="btn btn-primary">
-                <Plus size={14} /> Issue your first challenge
-              </Link>
-            ) : standing.ok ? (
-              <p className="mono muted" style={{ fontSize: 12, margin: 0 }} role="status">{quotaFullNote}</p>
-            ) : (
-              <StandingNote standing={standing} activity="New challenges" />
-            )}
-          </div>
-        </div>
-      ) : (
-        <ChallengeSections sections={sections} />
-      )}
+        }
+      />
     </div>
   );
 }
