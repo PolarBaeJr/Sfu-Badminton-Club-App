@@ -186,6 +186,8 @@ function answerAll(): void {
     ],
     data_api_seasons: (b: Record<string, unknown>) =>
       b.p_season_id === undefined || b.p_season_id === SEASON ? [seasonRow()] : [],
+    data_api_season_header: (b: Record<string, unknown>) =>
+      b.p_season_id === SEASON ? [{ id: SEASON, name: 'Fall 2026', active: true }] : [],
     data_api_season_standings: () => [
       {
         source: 'live',
@@ -689,6 +691,8 @@ describe('/v1/seasons', () => {
     const res = await get(h, `/v1/seasons/${TOURNAMENT}/standings`, key);
     expect(res.status).toBe(404);
     expect(all('data_api_season_standings')).toHaveLength(1);
+    // The header, never the totals scan.
+    expect(all('data_api_seasons')).toHaveLength(0);
   });
 });
 

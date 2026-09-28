@@ -37,8 +37,9 @@ key. It calls these functions and nothing else:
 | `data_api_head_to_head` | 00265 | `/v1/players/:ref/vs/:other_ref` |
 | `data_api_player_seasons` | 00265 | `/v1/players/:ref/seasons` |
 | `data_api_rating_history` | 00265 | `/v1/players/:ref/ratings` |
-| `data_api_seasons` | 00265 | `/v1/seasons`, `/v1/seasons/:id`, the standings 404 check |
+| `data_api_seasons` | 00265 | `/v1/seasons`, `/v1/seasons/:id` |
 | `data_api_season_standings` | 00265 | `/v1/seasons/:id/standings` |
+| `data_api_season_header` | 00267 | the standings 404 check, without the totals scan |
 | `data_api_tournaments` | 00266 | `/v1/tournaments`, `/v1/tournaments/:id` |
 | `data_api_tournament_events` | 00266 | tournament detail, and the event route's ownership check |
 | `data_api_tournament_entrants` | 00266 | tournament detail |
@@ -161,6 +162,12 @@ the Pi's own secrets directory (the two hosts keep different ones).
 - **Verification cache.** Positive results are cached 30 seconds per key hash
   (API.md: a revoked key stops working within 30 seconds), negative results 5
   seconds, at most 1000 entries. Upstream failures are never cached.
+- **Read cache.** Every read RPC is cached 15 seconds by function name and
+  exact arguments, at most 1000 entries (`src/rpc-cache.ts`). Identical calls
+  in flight share one database call, so a burst of the same request costs one
+  scan of the match history rather than one each. The consumer id is always an
+  argument, so one consumer never receives another's refs. Failures are
+  dropped as they settle. Key verification is not routed through it.
 - **Rate limits are per process.** 60 requests a minute per key, and 30 failed
   lookups a minute per client address. The edge proxy is the primary limiter;
   replicas each get their own budget.
