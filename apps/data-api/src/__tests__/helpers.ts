@@ -40,13 +40,21 @@ export interface Harness {
   keys: Map<string, KeyRow>;
   players: ReturnType<typeof playerRow>[];
   failNext: { status: number } | null;
+  /**
+   * Answers for any RPC beyond the three from 00241, keyed by function name.
+   * A function with no entry answers 404 PGRST202, as PostgREST does.
+   */
+  rpcs: Record<string, (body: Record<string, unknown>) => unknown>;
+  /** Makes only this function fail, leaving the others answering. */
+  failFn: { fn: string; status: number } | null;
   close(): Promise<void>;
 }
 
 /**
  * A real node:http server on an ephemeral port, driving the real handler and
  * the real upstream client, with only `fetch` to PostgREST mocked. The mock
- * reproduces the three RPCs from 00241 over in-memory rows.
+ * reproduces the three RPCs from 00241 over in-memory rows; tests answer the
+ * later ones through `rpcs`.
  */
 export async function startHarness(): Promise<Harness> {
   const h = {
@@ -56,6 +64,8 @@ export async function startHarness(): Promise<Harness> {
     keys: new Map<string, KeyRow>(),
     players: [] as ReturnType<typeof playerRow>[],
     failNext: null as { status: number } | null,
+    rpcs: { data_api_active_season: () => [] } as Harness['rpcs'],
+    failFn: null as Harness['failFn'],
   };
 
   const mockFetch: FetchLike = async (input, init) => {
@@ -66,6 +76,9 @@ export async function startHarness(): Promise<Harness> {
       const { status } = h.failNext;
       return new Response(JSON.stringify({ message: 'boom', details: body }), { status });
     }
+    if (h.failFn?.fn === fn) {
+      return new Response(JSON.stringify({ message: 'boom' }), { status: h.failFn.status });
+    }
     const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
     if (fn === 'data_api_verify_key') {
       const row = h.keys.get(body.p_key_hash as string);
@@ -73,6 +86,8 @@ export async function startHarness(): Promise<Harness> {
     }
     if (fn === 'data_api_players') return json(h.players);
     if (fn === 'data_api_player_by_ref') return json(h.players.filter((p) => p.player_ref === body.p_player_ref));
+    const answer = h.rpcs[fn];
+    if (answer) return json(answer(body));
     return new Response('{"code":"PGRST202"}', { status: 404 });
   };
 

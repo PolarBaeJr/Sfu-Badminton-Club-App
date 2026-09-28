@@ -3,7 +3,12 @@
 import { randomBytes } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { ExpectedError } from '@badminton/shared';
-import { DATA_API_KEY_PREFIX, hashDataApiKey } from '@badminton/shared/src/utils/data-api-key';
+import {
+  DATA_API_KEY_PREFIX,
+  DATA_API_SCOPES,
+  hashDataApiKey,
+  type DataApiScope,
+} from '@badminton/shared/src/utils/data-api-key';
 import { createAdminClient } from '../supabase-server';
 import { requireCapability } from './_shared';
 import { logAdminAudit } from '../audit';
@@ -30,24 +35,17 @@ import { runAction, type ActionResult } from '../action-result';
 //
 // EVERY EXPORTED PARAMETER BELOW IS A CLIENT-CONTROLLED POST FIELD. That is not
 // a warning about the UI, it is the shape of a server action: a hand-rolled
-// POST reaches these signatures directly. So neither function takes an actor
+// POST reaches these signatures directly. So no function here takes an actor
 // id, a consumer id, a player_ref, a key, a hash or a prefix. The actor is
 // resolved server-side by requireCapability, the consumer is resolved by name,
 // and the key material is made here.
 
-/**
- * The three scope strings the contract names, and the same three the SQL CHECK
- * `data_api_keys_scope_vocabulary` admits.
- *
- * VALIDATED HERE AS WELL AS THERE, on purpose. The CHECK is the backstop that
- * makes a bad row impossible; this is the validator that makes a bad request a
- * readable refusal instead of a constraint violation surfacing as "Something
- * went wrong". `ratings:history:read` is accepted and backed by nothing today,
- * which API.md states rather than this code pretending the scope is unknown.
- */
-const DATA_API_SCOPES = ['players:read', 'matches:read', 'ratings:history:read'] as const;
-
-type DataApiScope = (typeof DATA_API_SCOPES)[number];
+// SCOPES ARE VALIDATED HERE AS WELL AS BY THE SQL CHECK, on purpose. The CHECK
+// `data_api_keys_scope_vocabulary` (00264) is the backstop that makes a bad row
+// impossible; normaliseScopes is what makes a bad request a readable refusal
+// instead of a constraint violation surfacing as "Something went wrong". Both
+// read the one list in @badminton/shared, which a test asserts against the
+// CHECK.
 
 export interface MintDataApiKeyInput {
   consumerName: string;
@@ -67,6 +65,13 @@ export interface RevokeDataApiKeyInput {
   keyId: string;
   reason?: string | null;
 }
+
+export interface UpdateDataApiKeyScopesInput {
+  keyId: string;
+  scopes: string[];
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Mint a key for a consumer, creating the consumer row if this is the first key
@@ -221,6 +226,74 @@ async function revokeImpl(input: RevokeDataApiKeyInput): Promise<void> {
   revalidatePath('/accounts');
 }
 
+/**
+ * Rewrite the scopes of a live key, so a consumer is upgraded without being
+ * handed a new secret. The service re-reads scopes within its 30-second cache.
+ *
+ * GATED BY THE MINT CAPABILITY, not a new one: changing what a key can read is
+ * the same power as minting a key that can read it.
+ */
+export async function updateDataApiKeyScopes(
+  input: UpdateDataApiKeyScopesInput,
+): Promise<ActionResult<{ scopes: DataApiScope[] }>> {
+  return runAction(() => updateScopesImpl(input));
+}
+
+async function updateScopesImpl(input: UpdateDataApiKeyScopesInput): Promise<{ scopes: DataApiScope[] }> {
+  const actor = await requireCapability('accounts.apikey.mint.write');
+  const adminClient = createAdminClient();
+
+  const keyId = (input.keyId ?? '').trim();
+  if (!UUID_PATTERN.test(keyId)) throw new ExpectedError('No key was named.');
+  const scopes = normaliseScopes(input.scopes);
+
+  const { data: current, error: readError } = await adminClient
+    .from('data_api_keys')
+    .select('id, key_prefix, scopes, revoked_at, expires_at')
+    .eq('id', keyId)
+    .maybeSingle();
+  if (readError) throw new Error(`The key could not be read: ${readError.message}`);
+  const before = current as
+    | { id: string; key_prefix: string; scopes: string[]; revoked_at: string | null; expires_at: string | null }
+    | null;
+  if (!before || before.revoked_at) {
+    throw new ExpectedError('That key is revoked, or no longer exists. Mint a new one instead.');
+  }
+  if (before.expires_at && new Date(before.expires_at).getTime() <= Date.now()) {
+    throw new ExpectedError('That key has expired. Mint a new one instead.');
+  }
+
+  const { data, error } = await adminClient
+    .from('data_api_keys')
+    .update({ scopes })
+    .eq('id', keyId)
+    // A revoke that lands between the read above and this write must win: a
+    // revoked key never has its scopes rewritten.
+    .is('revoked_at', null)
+    .select('id');
+  if (error) throw new Error(`The scopes were not changed: ${error.message}`);
+  if ((data ?? []).length !== 1) {
+    throw new ExpectedError('That key was revoked while you were editing it.');
+  }
+
+  await logAdminAudit(
+    adminClient,
+    {
+      actor_id: actor.id as string,
+      action_type: 'data_api_key_scopes_changed',
+      target_type: 'data_api_key',
+      target_id: before.id,
+      old_value: { key_prefix: before.key_prefix, scopes: before.scopes },
+      new_value: { key_prefix: before.key_prefix, scopes },
+      reason: `${before.key_prefix} scopes set to ${scopes.join(', ')}`,
+    },
+    { keyId: before.id },
+  );
+
+  revalidatePath('/accounts');
+  return { scopes };
+}
+
 // ---------------------------------------------------------------------------
 // Helpers. Not exported: an exported function in a 'use server' module is a
 // POST endpoint, and neither of these is one.
@@ -233,7 +306,7 @@ function normaliseScopes(scopes: string[]): DataApiScope[] {
     throw new ExpectedError(`Not a data API scope: ${bad.join(', ')}`);
   }
   // De-duplicated and put in the contract's order, so two keys granted the same
-  // three scopes store the same array and read the same way on the screen.
+  // scopes store the same array and read the same way on the screen.
   const unique = DATA_API_SCOPES.filter((scope) => wanted.includes(scope));
   if (unique.length === 0) {
     throw new ExpectedError('A key with no scopes can read nothing. Choose at least one.');

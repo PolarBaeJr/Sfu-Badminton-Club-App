@@ -616,6 +616,7 @@ export default async function AccountsPage() {
                   keys={apiKeys}
                   canMint={canMintDataApiKey}
                   canRevoke={canRevokeDataApiKey}
+                  canEditScopes={canMintDataApiKey}
                 />
               )}
             </section>

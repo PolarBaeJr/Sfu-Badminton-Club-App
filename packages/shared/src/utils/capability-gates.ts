@@ -702,6 +702,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'accounts.apikey.mint.write': {
     label: 'Mint a data API key', area: 'accounts', group: null, mode: 'write',
     gate: 'actions/data-api-keys.ts mintDataApiKey',
+    also: ['actions/data-api-keys.ts updateDataApiKeyScopes'],
+    merged: 'Rewriting a live key\'s scopes grants exactly what minting a key with those scopes would, so they are one authority.',
   },
   // REVOKE, NOT DELETE, in the gate as in the key: the action sets `revoked_at`
   // and leaves the row, so who minted what survives the key being turned off.
