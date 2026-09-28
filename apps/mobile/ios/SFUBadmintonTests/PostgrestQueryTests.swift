@@ -1,8 +1,7 @@
 import XCTest
 @testable import SFUBadminton
 
-// Port of PostgrestQueryTest.kt. "reads the member's fees newest first" needs
-// OWN_FEE_COLUMNS from Statement, which lands with the data layer.
+// Port of PostgrestQueryTest.kt.
 final class PostgrestQueryTests: XCTestCase {
     func test_stripsWhitespaceFromASelectExceptInsideQuotes() {
         XCTAssertEqual("id,name,\"a b\"", PostgrestQuery.cleanSelect(" id,  name,\n\"a b\" "))
@@ -24,6 +23,16 @@ final class PostgrestQueryTests: XCTestCase {
         XCTAssertEqual(
             "/rest/v1/players?select=handle%2Cmember_code&user_id=eq.u1",
             PostgrestQuery.select("players", "handle, member_code").eq("user_id", "u1").pathAndQuery(),
+        )
+    }
+
+    func test_readsTheMembersFeesNewestFirst() {
+        XCTAssertEqual(
+            "/rest/v1/club_fees?select=id%2Cfee_type%2Cseason_id%2Ctournament_id%2Cclub_event_id%2Camount_cents%2C" +
+                "paid_at%2Cmethod%2Creference%2Ccreated_at%2Cfee_submissions%28id%2Cstatus%2Creference%2C" +
+                "reject_reason%2Csubmitted_at%29&player_id=eq.p1&order=created_at.desc",
+            PostgrestQuery.select("club_fees", ownFeeColumns).eq("player_id", "p1")
+                .order("created_at", ascending: false).pathAndQuery(),
         )
     }
 

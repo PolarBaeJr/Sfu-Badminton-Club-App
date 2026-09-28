@@ -40,9 +40,19 @@ struct Postgrest: Sendable {
         }
     }
 
-    /// postgrest-js maybeSingle: no row is nil, one is the row, more is an error.
-    func maybeSingleRow(_ query: PostgrestQuery, what: String) async throws -> JSONValue? {
+    /// Rows decoded by `decode`, or a ReadError prefixed with `what`.
+    func list<T>(_ query: PostgrestQuery, what: String, _ decode: (JSONValue) throws -> T) async throws -> [T] {
         let list = try await rows(query, what: what)
+        do {
+            return try list.map(decode)
+        } catch let error as DecodeError {
+            throw ReadError(message: "Could not read \(what): \(error.message)")
+        }
+    }
+
+    /// postgrest-js maybeSingle: no row is nil, one is the row, more is an error.
+    func maybeSingle<T>(_ query: PostgrestQuery, what: String, _ decode: (JSONValue) throws -> T) async throws -> T? {
+        let list = try await list(query, what: what, decode)
         if list.count > 1 { throw ReadError(message: "Could not read \(what): more than one row came back.") }
         return list.first
     }
