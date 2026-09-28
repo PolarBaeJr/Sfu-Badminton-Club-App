@@ -170,8 +170,89 @@ export function challengeQuota(used: number, max: number): ChallengeQuota {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Name + handle
+// Row text
 // ─────────────────────────────────────────────────────────────
+
+export interface RowPerson {
+  id: string;
+  full_name?: string | null;
+  avatar_url?: string | null;
+}
+
+export interface RowParticipant {
+  team_side: string;
+  person: RowPerson | null;
+}
+
+export interface ChallengeRowText {
+  /** "vs A", "vs A & B, with C", or "Awaiting roster" before the other side is set. */
+  title: string;
+  /** Whose avatars lead the row: the other side, or the creator while it is empty. */
+  faces: RowPerson[];
+  /** The mono line under the title, direction first and the date last. */
+  meta: string[];
+}
+
+const nameOf = (p: RowPerson | null | undefined) => p?.full_name?.trim() || 'Unknown';
+
+/**
+ * What one row on /challenges says, by display name only.
+ *
+ * Handles are left out on purpose. The row used to print "Name · @handle" for
+ * every person on it, twice for the creator, and a raw handle is noise in a
+ * list the member scans by face and name. They stay on the detail page and in
+ * challengeSearchKeys, so "@kiera" still finds the row.
+ *
+ * The direction reads from the viewer's side: in doubles the creator can be
+ * the viewer's own partner, and "Challenged you" would then be wrong.
+ */
+export function challengeRowText(input: {
+  viewerId: string;
+  createdBy: string;
+  creator: RowPerson | null;
+  participants: RowParticipant[];
+  type: string;
+  shape: string;
+  rated: boolean;
+  when: string;
+}): ChallengeRowText {
+  const roster = input.participants.filter(
+    (p): p is RowParticipant & { person: RowPerson } => Boolean(p.person),
+  );
+  const youSide = roster.find((p) => p.person.id === input.viewerId)?.team_side;
+  const opponents = roster.filter((p) => p.team_side !== youSide).map((p) => p.person);
+  const teammates = roster
+    .filter((p) => p.team_side === youSide && p.person.id !== input.viewerId)
+    .map((p) => p.person);
+
+  let title = opponents.length > 0 ? `vs ${opponents.map(nameOf).join(' & ')}` : 'Awaiting roster';
+  if (teammates.length > 0) title += `, with ${teammates.map(nameOf).join(', ')}`;
+
+  const faces =
+    opponents.length > 0
+      ? opponents.slice(0, 2)
+      : input.creator && input.creator.id !== input.viewerId
+        ? [input.creator]
+        : [];
+
+  const direction =
+    input.createdBy === input.viewerId
+      ? 'You challenged'
+      : teammates.some((t) => t.id === input.createdBy)
+        ? 'Your partner challenged'
+        : 'Challenged you';
+
+  const type = input.type.replace(/_/g, ' ').trim();
+  const meta = [
+    direction,
+    type ? type.charAt(0).toUpperCase() + type.slice(1) : null,
+    input.shape,
+    input.rated ? 'Rated' : null,
+    input.when,
+  ].filter((m): m is string => Boolean(m));
+
+  return { title, faces, meta };
+}
 
 // ─────────────────────────────────────────────────────────────
 // Which sections a challenge belongs in
