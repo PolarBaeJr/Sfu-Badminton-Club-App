@@ -1,7 +1,8 @@
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { cache } from 'react';
+import { VIEWER_HEADER, readViewer } from './verified-viewer';
 import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
 import { appActorStore } from './app-actor';
@@ -103,15 +104,28 @@ export async function getExecutives(): Promise<{
 // again, and nothing anywhere would say so.
 const PLAYER_SELECT = '*, ratings(*), waiver_acceptances(document, version, accepted_at)';
 
+/** Who the request's session belongs to. The middleware has usually just asked
+ *  GoTrue and forwarded the signed answer (lib/verified-viewer.ts); only when
+ *  it has not (a public path, which the middleware leaves alone) does this pay
+ *  for a getUser() round trip of its own. Just the id, because the id is all
+ *  any caller reads off it. */
+async function verifiedUserId(): Promise<string | null> {
+  const forwarded = await readViewer((await headers()).get(VIEWER_HEADER));
+  if (forwarded) return forwarded;
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return user?.id ?? null;
+}
+
 async function loadViewer() {
   // The native app's user was verified by resolveAppActor. Its client carries
   // the bearer as a global header and has no session, so an arg-less getUser()
-  // on it would find nobody.
+  // on it would find nobody. Checked first: an app request carries no cookie,
+  // so the middleware never forwards an id for one.
   const actor = appActorStore.getStore();
-  const user = actor
-    ? actor.user
-    : (await (await createServerSupabaseClient()).auth.getUser()).data.user;
-  if (!user) return { user: null, player: null };
+  const userId = actor ? actor.user.id : await verifiedUserId();
+  if (!userId) return { user: null, player: null };
+  const user = { id: userId };
 
   // Service role for the full row: migration 00032 revokes blanket SELECT on
   // players, and a column grant denies select('*') even on your own row. This

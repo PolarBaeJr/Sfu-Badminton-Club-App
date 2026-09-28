@@ -12,6 +12,7 @@ import {
   duplicateAuthCookieClears,
 } from '@badminton/shared/src/utils/constants';
 import { getServerSupabaseUrl } from '@badminton/shared/src/utils/supabase-url';
+import { VIEWER_HEADER, signViewer } from '@/lib/verified-viewer';
 
 export async function middleware(request: NextRequest) {
   // Container health probes, before anything else — before the Supabase client
@@ -25,6 +26,11 @@ export async function middleware(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith('/api/health/')) {
     return NextResponse.next();
   }
+
+  // Only ever this middleware's own, minted below. A copy the caller sent could
+  // never verify anyway (see lib/verified-viewer.ts), but dropping it here means
+  // render never spends an HMAC check on one.
+  request.headers.delete(VIEWER_HEADER);
 
   let supabaseResponse = NextResponse.next({ request });
 
@@ -159,6 +165,23 @@ export async function middleware(request: NextRequest) {
       // before finishing setup should still end up checked in, not stranded.
       url.search = authSuffix;
       return finish(NextResponse.redirect(url));
+    }
+  }
+
+  // Hand the verified id to the render that follows, so loadViewer() does not
+  // ask GoTrue the same question again. The request headers a NextResponse
+  // forwards are fixed when it is built, so this needs a fresh one; the old
+  // one's Set-Cookie lines (a token rotated by getUser above) are copied across
+  // or the refresh would be lost.
+  if (user) {
+    const token = await signViewer(user.id);
+    if (token) {
+      request.headers.set(VIEWER_HEADER, token);
+      const forwarded = NextResponse.next({ request });
+      supabaseResponse.headers
+        .getSetCookie()
+        .forEach((c) => forwarded.headers.append('set-cookie', c));
+      supabaseResponse = forwarded;
     }
   }
 
