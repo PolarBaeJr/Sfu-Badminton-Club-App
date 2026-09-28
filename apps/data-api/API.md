@@ -1,6 +1,9 @@
 # SFU Badminton Data API
 
-**Status: DRAFT CONTRACT, version 0. Nothing is live yet.**
+**Status: version 0. Implemented in `apps/data-api` (`/health`, `/v1/players`,
+`/v1/players/{player_ref}`, `/v1/matches`). The reference the service serves at
+`/documentations` describes what the code does; see also "Known gaps" in
+[`README.md`](./README.md).**
 
 This file is the contract. It was written before the service, deliberately, so
 that the field names, the scopes and the error shapes were settled while they
@@ -67,7 +70,7 @@ lowercase hex characters; that is not a promise.
 
 ## Authentication
 
-Every endpoint except `/health` requires a key:
+Every endpoint except `/health` and `/documentations` requires a key:
 
 ```
 Authorization: Bearer <your key>

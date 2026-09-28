@@ -7,6 +7,11 @@ A dependency-free Node 24 service: `node:http`, `node:crypto` and the global
 `fetch`. `package.json` has no runtime dependencies, only TypeScript, vitest and
 `@types/node` for the build and tests.
 
+Consumer-facing documentation is served by the service itself at
+`GET /documentations` (for example `https://api.sfubadminton.com/documentations`):
+one self-contained HTML page, no key, from `src/docs-page.ts`. A test fails when
+a route, scope or error code in `src/server.ts` is missing from it.
+
 ## How it reaches the database
 
 Through PostgREST (Supabase REST), as the Postgres role `data_api_reader` from
