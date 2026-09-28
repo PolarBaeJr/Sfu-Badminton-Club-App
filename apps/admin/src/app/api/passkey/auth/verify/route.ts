@@ -77,6 +77,9 @@ export async function POST(request: Request) {
     .select('id, credential_id, public_key, counter, transports')
     .eq('credential_id', body.credential.id)
     .eq('player_id', player.id)
+    // Two tiers (00051): a passkey added in the members' app never opens the
+    // console. Only one enrolled here does.
+    .eq('enrolled_via', 'admin')
     .maybeSingle();
   if (!stored) {
     const response = NextResponse.json({ error: 'Unknown passkey' }, { status: 400 });

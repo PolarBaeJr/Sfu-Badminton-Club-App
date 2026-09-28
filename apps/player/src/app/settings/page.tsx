@@ -15,6 +15,7 @@ import { AvatarUpload } from '@/components/AvatarUpload';
 import { CalendarFeed } from './calendar-feed';
 import { DataExport } from './data-export';
 import { PasskeyManager } from '@/components/passkey-manager';
+import { PasswordManager } from '@/components/password-manager';
 import { SignOutOtherDevices } from '@/components/sign-out-other-devices';
 import {
   User,
@@ -25,6 +26,7 @@ import {
   Bell,
   BellOff,
   KeyRound,
+  Lock,
   Shield,
   LogOut,
   Info,
@@ -832,6 +834,10 @@ export default function SettingsPage() {
 
           <Section icon={KeyRound} title="Passkeys">
             <PasskeyManager />
+          </Section>
+
+          <Section icon={Lock} title="Password">
+            <PasswordManager />
           </Section>
 
           <Section icon={MessageSquareWarning} title="Help & Feedback">
