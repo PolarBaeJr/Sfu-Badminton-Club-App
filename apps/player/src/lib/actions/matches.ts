@@ -14,6 +14,8 @@ import {
   parseOrThrow,
   ExpectedError,
   dbError,
+  getRulesFor,
+  validateGamesForRules,
   type MatchResultInput,
   type WalkoverReportInput,
 } from '@badminton/shared';
@@ -41,7 +43,7 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
   // player or its ratings; submit_match_result derives participants itself.
   const { data: challenge, error: challengeError } = await supabase
     .from('challenges')
-    .select('id, status, format, challenge_participants(player_id)')
+    .select('id, status, format, games_per_match, points_per_game, challenge_participants(player_id)')
     .eq('id', challengeId)
     .single();
 
@@ -60,6 +62,14 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
     (cp) => cp.player_id === player.id
   );
   if (!isParticipant) throw new ExpectedError('Not a participant');
+
+  // The DB still decides (00236), but judged here against the challenge's own
+  // target and best-of, a bad score reads as a sentence, not a raw RAISE.
+  const check = validateGamesForRules(
+    input.games,
+    getRulesFor(challenge.format, challenge.games_per_match, challenge.points_per_game),
+  );
+  if (!check.ok) throw new ExpectedError(check.message);
 
   // One RPC replaces what used to be three separate writes (match ->
   // participants -> games). Those were non-atomic: a crash between the match

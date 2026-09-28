@@ -591,9 +591,11 @@ export function pointsCap(target: number): number {
   return target + 9;
 }
 
+// A game is played to at most 21. The deuce cap is target + 9, so no game ever
+// runs past 30 (21 caps at 30, 15 at 24, 11 at 20).
 export const CUSTOM_FORMAT_BOUNDS = {
   minGames: 1, maxGames: 7,   // best-of must be odd so a majority exists
-  minPoints: 5, maxPoints: 30,
+  minPoints: 5, maxPoints: 21,
 } as const;
 
 /**
@@ -627,7 +629,7 @@ export function isLegalCustomPoints(pointsPerGame: number): boolean {
 export function customFormatHint(gamesPerMatch: number, pointsPerGame: number): string {
   const { minGames, maxGames, minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
   if (!isLegalCustomGames(gamesPerMatch)) {
-    return `Best of must be an odd number from ${minGames} to ${maxGames} — an even best-of can end level, so it could never be decided.`;
+    return `Best of must be an odd number from ${minGames} to ${maxGames}. An even best-of can end level, so it could never be decided.`;
   }
   if (!isLegalCustomPoints(pointsPerGame)) {
     return `Points per game must be between ${minPoints} and ${maxPoints}.`;

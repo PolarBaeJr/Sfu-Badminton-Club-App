@@ -415,6 +415,19 @@ describe('custom format validation', () => {
     expect(isLegalCustomPoints(21.5)).toBe(false);
   });
 
+  it('plays a game to at most 21', () => {
+    expect(CUSTOM_FORMAT_BOUNDS.maxPoints).toBe(21);
+    expect(isLegalCustomPoints(22)).toBe(false);
+    expect(isLegalCustomPoints(30)).toBe(false);
+    expect(customFormatHint(3, 30)).toContain('Points per game');
+  });
+
+  it('writes its hints without an em dash', () => {
+    for (const [games, points] of [[2, 21], [3, 30], [3, 21], [5, 15]] as const) {
+      expect(customFormatHint(games, points)).not.toContain('\u2014');
+    }
+  });
+
   it('explains what is wrong, naming the offending half of the shape', () => {
     expect(customFormatHint(2, 21)).toContain('odd');
     expect(customFormatHint(3, 99)).toContain('Points per game');

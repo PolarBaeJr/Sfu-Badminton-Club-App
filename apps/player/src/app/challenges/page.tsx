@@ -1,6 +1,6 @@
 import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import {
-  MATCH_FORMAT_LABELS,
+  describeMatchShape,
   formatRelativeTime,
   pickOne,
   CHALLENGE_STATUS_LABEL,
@@ -51,7 +51,7 @@ export default async function ChallengesPage() {
       // challenge lapses or when it is being played — the two things a member
       // opens this screen to find out. handle arrives with 00092 and is rendered
       // beside every name.
-      .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, rated_flag, status, created_at, expires_at, scheduled_date, scheduled_time, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name, handle)))')
+      .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, games_per_match, points_per_game, rated_flag, status, created_at, expires_at, scheduled_date, scheduled_time, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name, handle)))')
       .eq('player_id', player.id)
       // No server-side order: challenge_participants has no timestamp of its own,
       // and the previous `referencedTable: 'challenges'` order sorted *within* the
@@ -84,6 +84,8 @@ export default async function ChallengesPage() {
     created_by: string;
     type: string;
     format: string;
+    games_per_match: number | null;
+    points_per_game: number | null;
     rated_flag: boolean;
     status: string;
     created_at: string;
@@ -203,7 +205,7 @@ export default async function ChallengesPage() {
       >
         <div className="row" style={{ marginBottom: 12, fontSize: 12, flexWrap: 'wrap', gap: 8 }}>
           <span className="tag tag-red">{(c.type || '').toUpperCase()}</span>
-          <span className="tag">{MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS] || c.format}</span>
+          <span className="tag">{describeMatchShape({ match_format: c.format, games_per_match: c.games_per_match, points_per_game: c.points_per_game })}</span>
           {c.rated_flag && <span className="tag tag-gold">RATED</span>}
           <ExpiryChip state={expiry} />
           <span className="mono muted" style={{ marginLeft: 'auto' }}>

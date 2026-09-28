@@ -2,7 +2,7 @@ import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { getCheckinSettings } from '@/lib/checkin-settings';
 import {
   CLUB_TIMEZONE,
-  MATCH_FORMAT_LABELS,
+  describeMatchShape,
   clubToday,
   formatRelativeTime,
   formatTime,
@@ -97,6 +97,8 @@ type MatchRow = {
   played_at: string | null;
   match_type: string;
   format: string;
+  games_per_match: number | null;
+  points_per_game: number | null;
   score_summary: string | null;
   match_participants: MatchParticipantRow[] | null;
 };
@@ -180,7 +182,7 @@ export default async function FeedPage() {
   const riverBase = supabase
     .from('matches')
     .select(`
-      id, played_at, match_type, format, score_summary,
+      id, played_at, match_type, format, games_per_match, points_per_game, score_summary,
       match_participants(team_side, win_flag, rating_delta, post_rating,
         player:players(id, full_name, handle, avatar_url))
     `)
@@ -280,7 +282,7 @@ export default async function FeedPage() {
       // request, supabase-js resolved rather than rejected, and `?? []` turned
       // it into "no pending challenges" for every member. The timestamp this
       // needs is the challenge's own, which is selected below.
-      .select('id, challenge:challenges(id, type, format, created_at, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url))')
+      .select('id, challenge:challenges(id, type, format, games_per_match, points_per_game, created_at, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url))')
       .eq('player_id', player.id)
       .eq('confirmation_status', 'pending')
       .limit(5),
@@ -564,7 +566,7 @@ export default async function FeedPage() {
       const face = mine ? (iWon ? loserPeople[0] : winnerPeople[0]) : winnerPeople[0];
       if (!face) return null;
 
-      const formatLabel = MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS] || m.format;
+      const formatLabel = describeMatchShape({ match_format: m.format, games_per_match: m.games_per_match, points_per_game: m.points_per_game });
       const meta = [
         m.match_type === 'doubles' ? 'Doubles' : 'Singles',
         m.score_summary || formatLabel,
@@ -612,7 +614,7 @@ export default async function FeedPage() {
         at,
         mine: true,
         sentence: `${creator.name} wants to play you`,
-        meta: ['Challenge', MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS] || (c.format as string)]
+        meta: ['Challenge', describeMatchShape({ match_format: c.format as string, games_per_match: c.games_per_match as number | null, points_per_game: c.points_per_game as number | null })]
           .filter(Boolean)
           .join(' · '),
         face: creator,

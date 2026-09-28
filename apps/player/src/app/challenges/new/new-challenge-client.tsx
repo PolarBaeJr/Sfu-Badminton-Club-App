@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Select, Input, Textarea, DatePicker, Button, PlayerPicker } from '@badminton/ui';
-import { previewEloChange, getEventMultiplier } from '@badminton/shared';
+import { previewEloChange, getEventMultiplier, isLegalCustomPoints, customFormatHint } from '@badminton/shared';
 import type { RatingSettings } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
@@ -70,7 +70,7 @@ export default function NewChallengeClient({
   const format = Number(customGames) > 1 ? 'bo3_21' : 'single_21';
   // Checked here as well as by the CHECK constraint, so the form never submits
   // a shape the database will refuse.
-  const pointsInvalid = isCustom && (Number(customPoints) < 5 || Number(customPoints) > 30 || !customPoints);
+  const pointsInvalid = isCustom && !isLegalCustomPoints(Number(customPoints));
   const [opponentId, setOpponentId] = useState(initialOpponentId ?? '');
   const [partnerId, setPartnerId] = useState('');
   const [opponentPartnerId, setOpponentPartnerId] = useState('');
@@ -202,7 +202,7 @@ export default function NewChallengeClient({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!opponentId) { toast('Select an opponent', 'error'); return; }
-    if (pointsInvalid) { toast('Points per game must be between 5 and 30', 'error'); return; }
+    if (pointsInvalid) { toast(customFormatHint(Number(customGames), Number(customPoints)), 'error'); return; }
     setLoading(true);
     try {
       const res = await createChallenge({
@@ -396,9 +396,7 @@ export default function NewChallengeClient({
                   placeholder="21"
                 />
                 <p className="col-span-2 text-xs text-[var(--mute)]">
-                  {pointsInvalid
-                    ? 'Points per game must be between 5 and 30.'
-                    : `A game is won by two clear points, or at ${(Number(customPoints) || 21) + 9}.`}
+                  {customFormatHint(Number(customGames), Number(customPoints))}
                 </p>
             </div>
 

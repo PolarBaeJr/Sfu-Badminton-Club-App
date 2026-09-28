@@ -246,6 +246,16 @@ describe('custom formats (best of X to Y)', () => {
     expect(isLegalGameCount(3, 1, 'bo3_21', 5)).toBe(true);  // best of 5
     expect(isLegalGameCount(2, 1, 'bo3_21', 5)).toBe(false); // nobody clinched
     expect(isLegalGameCount(4, 1, 'bo3_21', 5)).toBe(false); // played past it
+    expect(isLegalGameCount(4, 3, 'bo3_21', 7)).toBe(true);  // best of 7 to the last game
+    expect(isLegalGameCount(4, 0, 'bo3_21', 5)).toBe(false); // best of 5 stops at 3
+    expect(isLegalGameCount(3, 3, 'bo3_21', 7)).toBe(false); // level, nobody clinched
+  });
+
+  it('caps a game to 11 at 20 and a game to 15 at 24', () => {
+    expect(isLegalGameScore(20, 19, 'bo3_21', 1, 11)).toBe(true);
+    expect(isLegalGameScore(21, 19, 'bo3_21', 1, 11)).toBe(false);
+    expect(isLegalGameScore(24, 23, 'bo3_21', 1, 15)).toBe(true);
+    expect(isLegalGameScore(25, 23, 'bo3_21', 1, 15)).toBe(false);
   });
 });
 
