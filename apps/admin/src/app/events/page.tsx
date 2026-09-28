@@ -81,7 +81,9 @@ export default async function ClubEventsPage() {
         }
       />
       <div className="flex flex-col gap-5">
-        <EventTable title="Upcoming" rows={upcoming} taken={taken} empty="Nothing is coming up." />
+        <div data-tour="events-upcoming">
+          <EventTable title="Upcoming" rows={upcoming} taken={taken} empty="Nothing is coming up." />
+        </div>
         <EventTable title="Past" rows={past} taken={taken} empty="No club events have happened yet." />
       </div>
     </div>

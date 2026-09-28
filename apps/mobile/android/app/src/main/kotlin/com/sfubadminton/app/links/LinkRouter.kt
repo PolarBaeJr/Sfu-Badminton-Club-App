@@ -11,7 +11,7 @@ import java.net.URISyntaxException
 // the same port as the build's site URL, and no user info. Anything else on
 // that origin opens in the browser; any other origin is not ours at all.
 
-enum class TabTarget { LEADERBOARD, CHALLENGES, SESSIONS, MY_STATS, MEMBERSHIP }
+enum class TabTarget { FEED, LEADERBOARD, CHALLENGES, MY_STATS, MEMBERSHIP }
 
 sealed interface LinkRoute {
     data class Tab(val tab: TabTarget, val sessionId: String? = null) : LinkRoute
@@ -42,7 +42,8 @@ object LinkRouter {
         return when {
             path == "/leaderboard" -> LinkRoute.Tab(TabTarget.LEADERBOARD)
             path == "/my-stats" -> LinkRoute.Tab(TabTarget.MY_STATS)
-            path == "/sessions" -> LinkRoute.Tab(TabTarget.SESSIONS, query["s"]?.takeIf { UUID.matches(it) })
+            // The web folded the schedule into the feed; /sessions only redirects there.
+            path == "/feed" || path == "/sessions" -> LinkRoute.Tab(TabTarget.FEED, query["s"]?.takeIf { UUID.matches(it) })
             path == "/membership" || path == "/fees" -> LinkRoute.Tab(TabTarget.MEMBERSHIP)
             path == "/challenges" -> LinkRoute.Tab(TabTarget.CHALLENGES)
             path == "/challenges/new" -> LinkRoute.NewChallenge(query["opponent"]?.takeIf { UUID.matches(it) })

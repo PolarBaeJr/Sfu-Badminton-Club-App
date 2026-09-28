@@ -104,6 +104,14 @@ describe('challengeCreateSchema', () => {
       challengeCreateSchema.safeParse({ ...base, opponent_id: 'not-a-uuid' }).success,
     ).toBe(false);
   });
+  it('accepts 21 points per game and a best of 7', () => {
+    expect(challengeCreateSchema.safeParse({ ...base, points_per_game: 21 }).success).toBe(true);
+    expect(challengeCreateSchema.safeParse({ ...base, games_per_match: 7 }).success).toBe(true);
+  });
+  it('rejects a game played to more than 21', () => {
+    expect(challengeCreateSchema.safeParse({ ...base, points_per_game: 22 }).success).toBe(false);
+    expect(challengeCreateSchema.safeParse({ ...base, points_per_game: 30 }).success).toBe(false);
+  });
   it('defaults event_type to rated_challenge', () => {
     const result = challengeCreateSchema.safeParse(base);
     expect(result.success).toBe(true);
@@ -131,14 +139,39 @@ describe('matchResultSchema', () => {
       }).success,
     ).toBe(false);
   });
-  it('rejects more than 3 games', () => {
+  it('rejects more than 7 games', () => {
     expect(
       matchResultSchema.safeParse({
         winner_side: 'a',
-        games: [game, game, game, game],
+        games: Array.from({ length: 8 }, (_, i) => ({ ...game, game_number: i + 1 })),
         completed: true,
       }).success,
     ).toBe(false);
+  });
+  it('accepts a five-game 3-2 result', () => {
+    expect(
+      matchResultSchema.safeParse({
+        winner_side: 'a',
+        games: [
+          { game_number: 1, side_a_score: 21, side_b_score: 15 },
+          { game_number: 2, side_a_score: 15, side_b_score: 21 },
+          { game_number: 3, side_a_score: 21, side_b_score: 19 },
+          { game_number: 4, side_a_score: 18, side_b_score: 21 },
+          { game_number: 5, side_a_score: 21, side_b_score: 17 },
+        ],
+        completed: true,
+      }).success,
+    ).toBe(true);
+  });
+  it('accepts a seven-game 4-3 result', () => {
+    const scores: [number, number][] = [[21, 15], [15, 21], [21, 19], [18, 21], [21, 17], [19, 21], [30, 29]];
+    expect(
+      matchResultSchema.safeParse({
+        winner_side: 'a',
+        games: scores.map(([a, b], i) => ({ game_number: i + 1, side_a_score: a, side_b_score: b })),
+        completed: true,
+      }).success,
+    ).toBe(true);
   });
   it('rejects a negative score', () => {
     expect(
@@ -865,6 +898,21 @@ describe('disputeResolveSchema', () => {
         dispute_id: UUID_A,
         resolution_type: 'denied',
         resolution_note: 'ok',
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects more than 7 edited games', () => {
+    expect(
+      disputeResolveSchema.safeParse({
+        dispute_id: UUID_A,
+        resolution_type: 'edited',
+        resolution_note: 'ok',
+        edited_winner_side: 'a',
+        edited_games: Array.from({ length: 8 }, (_, i) => ({
+          game_number: i + 1,
+          side_a_score: i % 2 === 0 ? 21 : 15,
+          side_b_score: i % 2 === 0 ? 15 : 21,
+        })),
       }).success,
     ).toBe(false);
   });

@@ -34,11 +34,11 @@ const body = (c: TourContext, id: string) => selected(c).find((s) => s.id === id
 
 describe('the member tour steps', () => {
   it('has six steps with every feature on', () => {
-    expect(ids(ctx())).toEqual(['welcome', 'calendar', 'next-session', 'tabs', 'membership', 'settings']);
+    expect(ids(ctx())).toEqual(['welcome', 'calendar', 'next-session', 'challenges', 'membership', 'settings']);
   });
 
   it('drops the session step with sessions off', () => {
-    expect(ids(ctx({ features: off('sessions') }))).toEqual(['welcome', 'calendar', 'tabs', 'membership', 'settings']);
+    expect(ids(ctx({ features: off('sessions') }))).toEqual(['welcome', 'calendar', 'challenges', 'membership', 'settings']);
   });
 
   it('shows the membership step only with fees and membership both on', () => {
@@ -51,29 +51,19 @@ describe('the member tour steps', () => {
     expect(ids(ctx({ features: off('sessions', 'events', 'tournaments') }))).not.toContain('calendar');
   });
 
-  it('gives a pending signup no session step, only the Ranks tab, and no calendar feed', () => {
+  it('gives a pending signup no session, challenge or fees step, and no calendar feed', () => {
     const pending = ctx({ approved: false });
-    expect(ids(pending)).toEqual(['welcome', 'calendar', 'tabs', 'settings']);
-    expect(body(pending, 'tabs')).toBe('Ranks: your singles and doubles ladder.');
+    expect(ids(pending)).toEqual(['welcome', 'calendar', 'settings']);
     expect(body(pending, 'settings')).not.toContain('calendar feed');
   });
 
-  it('drops the tabs step for a pending signup with the leaderboard off', () => {
-    expect(ids(ctx({ approved: false, features: off('leaderboard') }))).not.toContain('tabs');
+  it('drops the challenge step with challenges off, and keeps it for a key holder', () => {
+    expect(ids(ctx({ features: off('challenges') }))).not.toContain('challenges');
+    expect(ids(ctx({ features: off('challenges'), featureAccess: ['challenges'] }))).toContain('challenges');
   });
 
-  it('names only the tabs this member can see', () => {
-    expect(body(ctx({ features: off('challenges') }), 'tabs')).not.toContain('Challenges');
-    expect(body(ctx({ features: off('tournaments', 'events') }), 'tabs')).not.toContain('Events');
-    expect(body(ctx({ features: off('tournaments') }), 'tabs')).toContain('Events');
-  });
-
-  it('drops the tabs step when all four tab features are off', () => {
-    expect(ids(ctx({ features: off('challenges', 'leaderboard', 'tournaments', 'events') }))).not.toContain('tabs');
-  });
-
-  it('keeps a switched-off tab for somebody who holds its key', () => {
-    expect(body(ctx({ features: off('challenges'), featureAccess: ['challenges'] }), 'tabs')).toContain('Challenges:');
+  it('names events and tournaments on the calendar step', () => {
+    expect(body(ctx(), 'calendar')).toMatch(/events and tournaments/);
   });
 
   it('always keeps the two cards', () => {
@@ -84,7 +74,19 @@ describe('the member tour steps', () => {
   });
 
   it('uses the member key', () => {
-    expect(MEMBER_TOUR_KEY).toBe('member_v1');
+    expect(MEMBER_TOUR_KEY).toBe('member_v2');
+  });
+
+  it('visits only the feed, Challenges, Membership and Settings', () => {
+    const hrefs = memberTourSteps(ctx()).flatMap((s) => (s.href ? [s.href] : []));
+    expect(hrefs).toContain('/membership');
+    for (const href of hrefs) expect(['/feed', '/challenges', '/membership', '/settings'], href).toContain(href);
+  });
+
+  it('starts the welcome card where the tour opens, and every later step names its page', () => {
+    const [first, ...rest] = memberTourSteps(ctx());
+    expect(first!.href).toBeUndefined();
+    for (const step of rest) expect(step.href, step.id).toBeDefined();
   });
 });
 
@@ -116,11 +118,15 @@ describe('shouldAutoStart', () => {
   });
 
   it('does not start once the server has it as seen', () => {
-    expect(shouldAutoStart({ ...base, toursSeen: { member_v1: '2026-09-23T00:00:00Z' } })).toBe(false);
+    expect(shouldAutoStart({ ...base, toursSeen: { member_v2: '2026-09-23T00:00:00Z' } })).toBe(false);
   });
 
-  it('starts again for a new version of the tour', () => {
-    expect(shouldAutoStart({ ...base, toursSeen: { exec_v1: '2026-09-23T00:00:00Z' } })).toBe(true);
+  it('starts for the other app\'s tour being seen', () => {
+    expect(shouldAutoStart({ ...base, toursSeen: { exec_v2: '2026-09-23T00:00:00Z' } })).toBe(true);
+  });
+
+  it('starts again for someone who only saw the v1 tour', () => {
+    expect(shouldAutoStart({ ...base, toursSeen: { member_v1: '2026-09-23T00:00:00Z' } })).toBe(true);
   });
 
   it('does not start once this device has it as seen', () => {
@@ -137,7 +143,7 @@ describe('shouldAutoStart', () => {
 
   it('a replay starts anywhere, even when seen, but never behind a gate', () => {
     expect(
-      shouldAutoStart({ ...base, forced: true, pathname: '/settings', localSeen: true, toursSeen: { member_v1: 'x' } }),
+      shouldAutoStart({ ...base, forced: true, pathname: '/settings', localSeen: true, toursSeen: { member_v2: 'x' } }),
     ).toBe(true);
     expect(shouldAutoStart({ ...base, forced: true, blocked: true })).toBe(false);
   });
@@ -158,10 +164,9 @@ describe('the tour selectors still match the markup', () => {
     'month-calendar': 'app/feed/page.tsx',
     'up-next': 'app/feed/page.tsx',
     'next-session': 'app/sessions/session-card.tsx',
-    'settings-chip': 'components/top-bar.tsx',
-    'top-nav': 'components/top-bar.tsx',
-    'tab-bar': 'components/bottom-nav.tsx',
-    'membership-link': 'components/top-bar.tsx',
+    'new-challenge': 'app/challenges/page.tsx',
+    'membership-statement': 'app/membership/member-section.tsx',
+    'settings-notifications': 'app/settings/page.tsx',
   };
 
   it('every data-tour value is on the element expected to carry it', () => {
@@ -177,7 +182,12 @@ describe('the tour selectors still match the markup', () => {
   // The other direction: an anchor no step points at is dead markup, and the
   // next reader will assume something depends on it.
   it('every data-tour anchor in these files is targeted by a step', () => {
-    const files = [...new Set(Object.values(carriers)), 'app/feed/activity-panel.tsx'];
+    const files = [
+      ...new Set(Object.values(carriers)),
+      'app/feed/activity-panel.tsx',
+      'components/top-bar.tsx',
+      'components/bottom-nav.tsx',
+    ];
     for (const file of files) {
       for (const m of src(file).matchAll(/data-tour="([^"]+)"/g)) {
         expect(named, `${file} carries data-tour="${m[1]}" and no step targets it`).toContain(m[1]);

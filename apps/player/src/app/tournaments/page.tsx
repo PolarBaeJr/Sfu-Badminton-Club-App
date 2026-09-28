@@ -17,9 +17,7 @@ import { finishedSeasonIds, seasonPickerOptions, type HistorySeason } from '@/li
 import {
   countEnteredPlayers,
   describeDisciplines,
-  isPodium,
   isUpcoming,
-  ordinalPlacing,
   pickHeroTournament,
   resultMonth,
   soleEnterableEvent,
@@ -54,22 +52,16 @@ type MyEntry = {
   seed_number: number | null;
   status: string;
   final_position: number | null;
-  elo_change: number | null;
   event: NestedEvent | null;
   partner: { id: string; full_name: string; avatar_url: string | null } | null;
   isDoubles: boolean;
 };
 
 // A member's entries are read newest-first and capped rather than fetched
-// whole: nothing on this screen reads the far end of a four-year history, and
-// the cap is also what bounds the headcount query below, which fans out over
-// every event still in the list. Live entries are the newest rows a member has,
-// so ordering by creation date cannot push one of them past the cap.
+// whole: nothing on this screen reads the far end of a four-year history. Live
+// entries are the newest rows a member has, so ordering by creation date cannot
+// push one of them past the cap.
 const ENTRY_FETCH_CAP = 80;
-
-// How many results the rail shows. It is a summary of a record, not the record:
-// past this the column is taller than the screen and nobody reads the bottom.
-const PAST_RESULTS_SHOWN = 8;
 
 // A season id arriving from the URL is checked against this before it is used in
 // a filter. Postgres rejects a malformed uuid with an ERROR rather than an empty
@@ -153,16 +145,16 @@ export default async function TournamentsPage({
     activeId: activeSeason?.id,
   });
 
-  // The club's tournaments, and — separately — everything the member is in.
-  // The member's own history is deliberately NOT season-scoped: it is their
-  // record, and a new season would otherwise wipe the results panel on day one.
+  // The club's tournaments, and separately everything the member is in. The
+  // member's own entries are deliberately NOT season-scoped, so "Current
+  // tournaments" lists every live entry whichever season the picker is on.
   const [tournamentsRes, myEntriesRes, myPairsRes] = await Promise.all([
     scopedCalendar,
     player
       ? supabase
           .from('tournament_participants')
           .select(
-            'id, seed_number, status, final_position, elo_change, ' +
+            'id, seed_number, status, final_position, ' +
             'event:tournament_events(id, event_type, status, tournament:tournaments(id, name, start_date, status))',
           )
           .eq('player_id', player.id)
@@ -201,7 +193,6 @@ export default async function TournamentsPage({
       seed_number: (r.seed_number ?? null) as number | null,
       status: r.status as string,
       final_position: (r.final_position ?? null) as number | null,
-      elo_change: (r.elo_change ?? null) as number | null,
       event: one<NestedEvent>(r.event),
       partner: null,
       isDoubles: false,
@@ -218,10 +209,6 @@ export default async function TournamentsPage({
         seed_number: (r.seed_number ?? null) as number | null,
         status: r.status as string,
         final_position: (r.final_position ?? null) as number | null,
-        // tournament_pairs has no elo_change column — the ladder moves per
-        // PLAYER and the pair is not one. A doubles result therefore shows no
-        // swing rather than a made-up one. See the note by PAST RESULTS.
-        elo_change: null,
         event: one<NestedEvent>(r.event),
         partner,
         isDoubles: true,
@@ -234,30 +221,16 @@ export default async function TournamentsPage({
   const hero = pickHeroTournament(tournaments);
 
   // A finished entry is one the bracket has placed. Everything else that is not
-  // withdrawn is still live for the member, which is what "you are in" means.
+  // withdrawn is still live for the member, which is what "Current tournaments"
+  // lists.
   const liveEntries = myEntries
     .filter((e) => e.final_position === null && occupiesAPlace(e.status))
     .sort((a, b) => (a.event?.tournament?.start_date ?? '').localeCompare(b.event?.tournament?.start_date ?? ''));
-  const pastEntries = myEntries
-    .filter((e) => e.final_position !== null)
-    .sort((a, b) => (b.event?.tournament?.start_date ?? '').localeCompare(a.event?.tournament?.start_date ?? ''));
 
-  const shownPast = pastEntries.slice(0, PAST_RESULTS_SHOWN);
-  const olderPastCount = pastEntries.length - shownPast.length;
-
-  // One round trip for every headcount the screen needs: the hero's field, and
-  // the field size beside each past result. Counting rows here rather than with
-  // an embedded aggregate is what lets withdrawn entries be excluded — the same
-  // filter the server's own capacity check applies.
-  //
-  // Scoped to the results actually RENDERED, not to every result the member
-  // has: this query fans out over every event in the list, so counting events
-  // whose row is never drawn would make a long-standing member's page do the
-  // most work for the least visible reason.
-  const countedEventIds = [
-    ...(hero?.tournament_events ?? []).map((e) => e.id),
-    ...shownPast.map((e) => e.event!.id),
-  ].filter((v, i, a) => a.indexOf(v) === i);
+  // One round trip for the hero's headcount. Counting rows here rather than
+  // with an embedded aggregate is what lets withdrawn entries be excluded: the
+  // same filter the server's own capacity check applies.
+  const countedEventIds = (hero?.tournament_events ?? []).map((e) => e.id);
 
   let entryRows: EntryRow[] = [];
   let pairRows: PairRow[] = [];
@@ -269,23 +242,6 @@ export default async function TournamentsPage({
     entryRows = (pRes.data ?? []) as unknown as EntryRow[];
     pairRows = (prRes.data ?? []) as unknown as PairRow[];
   }
-
-  // How big the field WAS, for a finished event — this feeds "12 PAIRS" /
-  // "24 ENTRIES" under a past placing and nothing else.
-  //
-  // ADDING THE TWO TABLES IS SAFE HERE AND WOULD NOT BE ANYWHERE ELSE. Since
-  // 00102 a doubles event can hold participant rows (members waiting for a
-  // partner), and adding those to a count of pairs mixes people with teams. It
-  // cannot happen on THIS list: assertNobodyLeftUnpaired refuses to generate a
-  // draw while anyone is still unpaired, so an event that reached a
-  // final_position had none — and the ones who withdrew before the draw are
-  // dropped by occupiesAPlace. The doubles term is therefore always zero.
-  //
-  // Do not reuse this for an event still taking entries. doublesDrawSlots is
-  // the figure that means something there, and spotsLeft is what uses it.
-  const fieldSize = (eventId: string) =>
-    entryRows.filter((r) => r.event_id === eventId && occupiesAPlace(r.status)).length +
-    pairRows.filter((r) => r.event_id === eventId && occupiesAPlace(r.status)).length;
 
   // ── The hero card's figures ──────────────────────────────────────────────
   const heroEvents: IndexEvent[] = hero?.tournament_events ?? [];
@@ -354,11 +310,11 @@ export default async function TournamentsPage({
             </h1>
             <p className="ptourn-sub">Draws and the entries you are in.</p>
           </div>
-          {/* THE PICKER MOVES THE CALENDAR AND NOTHING ELSE. "You are in" and
-              "Past results" below read the member's own entries unscoped, on
+          {/* THE PICKER MOVES THE CALENDAR AND NOTHING ELSE. "Current
+              tournaments" below reads the member's own entries unscoped, on
               purpose (see the note above the fan-out), so a season change does
-              not touch either panel. The asymmetry is known and is the owner's
-              to settle: do not close it by scoping those two reads here. */}
+              not touch that panel. The asymmetry is known and is the owner's to
+              settle: do not close it by scoping the entry and pair reads here. */}
           <SeasonPick
             options={seasonPickerOptions(seasons, finishedSeasonIds(seasons), picked?.id ?? null)}
             selectedId={selectedSeason?.id ?? null}
@@ -368,10 +324,9 @@ export default async function TournamentsPage({
       </header>
 
       {/* The river carries what is happening and what the member is in; the rail
-          carries their record and the rest of the calendar. Below 1101px
-          .wide-grid is a single column and the rail unstacks underneath, which
-          is the phone order the screen was designed in: what is open, what you
-          are in, what you have done. */}
+          carries the rest of the calendar. Below 1101px .wide-grid is a single
+          column and the rail unstacks underneath, which is the phone order the
+          screen was designed in: what is open, what you are in, what else is on. */}
       <div className="wide-grid">
         <div className="ptourn-river">
           {/* ── THE OPEN EVENT ─────────────────────────────────────────── */}
@@ -417,7 +372,7 @@ export default async function TournamentsPage({
                   here: seed_number is written when the draw is generated, and an
                   event taking entries has no draw — the cell would read "—" for
                   every member on every open event forever. The seed is shown in
-                  YOU ARE IN instead, which is where it exists.
+                  CURRENT TOURNAMENTS instead, which is where it exists.
 
                   The button navigates rather than entering inline. registerForEvent
                   refuses on five separate grounds (suspension, membership, waiver,
@@ -449,13 +404,13 @@ export default async function TournamentsPage({
             </section>
           )}
 
-          {/* ── YOU ARE IN ─────────────────────────────────────────────── */}
+          {/* ── CURRENT TOURNAMENTS ─────────────────────────────────────── */}
           <section className="ptourn-sec">
-            <div className="ptourn-sec-label">You are in</div>
+            <div className="ptourn-sec-label">Current tournaments</div>
             {liveEntries.length === 0 ? (
               <p className="wide-note ptourn-empty">
-                You are not entered in anything right now. Entering a draw puts it
-                here with your seed and your next opponent.
+                You are not entered in a tournament right now. Entering a draw
+                puts it here with your seed.
               </p>
             ) : (
               liveEntries.map((entry) => (
@@ -466,69 +421,6 @@ export default async function TournamentsPage({
         </div>
 
         <aside className="wide-rail">
-          {/* ── PAST RESULTS ───────────────────────────────────────────── */}
-          <section className="card-base">
-            <div className="wide-cap">Past results</div>
-            {pastEntries.length === 0 ? (
-              <p className="wide-note">
-                Nothing finished yet. A placing appears here once the event you
-                played is finalised.
-              </p>
-            ) : (
-              <div className="ptourn-results">
-                {shownPast.map((entry) => {
-                  const position = entry.final_position!;
-                  const field = fieldSize(entry.event!.id);
-                  return (
-                    <Link
-                      key={`${entry.isDoubles ? 'pair' : 'solo'}-${entry.id}`}
-                      href={`/tournaments/${entry.event!.tournament!.id}`}
-                      className="ptourn-result press"
-                    >
-                      <div
-                        className="ptourn-place mono"
-                        style={{ color: isPodium(position) ? 'var(--gold)' : 'var(--mute)' }}
-                      >
-                        {ordinalPlacing(position)}
-                      </div>
-                      <div className="ptourn-result-body">
-                        <div className="ptourn-result-name">{entry.event!.tournament!.name}</div>
-                        <div className="ptourn-result-sub mono">
-                          {[
-                            resultMonth(entry.event!.tournament!.start_date),
-                            entry.isDoubles ? 'DOUBLES' : 'SINGLES',
-                            field > 0 ? `${field} ${entry.isDoubles ? 'PAIRS' : 'ENTRIES'}` : null,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </div>
-                      </div>
-                      {/* Only singles carries a swing: elo_change lives on
-                          tournament_participants and there is no equivalent on
-                          tournament_pairs, so a doubles row shows nothing rather
-                          than a number that is not the member's. */}
-                      {entry.elo_change !== null && entry.elo_change !== 0 && (
-                        <div
-                          className="ptourn-swing mono"
-                          style={{ color: entry.elo_change > 0 ? 'var(--win)' : 'var(--loss)' }}
-                        >
-                          {entry.elo_change > 0 ? '+' : ''}{entry.elo_change}
-                        </div>
-                      )}
-                    </Link>
-                  );
-                })}
-                {/* Says the record is longer than the card rather than ending
-                    on an arbitrary row and implying that is all of it. */}
-                {olderPastCount > 0 && (
-                  <p className="wide-note">
-                    And {olderPastCount} earlier {olderPastCount === 1 ? 'result' : 'results'}.
-                  </p>
-                )}
-              </div>
-            )}
-          </section>
-
           {/* ── THE REST OF THE CALENDAR ───────────────────────────────── */}
           <section className="card-base">
             {/* "Also on the calendar", NOT "Also this season". The list under

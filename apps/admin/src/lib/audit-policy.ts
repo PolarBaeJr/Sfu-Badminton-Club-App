@@ -132,10 +132,10 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'tournament_checkin_token_rotated',
   'session_checkin_token_rotated',
 
-  // THE DATA API'S KEYS. No RISK_CLASS_PATTERNS prefix matches either name, so
-  // nothing forces these into the required class: they are classified by hand,
-  // the way 'discord_link_forced' above is, and this comment is the only thing
-  // that will remind the next person to do it for a third one.
+  // THE DATA API'S KEYS. No RISK_CLASS_PATTERNS prefix matches any of these
+  // names, so nothing forces them into the required class: they are classified
+  // by hand, the way 'discord_link_forced' above is, and this comment is the
+  // only thing that will remind the next person to do it for a fourth one.
   //
   // Minting is the one act in that panel that MANUFACTURES DURABLE READ ACCESS
   // to club data. A key reads the roster's ratings from outside every gate in
@@ -146,6 +146,9 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   // required for the other half of the same fact: when the access stopped.
   'data_api_key_minted',
   'data_api_key_revoked',
+  // Widening a live key's scopes grants the same durable read access as
+  // minting a new key with them, so it is recorded with the same weight.
+  'data_api_key_scopes_changed',
 
   // CLUB EVENTS (00244). The delete and the removal match the risk patterns and
   // would be forced in anyway. The cancellation matches none, so it is

@@ -5,7 +5,11 @@ import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
 import { parseOrThrow } from '@badminton/shared';
-import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import {
+  createAdminClient,
+  getAuthenticatedConsoleUser,
+  isPasswordOnlyConsoleSession,
+} from '@/lib/supabase-server';
 import { logAdminAudit } from '@/lib/audit';
 import { signPayload, verifyPayload } from '@/lib/passkey/cookie';
 import { consumeChallenge } from '@/lib/passkey/challenge-store';
@@ -33,6 +37,12 @@ export async function POST(request: Request) {
     player = await getAuthenticatedConsoleUser({ skipPasskey: true });
   } catch {
     return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
+  }
+
+  // A password alone does not open the console, so it cannot enrol the
+  // passkey that would. A new exec signs in with an email code first.
+  if (await isPasswordOnlyConsoleSession()) {
+    return NextResponse.json({ error: 'Sign in with an email code to add a console passkey' }, { status: 403 });
   }
 
   let body: z.infer<typeof bodySchema>;

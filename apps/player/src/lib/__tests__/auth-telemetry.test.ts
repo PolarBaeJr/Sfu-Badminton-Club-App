@@ -39,6 +39,20 @@ describe('buildAuthFailureEvent', () => {
     });
     expect(e.extra.message).toBe('rate limited for <email>');
   });
+
+  it('groups the password flows like the others', () => {
+    const signin = buildAuthFailureEvent({ flow: 'password_signin', stage: 'verify', error: 'invalid_credentials' });
+    expect(signin.level).toBe('warning');
+    expect(signin.fingerprint).toEqual(['auth-failure', 'password_signin', 'verify', 'invalid_credentials']);
+    const set = buildAuthFailureEvent({
+      flow: 'password_set',
+      stage: 'update',
+      error: 'reauthentication_needed',
+      extra: { with_nonce: false },
+    });
+    expect(set.tags).toEqual({ auth_flow: 'password_set', auth_stage: 'update', auth_error: 'reauthentication_needed' });
+    expect((set.extra as Record<string, unknown>).with_nonce).toBe(false);
+  });
 });
 
 describe('authErrorCode', () => {

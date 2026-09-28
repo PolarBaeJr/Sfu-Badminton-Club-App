@@ -151,7 +151,33 @@ describe('buildAppleAppSiteAssociation', () => {
     expect(
       buildAppleAppSiteAssociation({
         PASSKEY_IOS_APP_IDS: ' ABCDE12345.com.example.app ,SHORT.com.example.app,ABCDE12345.com.example.app,FGHIJ67890.com.example.other',
-      }),
-    ).toEqual({ webcredentials: { apps: ['ABCDE12345.com.example.app', 'FGHIJ67890.com.example.other'] } });
+      })?.webcredentials,
+    ).toEqual({ apps: ['ABCDE12345.com.example.app', 'FGHIJ67890.com.example.other'] });
+  });
+
+  it('gives applinks the same app ids as webcredentials', () => {
+    const body = buildAppleAppSiteAssociation({ PASSKEY_IOS_APP_IDS: 'ABCDE12345.com.example.app,FGHIJ67890.com.example.other' });
+    expect(body?.applinks.details).toHaveLength(1);
+    expect(body?.applinks.details[0]?.appIDs).toEqual(body?.webcredentials.apps);
+  });
+
+  it('claims exactly the paths the app draws, each with and without a trailing slash', () => {
+    const body = buildAppleAppSiteAssociation({ PASSKEY_IOS_APP_IDS: 'ABCDE12345.com.example.app' });
+    const paths = body?.applinks.details[0]?.components.map((c) => c['/']);
+    const base = [
+      '/leaderboard',
+      '/my-stats',
+      '/sessions',
+      '/membership',
+      '/fees',
+      '/challenges',
+      '/challenges/new',
+      `/challenges/${'?'.repeat(36)}`,
+      `/checkin/${'?'.repeat(48)}`,
+    ];
+    expect(paths).toEqual(base.flatMap((p) => [p, `${p}/`]));
+    expect(body?.applinks.details[0]?.components.every((c) => c.comment.length > 0)).toBe(true);
+    // No session detail page: the app has no screen for one.
+    expect(paths?.some((p) => p.startsWith('/sessions/?'))).toBe(false);
   });
 });

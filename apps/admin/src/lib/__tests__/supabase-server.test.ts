@@ -17,7 +17,13 @@ const state = vi.hoisted(() => ({
   // query itself (enrolled_via = 'admin'), which is why this is a count of
   // admin credentials rather than of all of them.
   adminPasskeyCount: 0,
+  // The console_passkey_grace row (00262): when the 14 days without a console
+  // passkey started. null is "no row".
+  grace: null as { started_at: string } | null,
 }));
+
+const DAY_MS = 86_400_000;
+const daysAgo = (n: number) => new Date(Date.now() - n * DAY_MS).toISOString();
 
 const sentrySetUser = vi.hoisted(() => vi.fn());
 
@@ -43,11 +49,19 @@ vi.mock('@supabase/ssr', () => ({
 // A stub that only models one shape lets a real second filter throw at runtime
 // — which is exactly how this suite went red when the gate learned to narrow
 // on enrolled_via.
+//
+// TABLE-AWARE since 00262: the gate also reads console_passkey_grace with
+// .maybeSingle(). Answering every table with the player row would read as a
+// grace row with no started_at and fail closed, which looks exactly like a
+// real regression.
 vi.mock('@supabase/supabase-js', () => {
-  const chain = (): Record<string, unknown> => {
+  const chain = (table: string): Record<string, unknown> => {
     const self: Record<string, unknown> = {
       eq: () => self,
-      maybeSingle: async () => ({ data: state.player }),
+      maybeSingle: async () =>
+        table === 'console_passkey_grace'
+          ? { data: state.grace, error: null }
+          : { data: state.player },
       // Thenable: `await supabase.from(...).select(...).eq(...).eq(...)`
       then: (resolve: (v: { count: number }) => unknown) =>
         resolve({ count: state.adminPasskeyCount }),
@@ -56,13 +70,14 @@ vi.mock('@supabase/supabase-js', () => {
   };
   return {
     createClient: () => ({
-      from: (_table: string) => ({ select: (_cols: string, _opts?: unknown) => chain() }),
+      from: (table: string) => ({ select: (_cols: string, _opts?: unknown) => chain(table) }),
     }),
   };
 });
 
 vi.mock('@sentry/nextjs', () => ({
   setUser: sentrySetUser,
+  captureException: vi.fn(),
 }));
 
 // Import the module under test AFTER mocks are registered.
@@ -72,6 +87,9 @@ beforeEach(() => {
   state.user = null;
   state.player = null;
   state.adminPasskeyCount = 0;
+  // Inside the window by default, so tests about other things are not also
+  // tests about the grace period.
+  state.grace = { started_at: daysAgo(1) };
   sentrySetUser.mockClear();
 });
 
@@ -109,11 +127,37 @@ describe('getAuthenticatedAdmin', () => {
   // passkey, and again because this server-side check duplicated that decision
   // and was not narrowed alongside it. Both times an exec lost the console with
   // nothing failing in CI, so the two states are pinned here.
-  it('lets an admin with no admin-enrolled passkey through (grace period)', async () => {
+  it('lets an admin with no admin-enrolled passkey through inside the 14-day window', async () => {
     state.user = { id: 'user-1' };
     state.player = { id: 'player-1', role: 'admin' };
     state.adminPasskeyCount = 0;
+    state.grace = { started_at: daysAgo(3) };
     await expect(getAuthenticatedAdmin()).resolves.toEqual(state.player);
+  });
+
+  it('refuses once the 14 days without a console passkey have run out (AUTH-105)', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'player-1', role: 'admin' };
+    state.adminPasskeyCount = 0;
+    state.grace = { started_at: daysAgo(15) };
+    await expect(getAuthenticatedAdmin()).rejects.toThrow('Add a console passkey');
+    await expect(getAuthenticatedAdmin()).rejects.toMatchObject({ code: 'AUTH-105' });
+  });
+
+  it('fails closed when the window has no row (AUTH-103)', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'player-1', role: 'admin' };
+    state.adminPasskeyCount = 0;
+    state.grace = null;
+    await expect(getAuthenticatedAdmin()).rejects.toMatchObject({ code: 'AUTH-103' });
+  });
+
+  it('asks for the passkey, not the window, when one is enrolled', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'player-1', role: 'admin' };
+    state.adminPasskeyCount = 1;
+    state.grace = { started_at: daysAgo(30) };
+    await expect(getAuthenticatedAdmin()).rejects.toThrow('Passkey verification required');
   });
 
   it('requires verification once an admin-enrolled passkey exists', async () => {

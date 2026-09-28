@@ -180,7 +180,7 @@ export function RosterTable({ head, rows, tabs, total, initialQuery = '', note, 
     <div className="space-y-4">
       {/* Search left, tabs right, stacked on a phone — where a 360px field and
           five tabs cannot share a line without one of them scrolling. */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center" data-tour="roster">
         <SearchFilter
           className="w-full md:max-w-[360px]"
           value={query}

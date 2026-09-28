@@ -15,7 +15,7 @@
 // would make that test need an environment.
 //
 // THE PARTITION IS TOTAL, and that is the point. An FK-only scan of the schema
-// is not enough: four tables name a member with no foreign key at all (see
+// is not enough: five tables name a member with no foreign key at all (see
 // NON_FK_PLAYER_TABLES). So the test asserts that EVERY table any migration
 // creates and no migration drops lands in exactly one of four buckets, and
 // names the offenders when one does not. A new table then fails a test instead
@@ -531,6 +531,12 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     disposition: 'project',
     why: 'A queued instruction to strip club roles from a Discord account, included only where that account is the one currently linked to you.',
   },
+  console_passkey_grace: {
+    // A bare `user_id uuid` (the auth user id) with no foreign key (00262).
+    playerColumns: ['user_id'],
+    disposition: 'export',
+    why: 'When you first opened the admin console without a console passkey. The console opens without one for 14 days from then. Only people with console access have a row.',
+  },
   passkey_credentials: {
     playerColumns: ['player_id'],
     disposition: 'project',
@@ -795,6 +801,8 @@ export const NON_FK_PLAYER_TABLES: Record<string, string> = {
     'A bare `user_id uuid` with explicitly no foreign key (00181:42-56), and null for a discoverable-credential login.',
   discord_role_revocations:
     'Keyed on discord_user_id and deliberately carrying no player_id, because the player it used to belong to may not exist any more (00165:111-121).',
+  console_passkey_grace:
+    'A bare `user_id uuid` (the auth user id) with no foreign key (00262), and only for people with console access.',
   tournament_bonus_grants:
     '`subject_id uuid NOT NULL`, "Deliberately not a foreign key" (00188:43-58): a players.id for a rating grant, a tournament_participants.id for a participant credit.',
 };

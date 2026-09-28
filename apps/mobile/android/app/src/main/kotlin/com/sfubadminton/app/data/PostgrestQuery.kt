@@ -1,6 +1,7 @@
 package com.sfubadminton.app.data
 
 import com.sfubadminton.app.net.percentEncode
+import kotlinx.serialization.json.JsonObject
 
 /**
  * A PostgREST read, built the way postgrest-js builds it, so both apps send the
@@ -10,9 +11,13 @@ class PostgrestQuery private constructor(
     val method: String,
     val path: String,
     private val params: List<Pair<String, String>>,
+    /** The JSON an RPC is posted with; null for a read. */
+    val body: String? = null,
 ) {
     fun eq(column: String, value: String) = filter(column, "eq.$value")
     fun gte(column: String, value: String) = filter(column, "gte.$value")
+    fun lt(column: String, value: String) = filter(column, "lt.$value")
+    fun isNull(column: String) = filter(column, "is.null")
     fun notIsNull(column: String) = filter(column, "not.is.null")
 
     /** postgrest-js `in`: deduplicated, with a value quoted when it holds , ( or ). */
@@ -35,10 +40,13 @@ class PostgrestQuery private constructor(
         if (existing < 0) return param("order", term)
         val updated = params.toMutableList()
         updated[existing] = "order" to updated[existing].second + "," + term
-        return PostgrestQuery(method, path, updated)
+        return PostgrestQuery(method, path, updated, body)
     }
 
     fun limit(count: Int) = param("limit", count.toString())
+
+    /** postgrest-js range(from, to) sends offset=from and limit=to-from+1; this is the offset half. */
+    fun offset(count: Int) = param("offset", count.toString())
 
     fun filter(column: String, expression: String) = param(column, expression)
 
@@ -48,7 +56,7 @@ class PostgrestQuery private constructor(
         return path + "?" + params.joinToString("&") { (k, v) -> percentEncode(k) + "=" + percentEncode(v) }
     }
 
-    private fun param(key: String, value: String) = PostgrestQuery(method, path, params + (key to value))
+    private fun param(key: String, value: String) = PostgrestQuery(method, path, params + (key to value), body)
 
     companion object {
         private val RESERVED = Regex("[,()]")
@@ -57,8 +65,9 @@ class PostgrestQuery private constructor(
         fun select(table: String, columns: String): PostgrestQuery =
             PostgrestQuery("GET", "/rest/v1/$table", listOf("select" to cleanSelect(columns)))
 
-        /** An RPC with no arguments: POST with an empty object body. */
-        fun rpc(function: String): PostgrestQuery = PostgrestQuery("POST", "/rest/v1/rpc/$function", emptyList())
+        /** An RPC: POST with its arguments as the body, an empty object when it takes none. */
+        fun rpc(function: String, args: JsonObject = JsonObject(emptyMap())): PostgrestQuery =
+            PostgrestQuery("POST", "/rest/v1/rpc/$function", emptyList(), args.toString())
 
         /** postgrest-js strips whitespace from a select, except inside double quotes. */
         fun cleanSelect(columns: String): String {

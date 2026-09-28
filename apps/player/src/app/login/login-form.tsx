@@ -29,9 +29,11 @@ import {
   parseAuthError,
 } from '@/lib/auth-intent';
 import { sendEmailCode, verifyEmailCode } from '@/lib/email-code-client';
+import { signInWithEmailPassword } from '@/lib/password-client';
 import { AuthCard } from '@/components/auth/auth-card';
 import { CodeStep } from '@/components/auth/code-step';
 import { GoogleIcon } from '@/components/auth/google-icon';
+import { PasswordField } from '@/components/auth/password-field';
 
 // Sign in only. Creating an account lives on /signup, and nothing on this page
 // can create one: the email code is sent with shouldCreateUser: false, Google
@@ -44,6 +46,8 @@ import { GoogleIcon } from '@/components/auth/google-icon';
 // effects and handlers, so the server HTML and the first client render match.
 export function LoginForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
   const [email, setEmail] = useState('');
+  // React state only: never storage, a URL or telemetry.
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -186,6 +190,30 @@ export function LoginForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
       setLoading(false);
       return;
     }
+    await finishSignIn();
+  }
+
+  // Password sign-in. The same form as the code: a typed password makes the
+  // primary button sign in with it, an empty one emails a code.
+  async function handlePasswordLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setNoAccount(null);
+    const result = await signInWithEmailPassword(email, password);
+    if (!result.ok) {
+      const code = authErrorCode(result);
+      // Never the "No account uses that email" notice: GoTrue answers an
+      // unknown email and a wrong password alike, on purpose.
+      if (code === 'AUTH-211') setPassword('');
+      setError(withErrorCode(friendlyAuthError(result.message), code));
+      setLoading(false);
+      return;
+    }
+    await finishSignIn();
+  }
+
+  async function finishSignIn() {
     // An auth user with no player row never finished signing up (an account
     // from before first sign-in created the row). Checked here, not in
     // /auth/post-login: that is a Server Component and cannot clear cookies.
@@ -197,6 +225,7 @@ export function LoginForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
       await signOutThisDevice(supabase.auth);
       setSent(false);
       setCode('');
+      setPassword('');
       setNoAccount('unfinished');
       setLoading(false);
       return;
@@ -211,6 +240,15 @@ export function LoginForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
       sessionStorage.setItem('signup_prefill_email', email);
     } catch {
       // Storage unavailable: /signup just starts empty.
+    }
+  }
+
+  // The same hand-off to /login/forgot. The address only, never the password.
+  function goToForgot() {
+    try {
+      sessionStorage.setItem('forgot_prefill_email', email);
+    } catch {
+      // Storage unavailable: /login/forgot just starts empty.
     }
   }
 
@@ -236,7 +274,7 @@ export function LoginForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
             <div className="page-eyebrow"><span className="bar" /> WELCOME BACK</div>
             <h2>Sign in</h2>
             <div className="page-sub" style={{ marginTop: 6, marginInline: 'auto' }}>
-              Use a passkey, Google, or a 6-digit code we email you.
+              Use a passkey, Google, your password, or a 6-digit code we email you.
             </div>
           </div>
 
@@ -280,7 +318,7 @@ export function LoginForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
 
           <div className="hr-label">or with email</div>
 
-          <form onSubmit={handleSendCode} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <form onSubmit={password ? handlePasswordLogin : handleSendCode} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <label htmlFor="email" className="mono muted" style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase' }}>
               Email
             </label>
@@ -305,12 +343,31 @@ export function LoginForm({ guestWaiversOn }: { guestWaiversOn: boolean }) {
                 style={{ paddingLeft: 38 }}
               />
             </div>
+            {/* Optional, and in the SAME form as the email: the passkey autofill
+                above needs that one email field to stay mounted. */}
+            <PasswordField
+              id="password"
+              value={password}
+              onChange={setPassword}
+              autoComplete="current-password"
+              hint="Leave empty to get a code by email."
+            />
             {error && <div className="alert-danger" role="alert">{error}</div>}
             <button type="submit" disabled={loading} className="btn btn-primary btn-lg signin-cta">
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <Mail size={14} />}
-              Email me a code
+              {loading ? <Loader2 size={16} className="animate-spin" /> : password ? <KeyRound size={14} /> : <Mail size={14} />}
+              {password ? 'Sign in' : 'Email me a code'}
             </button>
+            {password && (
+              <button type="button" onClick={handleSendCode} disabled={loading} className="btn btn-ghost btn-lg signin-alt">
+                <Mail size={14} />
+                Email me a code instead
+              </button>
+            )}
           </form>
+
+          <div className="signin-switch">
+            <Link href={`/login/forgot${suffix}`} onClick={goToForgot}>Forgot password?</Link>
+          </div>
 
           <div className="signin-switch">
             New to the club? <Link href={`/signup${suffix}`}>Create an account</Link>

@@ -7,8 +7,12 @@
 // shape.
 //
 // Dependency-free, so a client component can import it deeply.
+//
+// v2 (1.1.0): both tours were rewritten, so both keys moved on. A v1 value
+// left in someone's tours_seen is harmless; it simply no longer silences the
+// tour.
 
-export const TOUR_KEYS = ['member_v1', 'exec_v1'] as const;
+export const TOUR_KEYS = ['member_v2', 'exec_v2'] as const;
 
 export type TourKey = (typeof TOUR_KEYS)[number];
 
@@ -24,4 +28,12 @@ export function isTourKey(value: unknown): value is TourKey {
  */
 export function tourSeenStorageKey(key: TourKey): string {
   return `sfu-badminton:tour-seen:${key}`;
+}
+
+/**
+ * The sessionStorage key a tab keeps an open tour's place under, so a reload
+ * resumes it. Namespaced per tour for the same shared-origin reason.
+ */
+export function tourProgressStorageKey(key: TourKey): string {
+  return `sfu-badminton:tour-progress:${key}`;
 }

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { get, grant, newKey, playerRow, startHarness, type Harness } from './helpers.js';
 // Literals, not the constants from auth.ts: the contract says 30 seconds, and a
@@ -23,6 +25,78 @@ describe('health', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, version: '0.1.0' });
     expect(h.calls).toHaveLength(0);
+  });
+});
+
+describe('/documentations', () => {
+  it('serves HTML without a key, with the security headers, and never asks the database', async () => {
+    for (const path of ['/documentations', '/documentations/']) {
+      const res = await get(h, path);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+      expect(res.headers.get('cache-control')).toBe('public, max-age=300');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+      const csp = res.headers.get('content-security-policy') ?? '';
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).not.toContain('script-src');
+      expect(csp).not.toContain('unsafe-inline');
+      const body = await res.text();
+      expect(body).toContain('<title>SFU Badminton Data API</title>');
+      // The one stylesheet, hashed here from what was served, is what the CSP allows.
+      const styles = [...body.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]!);
+      expect(styles).toHaveLength(1);
+      expect(body).not.toMatch(/\sstyle=/);
+      expect(body).not.toMatch(/<script/i);
+      const hash = createHash('sha256').update(styles[0]!).digest('base64');
+      expect(csp).toContain(`style-src 'sha256-${hash}'`);
+    }
+    expect(h.calls).toHaveLength(0);
+    const lines = h.logs.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines[0]).toMatchObject({ method: 'GET', path: '/documentations', status: 200 });
+    expect(lines[0]).not.toHaveProperty('key');
+  });
+
+  it('answers HEAD with the headers and no body', async () => {
+    const res = await get(h, '/documentations', undefined, { method: 'HEAD' });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(Number(res.headers.get('content-length'))).toBeGreaterThan(0);
+    expect(await res.text()).toBe('');
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('405s any other method', async () => {
+    const res = await get(h, '/documentations', newKey(), { method: 'POST' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('GET, HEAD');
+    expect(await res.json()).toEqual({ error: 'method_not_allowed' });
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('ignores a key and is not charged to its rate budget', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    for (let i = 0; i < 70; i++) {
+      expect((await get(h, '/documentations', key)).status).toBe(200);
+    }
+    expect(h.calls).toHaveLength(0);
+    expect((await get(h, '/v1/players', key)).status).toBe(200);
+  });
+
+  // Read from server.ts itself, so a route, scope or error code added there
+  // without a line on the page fails here rather than going undocumented.
+  it('documents every route, scope and error code the server has', async () => {
+    const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+    const routes = [...new Set([...source.matchAll(/template: '([^']+)'/g)].map((m) => m[1]!))];
+    const errors = [...new Set([...source.matchAll(/error: '(\w+)'/g)].map((m) => m[1]!))];
+    const scopes = [...new Set([...source.matchAll(/'([a-z]+(?::[a-z]+)*:read)'/g)].map((m) => m[1]!))];
+    expect(routes).toEqual(expect.arrayContaining(['/health', '/documentations', '/v1/players', '/v1/players/:ref', '/v1/matches']));
+    expect(errors).toEqual(expect.arrayContaining(['not_found', 'method_not_allowed', 'unauthorized', 'rate_limited', 'forbidden', 'unavailable']));
+    expect(scopes).toEqual(expect.arrayContaining(['players:read', 'matches:read']));
+
+    const body = await (await get(h, '/documentations')).text();
+    for (const s of [...routes, ...errors, ...scopes]) expect(body, s).toContain(s);
   });
 });
 
@@ -95,7 +169,7 @@ describe('scopes', () => {
     expect(one.status).toBe(403);
   });
 
-  it('403s /v1/matches without matches:read, and answers empty with it', async () => {
+  it('403s /v1/matches without matches:read, and pages an empty history with it', async () => {
     const reader = newKey();
     grant(h, reader, ['players:read']);
     const denied = await get(h, '/v1/matches', reader);
@@ -104,9 +178,17 @@ describe('scopes', () => {
 
     const matches = newKey();
     grant(h, matches, ['matches:read'], '99999999-2222-3333-4444-555555555555');
+    h.rpcs.data_api_matches = () => [];
     const ok = await get(h, '/v1/matches', matches);
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ generated_at: '2027-01-15T08:00:00Z', count: 0, matches: [] });
+    expect(await ok.json()).toEqual({
+      generated_at: '2027-01-15T08:00:00Z',
+      count: 0,
+      limit: 100,
+      offset: 0,
+      next_offset: null,
+      matches: [],
+    });
   });
 });
 
@@ -137,7 +219,7 @@ describe('/v1/players', () => {
       'updated_at',
     ]);
     expect(players[0]!.updated_at).toBe('2026-09-14T04:11:55Z');
-    expect(h.calls.map((c) => c.fn)).toEqual(['data_api_verify_key', 'data_api_players']);
+    expect(h.calls.map((c) => c.fn)).toEqual(['data_api_verify_key', 'data_api_players', 'data_api_active_season']);
     expect(h.calls[1]!.body).toEqual({ p_consumer_id: 'aaaaaaaa-0000-0000-0000-000000000001' });
   });
 

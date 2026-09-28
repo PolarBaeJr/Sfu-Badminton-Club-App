@@ -287,6 +287,12 @@ body {
   min-height: 100dvh;
   background-image: var(--body-grad-1), var(--body-grad-2), var(--body-grad-3);
   background-attachment: fixed;
+  /* A column, so the page below the top bar can take the rest of the screen
+     and keep the footer at the bottom (.page-shell). Everything else that
+     hangs off body is fixed or a full-width block, which a column leaves as
+     it was. */
+  display: flex;
+  flex-direction: column;
 }
 
 /* Neutral, not the brand red: a solid red block over a whole card read as an
@@ -1060,6 +1066,18 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   margin: 0 auto;
   padding: 28px;
   width: 100%;
+}
+/* The layout's <main>: its content takes the spare height, which pushes the
+   footer to the bottom of the screen on a short page. Only the wrapper and
+   the footer are flex items, so a page's own blocks keep normal flow. */
+.page-shell {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.page-shell-content {
+  flex: 1 0 auto;
+  min-width: 0;
 }
 @media (max-width: 980px) {
   .page { padding: 20px 16px; }
@@ -2026,6 +2044,135 @@ html, body { overflow-x: clip; }
   letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--dim);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CHALLENGES (/challenges)
+   The app's centrepiece, so the header carries the one big action and the
+   list is rows, not cards: a hairline-ruled list per section, the same shape
+   as the ladder above. Archived sits behind a <details> so finished history
+   never outranks what is live.
+   ═══════════════════════════════════════════════════════════ */
+
+@media (min-width: 981px) {
+  .chal-header { align-items: center; }
+}
+.chal-new { padding: 12px 20px; font-size: 12px; }
+/* .page-header stacks below 980px and leaves its action row hugging the left;
+   the one thing this screen is for gets the full width under the title. */
+@media (max-width: 980px) {
+  .chal-header > .row { align-self: stretch; }
+  .chal-new { flex: 1; justify-content: center; padding: 14px 20px; }
+}
+
+/* The rules line under the subtitle. Mono with tabular figures: these are
+   quantities read against a limit, and "2 of 3" should not shift as it counts. */
+.chal-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 4px;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mute);
+}
+.chal-summary > * + *::before { content: "·"; margin: 0 8px; color: var(--dim); }
+.chal-quota { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.chal-quota .capacity-bar { display: inline-block; width: 40px; height: 4px; }
+.chal-quota[data-level="warn"] { color: color-mix(in oklab, var(--gold) 75%, var(--ink)); }
+.chal-quota[data-level="full"] { color: var(--red); }
+
+.chal-search { max-width: 360px; }
+.chal-search > div { min-height: 40px; }
+
+.chal-section,
+.chal-archive,
+.chal-empty {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+}
+.chal-section { box-shadow: var(--elev-1); }
+.chal-section[data-accent] { border-color: var(--red-border); }
+.chal-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.chal-section-head .card-title { margin: 0; font-size: 16px; }
+
+.chal-list { display: flex; flex-direction: column; }
+.chal-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  color: inherit;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out-expo);
+}
+.chal-row + .chal-row { border-top: 1px solid var(--line); }
+/* The row asking the reader for an answer. Inset, so it survives the card's
+   overflow clip and costs the row no width. */
+.chal-row[data-awaiting] { box-shadow: inset 3px 0 0 var(--red); }
+@media (hover: hover) {
+  .chal-row:hover { background: var(--surface-2); }
+}
+/* Inset for the same reason: the card clips anything drawn outside the row. */
+.chal-row:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+
+.chal-faces { display: flex; align-items: center; min-width: 44px; }
+.chal-faces > .avatar + .avatar { margin-left: -10px; box-shadow: 0 0 0 2px var(--surface); }
+
+.chal-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.chal-title { font-weight: 600; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+/* Wraps rather than ellipsing: at 390px the line runs past the row, and an
+   ellipsis would cut the date, which is the part read last and wanted. */
+.chal-meta { font-family: var(--mono); font-size: 11px; line-height: 1.4; color: var(--mute); }
+.chal-when { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+
+.chal-end { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.chal-chevron { color: var(--mute); }
+
+.chal-archive-head {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+/* list-style alone does not remove it on iOS Safari. */
+.chal-archive-head::-webkit-details-marker { display: none; }
+.chal-archive-head:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+@media (hover: hover) {
+  .chal-archive-head:hover { background: var(--surface-2); }
+}
+.chal-archive-chevron { color: var(--mute); transition: transform var(--dur-fast) var(--ease-out-expo); }
+.chal-archive[open] .chal-archive-chevron { transform: rotate(90deg); }
+.chal-archive[open] > .chal-list { border-top: 1px solid var(--line); }
+.chal-archive .chal-title { font-weight: 500; color: var(--ink-2); }
+
+@media (max-width: 560px) {
+  .chal-row { gap: 10px; padding: 12px 14px; }
+  .chal-end { flex-direction: column; align-items: flex-end; }
+  .chal-section-head,
+  .chal-archive-head { padding: 12px 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chal-row, .chal-archive-chevron { transition: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -3197,10 +3344,10 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
    nothing above this point is edited.
 
    The screen is three things in one column on a phone: what is open, what you
-   are in, what you have done. On a laptop it borrows the house .wide-grid
+   are in, what else is on. On a laptop it borrows the house .wide-grid
    (1.6fr / 1fr, gap 20px, align-items: start) from the WIDE LAYOUTS block
-   rather than declaring a second two-column grid — the river keeps the first
-   two, the rail takes the third plus the rest of the calendar. There is no
+   rather than declaring a second two-column grid: the river keeps the first
+   two, the rail takes the rest of the calendar. There is no
    width-specific rule below except the one that widens the title, because the
    composition is the same at every size; only the column count changes, and
    .wide-grid already owns that.
@@ -3442,53 +3589,6 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   letter-spacing: .12em;
   color: var(--mute);
   margin-top: 3px;
-}
-
-/* ── Past results ─────────────────────────────────────────── */
-
-.ptourn-results { margin-top: 4px; }
-
-/* Hairline-separated rows, not cards: a result is one line of record and a
-   member reads a column of them at once. */
-.ptourn-result {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 0;
-  border-top: 1px solid var(--line);
-}
-.ptourn-result:first-child { border-top: 0; padding-top: 4px; }
-
-/* Fixed 38px so every placing in the column starts on the same vertical line —
-   the figures are the content here, and a ragged left edge makes them a list of
-   words instead. */
-.ptourn-place {
-  flex: 0 0 38px;
-  font-size: 18px;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-
-.ptourn-result-body { flex: 1; min-width: 0; }
-.ptourn-result-name {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ptourn-result-sub {
-  font-size: 10px;
-  letter-spacing: .08em;
-  color: var(--mute);
-  margin-top: 3px;
-}
-
-.ptourn-swing {
-  flex: 0 0 auto;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── The rest of the calendar ─────────────────────────────── */

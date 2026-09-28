@@ -6,15 +6,21 @@
 // player id (the scope's user is cleared), and no breadcrumbs, because those
 // can carry request URLs from the same page. Sentry still records the browser
 // and OS from the user agent, which is the part this is for.
+//
+// A password must never go in `message` or `extra`. scrubAuthText below only
+// catches emails and 6-digit codes; it cannot recognise a password.
 import * as Sentry from '@sentry/nextjs';
 
 export type AuthFlow =
   | 'passkey_signin'
   | 'passkey_enrol'
   | 'email_code_send'
-  | 'email_code_verify';
+  | 'email_code_verify'
+  | 'password_signin'
+  | 'password_set'
+  | 'password_reauth';
 
-export type AuthStage = 'options' | 'ceremony' | 'verify' | 'send';
+export type AuthStage = 'options' | 'ceremony' | 'verify' | 'send' | 'update';
 
 export type AuthFailure = {
   flow: AuthFlow;

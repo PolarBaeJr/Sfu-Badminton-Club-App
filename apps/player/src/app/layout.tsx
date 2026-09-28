@@ -362,11 +362,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                     the server refuses, and the per-surface notes need those
                     pages to stay reachable. */}
                 <StandingBanner />
-                <main className="page pb-safe-nav">
-                  {isAuthenticated && (
-                    <GroupSwitch isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} featureAccess={featureAccess} />
-                  )}
-                  {children}
+                <main className="page page-shell pb-safe-nav">
+                  {/* The content grows to fill the screen, so the footer sits at
+                      the bottom of a short page instead of halfway up it. */}
+                  <div className="page-shell-content">
+                    {isAuthenticated && (
+                      <GroupSwitch isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} featureAccess={featureAccess} />
+                    )}
+                    {children}
+                  </div>
                   <LegalFooter socials={footerSocials} />
                 </main>
                 <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} features={features} featureAccess={featureAccess} showDiscord={showDiscord} />

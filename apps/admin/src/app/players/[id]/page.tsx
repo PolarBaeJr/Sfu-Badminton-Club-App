@@ -17,7 +17,7 @@ import {
   resolveEntrySeasonId,
   formatMembershipType,
 } from '@badminton/shared';
-import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode, summarizeSeason } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, describeMatchShape, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode, summarizeSeason } from '@badminton/shared';
 import type { SeasonMatchRow } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
@@ -763,9 +763,11 @@ export default async function PlayerDetailPage({
             const m = mp.match as Record<string, unknown> | null;
             if (!m) return [];
             const score = (m.score_summary as string) || '—';
-            const formatLabel =
-              MATCH_FORMAT_LABELS[(m.format as string) as keyof typeof MATCH_FORMAT_LABELS] ||
-              (m.format as string);
+            const formatLabel = describeMatchShape({
+              match_format: m.format as string,
+              games_per_match: m.games_per_match as number | null,
+              points_per_game: m.points_per_game as number | null,
+            });
             const played = day(m.played_at as string | null);
             return [
               {

@@ -4,6 +4,8 @@ import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
 import { verifyPayload } from './passkey/cookie';
+import { isPasswordOnlySession } from './password-session';
+import { consolePasskeyGrace } from './passkey/grace';
 import { AUTH_COOKIE_OPTIONS, ExpectedError } from '@badminton/shared';
 import { getServerSupabaseUrl } from '@badminton/shared';
 import {
@@ -60,10 +62,11 @@ export function createAdminClient() {
 }
 
 // Belt-and-braces mirror of the middleware passkey gate: once a player has
-// enrolled at least one passkey, server actions also require the signed
-// verified-cookie (zero passkeys = grace period, no requirement). The
-// /api/passkey handlers opt out via { skipPasskey: true } — they must work
-// while UNverified, otherwise enrolment/verification would deadlock.
+// enrolled a console passkey, server actions also require the signed
+// verified-cookie. With none, they are allowed for 14 days from the first
+// console visit (lib/passkey/grace.ts, 00262), then refused. The /api/passkey
+// handlers opt out via { skipPasskey: true }: they must work while
+// UNverified, otherwise enrolment/verification would deadlock.
 async function assertPasskeyVerified(
   userId: string,
   playerId: string,
@@ -96,13 +99,35 @@ async function assertPasskeyVerified(
   if (error) {
     Sentry.captureException(error, { tags: { gate: 'assertPasskeyVerified' } });
     throw new ExpectedError(
-      'Cannot verify your passkey enrolment right now — please try again shortly',
+      'Cannot verify your passkey enrolment right now. Please try again shortly.',
       'AUTH-103',
     );
   }
   if ((count ?? 0) >= 1) {
     Sentry.setUser(null);
     throw new ExpectedError('Passkey verification required', 'AUTH-102');
+  }
+
+  // No console passkey: allowed only inside the 14-day window. The middleware
+  // writes the row on the first console visit, so a missing row is an anomaly
+  // and fails closed like the count above.
+  const { data: grace, error: graceError } = await adminClient
+    .from('console_passkey_grace')
+    .select('started_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (graceError || !grace) {
+    Sentry.captureException(graceError ?? new Error('console_passkey_grace row missing'), {
+      tags: { gate: 'assertPasskeyVerified' },
+    });
+    throw new ExpectedError(
+      'Cannot verify your passkey enrolment right now. Please try again shortly.',
+      'AUTH-103',
+    );
+  }
+  const standing = consolePasskeyGrace(grace.started_at, Date.now());
+  if (!standing || standing.expired) {
+    throw new ExpectedError('Add a console passkey in Settings to keep using the console', 'AUTH-105');
   }
 }
 
@@ -271,6 +296,22 @@ export async function requireCapability(
       permits(level, permissions, capability) ? null : denialFor(level, capability),
     options,
   );
+}
+
+// True when this request's session was made with nothing but a password (see
+// password-session). The passkey enrolment routes use it: they are exempt from
+// the middleware gate, so without this a password alone could enrol a console
+// passkey and then open the console with it. Fails closed: a session this
+// cannot read is treated as password-only, and the caller asks for a code.
+export async function isPasswordOnlyConsoleSession(): Promise<boolean> {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) return true;
+    return isPasswordOnlySession(data?.currentAuthenticationMethods);
+  } catch {
+    return true;
+  }
 }
 
 // The bottom rung: anyone with any console access at all, asking no capability

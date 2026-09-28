@@ -47,13 +47,13 @@ const EVENTS: NavGroup<PlayerNavItem, LucideIcon> = {
 
 // No Schedule entry: the schedule is the feed, and /sessions only redirects
 // there. Challenges is a direct link now that it has no group to share.
+// The same order as the phone's tab bar and the native apps: Feed, Leaderboard,
+// Challenges, Events, My stats. Membership has no tab slot, so it comes last here.
 export const DESKTOP_ENTRIES: PlayerNavEntry[] = [
   { kind: 'link', item: FEED },
+  { kind: 'link', item: LEADERBOARD },
   { kind: 'link', item: CHALLENGES },
   { kind: 'group', group: EVENTS },
-  // Two links, not a Stats menu: the ladder and your own numbers are
-  // different places, and each is worth one click.
-  { kind: 'link', item: LEADERBOARD },
   { kind: 'link', item: MY_STATS },
   { kind: 'link', item: MEMBERSHIP },
 ];

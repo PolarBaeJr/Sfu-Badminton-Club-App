@@ -13,8 +13,8 @@
 // "under way" the same event /tournaments is advertising as "entries open".
 //
 // What IS shared: occupiesAPlace and countEnteredPlayers are imported from
-// there rather than re-implemented, so "you are in" on the feed and "You are in"
-// on /tournaments cannot disagree about the same member.
+// there rather than re-implemented, so "you are in" on the feed and "Current
+// tournaments" on /tournaments cannot disagree about the same member.
 
 import type { TournamentEventStatus, TournamentEventType } from '@badminton/shared';
 

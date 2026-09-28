@@ -125,18 +125,12 @@ export const challengeCreateSchema = z.object({
   note: z.string().max(500).optional(),
 });
 
+// A sanity bound only: the deuce cap of the highest target anyone can set (a
+// game to 21 caps at 30). Which scores can actually end a game is
+// isLegalGameScore, judged against that match's own target. Player and admin
+// entry share it now that no target goes above 21.
 const matchGameSchema = z.object({
   game_number: z.number().int().positive(),
-  side_a_score: z.number().int().min(0).max(30),
-  side_b_score: z.number().int().min(0).max(30),
-});
-
-// 30 is the deuce cap of a 21-point game, which is as high as the presets go —
-// but an admin now types the target, and a game to 30 legally reaches 39-37. So
-// admin entry is bounded by the cap of the highest target anyone can ask for.
-// Still only a sanity bound: which scores can actually end a game is
-// isLegalGameScore, judged against that match's own target.
-const adminMatchGameSchema = matchGameSchema.extend({
   side_a_score: z.number().int().min(0).max(pointsCap(CUSTOM_FORMAT_BOUNDS.maxPoints)),
   side_b_score: z.number().int().min(0).max(pointsCap(CUSTOM_FORMAT_BOUNDS.maxPoints)),
 });
@@ -181,7 +175,7 @@ const refineGamesMatchWinner = (
 // take the matchId as a separate argument.
 export const matchResultSchema = z.object({
   winner_side: z.enum(['a', 'b']),
-  games: z.array(matchGameSchema).min(1).max(3),
+  games: z.array(matchGameSchema).min(1).max(CUSTOM_FORMAT_BOUNDS.maxGames),
   completed: z.boolean(),
 }).superRefine((val, ctx) => {
   refineGamesMatchWinner(val.games, val.winner_side, ctx, 'games', 'winner_side');
@@ -467,7 +461,7 @@ export const disputeResolveSchema = z.object({
   resolution_type: z.enum(['accepted', 'edited', 'voided', 'converted_to_casual']),
   resolution_note: z.string().min(2),
   edited_winner_side: z.enum(['a', 'b']).optional(),
-  edited_games: z.array(matchGameSchema).optional(),
+  edited_games: z.array(matchGameSchema).max(CUSTOM_FORMAT_BOUNDS.maxGames).optional(),
 }).superRefine((val, ctx) => {
   if (val.edited_games && val.edited_games.length > 0 && val.edited_winner_side) {
     refineGamesMatchWinner(val.edited_games, val.edited_winner_side, ctx, 'edited_games', 'edited_winner_side');
@@ -498,7 +492,7 @@ export const adminMatchCreateSchema = z.object({
   winner_side: z.enum(['a', 'b']),
   // A best-of-7 is seven games, so the old cap of 3 would have rejected every
   // custom shape longer than the presets.
-  games: z.array(adminMatchGameSchema).min(1).max(CUSTOM_FORMAT_BOUNDS.maxGames),
+  games: z.array(matchGameSchema).min(1).max(CUSTOM_FORMAT_BOUNDS.maxGames),
   admin_note: z.string().max(500).optional(),
 }).superRefine((v, ctx) => {
   // Nobody plays themselves. The two sides were validated only for length, so

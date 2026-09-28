@@ -9,6 +9,8 @@ import {
 } from '@/lib/permissions';
 import { PASSKEY_VERIFIED_COOKIE } from '@/lib/passkey/config';
 import { verifyPayload } from '@/lib/passkey/cookie';
+import { isPasswordOnlySession } from '@/lib/password-session';
+import { consolePasskeyGrace, parseGraceGate } from '@/lib/passkey/grace';
 import {
   AUTH_COOKIE_OPTIONS,
   hostOnlyAuthCookieClears,
@@ -224,9 +226,11 @@ export async function middleware(request: NextRequest) {
         return finish(NextResponse.redirect(url));
       }
 
-      // Passkey gate: once a user has enrolled a passkey, every page needs a
-      // valid signed verified-cookie (zero passkeys = grace period). The
-      // /api/passkey handlers are exempt — they're how you GET verified.
+      // Passkey gate: once a user has enrolled a console passkey, every page
+      // needs a valid signed verified-cookie. With none, the console opens for
+      // 14 days from the first visit (lib/passkey/grace.ts, 00262), then only
+      // /passkey-required, where they add one. The /api/passkey handlers are
+      // exempt: they are how you GET verified.
       //
       // IT USED TO FAIL OPEN. The reasoning was sound as far as it went — the
       // outer catch redirects to /login, and a gate failure there loops for
@@ -246,16 +250,56 @@ export async function middleware(request: NextRequest) {
           const token = request.cookies.get(PASSKEY_VERIFIED_COOKIE)?.value;
           const payload = token ? await verifyPayload(token) : null;
           if (!payload || payload.sub !== user.id) {
-            const { data: hasKeys, error } = await supabase.rpc('has_passkeys', { p_user_id: user.id });
+            // One call answers "do they hold a console passkey" and, if not,
+            // when their window started, writing it on the first visit. It
+            // replaced has_passkeys here; that function stays for rollback.
+            const { data: gateData, error } = await supabase.rpc('console_passkey_grace_start');
             if (error) throw new Error(error.message);
-            if (hasKeys) {
+            const gate = parseGraceGate(gateData);
+            if (!gate) throw new Error('console_passkey_grace_start returned an unexpected shape');
+            if (gate.hasConsolePasskey) {
               const url = request.nextUrl.clone();
               url.pathname = '/unavailable';
               url.search = '';
               url.searchParams.set('next', pathname + request.nextUrl.search);
               return finish(NextResponse.redirect(url));
             }
-            // No enrolled passkeys → grace period, proceed.
+            // No console passkey: the 14-day window, but never for a password.
+            // The member app's password sign-in shares this cookie, and a
+            // password alone must not open the console (see password-session).
+            // Decodes the token getUser() already validated; no network call.
+            // A failure here throws into the catch below, which holds the door.
+            const { data: aal, error: aalError } =
+              await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+            if (aalError) throw new Error(aalError.message);
+            if (isPasswordOnlySession(aal?.currentAuthenticationMethods)) {
+              const url = request.nextUrl.clone();
+              url.pathname = '/login';
+              url.search = '';
+              url.searchParams.set('reason', 'code-required');
+              return finish(NextResponse.redirect(url));
+            }
+            // A console user always gets a row, so a missing start is an
+            // anomaly and the door stays shut.
+            if (!gate.graceStartedAt) throw new Error('console passkey window has no start');
+            const standing = consolePasskeyGrace(gate.graceStartedAt, Date.now());
+            if (!standing) throw new Error('console passkey window start is unreadable');
+            if (standing.expired && pathname !== '/passkey-required') {
+              // JSON for an API call, never a redirect: fetch() follows it
+              // silently and hands the caller HTML (see /api/passkey/login).
+              if (pathname.startsWith('/api/')) {
+                return finish(NextResponse.json(
+                  { error: 'Add a console passkey to keep using the console' },
+                  { status: 403 },
+                ));
+              }
+              const url = request.nextUrl.clone();
+              url.pathname = '/passkey-required';
+              url.search = '';
+              url.searchParams.set('next', pathname + request.nextUrl.search);
+              return finish(NextResponse.redirect(url));
+            }
+            // Inside the window, on any other sign-in method: proceed.
           }
         } catch (err) {
           // console, not Sentry: this file runs in the edge runtime and has no

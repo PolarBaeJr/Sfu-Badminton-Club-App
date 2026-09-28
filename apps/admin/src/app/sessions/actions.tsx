@@ -306,6 +306,7 @@ export function CheckinQrDialog({ sessionId, url, svg }: CheckinQrDialogProps) {
         variant="ghost"
         onClick={() => setOpen(true)}
         aria-label="Check-in QR"
+        data-tour="checkin-qr"
         className="min-h-[44px] px-3"
       >
         <QrCode className="w-4 h-4" />

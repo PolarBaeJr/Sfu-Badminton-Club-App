@@ -640,6 +640,7 @@ export default async function PlayersPage({
       />
 
       {!canRead ? (
+        <div data-tour="roster">
         <Card>
           {/* "You may not see this" and "there is nothing to see" are different
               statements, and an empty roster is the one lie this page could
@@ -653,6 +654,7 @@ export default async function PlayersPage({
             }
           />
         </Card>
+        </div>
       ) : (
         <>
         {/* Remounted per tab (key) so a query typed on one tab cannot carry over

@@ -83,6 +83,12 @@ export const ERROR_CODES = {
     meaning: 'Your role does not allow this.',
     cause: 'The console capability check refused this role for the page or action.',
   },
+  'AUTH-105': {
+    area: 'AUTH',
+    title: 'Console passkey needed',
+    meaning: 'Add a console passkey to keep using the console. You can add one on the page the console sends you to.',
+    cause: 'The 14-day window for using the console without a console passkey has ended (00262).',
+  },
   'AUTH-201': {
     area: 'AUTH',
     title: 'Code already sent',
@@ -138,6 +144,36 @@ export const ERROR_CODES = {
     title: 'Google sign-in could not start',
     meaning: 'Google sign-in could not start. Try again, or use an email code.',
     cause: 'signInWithOAuth returned an error before redirecting to Google.',
+  },
+  'AUTH-210': {
+    area: 'AUTH',
+    title: 'Wrong email or password',
+    meaning: 'That email and password do not match. Try again, or sign in with an email code.',
+    cause: 'The password grant was refused (invalid_credentials). GoTrue gives the same answer for an unknown email.',
+  },
+  'AUTH-211': {
+    area: 'AUTH',
+    title: 'Email not confirmed',
+    meaning: 'This email is not confirmed yet. Sign in with an email code to confirm it.',
+    cause: 'The password grant was refused because the email was never confirmed (email_not_confirmed).',
+  },
+  'AUTH-212': {
+    area: 'AUTH',
+    title: 'Password not accepted',
+    meaning: 'That password was not accepted. Choose a longer or less common one.',
+    cause: 'The password is too short or too long, or the auth server refused it (weak_password), for example from a breach list.',
+  },
+  'AUTH-213': {
+    area: 'AUTH',
+    title: 'Confirmation needed',
+    meaning: 'Changing your password needs the confirmation code we email you.',
+    cause: 'updateUser refused the password change without a valid nonce (reauthentication_needed or reauthentication_not_valid).',
+  },
+  'AUTH-214': {
+    area: 'AUTH',
+    title: 'Password could not be saved',
+    meaning: 'Your password could not be saved. Try again in a moment.',
+    cause: 'updateUser failed setting a password with no more specific error.',
   },
 
   'ACC-000': {

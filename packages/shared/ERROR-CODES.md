@@ -21,6 +21,7 @@ had no code of its own, and the digits are the digest Next printed in the log.
 | `AUTH-102` | Passkey check needed | Confirm with your passkey, then try again. | The console passkey step-up gate refused: this session has not verified a passkey. |
 | `AUTH-103` | Passkey status unknown | We could not confirm your passkey setup. Try again in a moment. | The passkey enrolment lookup failed, so the step-up gate failed closed. |
 | `AUTH-104` | Not allowed | Your role does not allow this. | The console capability check refused this role for the page or action. |
+| `AUTH-105` | Console passkey needed | Add a console passkey to keep using the console. You can add one on the page the console sends you to. | The 14-day window for using the console without a console passkey has ended (00262). |
 | `AUTH-201` | Code already sent | A code was sent to this email moments ago. Check your inbox. | The auth server per-address email cooldown (over_email_send_rate_limit). |
 | `AUTH-202` | Too many attempts | Too many attempts. Wait a minute and try again. | A request rate limit at the auth server or the edge (over_request_rate_limit). |
 | `AUTH-203` | Code expired or wrong | That code has expired or is not right. Ask for a new one. | The auth server rejected the one-time code (otp_expired). |
@@ -30,6 +31,11 @@ had no code of its own, and the digits are the digest Next printed in the log.
 | `AUTH-207` | Sign-in blocked | This account cannot sign in. Contact an exec. | The auth server refused a banned user (user_banned). |
 | `AUTH-208` | Passkey sign-in failed | Signing in with your passkey did not work. Try again, or use an email code. | The passkey ceremony was cancelled or its server-side verification failed. |
 | `AUTH-209` | Google sign-in could not start | Google sign-in could not start. Try again, or use an email code. | signInWithOAuth returned an error before redirecting to Google. |
+| `AUTH-210` | Wrong email or password | That email and password do not match. Try again, or sign in with an email code. | The password grant was refused (invalid_credentials). GoTrue gives the same answer for an unknown email. |
+| `AUTH-211` | Email not confirmed | This email is not confirmed yet. Sign in with an email code to confirm it. | The password grant was refused because the email was never confirmed (email_not_confirmed). |
+| `AUTH-212` | Password not accepted | That password was not accepted. Choose a longer or less common one. | The password is too short or too long, or the auth server refused it (weak_password), for example from a breach list. |
+| `AUTH-213` | Confirmation needed | Changing your password needs the confirmation code we email you. | updateUser refused the password change without a valid nonce (reauthentication_needed or reauthentication_not_valid). |
+| `AUTH-214` | Password could not be saved | Your password could not be saved. Try again in a moment. | updateUser failed setting a password with no more specific error. |
 
 ## ACC: Account standing
 

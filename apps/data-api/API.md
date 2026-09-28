@@ -1,6 +1,11 @@
 # SFU Badminton Data API
 
-**Status: DRAFT CONTRACT, version 0. Nothing is live yet.**
+**Status: version 0. Implemented in `apps/data-api`: roster, match history,
+head-to-head, per-season records, rating history, seasons and standings,
+tournaments and draws, and the schedule (18 routes, listed under "Endpoints").
+The reference the service serves at `/documentations` describes what the code
+does, route by route and field by field; see also "Known gaps" in
+[`README.md`](./README.md).**
 
 This file is the contract. It was written before the service, deliberately, so
 that the field names, the scopes and the error shapes were settled while they
@@ -18,13 +23,17 @@ Base URL, once live:
 
 ## What this API is for
 
-Predicting the outcome of a challenge between two club members. That is the only
-use case it was designed around, and the shape reflects it.
+Predicting the outcome of a challenge between two club members was the use case
+it was designed around. It now also serves the history, seasons, tournaments and
+schedule an official club data pipeline needs, under the same privacy rules.
 
 ### What it deliberately does not carry
 
 No names, emails, Discord handles, phone numbers, avatars, student numbers or
-member codes.
+member codes, and no free text written by or about a member: no notes, no
+walkover or suspension reasons, no pair names, no court labels. Every mention of
+a player is an object, `{"player_ref": "..."}`, never a bare string, so a
+future identity scope could add fields to it without changing any shape.
 
 Not by omission, and the precise claim is worth stating honestly rather than
 overstating. Computing a `player_ref` requires reading a member's internal id,
@@ -33,8 +42,10 @@ What IS structurally true, and what migration 00241 asserts as a condition of
 applying at all, is this: **the database role the service connects as holds no
 grant that reaches any identifier column.** It cannot select from `players`, it
 cannot select the columns of `players`, and it cannot select the internal view
-the feed is built from. It holds EXECUTE on two functions and nothing else, and
-those two functions return a hash where an id went in.
+the feed is built from. It holds EXECUTE on the `data_api_*` read functions
+(00241, 00265, 00266) and nothing else, and every one of them returns a hash
+where an id went in. The internal helpers those functions share, including the
+one gate every match passes through, are granted to nobody.
 
 The remaining hole, named rather than hidden: a service configured with the
 Supabase **service role key** bypasses every one of those grants, because that
@@ -57,7 +68,9 @@ key into that page. The salt stays on the club's side, so:
 - The same player is the same `player_ref` across every row and every request,
   which is all a model needs.
 - Two different consumers see different `player_ref` values for the same person,
-  so datasets from separate keys cannot be cross-joined.
+  so datasets pulled by different consumers cannot be cross-joined. Keys of the
+  SAME consumer share its salt and see the same refs.
+- Matches are identified the same way, by a per-consumer `match_ref`.
 - Nobody outside the club can turn a `player_ref` back into a person.
 
 Treat `player_ref` as an opaque string. Do not parse it. Today it is 64
@@ -67,7 +80,7 @@ lowercase hex characters; that is not a promise.
 
 ## Authentication
 
-Every endpoint except `/health` requires a key:
+Every endpoint except `/health` and `/documentations` requires a key:
 
 ```
 Authorization: Bearer <your key>
@@ -80,51 +93,130 @@ it, it gets revoked and you get a new one.
 ### Scopes
 
 A key carries only the scopes it was granted. A key is not allowed everything by
-default; it is allowed nothing by default.
+default; it is allowed nothing by default. One key may carry all six, and the
+console has an "All read scopes" button for exactly that. An exec can change
+the scopes of a live key without reissuing it.
 
 | Scope | Grants |
 |---|---|
-| `players:read` | player refs, ratings and aggregate counts |
-| `matches:read` | individual match results, once they exist |
-| `ratings:history:read` | rating movement over time, once recorded |
+| `players:read` | the roster: player refs, lifetime ratings and counters |
+| `matches:read` | match history, head-to-head, per-season records |
+| `ratings:history:read` | per-player rating history |
+| `seasons:read` | seasons, season totals, season standings |
+| `tournaments:read` | tournaments, events, entrants, draws |
+| `schedule:read` | club sessions and club events, counts only |
 
-For win-rate prediction you want `players:read` today, and `matches:read` as
-match data accumulates.
-
-`ratings:history:read` is **accepted and empty**. A key may carry it, and it is
-in the database's own list of valid scopes, but nothing in the club's system
-journals a rating change per match, so there is no history to return. It
-answers with an empty history rather than a `403`, because the scope is granted;
-what is missing is the data, not the permission. See the honesty note below.
+A correction to earlier versions of this file: `ratings:history:read` was
+described as "accepted and empty" because nothing journals a rating change. That
+was wrong. Every club match participant row stores the rating after the match
+and the change, and every rated tournament match stores before, after and change
+per player. 00265 serves it.
 
 ### Revocation
 
-A revoked key stops working within 30 seconds. Verification results are cached
-briefly so that a busy consumer does not cause a database read per request.
+A revoked key, or a scope change, takes effect within 30 seconds. Verification
+results are cached briefly so that a busy consumer does not cause a database
+read per request.
 
 ---
 
 ## Endpoints
 
-### `GET /health`
+Every route answers `GET` only. Path values: `:ref` and `:other_ref` are
+`player_ref`s, `:match_ref` a `match_ref`, `:id` and `:event_id` uuids. A path
+value that is malformed is a `404` without a database call.
 
-Unauthenticated. For uptime checks.
+| Route | Scope | Parameters |
+|---|---|---|
+| `/health` | none | none |
+| `/documentations` | none | none |
+| `/v1/players` | `players:read` | none (query string ignored) |
+| `/v1/players/:ref` | `players:read` | none (query string ignored) |
+| `/v1/players/:ref/matches` | `matches:read` | as `/v1/matches`, minus `player` |
+| `/v1/players/:ref/vs/:other_ref` | `matches:read` | `type`, `season` |
+| `/v1/players/:ref/seasons` | `matches:read` | none |
+| `/v1/players/:ref/ratings` | `ratings:history:read` | `type`, `season`, `since`, `until`, `limit`, `offset` |
+| `/v1/matches` | `matches:read` | `season`, `since`, `until`, `player`, `opponent`, `type`, `source`, `rated`, `status`, `updated_since`, `limit`, `offset` |
+| `/v1/matches/:match_ref` | `matches:read` | none |
+| `/v1/seasons` | `seasons:read` | none |
+| `/v1/seasons/:id` | `seasons:read` | none |
+| `/v1/seasons/:id/standings` | `seasons:read` | none |
+| `/v1/tournaments` | `tournaments:read` | `season` |
+| `/v1/tournaments/:id` | `tournaments:read` | none |
+| `/v1/tournaments/:id/events/:event_id` | `tournaments:read` | none |
+| `/v1/sessions` | `schedule:read` | `from`, `to` |
+| `/v1/events` | `schedule:read` | `from`, `to` |
 
-```json
-{ "ok": true, "version": "0.1.0" }
-```
+The response shape of every route, with examples, is on the served
+`/documentations` page. The rules that matter for modelling are below.
+
+### Query parameters
+
+A route that takes parameters refuses an unknown or repeated one, and a value
+that does not parse, with `400 {"error":"bad_request","parameter":"<name>"}`.
+Timestamps (`since`, `until`, `updated_since`, `from`, `to`) must be UTC and end
+in `Z`. `until` must be after `since`. `opponent` on `/v1/matches` needs
+`player`. `status` is `final` (the default: everything except voided), `voided`
+or `all`. `limit` is 1 to 500 (default 100), `offset` 0 to 100000.
+
+The schedule window defaults to the next 30 days; one bound alone gets 30 days
+on its other side; wider than 366 days, or `to` not after `from`, is a `400`
+naming `to`.
+
+### Paging, and how to sync
+
+Paged responses carry `count`, `limit`, `offset` and `next_offset` (`null` on
+the last page). Offset paging over a set that changes between requests can skip
+or repeat rows: fine for browsing, wrong for syncing.
+
+**To sync, use `updated_since`.** `/v1/matches?status=all&updated_since=<t>`
+is ordered by `updated_at`, oldest first. Store the largest `updated_at` seen
+and pass it next time. A voided or corrected match comes back with a newer
+`updated_at`. A match that STOPS being published (a player opted out, a season
+was hidden) does not come back as a tombstone; rebuild from scratch now and then
+to drop those. A tournament match's `updated_at` is the later of its row change
+and its result entry, because that table has no update trigger.
+
+### Matches
+
+A match object carries `match_ref`, `source` (`club` or `tournament`),
+`status`, `counts_toward_stats`, `played_at`, `updated_at`, `season`, `type`,
+`kind`, `rated`, `format`, `games_per_match`, `points_per_game`, `walkover`,
+`winner_side`, `score_summary`, `games` and `sides`, plus `tournament` (round,
+phase, event) for a tournament match. Each side is a list of
+`{player_ref, won, rating: {before, after, delta} | null, points_scored,
+points_allowed, games_won, games_lost}`. A voided match keeps its result but its
+`rating` is `null`, because the change was reversed.
+
+`counts_toward_stats` is `true` only for a played, non-voided result (club:
+confirmed and not a walkover; tournament: completed). Every derived record in
+the API counts only those.
+
+### Tournament draws
+
+A draw slot that is disputed, or that has a player who fails the history test
+below, is **withheld**: it keeps its place in the bracket (`round_number`,
+`bracket_position`, `winner_to`, `loser_to`) with `"withheld": true` and
+`sides`, `winner_side` and `games` all `null`. The bracket's shape survives; who
+played does not. Entrants with an unpublished player are left out of the
+entrant list, and a pair needs both players published.
 
 ### `GET /v1/players`
 
-Requires `players:read`.
-
-Every member with a rating who is in the feed's population, one object each.
-See "who is in the feed" below: it is not the same set as the club's public
-leaderboard, and it is not the same as the club's membership.
+Every member on the roster, one object each, with lifetime figures. See "who is
+in the feed" below: it is not the same set as the club's public leaderboard,
+and it is not the same as the club's membership.
 
 ```json
 {
-  "season": { "name": "Fall 2026", "start_date": "2026-09-01" },
+  "season": {
+    "id": "7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93",
+    "name": "Fall 2026",
+    "term": "fall",
+    "year": 2026,
+    "start_date": "2026-09-01",
+    "end_date": "2026-12-15"
+  },
   "generated_at": "2026-09-19T22:14:03Z",
   "count": 39,
   "players": [
@@ -146,13 +238,8 @@ leaderboard, and it is not the same as the club's membership.
 }
 ```
 
-### `GET /v1/players/{player_ref}`
-
-Requires `players:read`. One player, same object shape. `404` if unknown.
-
-### `GET /v1/matches`
-
-Requires `matches:read`. **Returns an empty list today. See the honesty note.**
+`/v1/players/:ref` is one such object with no wrapper, `404` if the ref is not
+on the roster.
 
 ---
 
@@ -169,7 +256,9 @@ Requires `matches:read`. **Returns an empty list today. See the honesty note.**
 
 **The `season` block is context, and nothing else.** It reports the club's
 currently active season so you know roughly when a pull was taken. The field is
-`start_date`, which is what the column is called; there is no `started_on`.
+`start_date`, which is what the column is called; there is no `started_on`. It
+is `null` when no season is active, and also when it could not be read, because
+the roster is still worth serving without it.
 
 **The figures are LIFETIME, not season-scoped.** This is the trap in the block
 above and it is worth reading twice. A rating row carries no season at all, so
@@ -199,20 +288,38 @@ by subtracting.
 ## Who is in the feed
 
 Do not treat `count` as the club's membership, and do not compare it against
-any figure on the club's public site expecting them to agree. Four conditions
-decide whether a member appears, and two of them are privacy controls rather
-than filters:
+any figure on the club's public site expecting them to agree.
+
+**There are two tests, on purpose.**
+
+The **roster test** decides `/v1/players`, `/v1/players/:ref` and season
+standings. Four conditions decide whether a member appears, and two of them
+are privacy controls rather than filters:
 
 - they are an active member, and
 - their account is neither awaiting approval nor suspended, and
 - **they have not asked to be kept off published rankings**, and
 - **they have not requested deletion of their account.**
 
-The club's public leaderboard applies the first three. It does **not** apply the
-fourth, because a deletion request is not a leaderboard setting. This feed
-applies all four, and it applies the fourth from the moment the request is made
-rather than when the club's purge next runs, because the purge anonymises the
-record rather than erasing it and the ratings survive it.
+The **history test** decides every match, rating-history, head-to-head and
+per-season route. It keeps the two privacy controls and the approval check (not
+opted out, no deletion request, not awaiting approval) and drops "active" and
+"not suspended", because a former member's past results are still the club's
+history and their opponents' records would be wrong without them. So a ref can
+appear in a match while `/v1/players/:ref` answers `404`.
+
+The club's public leaderboard applies the first three roster conditions. It
+does **not** apply the fourth, because a deletion request is not a leaderboard
+setting. This feed applies the deletion request everywhere, from the moment it
+is made rather than when the club's purge next runs, because the purge
+anonymises the record rather than erasing it and the ratings survive it.
+
+**One gate for every match.** A club or tournament match is published only when
+it is final (confirmed, completed, a walkover, or voided), it is not a bye, its
+tournament is past the draft stage, its season is not hidden, and **every**
+player in it passes the history test. A match with even one unpublished player
+is dropped whole, never served with a gap. Every route that counts matches reads
+through the same gate, so figures derived from different routes agree.
 
 So the feed's population is the leaderboard's population minus anyone with a
 deletion request outstanding. The two legitimately differ, neither is wrong, and
@@ -225,39 +332,36 @@ two pulls simply stops appearing, with no tombstone and no notice.
 
 ---
 
-## The honesty note, read this before modelling
+## Reconciliation, read this before modelling
 
-At the time of writing, the club database holds **three matches, none of them
-rated**, and all three belong to a test season that has since been retired. The
-current season has **zero** matches.
+**Derived figures will not equal the lifetime counters.** `/v1/players`
+carries the club's own running counters (`*_wins`, `*_losses`,
+`*_matches_played`), kept by its rating system. Everything this API derives
+(head-to-head, per-season records, standings records, season totals) is counted
+from published matches only. The two differ whenever a match was dropped by the
+gate, whenever a season was hidden, and for walkovers, which the counters and
+the derived records treat differently. Neither is wrong.
 
-Concretely, for anyone building a predictor:
+**The history may be thin.** The club started recording rated matches recently,
+and matches in hidden seasons (including a retired test season) are never
+served. Check how much history there is before fitting anything to it.
 
-- Every `*_wins`, `*_losses` and `*_matches_played` field is `0`. They are
-  correct, not broken. There is simply nothing to count yet.
-- `GET /v1/matches` returns an empty list.
-- **There is no historical training data.** A model cannot be fitted on club
-  results today.
+**Rating history does not always chain.** Rated matches and tournament
+placement bonuses are in it; rating changes the club made by hand are not, so
+one row's `after` need not equal the next row's `before`. It does give each
+player's rating at the time of every rated match, which is the feature a model
+most often wants.
 
-- `ratings:history:read` is accepted and returns an empty history, for the same
-  reason: nothing journals a rating change per match, so there is no series to
-  return even for a key that carries the scope.
-
-What does exist is a current rating for every member in the feed. The standard
-starting point for "who wins when A challenges B" is the rating difference,
-which needs no history:
+The standard starting point for "who wins when A challenges B" is the rating
+difference, which needs no history:
 
 ```
 P(A beats B) = 1 / (1 + 10 ** ((elo_B - elo_A) / 400))
 ```
 
-That is a reasonable baseline now, and it becomes calibratable against real
-outcomes once matches accumulate. Treat anything fancier as unvalidated until
-there is something to validate against.
-
-One further limit worth knowing: the club does **not** journal rating changes
-per match, so Elo-at-the-time-of-a-match cannot be reconstructed for past
-matches. If a model wants that feature, it has to be captured going forward.
+The match history lets you calibrate that baseline against real outcomes.
+Treat anything fancier as unvalidated until there is enough history to validate
+it.
 
 ---
 
@@ -265,13 +369,17 @@ matches. If a model wants that feature, it has to be captured going forward.
 
 | Status | Meaning |
 |---|---|
+| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it |
 | `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. |
 | `403` | valid key, but it lacks the scope for this endpoint |
-| `404` | unknown player ref, or no such route |
+| `404` | no such route, or a ref or id in the path that is malformed, unknown or not published |
+| `405` | a method other than `GET` |
 | `429` | rate limited |
+| `503` | the club's database could not be reached |
 
 ```json
 { "error": "forbidden", "detail": "this key does not carry players:read" }
+{ "error": "bad_request", "parameter": "since" }
 ```
 
 ---
@@ -280,13 +388,14 @@ matches. If a model wants that feature, it has to be captured going forward.
 
 A per-key limit applies; `429` means slow down. The dataset changes slowly, so
 polling every few minutes buys nothing. Pull `/v1/players` on a schedule
-measured in hours and cache it.
+measured in hours and cache it, and keep match history in sync with
+`updated_since` rather than re-reading it.
 
 ---
 
 ## Versioning
 
-The `/v1` prefix is the contract. Within it, **new fields may be added** and
+The `/v1` prefix is the contract. Within it, **new fields and routes may be added** and
 existing fields will not be removed or change meaning. Parse defensively and
 ignore fields you do not recognise. A breaking change becomes `/v2`.
 

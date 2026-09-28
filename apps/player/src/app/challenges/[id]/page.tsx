@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
-import { MATCH_FORMAT_LABELS, formatRelativeTime, pickOne } from '@badminton/shared';
+import { describeMatchShape, formatRelativeTime, pickOne } from '@badminton/shared';
 import { notFound, redirect } from 'next/navigation';
 import { ChallengeDetailActions } from './actions';
 import { ArrowLeft, Clock, Zap, Trophy, MessageSquare, Crosshair } from 'lucide-react';
@@ -117,7 +117,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
           <div className="grid grid-2">
             {[
               { icon: Crosshair, label: 'Type',    value: challenge.type as string },
-              { icon: Trophy,    label: 'Format',  value: MATCH_FORMAT_LABELS[challenge.format as keyof typeof MATCH_FORMAT_LABELS] ?? (challenge.format as string) },
+              { icon: Trophy,    label: 'Format',  value: describeMatchShape({ match_format: challenge.format, games_per_match: challenge.games_per_match, points_per_game: challenge.points_per_game }) },
               { icon: Zap,       label: 'Rated',   value: challenge.rated_flag ? 'Rated' : 'Casual' },
               { icon: Clock,     label: 'Created', value: formatRelativeTime(challenge.created_at) },
             ].map((item) => (
@@ -265,6 +265,8 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
           myParticipantStatus={myParticipant?.confirmation_status}
           isCreator={challenge.created_by === player.id}
           format={challenge.format}
+          gamesPerMatch={challenge.games_per_match}
+          pointsPerGame={challenge.points_per_game}
           participants={challenge.challenge_participants}
           playerId={player.id}
           isSubmitter={match?.submitted_by === player.id}

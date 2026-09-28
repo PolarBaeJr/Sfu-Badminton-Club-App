@@ -1,8 +1,10 @@
 # fonts
 
-The Android app sets the website's three faces. The TTFs live in
-`android/app/src/main/res/font` (Android reads fonts only from there); this
-directory keeps their licences and how they were made. Both typefaces are under
+Both apps set the website's three faces. The TTFs live in
+`android/app/src/main/res/font` (Android reads fonts only from there); the iOS
+app bundles the same five files straight from that directory (`ios/project.yml`,
+listed under `UIAppFonts` in `Info.plist`), so there is one copy. This directory
+keeps their licences and how they were made. Both typefaces are under
 the SIL Open Font License 1.1 with no Reserved Font Name, so subsetting and
 converting them is allowed. `OFL-Barlow.txt` and `OFL-JetBrainsMono.txt` are
 copied verbatim from `apps/player/src/fonts`, and the app also ships them, with

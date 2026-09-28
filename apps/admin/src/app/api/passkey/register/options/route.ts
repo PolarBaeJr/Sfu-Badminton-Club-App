@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { generateRegistrationOptions } from '@simplewebauthn/server';
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
-import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import {
+  createAdminClient,
+  getAuthenticatedConsoleUser,
+  isPasswordOnlyConsoleSession,
+} from '@/lib/supabase-server';
 import { signPayload, verifyPayload } from '@/lib/passkey/cookie';
 import { recordChallenge } from '@/lib/passkey/challenge-store';
 import {
@@ -20,6 +24,12 @@ export async function POST(request: Request) {
     player = await getAuthenticatedConsoleUser({ skipPasskey: true });
   } catch {
     return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
+  }
+
+  // A password alone does not open the console, so it cannot enrol the
+  // passkey that would. A new exec signs in with an email code first.
+  if (await isPasswordOnlyConsoleSession()) {
+    return NextResponse.json({ error: 'Sign in with an email code to add a console passkey' }, { status: 403 });
   }
 
   const adminClient = createAdminClient();
@@ -40,7 +50,7 @@ export async function POST(request: Request) {
   // account takeover that survives the password.
   if (existingError) {
     return NextResponse.json(
-      { error: 'Cannot verify your passkey enrolment right now — please try again shortly' },
+      { error: 'Cannot verify your passkey enrolment right now. Please try again shortly.' },
       { status: 503 }
     );
   }
@@ -52,8 +62,8 @@ export async function POST(request: Request) {
   // gate — has_passkeys() (00051) and assertPasskeyVerified both filter on
   // enrolled_via, and this third copy of the question did not. A members'-app
   // passkey is a convenience that deliberately does not impose a second factor
-  // here, so an officer holding one and nothing else is in the grace period
-  // according to every gate, and was then refused by this route as though they
+  // here, so an officer holding one and nothing else has no console passkey
+  // according to every gate (and is inside or past the 14-day window, 00262), and was then refused by this route as though they
   // already had an admin credential to step up with. They had none, which made
   // the 403 unanswerable: the way to satisfy it is to log in with the passkey
   // this branch is claiming exists.

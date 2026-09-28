@@ -4,9 +4,14 @@
 //
 // SIX STEPS, under 110 words, under a minute. Setup plus this tour must fit
 // in 3 minutes on a phone (onboarding-budget.test.ts), so a new step has to
-// replace one. The tabs step is one card for every tab, and its body is built
-// from the features this member can see, which is why the steps are built from
-// the reader's context rather than declared once.
+// replace one. Challenges have their own stop because they are what the club
+// is for; events and tournaments are covered by the feed's calendar, which is
+// where members meet them. The steps are built from the reader's context
+// because the membership step depends on two switches.
+//
+// STEPS VISIT PAGES. A step's href is the page it is shown on, and the tour
+// opens it through the router; a step with none stays on the page before it,
+// so the welcome card is on the feed, where the tour starts.
 //
 // Targets are listed in priority order and the first VISIBLE one wins. That is
 // how a step points at the tab bar on a phone and the top bar on a desktop:
@@ -19,25 +24,10 @@
 // which are cards and need no target.
 //
 // Deep imports, not the package barrels: a test loads this file.
-import { requirementsMet, type TourContext, type TourStep, type TourStepRequires } from '@badminton/ui/src/tour';
+import { requirementsMet, type TourContext, type TourStep } from '@badminton/ui/src/tour';
 import type { TourKey } from '@badminton/shared/src/utils/tours';
 
-export const MEMBER_TOUR_KEY: TourKey = 'member_v1';
-
-const TAB_LINES: readonly { text: string; requires: TourStepRequires }[] = [
-  {
-    text: 'Challenges: play a rated match against another member.',
-    requires: { featuresAny: ['challenges'], approved: true },
-  },
-  {
-    text: 'Ranks: your singles and doubles ladder.',
-    requires: { featuresAny: ['leaderboard'] },
-  },
-  {
-    text: 'Events: see what is on and sign up.',
-    requires: { featuresAny: ['tournaments', 'events'], approved: true },
-  },
-];
+export const MEMBER_TOUR_KEY: TourKey = 'member_v2';
 
 const SETTINGS_APPROVED =
   'Notifications stay off until you turn them on here. Also here: Membership, the calendar feed, passkeys, the tour replay. Link Discord with /link at discord.sfubadminton.com.';
@@ -45,10 +35,6 @@ const SETTINGS_PENDING =
   'Notifications stay off until you turn them on here. Also here: passkeys and a tour replay. Link Discord with /link at discord.sfubadminton.com.';
 
 export function memberTourSteps(ctx: TourContext): TourStep[] {
-  const tabs = TAB_LINES.filter((line) => requirementsMet(line.requires, ctx))
-    .map((line) => line.text)
-    .join(' ');
-
   const steps: TourStep[] = [
     {
       id: 'welcome',
@@ -60,7 +46,8 @@ export function memberTourSteps(ctx: TourContext): TourStep[] {
     {
       id: 'calendar',
       title: 'Your schedule',
-      body: 'Everything the club has on. Tap a day to jump to it.',
+      body: 'Sessions, club events and tournaments all show up here. Tap a day to jump to it.',
+      href: '/feed',
       targets: ['[data-tour="week-strip"]', '[data-tour="month-calendar"]'],
       missingTarget: 'skip',
       requires: { featuresAny: ['sessions', 'events', 'tournaments'] },
@@ -69,31 +56,35 @@ export function memberTourSteps(ctx: TourContext): TourStep[] {
       id: 'next-session',
       title: 'RSVP and check in',
       body: "Tap Going or Can't make it. Check-in opens shortly before it starts: check in here, or scan the QR code at the door.",
+      href: '/feed',
       targets: ['[data-tour="next-session"]', '[data-tour="up-next"]'],
       missingTarget: 'skip',
       requires: { featuresAny: ['sessions'], approved: true },
     },
   ];
-  if (tabs) {
-    steps.push({
-      id: 'tabs',
-      title: 'The rest of the club',
-      body: tabs,
-      targets: ['[data-tour="tab-bar"]', '[data-tour="top-nav"]'],
-      missingTarget: 'skip',
-      requires: { featuresAny: ['challenges', 'leaderboard', 'tournaments', 'events'] },
-    });
-  }
+  // Challenges are the point of the club, so they get their own stop rather
+  // than a line in a list. The button is absent when the member's open
+  // challenges are at the cap; the card then sits centred on the page.
+  steps.push({
+    id: 'challenges',
+    title: 'Challenge someone',
+    body: 'Challenge any member to a rated match: tap New challenge and pick who. The result moves both players\' ratings.',
+    href: '/challenges',
+    targets: ['[data-tour="new-challenge"]'],
+    missingTarget: 'center',
+    requires: { featuresAny: ['challenges'], approved: true },
+  });
   // Only where the statement is: an approved member, with both the fees and
   // the membership switches on (membership/page.tsx). requires cannot say
-  // "both", so the membership half is checked here. On a phone there is no
-  // Membership tab, so the step is a card.
+  // "both", so the membership half is checked here. A card if the statement
+  // is not there to point at.
   if (requirementsMet({ featuresAny: ['membership'] }, ctx)) {
     steps.push({
       id: 'membership',
       title: 'Membership and fees',
-      body: 'Pay dues by e-transfer or the SFU Rec site, then upload the receipt on Membership.',
-      targets: ['[data-tour="membership-link"]'],
+      body: 'Pay dues by e-transfer or the SFU Rec site, then send the receipt here.',
+      href: '/membership',
+      targets: ['[data-tour="membership-statement"]'],
       missingTarget: 'center',
       requires: { featuresAny: ['fees'], approved: true },
     });
@@ -102,7 +93,8 @@ export function memberTourSteps(ctx: TourContext): TourStep[] {
     id: 'settings',
     title: 'Settings',
     body: ctx.approved ? SETTINGS_APPROVED : SETTINGS_PENDING,
-    targets: ['[data-tour="settings-chip"]'],
+    href: '/settings',
+    targets: ['[data-tour="settings-notifications"]'],
     missingTarget: 'center',
   });
   return steps;

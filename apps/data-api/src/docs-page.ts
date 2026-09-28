@@ -1,0 +1,420 @@
+import { createHash } from 'node:crypto';
+
+// The public documentation page served at /documentations. A module rather
+// than a file on disk so the image needs nothing beyond dist/.
+//
+// It describes what server.ts, params.ts, auth.ts and rate-limit.ts DO. Drift
+// tests in __tests__/server.test.ts and __tests__/routes.test.ts fail when a
+// route, scope, query parameter or error code is missing from this page.
+//
+// The CSP allows exactly this one stylesheet by hash, so the page must carry
+// no other <style> block and no style="" attribute.
+
+const STYLE = `
+:root { color-scheme: light dark; --bg: #ffffff; --fg: #1b1f24; --mute: #57606a; --line: #d0d7de; --code-bg: #f3f5f7; --accent: #b5121b; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e1116; --fg: #e6edf3; --mute: #9aa4af; --line: #30363d; --code-bg: #161b22; --accent: #ff6b6b; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 46rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+h1 { font-size: 1.9rem; margin: 0 0 0.25rem; }
+h2 { font-size: 1.35rem; margin: 2.5rem 0 0.75rem; padding-top: 0.5rem; border-top: 1px solid var(--line); }
+h3 { font-size: 1.05rem; margin: 1.75rem 0 0.5rem; }
+p, li { color: var(--fg); }
+.lede { color: var(--mute); margin-top: 0; }
+a { color: var(--accent); }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 4px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1rem; overflow-x: auto; line-height: 1.45; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.95em; }
+th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 0.4rem 0.5rem; }
+th { color: var(--mute); font-weight: 600; }
+nav { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem 1rem; margin: 1.5rem 0; }
+nav ol { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+td code { white-space: nowrap; }
+.note { border-left: 3px solid var(--accent); padding: 0.25rem 0 0.25rem 0.9rem; color: var(--mute); }
+`;
+
+export const DOCS_STYLE_HASH = `sha256-${createHash('sha256').update(STYLE).digest('base64')}`;
+
+export const DOCS_CSP = [
+  "default-src 'none'",
+  `style-src '${DOCS_STYLE_HASH}'`,
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+const EXAMPLE_REF = '9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544';
+const EXAMPLE_REF_2 = 'deb9f2c86c09c08fc5bc0ecaab85117d6264378ff6c6e71f3d7bb833a8cd748e';
+const EXAMPLE_MATCH = '4b1c0f7e2a9d8c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b';
+const EXAMPLE_SEASON = '7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93';
+const API = 'https://api.sfubadminton.com';
+
+export const DOCS_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>SFU Badminton Data API</title>
+<style>${STYLE}</style>
+</head>
+<body>
+<main>
+<h1>SFU Badminton Data API</h1>
+<p class="lede">A read-only, key-authenticated JSON feed of pseudonymous ratings, match history, seasons, tournaments and the schedule of the SFU Badminton Club.</p>
+
+<nav aria-label="Contents">
+<strong>Contents</strong>
+<ol>
+<li><a href="#purpose">What it is for</a></li>
+<li><a href="#base-urls">Base URLs</a></li>
+<li><a href="#authentication">Authentication</a></li>
+<li><a href="#scopes">Scopes</a></li>
+<li><a href="#who">Who and what is published</a></li>
+<li><a href="#parameters">Query parameters and paging</a></li>
+<li><a href="#endpoints">Endpoints</a></li>
+<li><a href="#fields">Player fields</a></li>
+<li><a href="#match-fields">Match fields</a></li>
+<li><a href="#errors">Errors and status codes</a></li>
+<li><a href="#rate-limits">Rate limits</a></li>
+<li><a href="#versioning">Versioning and stability</a></li>
+<li><a href="#data-handling">Data handling</a></li>
+<li><a href="#contact">Contact</a></li>
+</ol>
+</nav>
+
+<h2 id="purpose">What it is for</h2>
+<p>The API was built to support predicting the outcome of a challenge between two club members, and it now also serves the history, seasons, tournaments and schedule a club data pipeline needs.</p>
+<p>It deliberately carries <strong>no names, emails, Discord handles, phone numbers, avatars, student numbers or member codes, and no free text written by or about a member</strong> (no notes, reasons, pair names or court labels). Every player is an object carrying a <code>player_ref</code>: a salted hash of their internal id. It is stable across requests, different for every consumer, and cannot be turned back into a person outside the club. Treat it as an opaque string. A match is identified the same way, by a <code>match_ref</code>.</p>
+<p>Refs are salted per consumer, so data pulled with keys belonging to <strong>different consumers</strong> cannot be joined on <code>player_ref</code> or <code>match_ref</code>. Every key of one consumer sees the same refs.</p>
+
+<h2 id="base-urls">Base URLs</h2>
+<table>
+<tr><th>Environment</th><th>Base URL</th></tr>
+<tr><td>Production</td><td><code>${API}</code></td></tr>
+</table>
+<p>All responses except this page are JSON (<code>application/json; charset=utf-8</code>) and are sent with <code>Cache-Control: no-store</code>. Every timestamp is ISO 8601 UTC to the second, for example <code>2026-10-02T18:30:12Z</code>. Dates without a time (<code>start_date</code>, a session's <code>date</code>) are <code>YYYY-MM-DD</code> in the club's local calendar.</p>
+
+<h2 id="authentication">Authentication</h2>
+<p>Every endpoint except <code>/health</code> and this page needs a key, sent in the <code>Authorization</code> header:</p>
+<pre><code>Authorization: Bearer sfubad_&lt;43 characters&gt;</code></pre>
+<ul>
+<li>A key is <code>sfubad_</code> followed by exactly 43 characters from <code>A-Z a-z 0-9 _ -</code>.</li>
+<li>The scheme is the word <code>Bearer</code>, exactly one space, then the key. Anything else is treated as a missing key.</li>
+<li>Keys are never accepted in the URL. Do not put one in a query string.</li>
+</ul>
+<p><strong>Getting a key.</strong> A club exec mints one in the Accounts page of the club's admin console, choosing its scopes and an optional expiry. The key is shown exactly once, at creation. The club stores only a hash, so nobody can recover a lost key; it is revoked and a new one issued. An exec can change the scopes of a live key without reissuing it.</p>
+<p><strong>Revocation.</strong> Verification results are cached briefly. A revoked or expired key, or a scope change, takes effect within 30 seconds. A key that was rejected (for example, used a moment before it was minted) keeps being rejected for up to 5 seconds.</p>
+
+<h2 id="scopes">Scopes</h2>
+<p>A key is allowed nothing by default, only the scopes it was granted. One key may carry all six.</p>
+<table>
+<tr><th>Scope</th><th>Needed for</th></tr>
+<tr><td><code>players:read</code></td><td><code>/v1/players</code>, <code>/v1/players/:ref</code></td></tr>
+<tr><td><code>matches:read</code></td><td><code>/v1/matches</code>, <code>/v1/matches/:match_ref</code>, <code>/v1/players/:ref/matches</code>, <code>/v1/players/:ref/vs/:other_ref</code>, <code>/v1/players/:ref/seasons</code></td></tr>
+<tr><td><code>ratings:history:read</code></td><td><code>/v1/players/:ref/ratings</code></td></tr>
+<tr><td><code>seasons:read</code></td><td><code>/v1/seasons</code>, <code>/v1/seasons/:id</code>, <code>/v1/seasons/:id/standings</code></td></tr>
+<tr><td><code>tournaments:read</code></td><td><code>/v1/tournaments</code>, <code>/v1/tournaments/:id</code>, <code>/v1/tournaments/:id/events/:event_id</code></td></tr>
+<tr><td><code>schedule:read</code></td><td><code>/v1/sessions</code>, <code>/v1/events</code></td></tr>
+</table>
+<p>A valid key without the needed scope gets <code>403</code>.</p>
+
+<h2 id="who">Who and what is published</h2>
+<p>Two tests decide which members appear, and they differ on purpose.</p>
+<ul>
+<li><strong>The roster</strong> (<code>/v1/players</code>, <code>/v1/players/:ref</code>, season standings): active, approved members who are not suspended, have not opted out of published rankings and have not requested deletion of their account.</li>
+<li><strong>The history</strong> (every match, rating-history, head-to-head and per-season route): members who have not opted out, have not requested deletion and are not awaiting approval. A former or suspended member's past matches stay in the history under their ref, so a ref can appear in a match while <code>/v1/players/:ref</code> answers <code>404</code>.</li>
+</ul>
+<p><strong>One gate for matches.</strong> A club or tournament match is published only when it is final (confirmed, completed, a walkover, or voided), it is in a season the club has not hidden, and <strong>every</strong> player in it passes the history test. A match with even one unpublished player is left out entirely, not served with a gap. The same gate feeds every route that counts matches, so figures derived from different routes agree with each other.</p>
+<p><strong>Reconciliation.</strong> Because whole matches are left out, figures you derive from the match routes are not expected to equal the lifetime counters in <code>/v1/players</code>. Those counters are kept by the club's own rating system and include matches this API does not publish. Treat derived figures (head-to-head, per-season records, standings records and season totals) as counts of what you can see, not as the official record.</p>
+<p><code>count</code> in any list is the size of that response. A member who leaves a set simply stops appearing, with no tombstone and no notice.</p>
+
+<h2 id="parameters">Query parameters and paging</h2>
+<p>Routes that take parameters refuse any parameter they do not know, and a repeated parameter, with <code>400 {"error":"bad_request","parameter":"&lt;name&gt;"}</code>. <code>/v1/players</code> and <code>/v1/players/:ref</code> take no parameters and ignore the query string.</p>
+<table>
+<tr><th>Parameter</th><th>Value</th><th>Used by</th></tr>
+<tr><td><code>season</code></td><td>season id (uuid)</td><td>matches, player matches, vs, ratings, tournaments</td></tr>
+<tr><td><code>since</code>, <code>until</code></td><td>UTC timestamp ending in <code>Z</code>; <code>until</code> must be after <code>since</code></td><td>matches (on <code>played_at</code>), ratings (on <code>at</code>)</td></tr>
+<tr><td><code>player</code></td><td><code>player_ref</code></td><td><code>/v1/matches</code>: matches this player played in</td></tr>
+<tr><td><code>opponent</code></td><td><code>player_ref</code></td><td>matches where this player was on the other side; on <code>/v1/matches</code> it needs <code>player</code></td></tr>
+<tr><td><code>type</code></td><td><code>singles</code> or <code>doubles</code></td><td>matches, vs, ratings</td></tr>
+<tr><td><code>source</code></td><td><code>club</code> or <code>tournament</code></td><td>matches</td></tr>
+<tr><td><code>rated</code></td><td><code>true</code> or <code>false</code></td><td>matches</td></tr>
+<tr><td><code>status</code></td><td><code>final</code> (default: everything except voided), <code>voided</code>, or <code>all</code></td><td>matches</td></tr>
+<tr><td><code>updated_since</code></td><td>UTC timestamp</td><td>matches: only rows changed after it, oldest change first</td></tr>
+<tr><td><code>limit</code></td><td>1 to 500, default 100</td><td>matches, ratings</td></tr>
+<tr><td><code>offset</code></td><td>0 to 100000, default 0</td><td>matches, ratings</td></tr>
+<tr><td><code>from</code>, <code>to</code></td><td>UTC timestamp</td><td>sessions and events; see <a href="#schedule">the schedule</a></td></tr>
+</table>
+<p>Timestamps must be UTC and end in <code>Z</code>, for example <code>2026-09-01T00:00:00Z</code>. A bare date or an offset such as <code>-07:00</code> is a <code>400</code>.</p>
+<p><strong>Paging.</strong> Paged responses carry <code>count</code>, <code>limit</code>, <code>offset</code> and <code>next_offset</code>. <code>next_offset</code> is the <code>offset</code> for the next page, or <code>null</code> on the last page. Offset paging over a set that changes between requests can skip or repeat a row, so it suits browsing, not syncing.</p>
+<p><strong>Syncing.</strong> To keep a copy up to date, page <code>/v1/matches?status=all&amp;updated_since=&lt;last seen&gt;</code>, which is ordered by <code>updated_at</code> oldest first, and store the largest <code>updated_at</code> you received. A match that was voided, corrected or re-entered comes back with a newer <code>updated_at</code>. A match that stops being published (a player opted out, a season was hidden) does <strong>not</strong> come back; rebuild from scratch periodically to drop those.</p>
+
+<h2 id="endpoints">Endpoints</h2>
+<p>Every endpoint answers <code>GET</code> only; any other method, including <code>HEAD</code>, gets <code>405</code>. (This page also answers <code>HEAD</code>.) In the examples, <code>$K</code> holds your key.</p>
+
+<h3 id="health">GET /health</h3>
+<p>No key. For uptime checks. <code>version</code> is the service's release version.</p>
+<pre><code>curl -s ${API}/health</code></pre>
+<pre><code>{ "ok": true, "version": "0.1.0" }</code></pre>
+
+<h3 id="players">GET /v1/players</h3>
+<p>Requires <code>players:read</code>. Every player on the roster, one object each, with their <strong>lifetime</strong> ratings and counters.</p>
+<pre><code>curl -s -H "Authorization: Bearer $K" ${API}/v1/players</code></pre>
+<pre><code>{
+  "season": {
+    "id": "${EXAMPLE_SEASON}",
+    "name": "Fall 2026",
+    "term": "fall",
+    "year": 2026,
+    "start_date": "2026-09-01",
+    "end_date": "2026-12-15"
+  },
+  "generated_at": "2026-10-02T18:30:12Z",
+  "count": 1,
+  "players": [
+    {
+      "player_ref": "${EXAMPLE_REF}",
+      "singles_elo": 1150,
+      "doubles_elo": 1020,
+      "singles_provisional": false,
+      "doubles_provisional": true,
+      "singles_matches_played": 4,
+      "doubles_matches_played": 0,
+      "singles_wins": 3,
+      "singles_losses": 1,
+      "doubles_wins": 0,
+      "doubles_losses": 0,
+      "updated_at": "2026-09-20T03:15:40Z"
+    }
+  ]
+}</code></pre>
+<p><code>season</code> is the club's active season, for context only: the player figures are lifetime totals and cannot be sliced by it. It is <code>null</code> when there is no active season, when the active season is hidden, or when it could not be read.</p>
+
+<h3 id="player">GET /v1/players/:ref</h3>
+<p>Requires <code>players:read</code>. One player on the roster, the same object as an item of <code>players</code> above, with no wrapper. A ref not on the roster, or not a <code>player_ref</code> at all, gets <code>404</code>.</p>
+<pre><code>curl -s -H "Authorization: Bearer $K" ${API}/v1/players/${EXAMPLE_REF}</code></pre>
+
+<h3 id="matches">GET /v1/matches</h3>
+<p>Requires <code>matches:read</code>. Published club and tournament matches, newest first by <code>played_at</code> (oldest change first with <code>updated_since</code>). Parameters: <code>season</code>, <code>since</code>, <code>until</code>, <code>player</code>, <code>opponent</code>, <code>type</code>, <code>source</code>, <code>rated</code>, <code>status</code>, <code>updated_since</code>, <code>limit</code>, <code>offset</code>.</p>
+<pre><code>curl -s -H "Authorization: Bearer $K" \\
+  "${API}/v1/matches?season=${EXAMPLE_SEASON}&amp;type=singles&amp;limit=50"</code></pre>
+<pre><code>{
+  "generated_at": "2026-10-02T18:30:12Z",
+  "count": 1,
+  "limit": 50,
+  "offset": 0,
+  "next_offset": null,
+  "matches": [
+    {
+      "match_ref": "${EXAMPLE_MATCH}",
+      "source": "club",
+      "status": "confirmed",
+      "counts_toward_stats": true,
+      "played_at": "2026-09-29T02:41:07Z",
+      "updated_at": "2026-09-29T02:44:51Z",
+      "season": { "id": "${EXAMPLE_SEASON}", "name": "Fall 2026" },
+      "type": "singles",
+      "kind": "ranked",
+      "rated": true,
+      "format": "best_of_3",
+      "games_per_match": 3,
+      "points_per_game": 21,
+      "walkover": null,
+      "winner_side": "a",
+      "score_summary": "21-17, 19-21, 21-15",
+      "games": [
+        { "game": 1, "a": 21, "b": 17 },
+        { "game": 2, "a": 19, "b": 21 },
+        { "game": 3, "a": 21, "b": 15 }
+      ],
+      "sides": {
+        "a": [ { "player_ref": "${EXAMPLE_REF}", "won": true,
+                 "rating": { "before": 1134, "after": 1150, "delta": 16 },
+                 "points_scored": 61, "points_allowed": 53, "games_won": 2, "games_lost": 1 } ],
+        "b": [ { "player_ref": "${EXAMPLE_REF_2}", "won": false,
+                 "rating": { "before": 836, "after": 820, "delta": -16 },
+                 "points_scored": 53, "points_allowed": 61, "games_won": 1, "games_lost": 2 } ]
+      },
+      "tournament": null
+    }
+  ]
+}</code></pre>
+
+<h3 id="match">GET /v1/matches/:match_ref</h3>
+<p>Requires <code>matches:read</code>. One published match, of any status, as <code>{ "generated_at": ..., "match": { ... } }</code>. <code>404</code> for a ref that is not published to you.</p>
+
+<h3 id="player-matches">GET /v1/players/:ref/matches</h3>
+<p>Requires <code>matches:read</code>. The same as <code>/v1/matches?player=:ref</code>, with <code>player_ref</code> added to the envelope. Takes every <code>/v1/matches</code> parameter except <code>player</code>; <code>opponent</code> works on its own here. <code>404</code> when the ref does not pass the history test.</p>
+
+<h3 id="vs">GET /v1/players/:ref/vs/:other_ref</h3>
+<p>Requires <code>matches:read</code>. Head to head, derived from published matches that count toward stats. Parameters: <code>type</code>, <code>season</code>. <code>404</code> when either ref does not pass the history test, or when both refs are the same.</p>
+<pre><code>{
+  "generated_at": "2026-10-02T18:30:12Z",
+  "player_ref": "${EXAMPLE_REF}",
+  "other_ref": "${EXAMPLE_REF_2}",
+  "as_opponents": {
+    "singles": { "matches": 3, "wins": 2, "losses": 1 },
+    "doubles": { "matches": 0, "wins": 0, "losses": 0 }
+  },
+  "as_partners": { "doubles": { "matches": 1, "wins": 1, "losses": 0 } },
+  "recent": [ ... up to 10 match objects, newest first, where they met as opponents ... ]
+}</code></pre>
+<p>Wins and losses are from <code>:ref</code>'s point of view. <code>as_partners</code> counts doubles matches they played on the same side.</p>
+
+<h3 id="player-seasons">GET /v1/players/:ref/seasons</h3>
+<p>Requires <code>matches:read</code>. One entry per visible season the player has a published match or a final rating in, newest first. The records are derived from published matches that count toward stats; <code>final_rating</code> is the rating the club archived when the season closed, or <code>null</code>.</p>
+<pre><code>{
+  "generated_at": "2026-10-02T18:30:12Z",
+  "player_ref": "${EXAMPLE_REF}",
+  "count": 1,
+  "seasons": [
+    {
+      "season": { "id": "${EXAMPLE_SEASON}", "name": "Fall 2026", "active": true, "start_date": "2026-09-01" },
+      "singles": { "matches": 4, "wins": 3, "losses": 1, "games_won": 7, "games_lost": 3,
+                   "points_scored": 201, "points_allowed": 166 },
+      "doubles": { "matches": 0, "wins": 0, "losses": 0, "games_won": 0, "games_lost": 0,
+                   "points_scored": 0, "points_allowed": 0 },
+      "final_rating": null
+    }
+  ]
+}</code></pre>
+
+<h3 id="player-ratings">GET /v1/players/:ref/ratings</h3>
+<p>Requires <code>ratings:history:read</code>. Every rating change the club recorded for this player, oldest first. Parameters: <code>type</code>, <code>season</code>, <code>since</code>, <code>until</code>, <code>limit</code>, <code>offset</code>. Paged like <code>/v1/matches</code>, with the rows under <code>history</code>.</p>
+<pre><code>{ "at": "2026-09-29T02:44:51Z", "type": "singles", "kind": "match", "source": "club",
+  "match_ref": "${EXAMPLE_MATCH}", "before": 1134, "after": 1150, "delta": 16 }</code></pre>
+<p><code>kind</code> is <code>match</code> for a rated club or tournament match (only published, non-voided ones), or <code>placement_bonus</code> for a tournament placement bonus, which has <code>source</code> <code>tournament</code> and <code>match_ref</code> <code>null</code>. Rating changes the club made by hand are not in the history, so consecutive rows need not chain.</p>
+
+<h3 id="seasons">GET /v1/seasons</h3>
+<p>Requires <code>seasons:read</code>. Every season the club has not hidden, newest first, with totals. The match and player totals are derived from published matches; <code>sessions</code>, <code>tournaments</code> and <code>events</code> count what falls in the season.</p>
+<pre><code>{
+  "generated_at": "2026-10-02T18:30:12Z",
+  "count": 1,
+  "seasons": [
+    {
+      "id": "${EXAMPLE_SEASON}", "name": "Fall 2026", "term": "fall", "year": 2026,
+      "start_date": "2026-09-01", "end_date": "2026-12-15", "active": true,
+      "totals": { "club_matches": 41, "tournament_matches": 12, "players_with_matches": 23,
+                  "sessions": 9, "tournaments": 1, "events": 2 }
+    }
+  ]
+}</code></pre>
+
+<h3 id="season">GET /v1/seasons/:id</h3>
+<p>Requires <code>seasons:read</code>. One season, as <code>{ "generated_at": ..., "season": { ... } }</code>. <code>404</code> for a hidden or unknown season.</p>
+
+<h3 id="standings">GET /v1/seasons/:id/standings</h3>
+<p>Requires <code>seasons:read</code>. The roster ranked for one season. For the active season the <code>source</code> is <code>live</code> and the ratings are current; for a closed season it is <code>archived</code> and the ratings are the ones the club archived when it closed. Ranks are standard competition ranks (ties share a rank). <code>record</code> is derived from published matches in that season.</p>
+<pre><code>{
+  "generated_at": "2026-10-02T18:30:12Z",
+  "season": { "id": "${EXAMPLE_SEASON}", "name": "Fall 2026", "active": true },
+  "source": "live",
+  "count": 1,
+  "standings": [
+    { "player_ref": "${EXAMPLE_REF}", "singles_elo": 1150, "doubles_elo": 1020,
+      "singles_rank": 1, "doubles_rank": 1, "record": { "matches": 4, "wins": 3, "losses": 1 } }
+  ]
+}</code></pre>
+
+<h3 id="tournaments">GET /v1/tournaments</h3>
+<p>Requires <code>tournaments:read</code>. Every tournament past the draft stage in a visible season, newest first. Parameter: <code>season</code>. Each has <code>id</code>, <code>name</code>, <code>season</code>, <code>start_date</code>, <code>end_date</code>, <code>status</code>, <code>suspended</code>, <code>event_multiplier</code> and <code>placement_bonus_enabled</code>.</p>
+
+<h3 id="tournament">GET /v1/tournaments/:id</h3>
+<p>Requires <code>tournaments:read</code>. One tournament with its events, and each event's entrants:</p>
+<pre><code>{ "players": [ { "player_ref": "${EXAMPLE_REF}" }, { "player_ref": "${EXAMPLE_REF_2}" } ],
+  "seed": 1, "status": "active", "final_position": 1, "group": null, "points": null,
+  "elo": { "before": null, "after": null, "change": null }, "combined_elo": 2170 }</code></pre>
+<p>A singles entrant has one player; a pair has two. An entrant with a player who fails the history test is left out (a pair needs both players to pass), so seeds may have gaps. Pair names are never served.</p>
+
+<h3 id="draw">GET /v1/tournaments/:id/events/:event_id</h3>
+<p>Requires <code>tournaments:read</code>. One event and its draw: every slot in bracket order, with <code>match_ref</code>, <code>round_number</code>, <code>round_name</code>, <code>phase</code> (<code>pool</code> or <code>bracket</code>), <code>bracket_position</code>, <code>match_number</code>, <code>is_bye</code>, <code>is_third_place</code>, <code>scheduled_time</code>, <code>status</code>, <code>winner_to</code> and <code>loser_to</code> (the <code>match_ref</code> and <code>position</code> a player advances to), <code>sides</code>, <code>winner_side</code> and <code>games</code>.</p>
+<p><strong>Withheld slots.</strong> A slot that is disputed, or has a player who fails the history test, keeps its place with <code>"withheld": true</code> and <code>sides</code>, <code>winner_side</code> and <code>games</code> all <code>null</code>, so the shape of the bracket survives without saying who played. Court labels are never served.</p>
+
+<h3 id="schedule">GET /v1/sessions and GET /v1/events</h3>
+<p>Require <code>schedule:read</code>. Club sessions and club events that start in a window, soonest first. Parameters: <code>from</code> and <code>to</code>. With neither, the window is the next 30 days; with one, the window is 30 days on its other side. <code>to</code> must be after <code>from</code> and the window at most 366 days, or it is a <code>400</code> naming <code>to</code>. The envelope echoes <code>from</code> and <code>to</code>.</p>
+<p>A session has <code>id</code>, <code>name</code>, <code>season</code>, <code>date</code>, <code>starts_at</code>, <code>ends_at</code>, <code>location</code>, <code>status</code>, <code>track</code>, <code>require_scan_to_check_in</code> and <code>counts</code> (<code>rsvp_going</code>, <code>attended</code>). An event has <code>id</code>, <code>title</code>, <code>kind</code>, <code>location</code>, <code>starts_at</code>, <code>ends_at</code>, <code>status</code> (<code>published</code> or <code>cancelled</code>), <code>cancelled_at</code>, <code>capacity</code>, <code>cost_cents</code>, <code>signup_opens_at</code>, <code>signup_closes_at</code> and <code>counts</code> (<code>signups</code>). Only counts are served: never who is going, who attended or who signed up.</p>
+
+<h3 id="documentations">GET /documentations</h3>
+<p>This page. No key. Also served at <code>/documentations/</code>.</p>
+
+<h2 id="fields">Player fields</h2>
+<table>
+<tr><th>Field</th><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>player_ref</code></td><td>string</td><td>Opaque pseudonym, stable, different per consumer. Currently 64 lowercase hex characters; do not rely on that.</td></tr>
+<tr><td><code>singles_elo</code>, <code>doubles_elo</code></td><td>number</td><td>Current rating on each ladder, roughly 400 to 1400. Singles and doubles are separate ladders; do not average them or use one to predict the other. A new member's starting rating is assigned by skill tier, not earned.</td></tr>
+<tr><td><code>singles_provisional</code>, <code>doubles_provisional</code></td><td>boolean</td><td><code>true</code> while the rating is still settling. A provisional rating is a guess; weight it accordingly or exclude it.</td></tr>
+<tr><td><code>singles_matches_played</code>, <code>doubles_matches_played</code></td><td>integer</td><td>Rated matches only.</td></tr>
+<tr><td><code>singles_wins</code>, <code>singles_losses</code>, <code>doubles_wins</code>, <code>doubles_losses</code></td><td>integer</td><td>Rated matches only. Wins plus losses need not equal matches played; derive a win rate from wins and losses.</td></tr>
+<tr><td><code>updated_at</code></td><td>string</td><td>When the rating row last changed.</td></tr>
+</table>
+<p>All figures are <strong>lifetime</strong> totals kept by the club, not per season, and not derived from the match routes (see <a href="#who">reconciliation</a>). A field the database has no value for is <code>null</code>, so parse defensively. A reasonable prediction baseline is the Elo expectation: <code>P(A beats B) = 1 / (1 + 10 ** ((elo_B - elo_A) / 400))</code>.</p>
+
+<h2 id="match-fields">Match fields</h2>
+<table>
+<tr><th>Field</th><th>Meaning</th></tr>
+<tr><td><code>match_ref</code></td><td>Opaque, stable, per consumer, like <code>player_ref</code>.</td></tr>
+<tr><td><code>source</code></td><td><code>club</code> (a match recorded at a session or a challenge) or <code>tournament</code>.</td></tr>
+<tr><td><code>status</code></td><td>Club: <code>confirmed</code>, <code>walkover</code> or <code>voided</code>. Tournament: <code>completed</code>, <code>walkover</code> or <code>voided</code>.</td></tr>
+<tr><td><code>counts_toward_stats</code></td><td><code>true</code> for a played, non-voided result. Walkovers and voided matches are <code>false</code>. Every derived record in this API counts only these.</td></tr>
+<tr><td><code>played_at</code></td><td>When it was played. For a tournament match, when its result was entered, else its scheduled time.</td></tr>
+<tr><td><code>updated_at</code></td><td>When the row last changed. Use it with <code>updated_since</code>.</td></tr>
+<tr><td><code>season</code></td><td><code>{ id, name }</code>, or <code>null</code>. A tournament match belongs to its tournament's season.</td></tr>
+<tr><td><code>type</code></td><td><code>singles</code> or <code>doubles</code>.</td></tr>
+<tr><td><code>kind</code>, <code>format</code>, <code>games_per_match</code>, <code>points_per_game</code></td><td>How the match was set up. <code>kind</code> is the club's match kind, or <code>tournament</code>.</td></tr>
+<tr><td><code>rated</code></td><td>Whether it moved ratings.</td></tr>
+<tr><td><code>walkover</code></td><td><code>null</code>, or for a club walkover <code>{ type, forfeit_side }</code>, or for a tournament walkover <code>{ winner_side }</code>. Reasons are never served.</td></tr>
+<tr><td><code>winner_side</code></td><td><code>a</code>, <code>b</code> or <code>null</code>.</td></tr>
+<tr><td><code>score_summary</code>, <code>games</code></td><td>The score as the club shows it, and per game <code>{ game, a, b }</code>.</td></tr>
+<tr><td><code>sides</code></td><td><code>{ a: [...], b: [...] }</code>, one object per player: <code>player_ref</code>, <code>won</code>, <code>rating</code> (<code>{ before, after, delta }</code>, or <code>null</code> when the match was unrated or voided), <code>points_scored</code>, <code>points_allowed</code>, <code>games_won</code>, <code>games_lost</code>.</td></tr>
+<tr><td><code>tournament</code></td><td><code>null</code> for a club match; otherwise <code>{ id, event_id, event_type, round_number, round_name, phase, is_third_place }</code>.</td></tr>
+</table>
+
+<h2 id="errors">Errors and status codes</h2>
+<p>Every error is a JSON object with an <code>error</code> string. A <code>403</code> also carries a <code>detail</code> string, and a <code>400</code> a <code>parameter</code> string.</p>
+<pre><code>{ "error": "forbidden", "detail": "this key does not carry players:read" }
+{ "error": "bad_request", "parameter": "since" }</code></pre>
+<table>
+<tr><th>Status</th><th><code>error</code></th><th>When</th></tr>
+<tr><td><code>200</code></td><td></td><td>Success.</td></tr>
+<tr><td><code>400</code></td><td><code>bad_request</code></td><td>A query parameter the route does not take, a repeated one, or a value that does not parse. <code>parameter</code> names it.</td></tr>
+<tr><td><code>401</code></td><td><code>unauthorized</code></td><td>Key missing, malformed, unknown, expired or revoked. Deliberately identical in all five cases, with a <code>WWW-Authenticate: Bearer</code> header.</td></tr>
+<tr><td><code>403</code></td><td><code>forbidden</code></td><td>Valid key without the scope this endpoint needs.</td></tr>
+<tr><td><code>404</code></td><td><code>not_found</code></td><td>No such route, or a ref or id in the path that is malformed, unknown or not published to you.</td></tr>
+<tr><td><code>405</code></td><td><code>method_not_allowed</code></td><td>A method other than <code>GET</code> on an existing route (other than <code>GET</code> or <code>HEAD</code> on this page). The <code>Allow</code> header lists what is accepted.</td></tr>
+<tr><td><code>429</code></td><td><code>rate_limited</code></td><td>A rate limit was hit. The <code>Retry-After</code> header gives whole seconds to wait.</td></tr>
+<tr><td><code>503</code></td><td><code>unavailable</code></td><td>The club's database could not be reached or answered with an error. Retry later with backoff.</td></tr>
+</table>
+<p>Checks run in this order: route (<code>404</code>), method (<code>405</code>), key (<code>401</code>, or <code>429</code> from the per-address limit below), per-key rate (<code>429</code>), scope (<code>403</code>), query parameters (<code>400</code>), then the refs and ids in the path (<code>404</code>). So a request without a valid key never learns whether a ref exists, and a request refused for scope or parameters still spends one unit of the key's rate budget.</p>
+
+<h2 id="rate-limits">Rate limits</h2>
+<ul>
+<li><strong>Per key: 60 requests per minute.</strong> A token bucket holding 60, refilling at one per second, so a burst of 60 is allowed and then one request per second.</li>
+<li><strong>Per client address: 30 failed key lookups per minute.</strong> Every <code>401</code> spends one, including a missing or malformed header. When the budget is empty, a well-formed key that the server has not checked recently gets <code>429</code> instead of being looked up. A missing or malformed header still gets <code>401</code>, as does a key rejected in the last 5 seconds, and a key verified in the last 30 seconds is not affected by this limit.</li>
+<li><code>/health</code> and this page are not rate-limited by key.</li>
+<li>The limits are enforced per server process, and the club's network edge applies its own limits in front of them. Do not rely on the exact figures; honour <code>Retry-After</code>.</li>
+</ul>
+<p>The data changes slowly. Pull the roster on a schedule measured in hours, and keep match history in sync with <code>updated_since</code> rather than re-reading it.</p>
+
+<h2 id="versioning">Versioning and stability</h2>
+<p>The <code>/v1</code> prefix is the contract. Within it, new fields and new routes may be added, and existing fields will not be removed or change meaning. Ignore fields you do not recognise. A breaking change becomes <code>/v2</code>. <code>/health</code> reports the running version.</p>
+
+<h2 id="data-handling">Data handling</h2>
+<p>This is real data about real people, shared under a named key that identifies who received it.</p>
+<ul>
+<li>Do not attempt to re-identify players, including by combining match times with the club's public pages.</li>
+<li>Do not redistribute the data or publish it as a dataset.</li>
+<li>Keep the key out of version control, URLs and logs.</li>
+<li>Tell the club if a key leaks; it will be revoked and reissued.</li>
+</ul>
+
+<h2 id="contact">Contact</h2>
+<p>For a key, a scope change, a leaked key or a question about the data, contact the club exec, for example through the club Discord at <a href="https://discord.sfubadminton.com">discord.sfubadminton.com</a>.</p>
+</main>
+</body>
+</html>
+`;

@@ -70,6 +70,27 @@ describe('Tour', () => {
     expect(html).toContain('>Leave</button>');
     expect(html).toContain('one/one');
   });
+
+  // A tour resumed after a reload opens where it was.
+  it('opens at initialStep', () => {
+    const html = renderToStaticMarkup(
+      <Tour open steps={STEPS} onFinish={() => {}} labels={LABELS} initialStep={1} />,
+    );
+    expect(html).toMatch(/<div aria-live="polite"[^>]*>Step 2 of 2<\/div>/);
+    expect(html).toContain('>Back</button>');
+    expect(html).toContain('Second title');
+  });
+
+  it('clamps an initialStep past the end, and ignores a negative one', () => {
+    const past = renderToStaticMarkup(
+      <Tour open steps={STEPS} onFinish={() => {}} labels={LABELS} initialStep={9} />,
+    );
+    expect(past).toMatch(/Step 2 of 2/);
+    const negative = renderToStaticMarkup(
+      <Tour open steps={STEPS} onFinish={() => {}} labels={LABELS} initialStep={-3} />,
+    );
+    expect(negative).toMatch(/Step 1 of 2/);
+  });
 });
 
 function escapeRegExp(s: string): string {

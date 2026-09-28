@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button, Dialog, Select, Textarea, Input } from '@badminton/ui';
-import { tallyGames } from '@badminton/shared';
+import { tallyGames, getRulesFor, gamesNeededToWin, trimUnplayedGames, validateGamesForRules, type AnyMatchFormat } from '@badminton/shared';
 import { resolveDispute } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { createClient } from '@/lib/supabase-browser';
@@ -19,7 +19,7 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
   const [editedGames, setEditedGames] = useState<
     { game_number: number; side_a_score: string; side_b_score: string }[]
   >([]);
-  const [matchFormat, setMatchFormat] = useState<string>('single_21');
+  const [rules, setRules] = useState(() => getRulesFor('single_21'));
   const [hydrated, setHydrated] = useState(false);
   const { toast } = useToast();
 
@@ -27,6 +27,9 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
   // *because* the recorded result is wrong, so an exec correcting the scoreline
   // must not be able to leave a stale winner sitting beside it.
   const editedTally = tallyGames(editedGames);
+  const needed = gamesNeededToWin(rules.bestOf);
+  const canAddGame = editedGames.length < rules.bestOf
+    && editedTally.aGamesWon < needed && editedTally.bGamesWon < needed;
 
   useEffect(() => {
     if (!open || hydrated) return;
@@ -35,25 +38,27 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
       const supabase = createClient();
       const { data: m } = await supabase
         .from('matches')
-        .select('format, match_games(game_number, side_a_score, side_b_score)')
+        .select('format, games_per_match, points_per_game, match_games(game_number, side_a_score, side_b_score)')
         .eq('id', matchId)
         .single();
       if (cancelled || !m) return;
       const games = ((m.match_games as Game[] | null) ?? []).slice().sort((a, b) => a.game_number - b.game_number);
-      const formatStr = (m.format as string) || 'single_21';
-      const isBO3 = formatStr === 'bo3_21';
+      const matchRules = getRulesFor(
+        ((m.format as string) || 'single_21') as AnyMatchFormat,
+        m.games_per_match,
+        m.points_per_game,
+      );
+      // Every recorded game is shown, so a 3-2 in a best of 5 is not cut to 3.
       // Existing scores become text; an unplayed game starts blank rather than
       // pre-filled with 0, which the admin would then have to delete.
-      const asText = (g?: Game, n?: number) => ({
-        game_number: g?.game_number ?? n ?? 1,
-        side_a_score: g ? String(g.side_a_score) : '',
-        side_b_score: g ? String(g.side_b_score) : '',
-      });
-      const filled = isBO3
-        ? [1, 2, 3].map((n) => asText(games.find((g) => g.game_number === n), n))
-        : [asText(games[0], 1)];
+      const rows = Math.max(games.length, gamesNeededToWin(matchRules.bestOf));
+      const filled = Array.from({ length: rows }, (_, i) => ({
+        game_number: i + 1,
+        side_a_score: games[i] ? String(games[i].side_a_score) : '',
+        side_b_score: games[i] ? String(games[i].side_b_score) : '',
+      }));
       setEditedGames(filled);
-      setMatchFormat(formatStr);
+      setRules(matchRules);
       setHydrated(true);
     })();
     return () => { cancelled = true; };
@@ -67,7 +72,11 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
     if (resType === 'edited') {
       const games = toNumericGames();
       if (games.length === 0) { toast('Enter scores for each game', 'error'); return; }
-      if (!editedTally.winner) { toast('Games are level or incomplete — the corrected scores must decide the match', 'error'); return; }
+      if (!editedTally.winner) { toast('Games are level or incomplete. The corrected scores must decide the match.', 'error'); return; }
+      // resolve_dispute_rated/_unrated (00178) do not judge the scores, so this
+      // is the only check that each game is a legal finish for this match.
+      const check = validateGamesForRules(games, rules);
+      if (!check.ok) { toast(check.message, 'error'); return; }
       edited = { edited_winner_side: editedTally.winner, edited_games: games };
     }
     setLoading(true);
@@ -87,16 +96,15 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
     setLoading(false);
   }
 
-  // Text state -> the numeric shape the action expects, dropping games that
-  // were never played (both sides blank/zero).
+  // Text state -> the numeric shape the action expects, dropping trailing games
+  // that were never played and renumbering so no gap reaches UNIQUE(match_id,
+  // game_number).
   function toNumericGames() {
-    return editedGames
-      .map((g) => ({
-        game_number: g.game_number,
-        side_a_score: Number(g.side_a_score || 0),
-        side_b_score: Number(g.side_b_score || 0),
-      }))
-      .filter((g) => g.side_a_score > 0 || g.side_b_score > 0);
+    return trimUnplayedGames(editedGames).map((g, i) => ({
+      game_number: i + 1,
+      side_a_score: Number(g.side_a_score || 0),
+      side_b_score: Number(g.side_b_score || 0),
+    }));
   }
 
   function setGameScore(idx: number, side: 'a' | 'b', value: string) {
@@ -127,14 +135,14 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
               {editedGames.map((g, i) => (
                 <div key={i} className="grid grid-cols-2 gap-3">
                   <Input
-                    label={`Game ${g.game_number} — Team A`}
+                    label={`Game ${g.game_number}: Team A`}
                     type="text"
                     inputMode="numeric"
                     value={g.side_a_score}
                     onChange={(e) => setGameScore(i, 'a', e.target.value.replace(/\D/g, ''))}
                   />
                   <Input
-                    label={`Game ${g.game_number} — Team B`}
+                    label={`Game ${g.game_number}: Team B`}
                     type="text"
                     inputMode="numeric"
                     value={g.side_b_score}
@@ -142,9 +150,18 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
                   />
                 </div>
               ))}
-              {matchFormat === 'bo3_21' && (
-                <p className="text-xs text-[var(--text-muted)]">BO3: leave game 3 at 0–0 if it wasn&apos;t played.</p>
+              {canAddGame && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditedGames((games) => [...games, { game_number: games.length + 1, side_a_score: '', side_b_score: '' }])}
+                >
+                  + Add Game
+                </Button>
               )}
+              <p className="text-xs text-[var(--text-muted)]">
+                {rules.bestOf > 1 ? `First to ${needed} games.` : 'One game.'} A game is won by two clear points, or at {rules.cap}. Leave an unplayed game blank.
+              </p>
               {/* Read-only: the corrected scores decide this, and the games
                   tally is shown so a mistyped score reads as a wrong count. */}
               <div className="dialog-group" role="status" aria-live="polite">

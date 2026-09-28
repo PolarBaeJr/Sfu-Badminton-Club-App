@@ -529,6 +529,7 @@ export default async function AnnouncementsPage() {
           {/* LEFT — the composer                                              */}
           {/* ---------------------------------------------------------------- */}
             <div className="flex flex-col gap-5">
+              <div data-tour="announcement-composer">
               <Card className="p-5">
                 {/* `modes.length > 0`, NOT `canCreate`, and that is a deliberate
                     behaviour change. Until now a viewer holding
@@ -567,6 +568,7 @@ export default async function AnnouncementsPage() {
                   </div>
                 )}
               </Card>
+              </div>
             </div>
 
           {/* ---------------------------------------------------------------- */}

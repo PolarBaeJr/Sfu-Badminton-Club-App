@@ -1,14 +1,11 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { isChromelessRoute } from '@/lib/chromeless-routes';
 
 export function MainContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isPublicRoute =
-    pathname === '/login' ||
-    pathname.startsWith('/auth') ||
-    pathname === '/unauthorized' ||
-    pathname === '/unavailable';
+  const isPublicRoute = isChromelessRoute(pathname);
 
   if (isPublicRoute) {
     return <>{children}</>;

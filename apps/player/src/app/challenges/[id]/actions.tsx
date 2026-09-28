@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Card, Input, Select, Dialog, Textarea, useConfirm } from '@badminton/ui';
-import { tallyGames } from '@badminton/shared';
+import { tallyGames, getRulesFor, gamesNeededToWin, initialScoreSlots, trimUnplayedGames, validateGamesForRules, type AnyMatchFormat } from '@badminton/shared';
 import { acceptChallenge, rejectChallenge, submitMatchResult, confirmMatchResult, disputeMatchResult, reportWalkover, cancelChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
@@ -17,6 +17,8 @@ interface Props {
   myParticipantStatus: string | undefined;
   isCreator: boolean;
   format: string;
+  gamesPerMatch?: number | null;
+  pointsPerGame?: number | null;
   participants: Record<string, unknown>[];
   playerId: string;
   /** True when the signed-in player is the one who submitted the result. */
@@ -25,7 +27,7 @@ interface Props {
 
 export function ChallengeDetailActions({
   challengeId, challengeStatus, matchId, matchStatus,
-  myParticipantStatus, isCreator, format, participants, playerId, isSubmitter,
+  myParticipantStatus, isCreator, format, gamesPerMatch, pointsPerGame, participants, playerId, isSubmitter,
 }: Props) {
   const { toast } = useToast();
   const router = useRouter();
@@ -40,21 +42,22 @@ export function ChallengeDetailActions({
   const [showWalkover, setShowWalkover] = useState(false);
 
   // Score submission state
-  const isBO3 = format === 'bo3_21';
-  const [games, setGames] = useState(
-    isBO3
-      // Scores are held as text, not numbers: with `parseInt(x) || 0` the field
-      // snapped back to 0 the moment you cleared it, so you could never delete
-      // the zero to type over it. Empty stays empty until submit.
-      ? [{ game_number: 1, side_a_score: '', side_b_score: '' }, { game_number: 2, side_a_score: '', side_b_score: '' }, { game_number: 3, side_a_score: '', side_b_score: '' }]
-      : [{ game_number: 1, side_a_score: '', side_b_score: '' }]
-  );
+  // The custom columns win over the enum: a player-created challenge stores
+  // bo3_21 or single_21 alongside its real shape.
+  const rules = getRulesFor(format as AnyMatchFormat, gamesPerMatch, pointsPerGame);
+  const needed = gamesNeededToWin(rules.bestOf);
+  // Scores are held as text, not numbers: with `parseInt(x) || 0` the field
+  // snapped back to 0 the moment you cleared it, so you could never delete
+  // the zero to type over it. Empty stays empty until submit.
+  const [games, setGames] = useState(() => initialScoreSlots(rules.bestOf));
   // Derived from the scores below rather than held in state — there is no
   // separate answer for the two to drift apart into.
   const tally = tallyGames(
     games.map((g) => ({ side_a_score: g.side_a_score, side_b_score: g.side_b_score })),
   );
   const derivedWinner = tally.winner;
+  const clinched = tally.aGamesWon >= needed || tally.bGamesWon >= needed;
+  const canAddGame = games.length < rules.bestOf && !clinched;
 
   // Dispute state
   const [disputeReason, setDisputeReason] = useState('');
@@ -156,15 +159,20 @@ export function ChallengeDetailActions({
   async function handleSubmitResult() {
     setLoading('submit');
     try {
-      // A blank third game means the best-of-3 ended 2-0.
-      const entered = games.filter((g, i) => !isBO3 || i < 2 || g.side_a_score !== '' || g.side_b_score !== '');
-      const validGames = entered.map((g) => ({
-        game_number: g.game_number,
+      // Blank trailing games were never played: a best of 3 that ended 2-0.
+      const validGames = trimUnplayedGames(games).map((g, i) => ({
+        game_number: i + 1,
         side_a_score: Number(g.side_a_score || 0),
         side_b_score: Number(g.side_b_score || 0),
       }));
       if (!derivedWinner) {
-        toast('Enter the game scores — the winner is worked out from them.', 'error');
+        toast('Enter the game scores. The winner is worked out from them.', 'error');
+        setLoading('');
+        return;
+      }
+      const check = validateGamesForRules(validGames, rules);
+      if (!check.ok) {
+        toast(check.message, 'error');
         setLoading('');
         return;
       }
@@ -343,13 +351,13 @@ export function ChallengeDetailActions({
             </div>
             <div className="card-sub">
               {tally.aGamesWon}–{tally.bGamesWon} in games
-              {derivedWinner ? '' : ' — tied or incomplete, so the result cannot be submitted yet'}
+              {derivedWinner ? '' : '. Tied or incomplete, so the result cannot be submitted yet.'}
             </div>
           </div>
           {games.map((g, i) => (
             <div key={i} className="grid grid-cols-2 gap-3">
               <Input
-                label={`Game ${g.game_number} — ${compactA}`}
+                label={`Game ${g.game_number}: ${compactA}`}
                 type="text"
                 inputMode="numeric"
                 value={g.side_a_score}
@@ -361,7 +369,7 @@ export function ChallengeDetailActions({
                 }}
               />
               <Input
-                label={`Game ${g.game_number} — ${compactB}`}
+                label={`Game ${g.game_number}: ${compactB}`}
                 type="text"
                 inputMode="numeric"
                 value={g.side_b_score}
@@ -374,6 +382,18 @@ export function ChallengeDetailActions({
               />
             </div>
           ))}
+          {canAddGame && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setGames([...games, { game_number: games.length + 1, side_a_score: '', side_b_score: '' }])}
+            >
+              + Add Game
+            </Button>
+          )}
+          <p className="text-sm text-[var(--text-muted)]">
+            {rules.bestOf > 1 ? `First to ${needed} games.` : 'One game.'} A game is won by two clear points, or at {rules.cap}.
+          </p>
           <Button onClick={handleSubmitResult} loading={loading === 'submit'} className="w-full press">
             Submit
           </Button>
