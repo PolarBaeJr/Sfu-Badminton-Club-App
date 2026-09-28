@@ -287,6 +287,12 @@ body {
   min-height: 100dvh;
   background-image: var(--body-grad-1), var(--body-grad-2), var(--body-grad-3);
   background-attachment: fixed;
+  /* A column, so the page below the top bar can take the rest of the screen
+     and keep the footer at the bottom (.page-shell). Everything else that
+     hangs off body is fixed or a full-width block, which a column leaves as
+     it was. */
+  display: flex;
+  flex-direction: column;
 }
 
 /* Neutral, not the brand red: a solid red block over a whole card read as an
@@ -1060,6 +1066,18 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   margin: 0 auto;
   padding: 28px;
   width: 100%;
+}
+/* The layout's <main>: its content takes the spare height, which pushes the
+   footer to the bottom of the screen on a short page. Only the wrapper and
+   the footer are flex items, so a page's own blocks keep normal flow. */
+.page-shell {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.page-shell-content {
+  flex: 1 0 auto;
+  min-width: 0;
 }
 @media (max-width: 980px) {
   .page { padding: 20px 16px; }
