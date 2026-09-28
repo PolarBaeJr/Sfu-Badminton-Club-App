@@ -7,7 +7,7 @@ import {
   sendChallengeReceivedEmail,
   sendChallengeAcceptedEmail,
   sendChallengeRejectedEmail,
-  MATCH_FORMAT_LABELS,
+  describeMatchShape,
   challengeCreateSchema,
   parseOrThrow,
   ExpectedError,
@@ -91,7 +91,7 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
 
   const { data: opponent } = await createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').eq('id', input.opponent_id).single();
   if (opponent?.email) {
-    const formatLabel = MATCH_FORMAT_LABELS[input.format as keyof typeof MATCH_FORMAT_LABELS] || input.format;
+    const formatLabel = describeMatchShape({ match_format: input.format, games_per_match: input.games_per_match, points_per_game: input.points_per_game });
     sendChallengeReceivedEmail(opponent.email, player.full_name, formatLabel, input.type, challengeId).catch((err) => {
       Sentry.captureException(err, { extra: { email: 'challenge_received', challengeId } });
     });

@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, TableCard, Atomic } from '@badminton/ui';
-import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
+import { describeMatchShape, formatRelativeTime } from '@badminton/shared';
 import { SearchableTable } from '@/components/searchable-table';
 import { ChallengeActions } from './actions';
 import { CreateChallengeForm } from './create-challenge';
@@ -112,7 +112,7 @@ export default async function ChallengesPage() {
           fields={[
             { label: 'Creator', value: <Atomic>{creatorName}</Atomic> },
             { label: 'Created', value: formatRelativeTime(c.created_at) },
-            { label: 'Format', value: MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS], wide: true },
+            { label: 'Format', value: describeMatchShape({ match_format: c.format, games_per_match: c.games_per_match, points_per_game: c.points_per_game }), wide: true },
           ]}
           actions={actions}
         />
@@ -132,7 +132,7 @@ export default async function ChallengesPage() {
             </div>
           </td>
           <td style={{ padding: '1rem 1.25rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            {MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS]}
+            {describeMatchShape({ match_format: c.format, games_per_match: c.games_per_match, points_per_game: c.points_per_game })}
           </td>
           <td style={{ padding: '1rem 1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
