@@ -34,7 +34,8 @@ import kotlinx.serialization.json.booleanOrNull
 
 // apps/player/src/app/checkin/[token]/checkin-client.tsx: a door QR scanned
 // in the app, or opened from the camera app, checks the member in through the
-// website's checkInWithToken. The call is idempotent on the server; it runs
+// website's checkInWithToken once they confirm, so a link opened by another
+// app never checks anyone in by itself. The call is idempotent on the server; it runs
 // until an answer is in hand, so a rotation mid-request asks again rather than
 // leaving the screen spinning.
 
@@ -45,10 +46,11 @@ private const val ERROR = "error:"
 @Composable
 fun CheckInScreen(services: Services, token: String, onDone: () -> Unit) {
     val p = LocalPalette.current
+    var confirmed by rememberSaveable(token) { mutableStateOf(false) }
     var result by rememberSaveable(token) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(token, result == null) {
-        if (result != null) return@LaunchedEffect
+    LaunchedEffect(token, confirmed, result == null) {
+        if (!confirmed || result != null) return@LaunchedEffect
         val appApi = services.appApi
         result = if (appApi == null) {
             ERROR + READ_ONLY_NOTICE
@@ -73,6 +75,18 @@ fun CheckInScreen(services: Services, token: String, onDone: () -> Unit) {
             ) {
                 val r = result
                 when {
+                    r == null && !confirmed -> {
+                        Heading("Check in to this session?")
+                        Text(
+                            "This marks you as here at today's session.",
+                            color = p.muted,
+                            style = Type.pageSub,
+                            textAlign = TextAlign.Center,
+                        )
+                        Box(Modifier.padding(top = 12.dp)) {
+                            PrimaryButton("Check in") { confirmed = true }
+                        }
+                    }
                     r == null -> {
                         CircularProgressIndicator(color = p.muted, modifier = Modifier.size(28.dp))
                         Heading("Checking you in...")
@@ -90,8 +104,8 @@ fun CheckInScreen(services: Services, token: String, onDone: () -> Unit) {
                         Alert(r.removePrefix(ERROR))
                     }
                 }
-                Box(Modifier.padding(top = 12.dp)) {
-                    GhostButton("Go to sessions", onClick = onDone)
+                Box(Modifier.padding(top = if (confirmed) 12.dp else 0.dp)) {
+                    GhostButton(if (confirmed) "Go to sessions" else "Not now", onClick = onDone)
                 }
             }
         }

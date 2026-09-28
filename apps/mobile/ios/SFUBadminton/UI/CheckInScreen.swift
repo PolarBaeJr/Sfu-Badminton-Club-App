@@ -2,7 +2,9 @@ import SwiftUI
 
 // Port of CheckInScreen.kt (apps/player/src/app/checkin/[token]/checkin-client.tsx):
 // a door QR scanned in the app, or opened from a link, checks the member in
-// through the website's checkInWithToken. The call is idempotent on the server;
+// through the website's checkInWithToken once they confirm. The confirm step
+// matters because any app can open an sfubadminton:// link. The call is
+// idempotent on the server;
 // a run cut short records nothing, so the screen asks again when it next
 // appears rather than showing a failure it never had.
 
@@ -16,6 +18,7 @@ struct CheckInScreen: View {
     let token: String
     let action: (@Sendable (String, [JSONValue]) async throws -> ActionOutcome)?
     let onDone: () -> Void
+    @State private var confirmed = false
     @State private var result: CheckInResult?
 
     var body: some View {
@@ -24,6 +27,13 @@ struct CheckInScreen: View {
             Card(padding: 28) {
                 VStack(spacing: 8) {
                     switch result {
+                    case nil where !confirmed:
+                        Heading(text: "Check in to this session?")
+                        Text("This marks you as here at today's session.")
+                            .foregroundStyle(Palette.muted)
+                            .textStyle(TypeStyle.pageSub)
+                            .multilineTextAlignment(.center)
+                        PrimaryButton(title: "Check in") { confirmed = true }.padding(.top, 12)
                     case nil:
                         ProgressView().tint(Palette.muted).frame(width: 28, height: 28)
                         Heading(text: "Checking you in...")
@@ -37,15 +47,20 @@ struct CheckInScreen: View {
                         Heading(text: "Couldn't check you in")
                         AlertBox(text: message)
                     }
-                    GhostButton(title: "Go to sessions", action: onDone).padding(.top, 12)
+                    GhostButton(title: confirmed ? "Go to sessions" : "Not now", action: onDone)
+                        .padding(.top, confirmed ? 12 : 0)
                 }
                 .frame(maxWidth: .infinity)
             }
             .padding(.top, 40)
             .padding(16)
         }
-        .task(id: token) {
-            guard result == nil else { return }
+        .onChange(of: token) {
+            confirmed = false
+            result = nil
+        }
+        .task(id: "\(token) \(confirmed)") {
+            guard confirmed, result == nil else { return }
             guard let action else {
                 result = .error(readOnlyNotice)
                 return
