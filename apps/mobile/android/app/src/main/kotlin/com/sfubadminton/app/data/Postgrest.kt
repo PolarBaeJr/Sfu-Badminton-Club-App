@@ -70,7 +70,7 @@ class Postgrest(
                 method = query.method,
                 url = config.url + query.pathAndQuery(),
                 headers = PostgrestQuery.headers(config.anonKey, token, withBody),
-                body = if (withBody) "{}" else null,
+                body = if (withBody) query.body ?: "{}" else null,
             ),
         )
     }

@@ -13,6 +13,8 @@ struct Viewer: Equatable, Sendable {
     let createdAt: String?
     let handle: String?
     let memberCode: String?
+    /// Addresses an 'eligible_only' announcement.
+    var eligibilityFlag: Bool? = nil
 }
 
 /// Two reads, because neither source has everything. players_self is the
@@ -24,7 +26,7 @@ struct Viewer: Equatable, Sendable {
 /// signing up on the website.
 func loadViewer(_ postgrest: Postgrest, userId: String) async throws -> Viewer? {
     let selfRow = try await postgrest.maybeSingle(
-        PostgrestQuery.select("players_self", "id, full_name, status, is_exec, fee_exempt, avatar_url, created_at"),
+        PostgrestQuery.select("players_self", "id, full_name, status, is_exec, fee_exempt, avatar_url, created_at, eligibility_flag"),
         what: "your profile",
     ) { json in
         let row = try json.object()
@@ -38,6 +40,7 @@ func loadViewer(_ postgrest: Postgrest, userId: String) async throws -> Viewer? 
             createdAt: try row.optString("created_at"),
             handle: nil,
             memberCode: nil,
+            eligibilityFlag: try row.optBool("eligibility_flag"),
         ))
     }
     guard let id = selfRow?.id, let selfRow = selfRow?.row else { return nil }
@@ -60,6 +63,7 @@ func loadViewer(_ postgrest: Postgrest, userId: String) async throws -> Viewer? 
         createdAt: selfRow.createdAt,
         handle: extra?.handle,
         memberCode: extra?.memberCode,
+        eligibilityFlag: selfRow.eligibilityFlag,
     )
 }
 

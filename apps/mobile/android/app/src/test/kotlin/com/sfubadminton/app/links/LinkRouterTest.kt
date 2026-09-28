@@ -14,7 +14,8 @@ class LinkRouterTest {
     fun `routes every claimed tab path`() {
         assertEquals(LinkRoute.Tab(TabTarget.LEADERBOARD), parse("$site/leaderboard"))
         assertEquals(LinkRoute.Tab(TabTarget.MY_STATS), parse("$site/my-stats"))
-        assertEquals(LinkRoute.Tab(TabTarget.SESSIONS), parse("$site/sessions"))
+        assertEquals(LinkRoute.Tab(TabTarget.FEED), parse("$site/feed"))
+        assertEquals(LinkRoute.Tab(TabTarget.FEED), parse("$site/sessions"))
         assertEquals(LinkRoute.Tab(TabTarget.MEMBERSHIP), parse("$site/membership"))
         assertEquals(LinkRoute.Tab(TabTarget.MEMBERSHIP), parse("$site/fees"))
         assertEquals(LinkRoute.Tab(TabTarget.CHALLENGES), parse("$site/challenges"))
@@ -22,8 +23,10 @@ class LinkRouterTest {
 
     @Test
     fun `keeps a session id only when it is a uuid`() {
-        assertEquals(LinkRoute.Tab(TabTarget.SESSIONS, id), parse("$site/sessions?s=$id"))
-        assertEquals(LinkRoute.Tab(TabTarget.SESSIONS), parse("$site/sessions?s=nope"))
+        assertEquals(LinkRoute.Tab(TabTarget.FEED, id), parse("$site/sessions?s=$id"))
+        assertEquals(LinkRoute.Tab(TabTarget.FEED), parse("$site/sessions?s=nope"))
+        assertEquals(LinkRoute.Tab(TabTarget.FEED, id), parse("$site/feed?s=$id"))
+        assertEquals(LinkRoute.Tab(TabTarget.FEED), parse("$site/feed?s=nope"))
     }
 
     @Test
@@ -59,7 +62,7 @@ class LinkRouterTest {
     @Test
     fun `sends other pages of the website to the browser`() {
         assertEquals(LinkRoute.OpenInBrowser("$site/tournaments/checkin"), parse("$site/tournaments/checkin"))
-        assertEquals(LinkRoute.OpenInBrowser("$site/feed"), parse("$site/feed"))
+        assertEquals(LinkRoute.OpenInBrowser("$site/notifications"), parse("$site/notifications"))
         assertEquals(LinkRoute.OpenInBrowser(site), parse(site))
     }
 

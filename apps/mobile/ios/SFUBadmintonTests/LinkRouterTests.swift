@@ -12,15 +12,18 @@ final class LinkRouterTests: XCTestCase {
     func test_routesEveryClaimedTabPath() {
         XCTAssertEqual(.tab(.leaderboard), parse("\(site)/leaderboard"))
         XCTAssertEqual(.tab(.myStats), parse("\(site)/my-stats"))
-        XCTAssertEqual(.tab(.sessions), parse("\(site)/sessions"))
+        XCTAssertEqual(.tab(.feed), parse("\(site)/feed"))
+        XCTAssertEqual(.tab(.feed), parse("\(site)/sessions"))
         XCTAssertEqual(.tab(.membership), parse("\(site)/membership"))
         XCTAssertEqual(.tab(.membership), parse("\(site)/fees"))
         XCTAssertEqual(.tab(.challenges), parse("\(site)/challenges"))
     }
 
     func test_keepsASessionIdOnlyWhenItIsAUuid() {
-        XCTAssertEqual(.tab(.sessions, sessionId: id), parse("\(site)/sessions?s=\(id)"))
-        XCTAssertEqual(.tab(.sessions), parse("\(site)/sessions?s=nope"))
+        XCTAssertEqual(.tab(.feed, sessionId: id), parse("\(site)/sessions?s=\(id)"))
+        XCTAssertEqual(.tab(.feed), parse("\(site)/sessions?s=nope"))
+        XCTAssertEqual(.tab(.feed, sessionId: id), parse("\(site)/feed?s=\(id)"))
+        XCTAssertEqual(.tab(.feed), parse("\(site)/feed?s=nope"))
     }
 
     func test_routesChallenges() {
@@ -54,7 +57,7 @@ final class LinkRouterTests: XCTestCase {
 
     func test_sendsOtherPagesOfTheWebsiteToTheBrowser() {
         XCTAssertEqual(.openInBrowser(url: "\(site)/tournaments/checkin"), parse("\(site)/tournaments/checkin"))
-        XCTAssertEqual(.openInBrowser(url: "\(site)/feed"), parse("\(site)/feed"))
+        XCTAssertEqual(.openInBrowser(url: "\(site)/notifications"), parse("\(site)/notifications"))
         XCTAssertEqual(.openInBrowser(url: site), parse(site))
     }
 

@@ -7,6 +7,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import com.sfubadminton.app.shared.CalendarTone
 
 // The club website's dark theme tokens (apps/player/src/app/globals.css). The
 // app is dark only.
@@ -65,6 +66,15 @@ private val Dark = Palette(
 )
 
 val LocalPalette = staticCompositionLocalOf { Dark }
+
+/** The calendar's tone marks, as globals.css colours them. */
+fun Palette.tone(tone: CalendarTone): Color = when (tone) {
+    CalendarTone.OPEN -> win
+    CalendarTone.CLOSED -> line2
+    CalendarTone.CLUB -> gold
+    CalendarTone.TOURNAMENT -> ink2
+    CalendarTone.CANCELLED -> line2
+}
 
 @Composable
 fun AppTheme(content: @Composable () -> Unit) {

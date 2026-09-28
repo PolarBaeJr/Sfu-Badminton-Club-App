@@ -49,6 +49,35 @@ final class PostgrestQueryTests: XCTestCase {
         XCTAssertEqual("/rest/v1/rpc/get_leaderboard", q.pathAndQuery())
     }
 
+    func test_postsAnRpcsArgumentsAsItsBody() {
+        let q = PostgrestQuery.rpc("get_session_attendee_counts", .object([("p_session_ids", .array([.string("a"), .string("b")]))]))
+        XCTAssertEqual("/rest/v1/rpc/get_session_attendee_counts", q.pathAndQuery())
+        XCTAssertEqual(#"{"p_session_ids":["a","b"]}"#, q.body)
+        XCTAssertEqual("{}", PostgrestQuery.rpc("get_leaderboard").body)
+        XCTAssertNil(PostgrestQuery.select("seasons", "id").body)
+    }
+
+    func test_filtersBelowAValueAndOnNull() {
+        XCTAssertEqual(
+            "/rest/v1/sessions?select=id&date=lt.2026-09-01&season_id=is.null",
+            PostgrestQuery.select("sessions", "id").lt("date", "2026-09-01").isNull("season_id").pathAndQuery(),
+        )
+    }
+
+    func test_keepsTwoOrParamsApartAndInOrder() {
+        XCTAssertEqual(
+            "/rest/v1/announcements?select=id&or=%28a.is.null%29&or=%28b.eq.true%29",
+            PostgrestQuery.select("announcements", "id").or("a.is.null").or("b.eq.true").pathAndQuery(),
+        )
+    }
+
+    func test_pagesWithAnOffsetAndALimit() {
+        XCTAssertEqual(
+            "/rest/v1/session_rsvp?select=session_id&order=session_id.asc&offset=500&limit=500",
+            PostgrestQuery.select("session_rsvp", "session_id").order("session_id", ascending: true).offset(500).limit(500).pathAndQuery(),
+        )
+    }
+
     func test_sendsTheAnonKeyAndTheMembersToken() {
         XCTAssertEqual(
             ["apikey": "anon", "Authorization": "Bearer tok", "Accept": "application/json"],

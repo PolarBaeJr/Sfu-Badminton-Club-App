@@ -5,6 +5,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
+import com.sfubadminton.app.data.FeedLink
 import com.sfubadminton.app.data.isApproved
 import com.sfubadminton.app.links.LinkRoute
 import com.sfubadminton.app.links.LinkRouter
@@ -97,17 +98,17 @@ private fun NoPlayerRow(services: Services) {
 }
 
 private enum class Tab(val title: String, @param:DrawableRes val icon: Int) {
+    FEED("Feed", R.drawable.ic_tab_feed),
     LEADERBOARD("Leaderboard", R.drawable.ic_tab_leaderboard),
     CHALLENGES("Challenges", R.drawable.ic_tab_challenges),
-    SESSIONS("Sessions", R.drawable.ic_tab_sessions),
-    MY_STATS("My stats", R.drawable.ic_tab_stats),
+    MY_STATS("Stats", R.drawable.ic_tab_stats),
     MEMBERSHIP("Membership", R.drawable.ic_tab_membership),
 }
 
 private fun TabTarget.tab(): Tab = when (this) {
+    TabTarget.FEED -> Tab.FEED
     TabTarget.LEADERBOARD -> Tab.LEADERBOARD
     TabTarget.CHALLENGES -> Tab.CHALLENGES
-    TabTarget.SESSIONS -> Tab.SESSIONS
     TabTarget.MY_STATS -> Tab.MY_STATS
     TabTarget.MEMBERSHIP -> Tab.MEMBERSHIP
 }
@@ -127,11 +128,13 @@ private fun Tabs(services: Services, viewer: Viewer, pendingLink: MutableStateFl
     val scope = rememberCoroutineScope()
     val approved = isApproved(viewer)
     val tabs = Tab.entries.filter { it != Tab.CHALLENGES || approved }
-    var tab by rememberSaveable { mutableStateOf(Tab.LEADERBOARD) }
+    // Saved by name, so a tab a later build drops falls back to the Feed rather than failing to restore.
+    var tabName by rememberSaveable { mutableStateOf(Tab.FEED.name) }
+    val tab = Tab.entries.firstOrNull { it.name == tabName }?.takeIf { it in tabs } ?: Tab.FEED
     var overlay by rememberSaveable { mutableStateOf<String?>(null) }
     var notice by rememberSaveable { mutableStateOf<String?>(null) }
     var refreshKey by rememberSaveable { mutableIntStateOf(0) }
-    if (tab !in tabs) tab = Tab.LEADERBOARD
+    var focusSession by rememberSaveable { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = overlay != null) { overlay = null }
 
@@ -141,7 +144,8 @@ private fun Tabs(services: Services, viewer: Viewer, pendingLink: MutableStateFl
             is LinkRoute.Tab -> {
                 overlay = null
                 val target = route.tab.tab()
-                if (target in tabs) tab = target else overlay = LIST
+                if (target in tabs) tabName = target.name else overlay = LIST
+                if (target == Tab.FEED) focusSession = route.sessionId
             }
             is LinkRoute.ChallengeDetail -> overlay = if (approved) DETAIL + route.id else LIST
             is LinkRoute.NewChallenge -> overlay = if (approved) NEW + (route.opponentId ?: "") else LIST
@@ -180,13 +184,25 @@ private fun Tabs(services: Services, viewer: Viewer, pendingLink: MutableStateFl
     } else {
         null
     }
+    fun openLink(link: FeedLink) {
+        when (link) {
+            FeedLink.MyStats -> route(LinkRoute.Tab(TabTarget.MY_STATS), fromScanner = false)
+            FeedLink.Membership -> route(LinkRoute.Tab(TabTarget.MEMBERSHIP), fromScanner = false)
+            FeedLink.Challenges -> route(LinkRoute.Tab(TabTarget.CHALLENGES), fromScanner = false)
+            FeedLink.NewChallenge -> route(LinkRoute.NewChallenge(null), fromScanner = false)
+            is FeedLink.Challenge -> route(LinkRoute.ChallengeDetail(link.id), fromScanner = false)
+            is FeedLink.Web -> services.siteUrl?.let {
+                route(LinkRoute.OpenInBrowser(it.trimEnd('/') + link.path), fromScanner = false)
+            }
+        }
+    }
 
     Scaffold(
         containerColor = p.background,
         topBar = { BrandBar(onScan) },
         bottomBar = {
             TabBar(tabs, if (overlay == null) tab else null) {
-                tab = it
+                tabName = it.name
                 overlay = null
                 notice = null
             }
@@ -203,6 +219,16 @@ private fun Tabs(services: Services, viewer: Viewer, pendingLink: MutableStateFl
                 val o = overlay
                 when {
                     o == null -> when (tab) {
+                        Tab.FEED -> FeedScreen(
+                            services,
+                            viewer,
+                            refreshKey,
+                            focusSession,
+                            onFocusDone = { focusSession = null },
+                            onScan = onScan,
+                            canBrowse = services.siteUrl != null,
+                            onLink = ::openLink,
+                        )
                         Tab.LEADERBOARD -> LeaderboardScreen(services, viewer, onChallenge)
                         Tab.CHALLENGES -> ChallengesScreen(
                             services,
@@ -212,7 +238,6 @@ private fun Tabs(services: Services, viewer: Viewer, pendingLink: MutableStateFl
                             onNew = { overlay = NEW },
                         )
                         Tab.MY_STATS -> MyStatsScreen(services, viewer)
-                        Tab.SESSIONS -> SessionsScreen(services, viewer, onScan)
                         Tab.MEMBERSHIP -> MembershipScreen(services, viewer)
                     }
                     o.startsWith(DETAIL) -> Overlay("Back to challenges", { overlay = null }) {
@@ -222,14 +247,15 @@ private fun Tabs(services: Services, viewer: Viewer, pendingLink: MutableStateFl
                         NewChallengeScreen(services, viewer, o.removePrefix(NEW).ifEmpty { null }) {
                             refreshKey += 1
                             overlay = null
-                            tab = Tab.CHALLENGES
+                            tabName = Tab.CHALLENGES.name
                             notice = "Challenge sent!"
                         }
                     }
                     o.startsWith(CHECKIN) -> Overlay("Back", { overlay = null }) {
                         CheckInScreen(services, o.removePrefix(CHECKIN)) {
                             overlay = null
-                            tab = Tab.SESSIONS
+                            tabName = Tab.FEED.name
+                            refreshKey += 1
                         }
                     }
                     else -> Overlay("Back", { overlay = null }) {

@@ -41,3 +41,16 @@ enum Palette {
     static let silver = Color(hex: 0xFFBCBDC0)
     static let bronze = Color(hex: 0xFFC68A55)
 }
+
+extension Palette {
+    /// The calendar's tone marks, as globals.css colours them.
+    static func tone(_ tone: CalendarTone) -> Color {
+        switch tone {
+        case .open: return win
+        case .closed: return line2
+        case .club: return gold
+        case .tournament: return ink2
+        case .cancelled: return line2
+        }
+    }
+}

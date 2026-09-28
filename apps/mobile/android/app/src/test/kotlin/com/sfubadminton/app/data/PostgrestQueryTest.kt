@@ -1,7 +1,11 @@
 package com.sfubadminton.app.data
 
 import com.sfubadminton.app.net.percentEncode
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.putJsonArray
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PostgrestQueryTest {
@@ -19,8 +23,8 @@ class PostgrestQueryTest {
     @Test
     fun `reads the viewer's own row`() {
         assertEquals(
-            "/rest/v1/players_self?select=id%2Cfull_name%2Cstatus%2Cis_exec%2Cfee_exempt%2Cavatar_url%2Ccreated_at",
-            PostgrestQuery.select("players_self", "id, full_name, status, is_exec, fee_exempt, avatar_url, created_at")
+            "/rest/v1/players_self?select=id%2Cfull_name%2Cstatus%2Cis_exec%2Cfee_exempt%2Cavatar_url%2Ccreated_at%2Celigibility_flag",
+            PostgrestQuery.select("players_self", "id, full_name, status, is_exec, fee_exempt, avatar_url, created_at, eligibility_flag")
                 .pathAndQuery(),
         )
     }
@@ -57,6 +61,42 @@ class PostgrestQueryTest {
         val q = PostgrestQuery.rpc("get_leaderboard")
         assertEquals("POST", q.method)
         assertEquals("/rest/v1/rpc/get_leaderboard", q.pathAndQuery())
+    }
+
+    @Test
+    fun `posts an RPC's arguments as its body`() {
+        val q = PostgrestQuery.rpc(
+            "get_session_attendee_counts",
+            buildJsonObject { putJsonArray("p_session_ids") { add("a"); add("b") } },
+        )
+        assertEquals("/rest/v1/rpc/get_session_attendee_counts", q.pathAndQuery())
+        assertEquals("{\"p_session_ids\":[\"a\",\"b\"]}", q.body)
+        assertEquals("{}", PostgrestQuery.rpc("get_leaderboard").body)
+        assertNull(PostgrestQuery.select("seasons", "id").body)
+    }
+
+    @Test
+    fun `filters below a value and on null`() {
+        assertEquals(
+            "/rest/v1/sessions?select=id&date=lt.2026-09-01&season_id=is.null",
+            PostgrestQuery.select("sessions", "id").lt("date", "2026-09-01").isNull("season_id").pathAndQuery(),
+        )
+    }
+
+    @Test
+    fun `keeps two or params apart and in order`() {
+        assertEquals(
+            "/rest/v1/announcements?select=id&or=%28a.is.null%29&or=%28b.eq.true%29",
+            PostgrestQuery.select("announcements", "id").or("a.is.null").or("b.eq.true").pathAndQuery(),
+        )
+    }
+
+    @Test
+    fun `pages with an offset and a limit`() {
+        assertEquals(
+            "/rest/v1/session_rsvp?select=session_id&order=session_id.asc&offset=500&limit=500",
+            PostgrestQuery.select("session_rsvp", "session_id").order("session_id", true).offset(500).limit(500).pathAndQuery(),
+        )
     }
 
     @Test

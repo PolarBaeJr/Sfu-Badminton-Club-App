@@ -16,6 +16,8 @@ data class Viewer(
     val createdAt: String?,
     val handle: String?,
     val memberCode: String?,
+    /** Addresses an 'eligible_only' announcement. */
+    val eligibilityFlag: Boolean? = null,
 )
 
 @Serializable
@@ -27,6 +29,7 @@ internal data class PlayerSelfRow(
     @SerialName("fee_exempt") val feeExempt: Boolean? = null,
     @SerialName("avatar_url") val avatarUrl: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("eligibility_flag") val eligibilityFlag: Boolean? = null,
 )
 
 @Serializable
@@ -46,7 +49,7 @@ internal data class PlayerExtraRow(
  */
 suspend fun loadViewer(postgrest: Postgrest, userId: String): Viewer? {
     val self = postgrest.maybeSingle(
-        PostgrestQuery.select("players_self", "id, full_name, status, is_exec, fee_exempt, avatar_url, created_at"),
+        PostgrestQuery.select("players_self", "id, full_name, status, is_exec, fee_exempt, avatar_url, created_at, eligibility_flag"),
         PlayerSelfRow.serializer(),
         "your profile",
     )
@@ -68,6 +71,7 @@ suspend fun loadViewer(postgrest: Postgrest, userId: String): Viewer? {
         createdAt = self.createdAt,
         handle = extra?.handle,
         memberCode = extra?.memberCode,
+        eligibilityFlag = self.eligibilityFlag,
     )
 }
 

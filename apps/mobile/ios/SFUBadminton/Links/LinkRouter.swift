@@ -11,7 +11,7 @@ import Foundation
 // Keep in step with LinkRouter.kt, the Android manifest's App Links paths and
 // the applinks components in apps/player/src/lib/passkey/native-apps.ts.
 
-enum TabTarget: Equatable, Sendable { case leaderboard, challenges, sessions, myStats, membership }
+enum TabTarget: Equatable, Sendable { case feed, leaderboard, challenges, myStats, membership }
 
 enum LinkRoute: Equatable, Sendable {
     case tab(TabTarget, sessionId: String? = nil)
@@ -41,7 +41,8 @@ enum LinkRouter {
         switch path {
         case "/leaderboard": return .tab(.leaderboard)
         case "/my-stats": return .tab(.myStats)
-        case "/sessions": return .tab(.sessions, sessionId: query["s"].flatMap { isUuid($0) ? $0 : nil })
+        // The web folded the schedule into the feed; /sessions only redirects there.
+        case "/feed", "/sessions": return .tab(.feed, sessionId: query["s"].flatMap { isUuid($0) ? $0 : nil })
         case "/membership", "/fees": return .tab(.membership)
         case "/challenges": return .tab(.challenges)
         case "/challenges/new": return .newChallenge(opponentId: query["opponent"].flatMap { isUuid($0) ? $0 : nil })

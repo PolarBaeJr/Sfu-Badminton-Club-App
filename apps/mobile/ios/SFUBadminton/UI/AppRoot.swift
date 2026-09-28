@@ -33,23 +33,23 @@ struct AppRoot: View {
 }
 
 enum Tab: CaseIterable {
-    case leaderboard, challenges, sessions, myStats, membership
+    case feed, leaderboard, challenges, myStats, membership
 
     var title: String {
         switch self {
+        case .feed: return "Feed"
         case .leaderboard: return "Leaderboard"
         case .challenges: return "Challenges"
-        case .sessions: return "Sessions"
-        case .myStats: return "My stats"
+        case .myStats: return "Stats"
         case .membership: return "Membership"
         }
     }
 
     var icon: String {
         switch self {
+        case .feed: return "tab_feed"
         case .leaderboard: return "tab_leaderboard"
         case .challenges: return "tab_challenges"
-        case .sessions: return "tab_sessions"
         case .myStats: return "tab_stats"
         case .membership: return "tab_membership"
         }
@@ -62,7 +62,7 @@ struct ScreenData: Sendable {
     let siteUrl: String?
     let ladder: @Sendable () async throws -> [LadderRow]
     let myStats: @Sendable (_ playerId: String) async throws -> MyStats
-    let sessions: @Sendable (_ status: String?) async throws -> [UpcomingSession]
+    let feed: @Sendable (Viewer) async throws -> Feed
     let statement: @Sendable (Viewer) async throws -> Statement
     let challenges: @Sendable (_ playerId: String) async throws -> [ChallengeListItem]
     let challenge: @Sendable (_ id: String, _ viewerId: String) async throws -> ChallengeWithMatch?
@@ -85,7 +85,7 @@ struct ScreenData: Sendable {
             siteUrl: services.siteUrl,
             ladder: { try await loadLadder(postgrest) },
             myStats: { try await loadMyStats(postgrest, playerId: $0) },
-            sessions: { try await loadUpcomingSessions(postgrest, playerStatus: $0) },
+            feed: { try await loadFeed(postgrest, viewer: $0) },
             statement: { try await loadStatement(postgrest, viewer: $0) },
             challenges: { try await loadMyChallenges(postgrest, playerId: $0) },
             challenge: { try await loadChallenge(postgrest, id: $0, viewerId: $1) },
@@ -161,8 +161,10 @@ struct SignedInTabs: View {
     @State private var notice: String?
     @State private var scanning = false
     @State private var page: BrowserPage?
+    @State private var refreshKey = 0
+    @State private var focusSession: String?
 
-    init(data: ScreenData, viewer: Viewer, pendingLink: Binding<String?>, initialTab: Tab = .leaderboard, initialOverlay: Overlay? = nil) {
+    init(data: ScreenData, viewer: Viewer, pendingLink: Binding<String?>, initialTab: Tab = .feed, initialOverlay: Overlay? = nil) {
         self.data = data
         self.viewer = viewer
         _pendingLink = pendingLink
@@ -188,7 +190,7 @@ struct SignedInTabs: View {
     }
 
     var body: some View {
-        let shown = tabs.contains(tab) ? tab : .leaderboard
+        let shown = tabs.contains(tab) ? tab : .feed
         VStack(spacing: 0) {
             BrandBar(onScan: onScan)
             if let notice {
@@ -239,10 +241,11 @@ struct SignedInTabs: View {
     private func route(_ route: LinkRoute, fromScanner: Bool) {
         notice = nil
         switch route {
-        case let .tab(target, _):
+        case let .tab(target, sessionId):
             overlay = nil
             let wanted = Tab(target)
             if tabs.contains(wanted) { tab = wanted } else { overlay = .list }
+            if wanted == .feed { focusSession = sessionId }
         case let .challengeDetail(id):
             overlay = approved ? .detail(id: id) : .list
         case let .newChallenge(opponentId):
@@ -256,6 +259,21 @@ struct SignedInTabs: View {
         }
     }
 
+    private func open(_ link: FeedLink) {
+        switch link {
+        case .myStats: route(.tab(.myStats), fromScanner: false)
+        case .membership: route(.tab(.membership), fromScanner: false)
+        case .challenges: route(.tab(.challenges), fromScanner: false)
+        case .newChallenge: route(.newChallenge(opponentId: nil), fromScanner: false)
+        case let .challenge(id): route(.challengeDetail(id: id), fromScanner: false)
+        case let .web(path):
+            if let site = data.siteUrl {
+                let base = site.hasSuffix("/") ? String(site.dropLast()) : site
+                route(.openInBrowser(url: base + path), fromScanner: false)
+            }
+        }
+    }
+
     private func browse(_ url: String) {
         Task {
             if !(await openInBrowser(url) { page = $0 }) { notice = noBrowser }
@@ -265,6 +283,16 @@ struct SignedInTabs: View {
     @ViewBuilder
     private func screen(_ tab: Tab) -> some View {
         switch tab {
+        case .feed:
+            FeedScreen(
+                viewer: viewer,
+                load: data.feed,
+                refreshKey: refreshKey,
+                focusSession: $focusSession,
+                onScan: onScan,
+                canBrowse: data.siteUrl != nil,
+                onLink: open,
+            )
         case .leaderboard:
             LeaderboardScreen(viewer: viewer, load: data.ladder, onChallenge: onChallenge)
         case .challenges:
@@ -274,8 +302,6 @@ struct SignedInTabs: View {
                 onOpen: { overlay = .detail(id: $0) },
                 onNew: { overlay = .newChallenge(opponent: nil) },
             )
-        case .sessions:
-            SessionsScreen(viewer: viewer, load: data.sessions, onScan: onScan)
         case .myStats:
             MyStatsScreen(viewer: viewer, siteUrl: data.siteUrl, load: data.myStats, signOut: data.signOut)
         case .membership:
@@ -302,7 +328,8 @@ struct SignedInTabs: View {
             OverlayFrame(back: "Back", onBack: { self.overlay = nil }) {
                 CheckInScreen(token: token, action: data.action) {
                     self.overlay = nil
-                    tab = .sessions
+                    tab = .feed
+                    refreshKey += 1
                 }
             }
         case .list:
@@ -316,9 +343,9 @@ struct SignedInTabs: View {
 private extension Tab {
     init(_ target: TabTarget) {
         switch target {
+        case .feed: self = .feed
         case .leaderboard: self = .leaderboard
         case .challenges: self = .challenges
-        case .sessions: self = .sessions
         case .myStats: self = .myStats
         case .membership: self = .membership
         }

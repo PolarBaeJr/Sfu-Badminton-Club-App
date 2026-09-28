@@ -63,7 +63,7 @@ struct Postgrest: Sendable {
             method: query.method,
             url: url + query.pathAndQuery(),
             headers: PostgrestQuery.headers(anonKey: anonKey, accessToken: token, withBody: withBody),
-            body: withBody ? "{}" : nil,
+            body: withBody ? query.body ?? "{}" : nil,
         ))
     }
 

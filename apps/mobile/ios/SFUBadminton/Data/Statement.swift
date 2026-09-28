@@ -21,6 +21,42 @@ struct OwnFeeRow: Equatable, Sendable {
     var method: String? = nil
     var reference: String? = nil
     var createdAt: String = ""
+    var feeSubmissions: [OwnFeeSubmission]? = nil
+}
+
+struct OwnFeeSubmission: Equatable, Sendable {
+    var id: String = ""
+    var status: String = ""
+    var submittedAt: String = ""
+}
+
+extension OwnFeeSubmission {
+    init(json: JSONValue) throws {
+        let row = try json.object()
+        id = try row.optString("id") ?? ""
+        status = try row.optString("status") ?? ""
+        submittedAt = try row.optString("submitted_at") ?? ""
+    }
+}
+
+/// The most recent receipt sent for a fee, or nil.
+func latestSubmission(_ row: OwnFeeRow?) -> OwnFeeSubmission? {
+    (row?.feeSubmissions ?? []).enumerated()
+        .sorted { a, b in a.element.submittedAt == b.element.submittedAt ? a.offset < b.offset : a.element.submittedAt > b.element.submittedAt }
+        .first?.element
+}
+
+/// Port of toPayableLines in apps/player/src/lib/member-fees.ts: the rows as
+/// payable lines, dues from other seasons left out, plus this season's dues at
+/// the member's price when there is no dues row yet.
+func toPayableLines(_ rows: [OwnFeeRow], season: StatementSeason?, status: String?) -> [PayableFeeLine] {
+    var lines = rows
+        .filter { $0.feeType != "dues" || (season != nil && $0.seasonId == season?.id) }
+        .map { PayableFeeLine(feeType: $0.feeType, paidAt: $0.paidAt, amountCents: $0.amountCents, pending: latestSubmission($0)?.status == "submitted") }
+    if let season, !rows.contains(where: { $0.feeType == "dues" && $0.seasonId == season.id }) {
+        lines.append(PayableFeeLine(feeType: "dues", paidAt: nil, amountCents: seasonFeeFor(status, season), pending: false))
+    }
+    return lines
 }
 
 extension OwnFeeRow {
@@ -36,6 +72,7 @@ extension OwnFeeRow {
         method = try row.optString("method")
         reference = try row.optString("reference")
         createdAt = try row.optString("created_at") ?? ""
+        feeSubmissions = try row.optValue("fee_submissions")?.arrayValue?.map(OwnFeeSubmission.init(json:))
     }
 }
 

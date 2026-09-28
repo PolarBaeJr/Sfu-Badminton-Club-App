@@ -2,7 +2,7 @@
 import SwiftUI
 
 // A debug-only way to see the signed-in screens without an account: launch
-// with `-previewTab leaderboard` (or challenges, sessions, myStats, membership)
+// with `-previewTab feed` (or leaderboard, challenges, myStats, membership)
 // and optionally `-previewPending YES` or `-previewScrollToBottom YES` (the
 // ladder opened at its end). `-previewOverlay detail|new|checkin|scan` opens a
 // screen over the tabs (scan shows the paste field, as the simulator has no
@@ -103,12 +103,68 @@ enum DebugPreview {
         match("m0", "s-old", "2026-04-02", "singles", "confirmed", win: true, delta: 30, score: "21-3, 21-4"),
     ]
 
-    static let sessions: [UpcomingSession] = [
-        UpcomingSession(id: "x1", name: "Friday Drop in", date: "2026-10-02", startTime: "19:30:00", endTime: "21:30:00", location: "North Gym", track: "all"),
-        UpcomingSession(id: "x2", name: "Competitive Night", date: "2026-10-06", startTime: "18:00:00", endTime: "20:30:00", location: "South Gym", track: "competitive"),
-        UpcomingSession(id: "x3", name: nil, date: "2026-10-09", startTime: "19:30:00", endTime: nil, location: "", track: "all"),
-        UpcomingSession(id: "x4", name: "Tuesday Drop in", date: "2026-10-13", startTime: "19:30:00", endTime: "21:30:00", location: "North Gym", track: "all"),
-    ]
+    private static func face(_ n: Int) -> JSONValue {
+        let row = ladder.first { $0.id == pid(n) }!
+        return .object([("id", .string(row.id)), ("full_name", .string(row.name)), ("handle", row.handle.map(JSONValue.string) ?? .null), ("avatar_url", .null)])
+    }
+
+    private static let meFace = JSONValue.object([("id", .string(me)), ("full_name", .string("Alex Rivera")), ("handle", .string("alex_rivera")), ("avatar_url", .null)])
+
+    /// The Feed from invented rows, dated from today so the agenda and the week strip always have something on.
+    static func feed(_ viewer: Viewer) -> Feed {
+        let now = Date()
+        let today = clubToday(now)
+        func day(_ n: Int) -> String { addDaysISO(today, n) }
+        let sessions = [
+            OpenSessionRow(id: "x1", name: "Friday Drop in", date: day(1), startTime: "19:30:00", endTime: "21:30:00", status: "open", location: "North Gym", track: "all"),
+            OpenSessionRow(id: "x2", name: "Competitive Night", date: day(4), startTime: "18:00:00", endTime: "20:30:00", status: "open", location: "South Gym", notes: "Bring a light shirt and a dark shirt.", track: "competitive"),
+            OpenSessionRow(id: "x3", date: day(8), startTime: "19:30:00", status: "open", track: "all"),
+            OpenSessionRow(id: "20000000-0000-4000-8000-000000000004", name: "Tuesday Drop in", date: day(19), startTime: "19:30:00", endTime: "21:30:00", status: "open", location: "North Gym", track: "all"),
+        ]
+        var i = FeedInputs(season: FeedSeasonRow(id: "s-fall", name: "Fall 2026", startDate: "2026-09-07", endDate: "2026-12-10"))
+        i.openSessions = sessions
+        i.calendarSessions = sessions.map { CalendarSessionRow(id: $0.id, name: $0.name, date: $0.date, startTime: $0.startTime, status: "open", seasonId: "s-fall") }
+        i.clubEvents = [
+            CalendarClubEventRow(id: "e1", title: "Games Night", kind: "social", location: "Student Lounge", startsAt: iso(hours: 50), status: "published"),
+        ]
+        i.signedUp = ["e1"]
+        i.intents = ["x1": "going"]
+        i.going = ["x1": 14, "x2": 9]
+        i.checkedIn = ["x1": 0]
+        i.pastSessionIds = ["p1", "p2", "p3"]
+        i.attendance = ["p1": "present", "p2": "present"]
+        i.announcements = [
+            FeedAnnouncementRow(
+                id: "a1",
+                title: "Courts move to the North Gym",
+                body: "Friday drop in runs in the **North Gym** for the rest of term.",
+                createdAt: iso(hours: -20),
+                targetAudience: "all",
+                author: .object([("full_name", .string("Casey Morgan"))]),
+            ),
+        ]
+        i.river = [
+            RiverMatchRow(id: "r1", playedAt: iso(hours: -3), matchType: "singles", format: "bo3_21", scoreSummary: "21-17, 21-19", participants: [
+                RiverParticipantRow(teamSide: "a", winFlag: true, ratingDelta: 14.6, postRating: 1122.4, player: meFace),
+                RiverParticipantRow(teamSide: "b", winFlag: false, ratingDelta: -14.6, postRating: 1269.4, player: face(1)),
+            ]),
+            RiverMatchRow(id: "r2", playedAt: iso(hours: -28), matchType: "doubles", format: "single_21", scoreSummary: "21-15", participants: [
+                RiverParticipantRow(teamSide: "a", winFlag: true, player: face(2)),
+                RiverParticipantRow(teamSide: "a", winFlag: true, player: face(4)),
+                RiverParticipantRow(teamSide: "b", winFlag: false, player: face(5)),
+                RiverParticipantRow(teamSide: "b", winFlag: false, player: face(6)),
+            ]),
+        ]
+        i.pendingChallenges = [
+            PendingChallengeRow(id: "pc1", challenge: .object([
+                ("id", .string(incomingId)), ("type", .string("singles")), ("format", .string("bo3_21")),
+                ("created_at", .string(iso(hours: -5))), ("creator", face(3)),
+            ])),
+        ]
+        i.rating = OwnRatingRow(singlesElo: 1122.4, doublesElo: 1088, singlesWins: 5, singlesLosses: 3, doublesWins: 2, doublesLosses: 4, singlesProvisional: false, doublesProvisional: true)
+        i.prompt = .owing(totalCents: 4000, unknownCount: 0, count: 1)
+        return buildFeed(i, viewer: viewer, now: now)
+    }
 
     static let statementSeason = StatementSeason(id: "s-fall", name: "Fall 2026", endDate: "2026-12-10", competitiveFeeCents: 6000, recreationalFeeCents: 4000)
 
@@ -196,7 +252,7 @@ enum DebugPreview {
             myStats: { id in
                 try buildMyStats(rating: RatingRow(singlesElo: 1122.4, doublesElo: 1088), ladder: ladder, season: season, matches: matches, playerId: id)
             },
-            sessions: { _ in sessions },
+            feed: { feed($0) },
             statement: { viewer in
                 buildStatement(
                     viewer: viewer,

@@ -6,20 +6,25 @@ struct PostgrestQuery: Sendable, Equatable {
     let method: String
     let path: String
     private let params: [Param]
+    /// The JSON an RPC is posted with; nil for a read.
+    let body: String?
 
     private struct Param: Sendable, Equatable {
         let key: String
         let value: String
     }
 
-    private init(method: String, path: String, params: [Param]) {
+    private init(method: String, path: String, params: [Param], body: String? = nil) {
         self.method = method
         self.path = path
         self.params = params
+        self.body = body
     }
 
     func eq(_ column: String, _ value: String) -> PostgrestQuery { filter(column, "eq.\(value)") }
     func gte(_ column: String, _ value: String) -> PostgrestQuery { filter(column, "gte.\(value)") }
+    func lt(_ column: String, _ value: String) -> PostgrestQuery { filter(column, "lt.\(value)") }
+    func isNull(_ column: String) -> PostgrestQuery { filter(column, "is.null") }
     func notIsNull(_ column: String) -> PostgrestQuery { filter(column, "not.is.null") }
 
     /// postgrest-js `in`: deduplicated, with a value quoted when it holds , ( or ).
@@ -45,10 +50,13 @@ struct PostgrestQuery: Sendable, Equatable {
         guard let existing = params.firstIndex(where: { $0.key == "order" }) else { return param("order", term) }
         var updated = params
         updated[existing] = Param(key: "order", value: updated[existing].value + "," + term)
-        return PostgrestQuery(method: method, path: path, params: updated)
+        return PostgrestQuery(method: method, path: path, params: updated, body: body)
     }
 
     func limit(_ count: Int) -> PostgrestQuery { param("limit", String(count)) }
+
+    /// postgrest-js range(from, to) sends offset=from and limit=to-from+1; this is the offset half.
+    func offset(_ count: Int) -> PostgrestQuery { param("offset", String(count)) }
 
     func filter(_ column: String, _ expression: String) -> PostgrestQuery { param(column, expression) }
 
@@ -59,16 +67,16 @@ struct PostgrestQuery: Sendable, Equatable {
     }
 
     private func param(_ key: String, _ value: String) -> PostgrestQuery {
-        PostgrestQuery(method: method, path: path, params: params + [Param(key: key, value: value)])
+        PostgrestQuery(method: method, path: path, params: params + [Param(key: key, value: value)], body: body)
     }
 
     static func select(_ table: String, _ columns: String) -> PostgrestQuery {
         PostgrestQuery(method: "GET", path: "/rest/v1/\(table)", params: [Param(key: "select", value: cleanSelect(columns))])
     }
 
-    /// An RPC with no arguments: POST with an empty object body.
-    static func rpc(_ function: String) -> PostgrestQuery {
-        PostgrestQuery(method: "POST", path: "/rest/v1/rpc/\(function)", params: [])
+    /// An RPC: POST with its arguments as the body, an empty object when it takes none.
+    static func rpc(_ function: String, _ args: JSONValue = .object([])) -> PostgrestQuery {
+        PostgrestQuery(method: "POST", path: "/rest/v1/rpc/\(function)", params: [], body: args.serialized)
     }
 
     /// postgrest-js strips whitespace from a select, except inside double quotes.

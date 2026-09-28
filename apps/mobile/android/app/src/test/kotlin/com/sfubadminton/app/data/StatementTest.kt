@@ -127,4 +127,31 @@ class StatementTest {
         )
         assertEquals(listOf("alpha Open", "Beta Cup", "banquet", "Zumba night"), built.lines.map { it.name })
     }
+
+    // toPayableLines, from apps/player/src/lib/member-fees.ts.
+    @Test
+    fun `drops dues from past seasons from the payable lines`() {
+        val lines = toPayableLines(listOf(fee("old", seasonId = "s0", amountCents = 4000)), season, "recreational")
+        assertEquals(listOf("dues" to 4000L), lines.map { it.feeType to it.amountCents })
+    }
+
+    @Test
+    fun `adds this season's dues at the member's price when there is no row`() {
+        assertEquals(6000L, toPayableLines(emptyList(), season, "competitive").single().amountCents)
+        assertEquals(4000L, toPayableLines(emptyList(), season, "recreational").single().amountCents)
+        assertTrue(toPayableLines(emptyList(), null, "competitive").isEmpty())
+    }
+
+    @Test
+    fun `reads pending from the latest receipt only`() {
+        val subs = listOf(
+            OwnFeeSubmission("a", "rejected", "2026-09-02T00:00:00Z"),
+            OwnFeeSubmission("b", "submitted", "2026-09-03T00:00:00Z"),
+        )
+        val row = fee("d", seasonId = "s1", amountCents = 4000).copy(feeSubmissions = subs)
+        assertTrue(toPayableLines(listOf(row), season, "recreational").single().pending)
+        val rejectedLast = row.copy(feeSubmissions = subs.reversed().map { if (it.id == "a") it.copy(submittedAt = "2026-09-04T00:00:00Z") else it })
+        assertFalse(toPayableLines(listOf(rejectedLast), season, "recreational").single().pending)
+        assertNull(latestSubmission(fee()))
+    }
 }

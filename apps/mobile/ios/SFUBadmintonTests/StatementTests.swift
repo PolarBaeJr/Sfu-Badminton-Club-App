@@ -113,4 +113,34 @@ final class StatementTests: XCTestCase {
         )
         XCTAssertEqual(["alpha Open", "Beta Cup", "banquet", "Zumba night"], built.lines.map(\.name))
     }
+
+    // toPayableLines, from apps/player/src/lib/member-fees.ts.
+    func test_dropsDuesFromPastSeasonsFromThePayableLines() {
+        let lines = toPayableLines([fee(id: "old", seasonId: "s0", amountCents: 4000)], season: season, status: "recreational")
+        XCTAssertEqual(["dues"], lines.map(\.feeType))
+        XCTAssertEqual([4000], lines.map(\.amountCents))
+    }
+
+    func test_addsThisSeasonsDuesAtTheMembersPriceWhenThereIsNoRow() {
+        XCTAssertEqual([6000], toPayableLines([], season: season, status: "competitive").map(\.amountCents))
+        XCTAssertEqual([4000], toPayableLines([], season: season, status: "recreational").map(\.amountCents))
+        XCTAssertTrue(toPayableLines([], season: nil, status: "competitive").isEmpty)
+    }
+
+    func test_readsPendingFromTheLatestReceiptOnly() throws {
+        var row = fee(id: "d", seasonId: "s1", amountCents: 4000)
+        row.feeSubmissions = [
+            OwnFeeSubmission(id: "a", status: "rejected", submittedAt: "2026-09-02T00:00:00Z"),
+            OwnFeeSubmission(id: "b", status: "submitted", submittedAt: "2026-09-03T00:00:00Z"),
+        ]
+        XCTAssertEqual([true], toPayableLines([row], season: season, status: "recreational").map(\.pending))
+        row.feeSubmissions = [
+            OwnFeeSubmission(id: "b", status: "submitted", submittedAt: "2026-09-03T00:00:00Z"),
+            OwnFeeSubmission(id: "a", status: "rejected", submittedAt: "2026-09-04T00:00:00Z"),
+        ]
+        XCTAssertEqual([false], toPayableLines([row], season: season, status: "recreational").map(\.pending))
+        XCTAssertNil(latestSubmission(fee()))
+        let decoded = try OwnFeeRow(json: XCTUnwrap(json(#"{"id":"d","fee_type":"dues","fee_submissions":[{"id":"x","status":"submitted","submitted_at":"2026-09-03T00:00:00Z"}]}"#)))
+        XCTAssertEqual("submitted", latestSubmission(decoded)?.status)
+    }
 }

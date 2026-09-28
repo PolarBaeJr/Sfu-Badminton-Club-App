@@ -3,6 +3,7 @@ package com.sfubadminton.app.data
 import com.sfubadminton.app.shared.FeeKind
 import com.sfubadminton.app.shared.FeeLine
 import com.sfubadminton.app.shared.OutstandingSummary
+import com.sfubadminton.app.shared.PayableFeeLine
 import com.sfubadminton.app.shared.headlineAmount
 import com.sfubadminton.app.shared.headlineBadge
 import com.sfubadminton.app.shared.settlementOf
@@ -36,7 +37,35 @@ data class OwnFeeRow(
     val method: String? = null,
     val reference: String? = null,
     @SerialName("created_at") val createdAt: String = "",
+    @SerialName("fee_submissions") val feeSubmissions: List<OwnFeeSubmission>? = null,
 )
+
+@Serializable
+data class OwnFeeSubmission(
+    val id: String = "",
+    val status: String = "",
+    @SerialName("submitted_at") val submittedAt: String = "",
+)
+
+/** The most recent receipt sent for a fee, or null. */
+fun latestSubmission(row: OwnFeeRow?): OwnFeeSubmission? =
+    row?.feeSubmissions.orEmpty().sortedWith { a, b -> b.submittedAt.compareTo(a.submittedAt) }.firstOrNull()
+
+/**
+ * Port of toPayableLines in apps/player/src/lib/member-fees.ts: the rows as
+ * payable lines, dues from other seasons left out, plus this season's dues at
+ * the member's price when there is no dues row yet.
+ */
+fun toPayableLines(rows: List<OwnFeeRow>, season: StatementSeason?, status: String?): List<PayableFeeLine> {
+    val lines = rows
+        .filter { it.feeType != "dues" || (season != null && it.seasonId == season.id) }
+        .map { PayableFeeLine(it.feeType, it.paidAt, it.amountCents, latestSubmission(it)?.status == "submitted") }
+        .toMutableList()
+    if (season != null && rows.none { it.feeType == "dues" && it.seasonId == season.id }) {
+        lines += PayableFeeLine("dues", null, seasonFeeFor(status, season), pending = false)
+    }
+    return lines
+}
 
 @Serializable
 data class StatementSeason(
