@@ -2,16 +2,10 @@
 
 import { useState } from 'react';
 import { Loader2, Lock } from 'lucide-react';
-import {
-  PASSWORD_MIN_LENGTH,
-  authErrorCode,
-  friendlyAuthError,
-  passwordProblem,
-  withErrorCode,
-} from '@badminton/shared';
+import { PASSWORD_MIN_LENGTH } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { PasswordField } from '@/components/auth/password-field';
-import { passwordSaveMessage, sendReauthCode, setMemberPassword } from '@/lib/password-client';
+import { usePasswordSave } from '@/lib/use-password-save';
 
 // "Set or change password". The client cannot tell whether a password exists
 // (a code-only member has an email identity too), so one control does both.
@@ -21,73 +15,32 @@ import { passwordSaveMessage, sendReauthCode, setMemberPassword } from '@/lib/pa
 // members' sessions are.
 export function PasswordManager() {
   const [password, setPassword] = useState('');
-  const [step, setStep] = useState<'password' | 'code'>('password');
-  const [nonce, setNonce] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const { toast } = useToast();
+  const pw = usePasswordSave({
+    onSaved: () => {
+      toast('Password saved', 'success');
+      setPassword('');
+    },
+  });
+  const { step, nonce, setNonce, busy, error, notice } = pw;
 
   function reset() {
     setPassword('');
-    setNonce('');
-    setStep('password');
-    setError('');
-    setNotice('');
+    pw.cancel();
   }
 
-  async function emailCode(): Promise<boolean> {
-    const { error: sendError } = await sendReauthCode();
-    if (sendError) {
-      setError(withErrorCode(friendlyAuthError(sendError.message), authErrorCode(sendError)));
-      return false;
-    }
-    return true;
-  }
-
-  async function handleSave(e: React.FormEvent) {
+  function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    const problem = passwordProblem(password);
-    if (problem) {
-      setError(withErrorCode(problem, 'AUTH-212'));
-      return;
-    }
-    setBusy(true);
-    setError('');
-    setNotice('');
-    const saved = await setMemberPassword(password);
-    if (saved.ok) {
-      toast('Password saved', 'success');
-      reset();
-    } else if (saved.needsReauth) {
-      if (await emailCode()) setStep('code');
-    } else {
-      setError(passwordSaveMessage(saved));
-    }
-    setBusy(false);
+    void pw.submitPassword(password);
   }
 
-  async function handleConfirm(e: React.FormEvent) {
+  function handleConfirm(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError('');
-    setNotice('');
-    const saved = await setMemberPassword(password, nonce.trim());
-    if (saved.ok) {
-      toast('Password saved', 'success');
-      reset();
-    } else {
-      setError(passwordSaveMessage(saved));
-    }
-    setBusy(false);
+    void pw.submitCode();
   }
 
-  async function handleResend() {
-    setBusy(true);
-    setError('');
-    setNotice('');
-    if (await emailCode()) setNotice('A new code is on its way.');
-    setBusy(false);
+  function handleResend() {
+    void pw.resendCode();
   }
 
   if (step === 'code') {
@@ -137,7 +90,7 @@ export function PasswordManager() {
       <PasswordField
         id="settings-password"
         value={password}
-        onChange={(v) => { setPassword(v); setError(''); }}
+        onChange={setPassword}
         autoComplete="new-password"
         label="New password"
         hint={`At least ${PASSWORD_MIN_LENGTH} characters.`}

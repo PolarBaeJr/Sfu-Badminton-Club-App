@@ -15,7 +15,7 @@ import { signOutOtherDevices, signOutThisDevice } from '@badminton/shared/src/ut
 import { Mail, Loader2 } from 'lucide-react';
 import { authSuffix } from '@/lib/auth-intent';
 import { sendEmailCode, verifyEmailCode } from '@/lib/email-code-client';
-import { passwordSaveMessage, setMemberPassword } from '@/lib/password-client';
+import { usePasswordSave } from '@/lib/use-password-save';
 import { AuthCard } from '@/components/auth/auth-card';
 import { CodeStep } from '@/components/auth/code-step';
 import { SetPasswordStep } from '@/components/auth/set-password-step';
@@ -34,6 +34,14 @@ export function ForgotForm() {
   const [noAccount, setNoAccount] = useState<'unknown' | 'unfinished' | null>(null);
   const [sentNotice, setSentNotice] = useState<string | null>(null);
   const [suffix, setSuffix] = useState('');
+  const pw = usePasswordSave({
+    onSaved: async () => {
+      // A reset is often a reaction to someone else getting in, so end every
+      // other session. Best effort: the password is already changed either way.
+      await signOutOtherDevices(createClient().auth).catch(() => undefined);
+      window.location.href = `/auth/post-login${authSuffix(window.location.search)}`;
+    },
+  });
 
   useEffect(() => {
     setSuffix(authSuffix(window.location.search));
@@ -106,28 +114,31 @@ export function ForgotForm() {
     setLoading(false);
   }
 
-  async function handleSetPassword(pw: string) {
-    setLoading(true);
-    setError('');
-    const saved = await setMemberPassword(pw);
-    if (!saved.ok) {
-      setError(passwordSaveMessage(saved));
-      setLoading(false);
-      return;
-    }
-    // A reset is often a reaction to someone else getting in, so end every
-    // other session. Best effort: the password is already changed either way.
-    await signOutOtherDevices(createClient().auth).catch(() => undefined);
-    window.location.href = `/auth/post-login${authSuffix(window.location.search)}`;
-  }
-
   return (
     <AuthCard subtitle="Reset your password">
-      {step === 'password' ? (
+      {step === 'password' && pw.step === 'code' ? (
+        <CodeStep
+          email={email}
+          title="Confirm it is you"
+          lead={<>We emailed a 6-digit code to <strong>{email}</strong> to confirm your new password.</>}
+          codeLabel="Confirmation code"
+          code={pw.nonce}
+          onCodeChange={pw.setNonce}
+          onSubmit={(e) => { e.preventDefault(); void pw.submitCode(); }}
+          onResend={() => void pw.resendCode()}
+          onChangeEmail={pw.cancel}
+          altLabel="Choose a different password"
+          loading={pw.busy}
+          resending={pw.busy}
+          error={pw.error}
+          submitLabel="Save password"
+          sentNotice={pw.notice || null}
+        />
+      ) : step === 'password' ? (
         <SetPasswordStep
-          onSubmit={(pw) => void handleSetPassword(pw)}
-          loading={loading}
-          error={error}
+          onSubmit={(next) => void pw.submitPassword(next)}
+          loading={pw.busy}
+          error={pw.error}
           submitLabel="Save password"
           lead="You are signed in. Choose a new password; saving it signs you out on every other device."
         />

@@ -2,13 +2,13 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { startRegistration } from '@simplewebauthn/browser';
-import { Button, Input, useConfirm } from '@badminton/ui';
+import { useConfirm } from '@badminton/ui';
 import { KeyRound } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
 import { removePasskey } from './actions';
 import { friendlyPasskeyError } from '@/lib/passkey/errors';
-import { withBase } from '@/lib/base-path';
+import { graceDaysText } from '@/lib/passkey/grace';
+import { AddConsolePasskey } from './add-console-passkey';
 
 interface Passkey {
   id: string;
@@ -36,50 +36,20 @@ function formatDate(iso: string | null): string {
   });
 }
 
-export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
+export function PasskeySection({
+  passkeys,
+  graceDaysLeft,
+}: {
+  passkeys: Passkey[];
+  // Days left in the 14-day window without a console passkey (00262), or
+  // null when that could not be read.
+  graceDaysLeft: number | null;
+}) {
   const router = useRouter();
   const { toast } = useToast();
   const confirm = useConfirm();
-  const [nickname, setNickname] = useState('');
-  const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const armsTheGate = passkeys.filter((pk) => pk.enrolled_via === 'admin').length;
-
-  async function handleAdd() {
-    setAdding(true);
-    try {
-      // withBase, not a bare path: fetch() does not apply Next's basePath, so
-      // on the path-mounted console this would hit the player app instead.
-      const optRes = await fetch(withBase('/api/passkey/register/options'), { method: 'POST' });
-      if (!optRes.ok) {
-        const body = await optRes.json().catch(() => null);
-        throw new Error(body?.error || 'Could not start passkey enrollment');
-      }
-      const optionsJSON = await optRes.json();
-
-      const attestation = await startRegistration({ optionsJSON });
-
-      const verifyRes = await fetch(withBase('/api/passkey/register/verify'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          credential: attestation,
-          nickname: nickname.trim() || undefined,
-        }),
-      });
-      if (!verifyRes.ok) {
-        const body = await verifyRes.json().catch(() => null);
-        throw new Error(body?.error || 'Passkey enrollment failed');
-      }
-
-      toast('Passkey added', 'success');
-      setNickname('');
-      router.refresh();
-    } catch (err) {
-      toast(friendlyPasskeyError(err, 'Passkey enrollment failed'), 'error');
-    }
-    setAdding(false);
-  }
 
   async function handleRemove(id: string) {
     if (!(await confirm({ title: 'Remove passkey?', message: 'Remove this passkey?', confirmLabel: 'Remove', danger: true }))) return;
@@ -122,28 +92,18 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
       ))}
 
       <div className="px-6 py-5">
-        <div className="flex flex-col gap-3 rounded-[12px] border border-[var(--line)] bg-[var(--bg-primary)] p-3 sm:flex-row sm:items-center">
-          <div className="min-w-0 flex-1">
-            <Input
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value)}
-              placeholder="Name this device, e.g. Work laptop"
-              aria-label="Passkey name (optional)"
-              maxLength={64}
-            />
-          </div>
-          <Button onClick={handleAdd} loading={adding}>
-            Add passkey
-          </Button>
-        </div>
+        <AddConsolePasskey onAdded={() => router.refresh()} />
         <p className="mt-3 text-[13px] text-[var(--mute)]">
           {/* Counts only admin-enrolled credentials. Since 00051 a passkey
               added in the members' app does NOT arm the gate, so testing
               `passkeys.length` told an exec the console was gated when it was
-              still in the grace period. */}
-          {armsTheGate === 0
-            ? 'No passkeys enrolled here yet. The console is in the grace period until you enroll one.'
-            : 'Adding another passkey requires having logged in with an existing passkey.'}
+              still open without one. Without one, the console opens for 14
+              days from the first visit (00262). */}
+          {armsTheGate > 0
+            ? 'Adding another passkey requires having logged in with an existing passkey.'
+            : graceDaysLeft === null
+              ? 'No passkeys added here yet. The console will ask for one soon.'
+              : `No passkeys added here yet. The console opens without one for ${graceDaysText(graceDaysLeft)} more, then asks for one.`}
         </p>
       </div>
     </div>

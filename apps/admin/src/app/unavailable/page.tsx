@@ -10,14 +10,8 @@ import { Button } from '@badminton/ui';
 import { KeyRound, LogOut } from 'lucide-react';
 import { friendlyPasskeyError } from '@/lib/passkey/errors';
 import { withBase } from '@/lib/base-path';
+import { sanitizeNext } from '@/lib/safe-next';
 
-// Only allow same-app relative paths (no protocol-relative '//', no
-// backslash tricks) so ?next= can't be used as an open redirect.
-function sanitizeNext(next: string | null): string {
-  if (!next) return '/dashboard';
-  if (!next.startsWith('/') || next.startsWith('//') || next.includes('\\')) return '/dashboard';
-  return next;
-}
 
 function UnavailableContent() {
   const router = useRouter();

@@ -83,6 +83,12 @@ export const ERROR_CODES = {
     meaning: 'Your role does not allow this.',
     cause: 'The console capability check refused this role for the page or action.',
   },
+  'AUTH-105': {
+    area: 'AUTH',
+    title: 'Console passkey needed',
+    meaning: 'Add a console passkey to keep using the console. You can add one on the page the console sends you to.',
+    cause: 'The 14-day window for using the console without a console passkey has ended (00262).',
+  },
   'AUTH-201': {
     area: 'AUTH',
     title: 'Code already sent',

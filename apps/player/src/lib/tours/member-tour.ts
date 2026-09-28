@@ -27,7 +27,7 @@
 import { requirementsMet, type TourContext, type TourStep } from '@badminton/ui/src/tour';
 import type { TourKey } from '@badminton/shared/src/utils/tours';
 
-export const MEMBER_TOUR_KEY: TourKey = 'member_v1';
+export const MEMBER_TOUR_KEY: TourKey = 'member_v2';
 
 const SETTINGS_APPROVED =
   'Notifications stay off until you turn them on here. Also here: Membership, the calendar feed, passkeys, the tour replay. Link Discord with /link at discord.sfubadminton.com.';

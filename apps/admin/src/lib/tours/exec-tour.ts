@@ -19,7 +19,7 @@
 import type { TourStep } from '@badminton/ui/src/tour';
 import type { TourKey } from '@badminton/shared/src/utils/tours';
 
-export const EXEC_TOUR_KEY: TourKey = 'exec_v1';
+export const EXEC_TOUR_KEY: TourKey = 'exec_v2';
 
 /**
  * Whether the tour may open by itself for this level. Never for a trainer,
@@ -116,7 +116,7 @@ export function execTourSteps(held: ReadonlySet<string>): TourStep[] {
     {
       id: 'settings',
       title: 'Settings',
-      body: 'Add a passkey here to sign in to the console. Replay console tour, on this page, runs this again.',
+      body: 'Add a passkey here. The console needs one after your first 14 days. Replay console tour, on this page, runs this again.',
       href: '/settings',
       targets: ['[data-tour="passkeys"]'],
       missingTarget: 'center',

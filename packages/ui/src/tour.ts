@@ -304,3 +304,54 @@ export function shouldAutoStart(input: AutoStartInput): boolean {
   if (Object.prototype.hasOwnProperty.call(input.toursSeen, input.tourKey)) return false;
   return !input.localSeen;
 }
+
+// RESUMING AFTER A RELOAD. An open tour writes its place to sessionStorage on
+// every step; a reload within half an hour reopens it there. Per tab, so a new
+// tab never resumes, and resolved by step id rather than index, because the
+// steps a person gets can change between reloads (a feature switched off).
+
+export const TOUR_RESUME_MAX_AGE_MS = 30 * 60 * 1000;
+
+export interface TourProgress {
+  v: 1;
+  key: string;
+  stepId: string;
+  index: number;
+  startPath: string;
+  replay: boolean;
+  savedAt: number;
+}
+
+export function serializeTourProgress(p: TourProgress): string {
+  return JSON.stringify(p);
+}
+
+/**
+ * A saved place, checked against this tour and this person's steps. Null for
+ * anything unusable: unreadable, another tour, too old, from the future, a
+ * start path that is not a plain app path, or a step this person no longer
+ * gets.
+ */
+export function parseTourProgress(
+  raw: string | null,
+  ctx: { tourKey: string; stepIds: readonly string[]; now: number; maxAgeMs?: number },
+): { index: number; startPath: string; replay: boolean } | null {
+  if (!raw) return null;
+  let p: unknown;
+  try {
+    p = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!p || typeof p !== 'object') return null;
+  const r = p as Partial<TourProgress>;
+  if (r.v !== 1 || r.key !== ctx.tourKey) return null;
+  if (typeof r.savedAt !== 'number' || typeof r.stepId !== 'string') return null;
+  if (typeof r.startPath !== 'string' || typeof r.replay !== 'boolean') return null;
+  const age = ctx.now - r.savedAt;
+  if (age < 0 || age > (ctx.maxAgeMs ?? TOUR_RESUME_MAX_AGE_MS)) return null;
+  if (!r.startPath.startsWith('/') || r.startPath.startsWith('//') || r.startPath.includes('\\')) return null;
+  const index = ctx.stepIds.indexOf(r.stepId);
+  if (index < 0) return null;
+  return { index, startPath: r.startPath, replay: r.replay };
+}

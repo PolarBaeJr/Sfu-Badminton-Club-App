@@ -19,6 +19,7 @@ import {
 } from '@/lib/permissions';
 import { NAV_LAYOUT, adminNavItemOn, type NavItem } from './nav-sections';
 import { ALL_FEATURES_ENABLED, type FeatureFlags } from '@badminton/shared/src/utils/features';
+import { isChromelessRoute } from '@/lib/chromeless-routes';
 
 // How quickly a promotion, demotion or narrowing reaches an already-open tab.
 const POLL_MS = 5000;
@@ -55,11 +56,7 @@ export function Sidebar({
   const [accessLoaded, setAccessLoaded] = useState(initialAccessLevel !== null);
 
   // Don't render header on public routes
-  const isPublicRoute =
-    pathname === '/login' ||
-    pathname.startsWith('/auth') ||
-    pathname === '/unauthorized' ||
-    pathname === '/unavailable';
+  const isPublicRoute = isChromelessRoute(pathname);
 
   // Load the email once, then keep the access level fresh.
   //

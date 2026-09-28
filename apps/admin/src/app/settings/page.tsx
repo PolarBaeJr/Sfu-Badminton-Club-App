@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { AvatarChip, Badge, Card, PageHeader } from '@badminton/ui';
 import { accessLevelFor } from '@/lib/permissions';
 import { accessForLevel, EXEC_ROLE_OPTIONS } from '@/lib/console-access';
+import { consolePasskeyGrace, graceDaysText } from '@/lib/passkey/grace';
 import { PasskeySection } from './passkey-section';
 import { SignOutOtherDevices } from './sign-out-other-devices';
 
@@ -26,7 +27,7 @@ export default async function SettingsPage() {
         .from('passkey_credentials')
         // enrolled_via (00051) travels with the row so this list and the
         // members'-app list show the SAME credentials described the same way,
-        // and so the grace-period hint below can tell the truth: only
+        // and so the passkey hint below can tell the truth: only
         // admin-enrolled credentials arm the console gate.
         .select('id, nickname, created_at, last_used_at, transports, enrolled_via')
         .eq('player_id', player.id)
@@ -46,6 +47,19 @@ export default async function SettingsPage() {
 
   const passkeyList = passkeys ?? [];
   const gateArmed = passkeyList.some((pk) => pk.enrolled_via === 'admin');
+
+  // The 14-day window without a console passkey (00262). Null when it could
+  // not be read, or has not started; the copy then stays vague rather than
+  // promising days nobody counted.
+  let grace: ReturnType<typeof consolePasskeyGrace> = null;
+  if (player?.user_id && !gateArmed) {
+    const { data: row } = await supabase
+      .from('console_passkey_grace')
+      .select('started_at')
+      .eq('user_id', player.user_id as string)
+      .maybeSingle();
+    grace = row ? consolePasskeyGrace(row.started_at, Date.now()) : null;
+  }
   const roleLabel = player
     ? EXEC_ROLE_OPTIONS.find((o) => o.value === accessForLevel(accessLevelFor(player)))?.label
     : undefined;
@@ -103,7 +117,7 @@ export default async function SettingsPage() {
                     : `${passkeyList.length} devices`}
               </span>
             </div>
-            <PasskeySection passkeys={passkeyList} />
+            <PasskeySection passkeys={passkeyList} graceDaysLeft={grace && !grace.expired ? grace.daysLeft : null} />
           </Card>
           </div>
 
@@ -128,11 +142,15 @@ export default async function SettingsPage() {
               hint={
                 gateArmed
                   ? 'A passkey enrolled here is checked at every console login.'
-                  : 'No passkey enrolled here yet, so the console is in the grace period.'
+                  : grace?.expired
+                    ? 'The window has ended. Add a passkey above to keep using the console.'
+                    : grace
+                      ? `No passkey added here yet. The console opens without one for ${graceDaysText(grace.daysLeft)} more.`
+                      : 'No passkey added here yet. The console will ask for one soon.'
               }
               aside={
                 <StateText tone={gateArmed ? 'success' : 'warning'}>
-                  {gateArmed ? 'ON' : 'GRACE PERIOD'}
+                  {gateArmed ? 'ON' : grace && !grace.expired ? `GRACE: ${grace.daysLeft}D` : 'REQUIRED'}
                 </StateText>
               }
             />

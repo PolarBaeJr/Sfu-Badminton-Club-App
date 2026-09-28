@@ -535,6 +535,21 @@ export type Database = {
           },
         ]
       }
+      console_passkey_grace: {
+        Row: {
+          started_at: string
+          user_id: string
+        }
+        Insert: {
+          started_at?: string
+          user_id: string
+        }
+        Update: {
+          started_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       cron_config: {
         Row: {
           key: string
@@ -3998,6 +4013,7 @@ export type Database = {
         }
         Returns: Json
       }
+      console_passkey_grace_start: { Args: Record<PropertyKey, never>; Returns: Json }
       consume_discord_link_token: {
         Args: { p_token_hash: string }
         Returns: {

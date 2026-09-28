@@ -803,6 +803,13 @@ export async function assembleMemberExport(
     ? await reader.all('discord_role_revocations', (q) => q.eq('discord_user_id', discordUserId))
     : [];
 
+  // Keyed on the AUTH user id with no foreign key (00262): when the member
+  // first opened the console without a console passkey. Only console users
+  // have a row.
+  data.console_passkey_grace = authUserId
+    ? await reader.all('console_passkey_grace', (q) => q.eq('user_id', authUserId), 'started_at')
+    : [];
+
   // ---- club-wide context, kept to the minimum -----------------------------
   // NOT THE CLUB CALENDAR. Only enough of each parent object to make the
   // member's own rows legible, plus an "I created this" flag. Exporting the

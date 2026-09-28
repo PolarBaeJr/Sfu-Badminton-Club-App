@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { Badge, Button, Card, Checkbox, EmptyState, Input } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
-import { mintDataApiKey, revokeDataApiKey } from '@/lib/actions/data-api-keys';
+import type { DataApiScope } from '@badminton/shared/src/utils/data-api-key';
+import { mintDataApiKey, revokeDataApiKey, updateDataApiKeyScopes } from '@/lib/actions/data-api-keys';
 
 // THE PANEL THAT HANDS OUT READ ACCESS TO THE CLUB'S DATA.
 //
@@ -38,21 +39,70 @@ export interface DataApiKeyRow {
   minted_by_name: string | null;
 }
 
-/** The three the contract names, with what each one actually opens. */
-const SCOPE_CHOICES: { scope: string; hint: string }[] = [
-  { scope: 'players:read', hint: 'Pseudonymous player refs and ratings' },
-  { scope: 'matches:read', hint: 'Match results, empty until matches exist' },
-  { scope: 'ratings:history:read', hint: 'Rating movement. Nothing journals it, so empty' },
+/**
+ * Every scope, with what each one actually opens. Listed here rather than
+ * imported because the shared module that holds DATA_API_SCOPES imports
+ * node:crypto, which cannot reach a client bundle; the type import keeps each
+ * string honest, and the server action refuses anything not in the real list.
+ */
+const SCOPE_CHOICES: { scope: DataApiScope; hint: string }[] = [
+  { scope: 'players:read', hint: 'The roster: pseudonymous refs and lifetime ratings' },
+  { scope: 'matches:read', hint: 'Match history, head to head, per-season records' },
+  { scope: 'ratings:history:read', hint: 'Every recorded rating change per player' },
+  { scope: 'seasons:read', hint: 'Seasons, season totals and standings' },
+  { scope: 'tournaments:read', hint: 'Tournaments, events, entrants and draws' },
+  { scope: 'schedule:read', hint: 'Sessions and club events, counts only' },
 ];
+
+const ALL_SCOPES: string[] = SCOPE_CHOICES.map((c) => c.scope);
+
+function ScopePicker({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const everything = ALL_SCOPES.every((s) => selected.includes(s));
+  return (
+    <div className="flex flex-col gap-2">
+      {SCOPE_CHOICES.map(({ scope, hint }) => (
+        <div key={scope} className="flex items-baseline gap-3">
+          <Checkbox
+            checked={selected.includes(scope)}
+            onChange={(on) =>
+              onChange(on ? [...selected, scope] : selected.filter((s) => s !== scope))
+            }
+            label={scope}
+            showLabel
+          />
+          <span className="text-[12px] text-[var(--mute)]">{hint}</span>
+        </div>
+      ))}
+      <div>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={everything}
+          onClick={() => onChange([...ALL_SCOPES])}
+        >
+          All read scopes
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export function DataApiKeysCard({
   keys,
   canMint,
   canRevoke,
+  canEditScopes,
 }: {
   keys: DataApiKeyRow[];
   canMint: boolean;
   canRevoke: boolean;
+  canEditScopes: boolean;
 }) {
   const { toast } = useToast();
   const [consumerName, setConsumerName] = useState('');
@@ -69,9 +119,24 @@ export function DataApiKeysCard({
   // The plaintext, for this render of this tab only.
   const [minted, setMinted] = useState<{ prefix: string; key: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  // Which live key has its scopes open for editing, and the draft.
+  const [scopeTarget, setScopeTarget] = useState<string | null>(null);
+  const [scopeDraft, setScopeDraft] = useState<string[]>([]);
+  const [savingScopes, setSavingScopes] = useState(false);
 
-  function toggleScope(scope: string, on: boolean) {
-    setScopes((prev) => (on ? [...prev, scope] : prev.filter((s) => s !== scope)));
+  async function handleSaveScopes(row: DataApiKeyRow) {
+    setSavingScopes(true);
+    try {
+      const result = await updateDataApiKeyScopes({ keyId: row.id, scopes: scopeDraft });
+      if (!result.ok) {
+        toast(result.error, 'error');
+        return;
+      }
+      setScopeTarget(null);
+      toast(`${row.key_prefix} now carries ${result.data.scopes.length} scopes`, 'success');
+    } finally {
+      setSavingScopes(false);
+    }
   }
 
   async function handleMint() {
@@ -189,18 +254,8 @@ export function DataApiKeysCard({
               onChange={(e) => setExpiresAt(e.target.value)}
             />
           </div>
-          <div className="mt-4 flex flex-col gap-2">
-            {SCOPE_CHOICES.map(({ scope, hint }) => (
-              <div key={scope} className="flex items-baseline gap-3">
-                <Checkbox
-                  checked={scopes.includes(scope)}
-                  onChange={(on) => toggleScope(scope, on)}
-                  label={scope}
-                  showLabel
-                />
-                <span className="text-[12px] text-[var(--mute)]">{hint}</span>
-              </div>
-            ))}
+          <div className="mt-4">
+            <ScopePicker selected={scopes} onChange={setScopes} />
           </div>
           <div className="mt-4">
             <Button
@@ -251,49 +306,81 @@ export function DataApiKeysCard({
                     {row.expires_at ? ` · expires ${shortDate(row.expires_at)}` : ''}
                     {row.revoked_at ? ` · revoked ${shortDate(row.revoked_at)}` : ''}
                   </div>
-                </div>
-                {canRevoke && !row.revoked_at && (
-                  revokeTarget === row.id ? (
-                    <div className="flex shrink-0 flex-col gap-2 sm:w-[260px]">
-                      <Input
-                        value={revokeReason}
-                        onChange={(e) => setRevokeReason(e.target.value)}
-                        placeholder="Why is this key being turned off"
-                      />
-                      <div className="flex gap-2">
+                  {scopeTarget === row.id && (
+                    <div className="mt-3">
+                      <ScopePicker selected={scopeDraft} onChange={setScopeDraft} />
+                      <div className="mt-3 flex gap-2">
                         <Button
                           size="sm"
-                          variant="danger"
-                          loading={revoking === row.id}
-                          onClick={() => handleRevoke(row)}
+                          loading={savingScopes}
+                          disabled={scopeDraft.length === 0}
+                          onClick={() => handleSaveScopes(row)}
                         >
-                          Confirm revoke
+                          Save scopes
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setRevokeTarget(null);
-                            setRevokeReason('');
-                          }}
-                        >
+                        <Button size="sm" variant="ghost" onClick={() => setScopeTarget(null)}>
                           Cancel
                         </Button>
                       </div>
                     </div>
-                  ) : (
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-wrap items-start gap-2">
+                  {canEditScopes && !row.revoked_at && !isExpired(row.expires_at) && scopeTarget !== row.id && (
                     <Button
                       size="sm"
-                      variant="danger"
+                      variant="secondary"
                       onClick={() => {
-                        setRevokeTarget(row.id);
-                        setRevokeReason('');
+                        setScopeTarget(row.id);
+                        setScopeDraft([...row.scopes]);
                       }}
                     >
-                      Revoke
+                      Edit scopes
                     </Button>
-                  )
-                )}
+                  )}
+                  {canRevoke && !row.revoked_at && (
+                    revokeTarget === row.id ? (
+                      <div className="flex shrink-0 flex-col gap-2 sm:w-[260px]">
+                        <Input
+                          value={revokeReason}
+                          onChange={(e) => setRevokeReason(e.target.value)}
+                          placeholder="Why is this key being turned off"
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            loading={revoking === row.id}
+                            onClick={() => handleRevoke(row)}
+                          >
+                            Confirm revoke
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setRevokeTarget(null);
+                              setRevokeReason('');
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={() => {
+                          setRevokeTarget(row.id);
+                          setRevokeReason('');
+                        }}
+                      >
+                        Revoke
+                      </Button>
+                    )
+                  )}
+                </div>
               </li>
             ))}
           </ul>

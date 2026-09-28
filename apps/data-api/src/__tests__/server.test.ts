@@ -169,7 +169,7 @@ describe('scopes', () => {
     expect(one.status).toBe(403);
   });
 
-  it('403s /v1/matches without matches:read, and answers empty with it', async () => {
+  it('403s /v1/matches without matches:read, and pages an empty history with it', async () => {
     const reader = newKey();
     grant(h, reader, ['players:read']);
     const denied = await get(h, '/v1/matches', reader);
@@ -178,9 +178,17 @@ describe('scopes', () => {
 
     const matches = newKey();
     grant(h, matches, ['matches:read'], '99999999-2222-3333-4444-555555555555');
+    h.rpcs.data_api_matches = () => [];
     const ok = await get(h, '/v1/matches', matches);
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ generated_at: '2027-01-15T08:00:00Z', count: 0, matches: [] });
+    expect(await ok.json()).toEqual({
+      generated_at: '2027-01-15T08:00:00Z',
+      count: 0,
+      limit: 100,
+      offset: 0,
+      next_offset: null,
+      matches: [],
+    });
   });
 });
 
@@ -211,7 +219,7 @@ describe('/v1/players', () => {
       'updated_at',
     ]);
     expect(players[0]!.updated_at).toBe('2026-09-14T04:11:55Z');
-    expect(h.calls.map((c) => c.fn)).toEqual(['data_api_verify_key', 'data_api_players']);
+    expect(h.calls.map((c) => c.fn)).toEqual(['data_api_verify_key', 'data_api_players', 'data_api_active_season']);
     expect(h.calls[1]!.body).toEqual({ p_consumer_id: 'aaaaaaaa-0000-0000-0000-000000000001' });
   });
 
