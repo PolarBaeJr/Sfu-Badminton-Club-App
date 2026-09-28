@@ -35,6 +35,22 @@ All on host `sfubadminton.com`, keyed per client IP (full address for IPv4,
 | `/admin/api/passkey` | 60 | console passkey routes |
 | `/admin/auth/callback` | 60 | console auth callback |
 
+### Pending: `/api/app` (owner-run)
+
+The native app's bearer routes (`/api/app/actions/<name>` and
+`/api/app/challenges/context`, see `apps/player/src/app/api/app/`) are NOT yet
+in `routes.json` on either host. Proposed entry, to be added by the owner on
+BOTH hosts when the player image carrying the routes is deployed:
+
+| path | rpm | covers |
+| --- | --- | --- |
+| `/api/app` | 240 | native app writes (the website's own server actions) and the challenges context read |
+
+240 for the same reason as `/api/passkey`: campus NAT puts the whole club
+behind one address, and a check-in rush through the app is a burst of these.
+Move the row into the table above once it is live and verified with the
+`/ratelimit` command.
+
 ### Why `/api/account/export` is the one small number
 
 It is the only limit here set BELOW a real member's measured peak, and
