@@ -5,6 +5,8 @@ data class HttpRequest(
     val url: String,
     val headers: Map<String, String>,
     val body: String? = null,
+    /** False for the website's app routes, where a redirect means the route is not there. */
+    val followRedirects: Boolean = true,
 )
 
 /**

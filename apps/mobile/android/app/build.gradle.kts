@@ -1,3 +1,4 @@
+import java.net.URI
 import java.util.Properties
 
 plugins {
@@ -36,6 +37,11 @@ android {
         buildConfigField("String", "SUPABASE_URL", buildConfigString(configValue("badminton.supabaseUrl")))
         buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigString(configValue("badminton.supabaseAnonKey")))
         buildConfigField("String", "SITE_URL", buildConfigString(configValue("badminton.siteUrl")))
+
+        // The App Links host. A build with no site URL claims a host that can never resolve.
+        manifestPlaceholders["siteHost"] =
+            runCatching { URI(configValue("badminton.siteUrl")).host }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: "example.invalid"
     }
 
     buildFeatures {
@@ -81,6 +87,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.credentials)
     implementation(libs.credentials.play.services.auth)
+    implementation(libs.play.services.code.scanner)
+    implementation(libs.qrcodegen)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

@@ -23,6 +23,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sfubadminton.app.R
 import com.sfubadminton.app.Services
 import com.sfubadminton.app.data.Viewer
 import com.sfubadminton.app.data.formatSessionDate
@@ -34,7 +35,7 @@ import com.sfubadminton.app.ui.theme.Type
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SessionsScreen(services: Services, viewer: Viewer) {
+fun SessionsScreen(services: Services, viewer: Viewer, onScan: (() -> Unit)? = null) {
     val p = LocalPalette.current
     val loader = rememberLoader(viewer.id to viewer.status) { loadUpcomingSessions(services.postgrest, viewer.status) }
 
@@ -54,6 +55,7 @@ fun SessionsScreen(services: Services, viewer: Viewer) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item { PageHeader("Sessions", padding = PaddingValues(top = 20.dp, bottom = 8.dp)) }
+                if (onScan != null) item { GhostButton("Scan the door code", icon = R.drawable.ic_scan, onClick = onScan) }
                 if (state.data.isEmpty()) {
                     item { Box(Modifier.fillParentMaxSize()) { EmptyState("No sessions are scheduled yet.") } }
                 }

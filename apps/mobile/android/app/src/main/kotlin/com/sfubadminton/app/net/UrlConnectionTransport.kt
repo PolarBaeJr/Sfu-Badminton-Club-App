@@ -24,6 +24,7 @@ class UrlConnectionTransport(private val timeoutMillis: Int = 15_000) : HttpTran
             connection.connectTimeout = timeoutMillis
             connection.readTimeout = timeoutMillis
             connection.useCaches = false
+            connection.instanceFollowRedirects = request.followRedirects
             for ((name, value) in request.headers) connection.setRequestProperty(name, value)
             if (request.body != null) {
                 connection.doOutput = true

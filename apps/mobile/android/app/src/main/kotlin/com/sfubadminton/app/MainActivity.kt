@@ -1,5 +1,6 @@
 package com.sfubadminton.app
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -18,10 +19,26 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         val container = (application as BadmintonApp).container
+        // Only a fresh start: after a recreation the link was already taken.
+        if (savedInstanceState == null) takeLink(intent)
         setContent {
             AppTheme {
                 AppRoot(container)
             }
         }
+    }
+
+    // singleTop: a link tapped while the app is open arrives here.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeLink(intent)
+    }
+
+    /** An https link Android handed over (App Links), queued for the signed-in screens to route. */
+    private fun takeLink(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val data = intent.data ?: return
+        if (!data.scheme.equals("https", ignoreCase = true)) return
+        (application as BadmintonApp).container.pendingLink.value = data.toString()
     }
 }
