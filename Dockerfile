@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ---- Stage 1: Install dependencies ----
 FROM node:24-bookworm-slim AS deps
 WORKDIR /app
@@ -55,9 +56,13 @@ ARG NEXT_PUBLIC_POSTHOG_HOST
 # These live only in this (unpublished) builder stage, not the runner images.
 ARG SENTRY_ORG
 ARG SENTRY_PROJECT
-ARG SENTRY_AUTH_TOKEN
 
-RUN npx turbo run build --filter=player --filter=admin --filter=bot --concurrency=1
+# The token is a BuildKit secret, not an ARG: an ARG value is recorded in the
+# builder's history and in the build cache, a secret mount is neither. It is
+# exposed as an env var for this one RUN only. Absent (the staging build passes
+# none) leaves it unset, which skips the upload exactly as an empty ARG did.
+RUN --mount=type=secret,id=sentry_auth_token,env=SENTRY_AUTH_TOKEN \
+    npx turbo run build --filter=player --filter=admin --filter=bot --concurrency=1
 
 # ---- Stage 3: Player runner ----
 FROM node:24-bookworm-slim AS runner-player
