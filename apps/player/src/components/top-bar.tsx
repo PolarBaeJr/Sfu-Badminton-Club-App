@@ -102,7 +102,7 @@ export function TopBar({
           </div>
         </Link>
 
-        <nav className="nav" aria-label="Main navigation" data-tour="top-nav">
+        <nav className="nav" aria-label="Main navigation">
           {isAuthenticated ? (
             navEntries.map((entry) => {
               if (entry.kind === 'link') {

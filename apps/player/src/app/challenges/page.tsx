@@ -331,7 +331,7 @@ export default async function ChallengesPage() {
         actions={
           standing.ok ? (
             canIssue ? (
-              <Link href="/challenges/new" className="btn btn-primary">
+              <Link href="/challenges/new" className="btn btn-primary" data-tour="new-challenge">
                 <Plus size={14} /> New challenge
               </Link>
             ) : (
