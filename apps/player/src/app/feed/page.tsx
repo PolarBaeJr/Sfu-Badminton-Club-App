@@ -115,22 +115,28 @@ function Handle({ handle }: { handle: string | null }) {
 }
 
 export default async function FeedPage() {
-  const { player } = await getViewer();
-  if (!player) redirect('/login');
-
   const supabase = await createServerSupabaseClient();
-  const now = new Date();
-  const todayKey = clubDayKey(now.toISOString(), CLUB_TIMEZONE);
-  const nowIso = now.toISOString();
 
   // The active season scopes the header eyebrow, the schedule and the notice,
   // exactly as /sessions and /announcements already scope themselves. Fetched
-  // first because three of the queries below need its id.
-  const { data: activeSeason } = await supabase
-    .from('seasons')
-    .select('id, name, start_date')
-    .eq('active_flag', true)
-    .maybeSingle();
+  // before the batch below because three of its queries need the id, but
+  // ALONGSIDE the viewer rather than after it: it does not depend on who is
+  // asking, and awaiting the two in turn was a whole extra round trip on the
+  // app's landing page. A signed-out caller wastes one season read before the
+  // redirect, which is cheaper than every member paying the wait.
+  const [{ player }, { data: activeSeason }] = await Promise.all([
+    getViewer(),
+    supabase
+      .from('seasons')
+      .select('id, name, start_date')
+      .eq('active_flag', true)
+      .maybeSingle(),
+  ]);
+  if (!player) redirect('/login');
+
+  const now = new Date();
+  const todayKey = clubDayKey(now.toISOString(), CLUB_TIMEZONE);
+  const nowIso = now.toISOString();
 
   const inActiveSeason = <T extends { or: (f: string) => T }>(q: T): T =>
     activeSeason ? q.or(`season_id.eq.${activeSeason.id},season_id.is.null`) : q;
@@ -324,13 +330,19 @@ export default async function FeedPage() {
 
   // Going is an RSVP, not a check-in: it is what the member is asking when they
   // look at tonight's session, and it is the number /sessions already shows.
-  const { count: goingCount } = nextSession
-    ? await supabase
+  //
+  // STARTED HERE, AWAITED AFTER THE TOURNAMENT WAVE BELOW. The two are
+  // independent, and awaiting this one first made the tournament read queue
+  // behind it. `.then` is what sends a PostgREST request (the builder is lazy),
+  // so calling it now puts the count in flight at once.
+  const goingCountPromise: PromiseLike<number | null> = nextSession
+    ? supabase
         .from('session_rsvp')
         .select('session_id', { count: 'exact', head: true })
         .eq('session_id', nextSession.id)
         .eq('intent', 'going')
-    : { count: null };
+        .then(({ count }) => count)
+    : Promise.resolve(null);
 
   // ---- IS THE CLUB PLAYING A TOURNAMENT RIGHT NOW (wave 2 of 2) ------------
   //
@@ -410,6 +422,8 @@ export default async function FeedPage() {
       tournamentPairRows = (prRes.data ?? []) as typeof tournamentPairRows;
     }
   }
+
+  const goingCount = await goingCountPromise;
 
   /** The viewer's own standing in one running event, or null if they are not in
    *  it. `occupiesAPlace` rather than a fresh status check, so this agrees with
