@@ -3197,10 +3197,10 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
    nothing above this point is edited.
 
    The screen is three things in one column on a phone: what is open, what you
-   are in, what you have done. On a laptop it borrows the house .wide-grid
+   are in, what else is on. On a laptop it borrows the house .wide-grid
    (1.6fr / 1fr, gap 20px, align-items: start) from the WIDE LAYOUTS block
-   rather than declaring a second two-column grid — the river keeps the first
-   two, the rail takes the third plus the rest of the calendar. There is no
+   rather than declaring a second two-column grid: the river keeps the first
+   two, the rail takes the rest of the calendar. There is no
    width-specific rule below except the one that widens the title, because the
    composition is the same at every size; only the column count changes, and
    .wide-grid already owns that.
@@ -3442,53 +3442,6 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   letter-spacing: .12em;
   color: var(--mute);
   margin-top: 3px;
-}
-
-/* ── Past results ─────────────────────────────────────────── */
-
-.ptourn-results { margin-top: 4px; }
-
-/* Hairline-separated rows, not cards: a result is one line of record and a
-   member reads a column of them at once. */
-.ptourn-result {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 0;
-  border-top: 1px solid var(--line);
-}
-.ptourn-result:first-child { border-top: 0; padding-top: 4px; }
-
-/* Fixed 38px so every placing in the column starts on the same vertical line —
-   the figures are the content here, and a ragged left edge makes them a list of
-   words instead. */
-.ptourn-place {
-  flex: 0 0 38px;
-  font-size: 18px;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-
-.ptourn-result-body { flex: 1; min-width: 0; }
-.ptourn-result-name {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ptourn-result-sub {
-  font-size: 10px;
-  letter-spacing: .08em;
-  color: var(--mute);
-  margin-top: 3px;
-}
-
-.ptourn-swing {
-  flex: 0 0 auto;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── The rest of the calendar ─────────────────────────────── */
