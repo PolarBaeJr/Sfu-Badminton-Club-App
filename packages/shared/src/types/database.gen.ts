@@ -1531,6 +1531,7 @@ export type Database = {
           completed_flag: boolean
           confirmed_by: string | null
           created_at: string
+          elo_boost: number | null
           elo_weight_override: number | null
           event_multiplier: number
           event_type: Database["public"]["Enums"]["event_type_enum"]
@@ -1544,6 +1545,8 @@ export type Database = {
           played_at: string | null
           points_per_game: number | null
           rated_flag: boolean
+          repeat_factor: number | null
+          repeat_index: number | null
           result_status: Database["public"]["Enums"]["result_status"]
           score_summary: string | null
           season_id: string | null
@@ -1559,6 +1562,7 @@ export type Database = {
           completed_flag?: boolean
           confirmed_by?: string | null
           created_at?: string
+          elo_boost?: number | null
           elo_weight_override?: number | null
           event_multiplier?: number
           event_type?: Database["public"]["Enums"]["event_type_enum"]
@@ -1572,6 +1576,8 @@ export type Database = {
           played_at?: string | null
           points_per_game?: number | null
           rated_flag?: boolean
+          repeat_factor?: number | null
+          repeat_index?: number | null
           result_status?: Database["public"]["Enums"]["result_status"]
           score_summary?: string | null
           season_id?: string | null
@@ -1587,6 +1593,7 @@ export type Database = {
           completed_flag?: boolean
           confirmed_by?: string | null
           created_at?: string
+          elo_boost?: number | null
           elo_weight_override?: number | null
           event_multiplier?: number
           event_type?: Database["public"]["Enums"]["event_type_enum"]
@@ -1600,6 +1607,8 @@ export type Database = {
           played_at?: string | null
           points_per_game?: number | null
           rated_flag?: boolean
+          repeat_factor?: number | null
+          repeat_index?: number | null
           result_status?: Database["public"]["Enums"]["result_status"]
           score_summary?: string | null
           season_id?: string | null
@@ -3915,6 +3924,15 @@ export type Database = {
       assign_member_code: { Args: { p_player_id: string }; Returns: string }
       auto_seed_field_by_rating: {
         Args: { p_event_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
+      boost_match_rating: {
+        Args: {
+          p_actor_id: string
+          p_boost: number
+          p_match_id: string
+          p_reason: string
+        }
         Returns: Json
       }
       bulk_check_in_field: {

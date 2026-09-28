@@ -34,7 +34,7 @@ export const SETTING_DESCRIPTIONS: Record<string, string> = {
   session_caps: 'Maximum rated matches per session (singles and doubles)',
   repeat_opponent_caps: 'Maximum rated matches against the same opponent in a rolling window',
   walkover_rules: 'Grace periods, withdrawal thresholds, auto-flag and auto-suspend limits',
-  rating_defaults: 'Starting Elo, provisional threshold, K-factors',
+  rating_defaults: 'Starting Elo, provisional threshold, K-factors, repeat challenges',
   tournament_bonuses: 'Placement bonus amounts for singles and doubles tournaments',
   season_settings: 'Compression factor for end-of-season Elo normalization',
   inactivity_rules: 'Days of inactivity before auto-marking players inactive',
@@ -290,6 +290,32 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       type: 'number',
       min: 0,
       step: 50,
+    },
+    // Repeat challenges (00268). Also editable by execs from the card on
+    // /matches, which validates the same ranges in updateRepeatChallengeSettings.
+    repeat_decay_pct: {
+      label: 'Repeat challenge reduction (%)',
+      hint: "Each earlier rated challenge between the same players inside the window cuts this match's rating change by this percentage, compounding. 0 turns it off.",
+      type: 'number',
+      min: 0,
+      max: 90,
+      step: 5,
+    },
+    repeat_window_days: {
+      label: 'Repeat challenge window (days)',
+      hint: 'How far back an earlier challenge between the same players still counts.',
+      type: 'number',
+      min: 1,
+      max: 365,
+      step: 1,
+    },
+    repeat_min_factor: {
+      label: 'Repeat challenge floor',
+      hint: 'The smallest share of a normal rating change a repeat can fall to, from 0 to 1.',
+      type: 'number',
+      min: 0,
+      max: 1,
+      step: 0.05,
     },
   },
   tournament_bonuses: {

@@ -236,16 +236,25 @@ describe('CAPABILITY_GATES', () => {
   // the two writes are the mint and the revoke, each a function of its own.
   // Handing a key out and taking one back are opposite acts and the club may
   // well want one person doing each, so there was never a merge to argue.
-  it('names 145 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 145 BECAME 147 with repeat challenges (00268): boostMatchRating and
+  // updateRepeatChallengeSettings, two new sites and NO new capability. Both
+  // merged into `matches.void.write`, because voiding, boosting and the repeat
+  // rules all decide how much one confirmed challenge moves two ratings, and
+  // because a new capability would have collided with the 1.1.0 vocabulary
+  // migrations that redefine the CHECK wholesale. The repeat rules also live in
+  // rating_defaults, which /ratings edits under the admin-only
+  // `platform.settings.write`; this is the exec's narrower door to three keys.
+  it('names 147 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(145);
-    expect(new Set(sites).size).toBe(145);
-    expect(ENFORCEMENT_POINTS).toBe(145);
+    expect(sites.length).toBe(147);
+    expect(new Set(sites).size).toBe(147);
+    expect(ENFORCEMENT_POINTS).toBe(147);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

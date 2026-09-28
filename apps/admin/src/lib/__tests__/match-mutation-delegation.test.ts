@@ -63,7 +63,7 @@ vi.mock('@sentry/nextjs', () => ({
   captureException: () => {},
 }));
 
-const { voidMatch, convertMatchToCasual } = await import('../actions/matches');
+const { voidMatch, convertMatchToCasual, boostMatchRating } = await import('../actions/matches');
 
 const M_ID = '22222222-2222-4222-8222-222222222222';
 
@@ -112,5 +112,60 @@ describe.each([
     // Nothing landed, so nothing may be claimed. The old shape could return ok
     // with noteRecorded false; this one has no such half-outcome to report.
     expect(store.audits).toEqual([]);
+  });
+});
+
+// THE BOOST (00268) IS THE SAME SHAPE WITH ONE MORE ARGUMENT. boost_match_rating
+// moves the ratings, records the boost and writes match_rating_boosted in one
+// transaction, so the action must delegate all of it and reject a bad POST
+// before any call is made.
+describe('boostMatchRating delegates the whole mutation', () => {
+  it('makes exactly one RPC call, with the trimmed reason', async () => {
+    const r = await boostMatchRating(M_ID, 1.5, '  a genuine reason  ');
+    expect(r.ok).toBe(true);
+    expect(store.rpcs).toEqual([
+      {
+        fn: 'boost_match_rating',
+        args: { p_match_id: M_ID, p_actor_id: 'admin-1', p_boost: 1.5, p_reason: 'a genuine reason' },
+      },
+    ]);
+  });
+
+  it('reads and writes no table, and writes no audit row, of its own', async () => {
+    await boostMatchRating(M_ID, 1.5, 'a genuine reason');
+    expect(store.tables).toEqual([]);
+    expect(store.audits).toEqual([]);
+  });
+
+  it('surfaces a failed transaction instead of a green toast', async () => {
+    store.rpcError = { message: 'Only a match in the active season can be boosted' };
+    const r = await boostMatchRating(M_ID, 1.5, 'a genuine reason');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('active season');
+  });
+
+  it('accepts two-decimal values a naive x100 check would refuse', async () => {
+    // 1.15 * 100 is 114.99999999999999 in binary floating point.
+    const r = await boostMatchRating(M_ID, 1.15, 'a genuine reason');
+    expect(r.ok).toBe(true);
+    expect(store.rpcs[0]!.args.p_boost).toBe(1.15);
+  });
+
+  it.each([
+    ['exactly 1', 1],
+    ['above 2', 2.01],
+    ['three decimals', 1.555],
+    ['not a number', Number.NaN],
+    ['a string', '1.5' as unknown as number],
+  ])('refuses a boost that is %s without calling anything', async (_label, boost) => {
+    const r = await boostMatchRating(M_ID, boost, 'a genuine reason');
+    expect(r.ok).toBe(false);
+    expect(store.rpcs).toEqual([]);
+  });
+
+  it('refuses a short reason without calling anything', async () => {
+    const r = await boostMatchRating(M_ID, 1.5, '  ok ');
+    expect(r.ok).toBe(false);
+    expect(store.rpcs).toEqual([]);
   });
 });

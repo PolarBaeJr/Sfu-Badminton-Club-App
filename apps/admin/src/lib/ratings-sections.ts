@@ -77,6 +77,15 @@ export const RATINGS_SECTIONS: RatingsSectionDef[] = [
     reference: true,
   },
   {
+    id: 'repeat-challenges',
+    label: 'Repeat challenges',
+    fields: [
+      { key: 'rating_defaults', field: 'repeat_decay_pct' },
+      { key: 'rating_defaults', field: 'repeat_window_days' },
+      { key: 'rating_defaults', field: 'repeat_min_factor' },
+    ],
+  },
+  {
     id: 'tournament-bonuses',
     label: 'Tournament bonuses',
     fields: [

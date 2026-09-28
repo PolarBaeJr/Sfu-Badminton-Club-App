@@ -5,6 +5,7 @@
 //   - players.ts       — approve/create/update/remove player,
 //                        cancelAccountDeletion
 //   - matches.ts       — voidMatch, convertMatchToCasual, adminCreateMatch,
+//                        boostMatchRating, updateRepeatChallengeSettings,
 //                        adminCreateChallenge, forceExpireChallenge
 //   - disputes.ts      — resolveDispute
 //   - walkovers.ts     — confirmWalkover / rejectWalkover
@@ -46,6 +47,8 @@ export type { MergePreviewRow, DiscordForceLinkPreview } from './actions/players
 export {
   voidMatch,
   convertMatchToCasual,
+  boostMatchRating,
+  updateRepeatChallengeSettings,
   adminCreateMatch,
   adminCreateChallenge,
   forceExpireChallenge,

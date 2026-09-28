@@ -8,6 +8,7 @@ import { canReadMatchNotes, fetchMatchNotes } from '@/lib/match-note';
 import { MatchActions } from './actions';
 import { CreateMatchForm } from './create-match';
 import { LiveMatches } from './live-matches';
+import { RepeatSettingsCard } from './repeat-settings';
 import {
   Plus,
   AlertTriangle,
@@ -36,13 +37,17 @@ export default async function MatchesPage() {
   // crosses to the browser in the RSC payload, which is the same reasoning
   // /fees and the dashboard finance snapshot use.
   const canSeeNotes = canReadMatchNotes(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer));
+  // Void, Boost and the repeat challenge card are one capability (00268). Like
+  // canCreate, it skips the settings read rather than hiding the card, so a
+  // viewer without it never receives the values in the RSC payload.
+  const canVoidOrBoost = permits(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer), 'matches.void.write');
   const supabase = createAdminClient();
 
   // TWO ROUND TRIPS, NOT FIVE. The roster is not derived from the ledger, so it
   // has no reason to queue behind it; disputes, walkovers and notes all key off
   // the fifty match ids and so genuinely cannot start until those are in hand.
   // That is the only ordering this page actually requires.
-  const [matchesResult, playersResult] = await Promise.all([
+  const [matchesResult, playersResult, ratingDefaultsResult] = await Promise.all([
     supabase
       .from('matches')
       .select('*, match_participants(*, player:players(full_name)), match_games(*)')
@@ -57,10 +62,24 @@ export default async function MatchesPage() {
           .neq('status', 'pending_approval')
           .order('full_name')
       : null,
+    canVoidOrBoost
+      ? supabase.from('platform_settings').select('value').eq('key', 'rating_defaults').maybeSingle()
+      : null,
   ]);
 
   const matches = unwrap(matchesResult);
   const allPlayers = playersResult ? unwrap(playersResult) : [];
+  // Null until 00268 has seeded the keys: the card has nothing true to say
+  // before then, and saving would write keys no function reads yet.
+  const ratingDefaults = (ratingDefaultsResult ? unwrap(ratingDefaultsResult)?.value : null) as Record<string, unknown> | null;
+  const repeatSettings =
+    ratingDefaults && ratingDefaults.repeat_decay_pct !== undefined
+      ? {
+          decayPct: Number(ratingDefaults.repeat_decay_pct),
+          windowDays: Number(ratingDefaults.repeat_window_days ?? 30),
+          minFactor: Number(ratingDefaults.repeat_min_factor ?? 0.1),
+        }
+      : null;
 
   // Fetch disputes and walkovers inline
   const matchIds = matches?.map(m => m.id) || [];
@@ -243,6 +262,18 @@ export default async function MatchesPage() {
           </span>
         );
       })}
+      {/* Why a delta is smaller or larger than the formula alone gives (00268).
+          Nothing is drawn for a first challenge or an unboosted match. */}
+      {(m.repeat_index as number | null) !== null && (m.repeat_index as number) > 1 && (
+        <span className="text-[10px] font-mono text-[var(--text-muted)] whitespace-nowrap">
+          repeat #{m.repeat_index as number} x{Number(m.repeat_factor).toFixed(2)}
+        </span>
+      )}
+      {m.elo_boost !== null && m.elo_boost !== undefined && (
+        <span className="text-[10px] font-mono text-[var(--color-info)] whitespace-nowrap">
+          boost x{Number(m.elo_boost).toFixed(2)}
+        </span>
+      )}
     </div>
   );
 
@@ -250,8 +281,16 @@ export default async function MatchesPage() {
   // and the phone <TableCard> cannot disagree about who played — and so the
   // search has a single key per row rather than one per layout.
   const matchRows = rows.map(({ m, sideA, sideB, matchDisputes, matchWalkovers, adminNote }) => {
+    const canBoost =
+      canVoidOrBoost
+      && m.result_status === 'confirmed'
+      && m.rated_flag
+      && m.event_type !== 'casual'
+      && m.walkover_type === null
+      && m.tournament_id === null
+      && m.elo_boost === null;
     const actions = m.result_status !== 'voided'
-      ? <MatchActions matchId={m.id} resultStatus={m.result_status} />
+      ? <MatchActions matchId={m.id} resultStatus={m.result_status} canBoost={canBoost} />
       : undefined;
     const statusVariant =
       m.result_status === 'confirmed' ? 'success' as const :
@@ -356,6 +395,8 @@ export default async function MatchesPage() {
         watermark="M"
         actions={<CreateMatchForm players={allPlayers || []} />}
       />
+
+      {repeatSettings && <RepeatSettingsCard {...repeatSettings} />}
 
       {/* Matches Table */}
       <Card padding={false}>
