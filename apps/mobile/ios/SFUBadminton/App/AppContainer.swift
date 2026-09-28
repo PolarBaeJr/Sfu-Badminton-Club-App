@@ -9,6 +9,8 @@ final class Services: Sendable {
     let store: KeychainSessionStore
     /// Nil when the build names no club website: the sign-in screen then offers email codes only.
     let passkey: PasskeySignIn?
+    /// Nil when the build names no club website: challenges are then read-only.
+    let appApi: AppApi?
     let authenticator: PasskeyAuthenticator
 
     init(url: String, anonKey: String, siteUrl: String?, rpId: String?) {
@@ -26,6 +28,7 @@ final class Services: Sendable {
         passkey = siteUrl.map {
             PasskeySignIn(api: PasskeyApi(siteUrl: $0, transport: transport), gotrue: gotrue, sessions: sessions, postgrest: postgrest, nowEpochSec: clock)
         }
+        appApi = siteUrl.map { AppApi(siteUrl: $0, transport: transport, sessions: sessions) }
         authenticator = ASAuthorizationAuthenticator(fallbackRpId: rpId)
     }
 }

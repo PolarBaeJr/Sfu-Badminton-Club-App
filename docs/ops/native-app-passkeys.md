@@ -16,7 +16,7 @@ prefix (see `rate-limits.md`).
 | `POST /api/passkey/app/login/options` | mint a challenge for the app |
 | `POST /api/passkey/app/login/verify` | verify an assertion, return session tokens |
 | `GET /.well-known/assetlinks.json` | Android trust file, built from env |
-| `GET /.well-known/apple-app-site-association` | iOS trust file, built from env |
+| `GET /.well-known/apple-app-site-association` | iOS trust file, built from env: `webcredentials` and `applinks` |
 
 The web pair (`/api/passkey/login/options` and `/verify`) is unchanged and does
 not accept any Android origin. Both verify routes share one implementation,
@@ -108,6 +108,15 @@ repeat the value. iOS ids that do not look like `TEAMID.bundle.id` are dropped.
 With all three empty the well-known files answer `404` and nothing about the
 site changes.
 
+The Apple file also carries `applinks`: the same app ids, and the paths the iOS
+app opens as universal links (`/leaderboard`, `/my-stats`, `/sessions`,
+`/membership`, `/fees`, `/challenges`, `/challenges/new`, `/challenges/<36
+characters>` and `/checkin/<48 characters>`, each with and without a trailing
+slash). They are kept in step with `LinkRouter.swift`, `LinkRouter.kt` and the
+Android manifest's App Links paths; `native-apps.ts` holds the list. `applinks`
+names the site's own host, while `webcredentials` is checked at the RP ID's host:
+when they differ, the file has to be served on both.
+
 ## Owner steps
 
 1. Collect the SHA-256 fingerprints:
@@ -118,8 +127,10 @@ site changes.
 2. Set `PASSKEY_ANDROID_CERT_SHA256` (all of them, comma-separated) and, if the
    application id is not the default, `PASSKEY_ANDROID_PACKAGE`, on the player
    service for the environment being tested (staging first).
-3. For iOS, set `PASSKEY_IOS_APP_IDS` once the app has a team and bundle id,
-   and add `webcredentials:<host>` to the app's Associated Domains.
+3. For iOS, set `PASSKEY_IOS_APP_IDS` once the app has a team and bundle id.
+   The app's entitlements file already names `webcredentials:<rp host>` and
+   `applinks:<site host>`; a signed build switches it on
+   (`apps/mobile/ios/README.md`).
 4. Check both files are served directly, with no redirect:
 
    ```sh

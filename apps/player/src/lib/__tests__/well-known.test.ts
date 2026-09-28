@@ -45,11 +45,14 @@ describe('/.well-known/apple-app-site-association', () => {
     expect(await res.text()).toBe('');
   });
 
-  it('serves webcredentials as JSON when configured', async () => {
+  it('serves webcredentials and applinks as JSON when configured', async () => {
     vi.stubEnv('PASSKEY_IOS_APP_IDS', 'ABCDE12345.com.example.test');
     const res = appleAssociation();
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/json');
-    expect(await res.json()).toEqual({ webcredentials: { apps: ['ABCDE12345.com.example.test'] } });
+    const body = await res.json();
+    expect(body.webcredentials).toEqual({ apps: ['ABCDE12345.com.example.test'] });
+    expect(body.applinks.details[0].appIDs).toEqual(['ABCDE12345.com.example.test']);
+    expect(body.applinks.details[0].components).toContainEqual({ '/': '/challenges/new', comment: 'New challenge, from a member QR' });
   });
 });

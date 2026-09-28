@@ -1,5 +1,7 @@
 # Building it
 
+The Android app first; the iOS app is under [iOS](#ios) below.
+
 ## Prerequisites
 
 - A JDK 17 installed: the build pins a Java 17 toolchain (`jvmToolchain(17)`).
@@ -101,9 +103,13 @@ and follow it here.
 
 ## Deferred past milestone 1
 
+Challenges (issue, answer, cancel, submit, confirm, dispute, walkover) and the door
+check-in are built in both apps, through the website's own actions
+(`01-architecture.md`). Still deferred:
+
 - Google sign in.
-- Any write: challenges, match results, check in, tournament entry, receipt upload.
-  Receipts are sent from the website; the Membership tab says so.
+- Every other write: tournament entry and receipt upload. Receipts are sent from
+  the website; the Membership tab says so.
 - The tournament points ladder tab and the win-rate sort.
 - Realtime updates (every screen refreshes by pull to refresh).
 - Push notifications.
@@ -113,4 +119,69 @@ and follow it here.
   icon, made when the listing is).
 - A minimum version gate (see `04-release-and-versioning.md`).
 - CI for this directory.
-- iOS.
+- iOS on a device: signing, passkeys and universal links wait on an Apple team
+  (`../ios/README.md`).
+
+## iOS
+
+### Prerequisites
+
+- Xcode with an iOS 17 or later simulator (built and tested with Xcode 27 on an
+  "iPhone 17e" simulator).
+- XcodeGen (`brew install xcodegen`). `SFUBadminton.xcodeproj` is generated from
+  `ios/project.yml` and gitignored; regenerate it after adding or removing a file.
+
+### Configure
+
+```
+cd apps/mobile/ios
+sh scripts/config-from-android.sh      # or: cp Config/Local.xcconfig.example Config/Local.xcconfig
+```
+
+`Config/Local.xcconfig` is gitignored and holds the same public values as the
+Android `local.properties`: the Supabase host, the public anon key, and optionally
+the club website host and the passkey RP ID. Hosts go in without `https://`, because
+xcconfig reads `//` as a comment; `Info.plist` adds the scheme. The script copies the
+Android values, so both apps point at the same environment, and never prints the
+key. With no file the app still builds and shows the configuration screen. Never
+run `xcodebuild -showBuildSettings` or `-verbose` in a shared terminal: both print
+the anon key.
+
+### Gates
+
+```
+xcodegen generate && xcodebuild test -project SFUBadminton.xcodeproj -scheme SFUBadminton \
+  -destination 'platform=iOS Simulator,name=iPhone 17e' -quiet
+```
+
+The tests are XCTest, hosted in the app (the Keychain tests need the simulator's
+ad-hoc signature, so do not add `CODE_SIGNING_ALLOWED=NO` here). The app itself
+builds nothing when it is launched under test, so no test touches the network or
+the member's Keychain item. The debug previews (`../ios/README.md`) draw every
+screen from fixtures without an account.
+
+There is no CI for this directory. Run the gates by hand.
+
+### Size and memory
+
+Measured 2026-09-27 on an unsigned Release archive (`-Osize`, dead code stripping):
+
+```
+xcodebuild archive -project SFUBadminton.xcodeproj -scheme SFUBadminton -configuration Release \
+  -destination 'generic/platform=iOS' -archivePath build/SFUBadminton.xcarchive CODE_SIGNING_ALLOWED=NO -quiet
+```
+
+| | Bytes on disk | Compressed |
+|---|---|---|
+| iOS `SFUBadminton.app` (arm64) | 1,755,720 (the binary 1,463,680) | 786,598 (`ditto -c -k` zip) |
+| Android unsigned release APK | 3,813,776 | 1,917,286 (apkanalyzer download size) |
+
+The zip is only a stand-in for the App Store download, which Apple computes per
+device after signing and thinning, so it is not measured here. Of the
+.app, the five fonts are about 216 KB and the asset catalogue about 60 KB; the rest
+is code, since the app links no third-party library.
+
+Memory, with `footprint -p <pid>` on the simulator, a Debug build in preview mode
+(fixture data, no network): 22 to 26 MB on every tab and challenge screen, the
+highest on My stats (the QR) and the scanner's paste screen. Simulator numbers are
+indicative only; measure a device build against real data before quoting them.

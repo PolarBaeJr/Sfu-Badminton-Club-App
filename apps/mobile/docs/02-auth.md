@@ -28,6 +28,15 @@ The session is one file, `session.bin` in the app's private files directory:
   on another phone could not be decrypted anyway.
 - Anything that cannot be decrypted or parsed is deleted and reads as signed out.
 
+On iOS the session is one generic-password **Keychain** item
+(`Auth/KeychainSessionStore.swift`): `AfterFirstUnlockThisDeviceOnly`, so a
+background refresh can read it, and never synchronizable, so it never syncs to
+iCloud or moves to another phone. A value that does not read back as a session is
+deleted and reads as signed out, as on Android. The Keychain outlives an uninstall,
+so a UserDefaults marker (which does not) clears a leftover session on the first
+launch after a reinstall; that is the reason `PrivacyInfo.xcprivacy` declares for
+UserDefaults.
+
 ## Refresh
 
 `auth/SessionManager.kt` is the one owner of the session. Every token read refreshes
@@ -115,6 +124,32 @@ Three ways this goes wrong late:
    Manager fetches `https://<rpId>/.well-known/assetlinks.json`, and the RP ID may be
    a parent of the site's host. A file served only on the site's own host then does
    nothing, and every attempt fails as a passkey failure (AUTH-208).
+
+### On iOS
+
+`Auth/PasskeySignIn.swift` and `Auth/PasskeyApi.swift` follow the same five steps
+against the same routes, with `ASAuthorizationPlatformPublicKeyCredentialProvider`
+(`Auth/ASAuthorizationAuthenticator.swift`) in place of Credential Manager. The
+differences:
+
+- iOS lets the app use the RP ID's passkeys only when the website's
+  `/.well-known/apple-app-site-association` lists `<TEAMID>.com.sfubadminton.app`
+  under `webcredentials` (`PASSKEY_IOS_APP_IDS`) and the build carries the
+  associated-domains entitlement. That needs a signed build and an Apple team, so
+  on an unsigned simulator build every attempt fails as AUTH-208. The owner's
+  steps are in `../ios/README.md`.
+- The options are decoded, not passed through: `ASAuthorization` takes the
+  challenge, RP ID, allowed credentials and user verification as values, not JSON.
+  The assertion is written back as the same JSON object, in the web client's field
+  order.
+- Only `ASAuthorizationError.canceled` is silent. A failure is never read as a
+  cancel, for the same reason as on Android. With no passkey on the phone, the
+  sheet offers other devices instead and dismissing it arrives as a cancel, so the
+  no-passkey line is probably never shown on iOS. That is unverified until tried on
+  a device.
+- The server accepts `https://<rpId>` as an app origin on the strength of Apple's
+  documentation. Read `clientDataJSON.origin` from the first real iOS assertion to
+  confirm it.
 
 These files belong to production, `sfubadminton.com`, and must not redirect. Serving
 them from staging proves staging works (see `05-development.md`), not production.

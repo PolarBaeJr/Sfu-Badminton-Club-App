@@ -387,7 +387,7 @@ private struct Messages: View {
     }
 }
 
-private extension View {
+extension View {
     /// The outlined text field: surface fill, a hairline that turns red on focus.
     func fieldBox(focused: Bool) -> some View {
         padding(.horizontal, 16)

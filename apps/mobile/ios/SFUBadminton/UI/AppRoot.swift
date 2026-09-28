@@ -13,7 +13,7 @@ struct AppRoot: View {
                 case let .signedOut(notice):
                     SignInScreen(services: services, notice: notice)
                 case let .signedIn(session):
-                    SignedIn(services: services, userId: session.userId)
+                    SignedIn(services: services, userId: session.userId, pendingLink: Bindable(model).pendingLink)
                         .id(session.userId)
                 }
             } else {
@@ -64,17 +64,33 @@ struct ScreenData: Sendable {
     let myStats: @Sendable (_ playerId: String) async throws -> MyStats
     let sessions: @Sendable (_ status: String?) async throws -> [UpcomingSession]
     let statement: @Sendable (Viewer) async throws -> Statement
+    let challenges: @Sendable (_ playerId: String) async throws -> [ChallengeListItem]
+    let challenge: @Sendable (_ id: String, _ viewerId: String) async throws -> ChallengeWithMatch?
+    /// Nil when the build names no club website: challenges are then read-only.
+    let context: (@Sendable () async throws -> AppResult<ChallengeContext>)?
+    /// Nil when the build names no club website: nothing can be written.
+    let action: (@Sendable (_ name: String, _ args: [JSONValue]) async throws -> ActionOutcome)?
     let signOut: @Sendable () async -> Void
 
     static func live(_ services: Services) -> ScreenData {
         let postgrest = services.postgrest
         let sessions = services.sessions
+        var context: (@Sendable () async throws -> AppResult<ChallengeContext>)?
+        var action: (@Sendable (String, [JSONValue]) async throws -> ActionOutcome)?
+        if let api = services.appApi {
+            context = { try await api.context() }
+            action = { try await api.action($0, $1) }
+        }
         return ScreenData(
             siteUrl: services.siteUrl,
             ladder: { try await loadLadder(postgrest) },
             myStats: { try await loadMyStats(postgrest, playerId: $0) },
             sessions: { try await loadUpcomingSessions(postgrest, playerStatus: $0) },
             statement: { try await loadStatement(postgrest, viewer: $0) },
+            challenges: { try await loadMyChallenges(postgrest, playerId: $0) },
+            challenge: { try await loadChallenge(postgrest, id: $0, viewerId: $1) },
+            context: context,
+            action: action,
             signOut: { await sessions.signOut() },
         )
     }
@@ -83,10 +99,12 @@ struct ScreenData: Sendable {
 /// The member's own row, read once per session and shared by every tab.
 private struct SignedIn: View {
     let services: Services
+    @Binding var pendingLink: String?
     @State private var viewer: Loader<Viewer?>
 
-    init(services: Services, userId: String) {
+    init(services: Services, userId: String, pendingLink: Binding<String?>) {
         self.services = services
+        _pendingLink = pendingLink
         let postgrest = services.postgrest
         _viewer = State(initialValue: Loader { try await loadViewer(postgrest, userId: userId) })
     }
@@ -100,7 +118,7 @@ private struct SignedIn: View {
                 ErrorState(message: message) { viewer.load() }
             case let .loaded(data):
                 if let data {
-                    SignedInTabs(data: .live(services), viewer: data)
+                    SignedInTabs(data: .live(services), viewer: data, pendingLink: $pendingLink)
                 } else {
                     NoPlayerRow(services: services)
                 }
@@ -124,7 +142,7 @@ private struct NoPlayerRow: View {
 /// A screen laid over the tabs. One slot, as on Android: opening another
 /// replaces it. `list` is the challenges list, for a member whose tab bar has
 /// no Challenges tab.
-enum Overlay: Equatable {
+enum Overlay: Hashable {
     case detail(id: String)
     case newChallenge(opponent: String?)
     case checkIn(token: String)
@@ -132,29 +150,47 @@ enum Overlay: Equatable {
 }
 
 /// The signed-in shell: brand bar, the open tab's screen, the tab bar. Only the
-/// open tab's view exists, as on Android, so a closed tab holds no memory.
+/// open tab's view exists, as on Android, so a closed tab holds no memory, and
+/// a tab left for an overlay reads afresh on return.
 struct SignedInTabs: View {
     let data: ScreenData
     let viewer: Viewer
+    @Binding var pendingLink: String?
     @State private var tab: Tab
     @State private var overlay: Overlay?
     @State private var notice: String?
+    @State private var scanning = false
+    @State private var page: BrowserPage?
 
-    init(data: ScreenData, viewer: Viewer, initialTab: Tab = .leaderboard) {
+    init(data: ScreenData, viewer: Viewer, pendingLink: Binding<String?>, initialTab: Tab = .leaderboard, initialOverlay: Overlay? = nil) {
         self.data = data
         self.viewer = viewer
+        _pendingLink = pendingLink
         _tab = State(initialValue: initialTab)
+        _overlay = State(initialValue: initialOverlay)
+        #if DEBUG
+        _scanning = State(initialValue: DebugPreview.scanOnLaunch)
+        #endif
     }
 
     private var approved: Bool { isApproved(viewer) }
     private var tabs: [Tab] { Tab.allCases.filter { $0 != .challenges || approved } }
 
+    // Scanning needs the website's address to know a club code from any other.
+    private var onScan: (() -> Void)? { data.siteUrl == nil ? nil : { scanning = true } }
+
+    private var onChallenge: ((String) -> Void)? {
+        guard approved, data.action != nil else { return nil }
+        return { id in
+            notice = nil
+            overlay = .newChallenge(opponent: id)
+        }
+    }
+
     var body: some View {
         let shown = tabs.contains(tab) ? tab : .leaderboard
         VStack(spacing: 0) {
-            // The scanner lands with the challenge screens; until then there is
-            // no scan button, rather than one that cannot scan.
-            BrandBar(onScan: nil)
+            BrandBar(onScan: onScan)
             if let notice {
                 VStack(alignment: .leading, spacing: 0) {
                     Notice(text: notice)
@@ -166,7 +202,7 @@ struct SignedInTabs: View {
             ZStack {
                 Palette.background
                 if let overlay {
-                    overlayView(overlay)
+                    overlayView(overlay).id(overlay)
                 } else {
                     screen(shown)
                 }
@@ -179,19 +215,69 @@ struct SignedInTabs: View {
             }
         }
         .background(Palette.background.ignoresSafeArea())
+        .fullScreenCover(isPresented: $scanning) {
+            ScannerView { outcome in
+                scanning = false
+                switch outcome {
+                case .cancelled: break
+                case .unavailable: notice = scanUnavailable
+                case let .scanned(text): route(LinkRouter.parse(text, siteUrl: data.siteUrl), fromScanner: true)
+                }
+            }
+        }
+        .sheet(item: $page) { SafariView(url: $0.url).ignoresSafeArea() }
+        // A link iOS handed over, including one that arrived while signed out.
+        // A link that is not the website's goes to the browser.
+        .task(id: pendingLink) {
+            guard let url = pendingLink else { return }
+            pendingLink = nil
+            let parsed = LinkRouter.parse(url, siteUrl: data.siteUrl)
+            if parsed == .notOurs { browse(url) } else { route(parsed, fromScanner: false) }
+        }
+    }
+
+    private func route(_ route: LinkRoute, fromScanner: Bool) {
+        notice = nil
+        switch route {
+        case let .tab(target, _):
+            overlay = nil
+            let wanted = Tab(target)
+            if tabs.contains(wanted) { tab = wanted } else { overlay = .list }
+        case let .challengeDetail(id):
+            overlay = approved ? .detail(id: id) : .list
+        case let .newChallenge(opponentId):
+            overlay = approved ? .newChallenge(opponent: opponentId) : .list
+        case let .checkIn(token):
+            overlay = .checkIn(token: token)
+        case let .openInBrowser(url):
+            browse(url)
+        case .notOurs:
+            if fromScanner { notice = scanNotOurs }
+        }
+    }
+
+    private func browse(_ url: String) {
+        Task {
+            if !(await openInBrowser(url) { page = $0 }) { notice = noBrowser }
+        }
     }
 
     @ViewBuilder
     private func screen(_ tab: Tab) -> some View {
         switch tab {
         case .leaderboard:
-            LeaderboardScreen(viewer: viewer, load: data.ladder, onChallenge: nil)
+            LeaderboardScreen(viewer: viewer, load: data.ladder, onChallenge: onChallenge)
         case .challenges:
-            Placeholder(title: tab.title)
+            ChallengesScreen(
+                data: data,
+                viewer: viewer,
+                onOpen: { overlay = .detail(id: $0) },
+                onNew: { overlay = .newChallenge(opponent: nil) },
+            )
         case .sessions:
-            SessionsScreen(viewer: viewer, load: data.sessions, onScan: nil)
+            SessionsScreen(viewer: viewer, load: data.sessions, onScan: onScan)
         case .myStats:
-            MyStatsScreen(viewer: viewer, load: data.myStats, signOut: data.signOut)
+            MyStatsScreen(viewer: viewer, siteUrl: data.siteUrl, load: data.myStats, signOut: data.signOut)
         case .membership:
             MembershipScreen(viewer: viewer, load: data.statement)
         }
@@ -200,12 +286,41 @@ struct SignedInTabs: View {
     @ViewBuilder
     private func overlayView(_ overlay: Overlay) -> some View {
         switch overlay {
-        case .detail, .newChallenge:
-            OverlayFrame(back: "Back to challenges", onBack: { self.overlay = nil }) { Placeholder(title: "Challenges") }
-        case .checkIn:
-            OverlayFrame(back: "Back", onBack: { self.overlay = nil }) { Placeholder(title: "Check in") }
+        case let .detail(id):
+            OverlayFrame(back: "Back to challenges", onBack: { self.overlay = nil }) {
+                ChallengeDetailScreen(data: data, viewer: viewer, challengeId: id)
+            }
+        case let .newChallenge(opponent):
+            OverlayFrame(back: "Back to challenges", onBack: { self.overlay = nil }) {
+                NewChallengeScreen(data: data, viewer: viewer, initialOpponentId: opponent) {
+                    self.overlay = nil
+                    tab = .challenges
+                    notice = "Challenge sent!"
+                }
+            }
+        case let .checkIn(token):
+            OverlayFrame(back: "Back", onBack: { self.overlay = nil }) {
+                CheckInScreen(token: token, action: data.action) {
+                    self.overlay = nil
+                    tab = .sessions
+                }
+            }
         case .list:
-            OverlayFrame(back: "Back", onBack: { self.overlay = nil }) { Placeholder(title: "Challenges") }
+            OverlayFrame(back: "Back", onBack: { self.overlay = nil }) {
+                ChallengesScreen(data: data, viewer: viewer, onOpen: { _ in }, onNew: {})
+            }
+        }
+    }
+}
+
+private extension Tab {
+    init(_ target: TabTarget) {
+        switch target {
+        case .leaderboard: self = .leaderboard
+        case .challenges: self = .challenges
+        case .sessions: self = .sessions
+        case .myStats: self = .myStats
+        case .membership: self = .membership
         }
     }
 }
@@ -220,23 +335,6 @@ private struct OverlayFrame<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             TextLink(text: back, action: onBack).padding(.horizontal, 12)
             content.frame(maxHeight: .infinity)
-        }
-    }
-}
-
-/// A screen that is not drawn in this build yet.
-private struct Placeholder: View {
-    let title: String
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                PageHeader(title: title, padding: EdgeInsets(top: 20, leading: 0, bottom: 4, trailing: 0))
-                Card {
-                    BodyText(text: "This screen arrives in the next build.", muted: true)
-                }
-            }
-            .padding(.horizontal, 16)
         }
     }
 }

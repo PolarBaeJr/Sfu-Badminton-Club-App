@@ -12,7 +12,8 @@
 //    cert>` as its origin, not an https origin, so the verify route has to
 //    accept those strings too.
 //  - iOS reads /.well-known/apple-app-site-association and wants the app's
-//    TEAMID.bundle.id under `webcredentials`.
+//    TEAMID.bundle.id under `webcredentials`. The same file's `applinks`
+//    hands the paths the app draws to it as universal links.
 //
 // Everything is read from env at call time (runtime, server-only, never
 // NEXT_PUBLIC_, which Next would freeze into the image at build time). Unset
@@ -122,6 +123,33 @@ export function buildAssetLinks(env: Env = process.env) {
   ];
 }
 
+// The paths the iOS app opens as universal links, as AASA components. `?` is
+// one character: a challenge id is a 36-character uuid and a check-in token
+// 48 hex characters. Each path is claimed with and without a trailing slash;
+// a query is not matched on, so /challenges/new?opponent=<id> is included.
+// Session pages are NOT claimed: the app has no session screen, and a claimed
+// path it cannot draw would bounce back to the browser. Keep in step with
+// Links/LinkRouter.swift (isClaimedPath) in apps/mobile/ios, LinkRouter.kt and
+// the Android manifest's App Links paths.
+const APP_LINK_PATHS: { path: string; comment: string }[] = [
+  { path: '/leaderboard', comment: 'Leaderboard tab' },
+  { path: '/my-stats', comment: 'My stats tab' },
+  { path: '/sessions', comment: 'Sessions tab' },
+  { path: '/membership', comment: 'Membership tab' },
+  { path: '/fees', comment: 'Membership tab (the fees page)' },
+  { path: '/challenges', comment: 'Challenges tab' },
+  { path: '/challenges/new', comment: 'New challenge, from a member QR' },
+  { path: `/challenges/${'?'.repeat(36)}`, comment: 'One challenge' },
+  { path: `/checkin/${'?'.repeat(48)}`, comment: 'Session door check-in' },
+];
+
+function appLinkComponents() {
+  return APP_LINK_PATHS.flatMap(({ path, comment }) => [
+    { '/': path, comment },
+    { '/': `${path}/`, comment },
+  ]);
+}
+
 /** Body of /.well-known/apple-app-site-association, or null when no app id is set. */
 export function buildAppleAppSiteAssociation(env: Env = process.env) {
   const apps = [
@@ -133,5 +161,8 @@ export function buildAppleAppSiteAssociation(env: Env = process.env) {
     ),
   ];
   if (apps.length === 0) return null;
-  return { webcredentials: { apps } };
+  return {
+    webcredentials: { apps },
+    applinks: { details: [{ appIDs: apps, components: appLinkComponents() }] },
+  };
 }

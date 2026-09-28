@@ -8,7 +8,7 @@ around any of them.
                   admin console (Next.js)
   Supabase  <---- Discord bot
    Postgres       Android app (Kotlin)   <- this directory
-   PostgREST
+   PostgREST      iOS app (Swift)        <- this directory
    GoTrue
 ```
 
@@ -67,3 +67,31 @@ passkeys already use.
 The app starts in `BadmintonApp`, which builds one `AppContainer` per process so a
 session has one owner. With no usable Supabase config the container has no services
 and the app shows `ConfigErrorScreen` instead of starting.
+
+## The iOS app
+
+`ios/` is the same design in Swift and SwiftUI, file for file: GoTrue, PostgREST and
+the website's `/api/app` routes over `URLSession`, with no Supabase SDK and no
+third-party package. JSON goes through an ordered value type (`Net/JSONValue.swift`)
+rather than `Codable`, so every request body is byte for byte what the Android app
+sends, key order included. The same rules hold: a failed read is an error, never an
+empty list; a redirect is never followed; a write is never retried after no answer
+or a 5xx. The Android unit tests are ported to XCTest with the same inputs and
+expected strings.
+
+Where the platforms differ:
+
+- **Scanner.** VisionKit's `DataScannerViewController`, the system's own camera
+  reader, so the app ships no scanning model. Unlike Android's Play services
+  scanner it runs in the app's process and needs the camera permission
+  (`NSCameraUsageDescription`). The simulator has no camera; a debug build offers a
+  paste field instead.
+- **Member QR.** CoreImage's `CIQRCodeGenerator` (correction level M), cropped to its
+  modules and redrawn with a quiet zone of exactly 4 modules, so no QR library.
+- **Links.** Universal links, from the `applinks` block of the website's
+  `apple-app-site-association`, claiming the same paths as the Android manifest.
+  They need a signed build; until there is an Apple team the app also answers
+  `sfubadminton://<path>`, read as the same path of the build's website. A claimed
+  page the app does not draw opens in an in-app Safari view, so it cannot loop back
+  into the app (`ios/README.md`).
+- **Dialogs** are sheets, and confirming a cancel is an alert.

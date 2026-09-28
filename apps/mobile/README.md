@@ -6,7 +6,10 @@ upcoming sessions and your membership statement, all read only. It builds and it
 unit tests pass, but it has not yet been run on a device or emulator. How to build
 it is in `docs/05-development.md`.
 
-iOS will be a separate native Swift app. It has not been started (`ios/README.md`).
+The iOS app is a separate native Swift and SwiftUI app in `ios/`, a port of the
+Android one with the same screens, challenges and scanner included. It builds and
+its tests pass on the simulator; it has not run on a device, because signing needs
+an Apple team (`ios/README.md`).
 
 An Expo / React Native version was built first and dropped by the owner for its
 download size and memory use. It survives in git history only.
@@ -54,15 +57,16 @@ phone app cannot do it.
 
 ## The cost of going native: ported shared logic
 
-`packages/shared` is TypeScript, and a Kotlin app cannot import it. The rules the
-app needs are ported by hand into `android/app/src/main/kotlin/.../shared/`: active
+`packages/shared` is TypeScript, and neither a Kotlin nor a Swift app can import it.
+The rules the app needs are ported by hand into `android/app/src/main/kotlin/.../shared/`
+(and from there into `ios/SFUBadminton/Shared/`): active
 season filtering, auth error and OTP rules, the club's clock, the fee statement,
 payment methods, season records and session tracks. Each file names its TypeScript
 source and says "keep in step with it".
 
 Nothing checks that they stay in step. A change to one of those TypeScript files
-needs the matching change in Kotlin, and the Kotlin tests only prove the port agrees
-with itself. The Elo engine is **not** ported: ratings are read from the database,
+needs the matching change in Kotlin and in Swift, and each app's tests only prove
+its port agrees with itself. The Elo engine is **not** ported: ratings are read from the database,
 never computed on the phone. Keep it that way.
 
 ## Layout
@@ -77,14 +81,15 @@ apps/mobile/
       net/        the HTTP transport (HttpURLConnection)
       shared/     hand ports of packages/shared rules
       ui/         Compose screens and theme
-  ios/          the iOS app, not started
+  ios/          the Swift / SwiftUI app (XcodeGen project, see ios/README.md)
   assets/       icons, splash, fonts
   docs/         the decisions, written down before the code
 ```
 
 ## Passkeys
 
-The Android app signs in by email code, or by a passkey already enrolled on the
-website, through Credential Manager. The server side of native passkeys is on branch
+Both apps sign in by email code, or by a passkey already enrolled on the website:
+through Credential Manager on Android, and through AuthenticationServices on iOS,
+which needs a signed build. The server side of native passkeys is on branch
 `feat/passkey-native-app` (token-returning routes and
 `/.well-known/assetlinks.json`). See `docs/02-auth.md`.

@@ -63,4 +63,19 @@ extension JSONValue {
 
     /// The raw value under `key`, nil when missing or null.
     func optValue(_ key: String) -> JSONValue? { present(key) }
+
+    func reqBool(_ key: String) throws -> Bool {
+        guard let b = try optBool(key) else { throw DecodeError(message: "\(key) is missing") }
+        return b
+    }
+
+    func reqDouble(_ key: String) throws -> Double {
+        guard let d = try optDouble(key) else { throw DecodeError(message: "\(key) is missing") }
+        return d
+    }
+
+    func reqObject(_ key: String) throws -> JSONValue {
+        guard let value = present(key) else { throw DecodeError(message: "\(key) is missing") }
+        return try value.object()
+    }
 }

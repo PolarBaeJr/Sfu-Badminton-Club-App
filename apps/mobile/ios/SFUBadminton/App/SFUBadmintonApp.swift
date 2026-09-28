@@ -52,8 +52,14 @@ struct SFUBadmintonApp: App {
         }
     }
 
-    /// An https link the system handed over, queued for the signed-in screens to route.
+    /// A link the system handed over, queued for the signed-in screens to
+    /// route: an https universal link, or one on the app's own scheme read as
+    /// the same page of the build's website.
     private func takeLink(_ url: URL) {
+        if url.scheme?.lowercased() == LinkRouter.appScheme {
+            model.pendingLink = LinkRouter.fromAppScheme(url.absoluteString, siteUrl: container?.services?.siteUrl)
+            return
+        }
         guard url.scheme?.lowercased() == "https" else { return }
         model.pendingLink = url.absoluteString
     }

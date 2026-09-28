@@ -4,11 +4,13 @@ import SwiftUI
 
 struct MyStatsScreen: View {
     let viewer: Viewer
+    let siteUrl: String?
     let signOut: @Sendable () async -> Void
     @State private var loader: Loader<MyStats>
 
-    init(viewer: Viewer, load: @escaping @Sendable (String) async throws -> MyStats, signOut: @escaping @Sendable () async -> Void) {
+    init(viewer: Viewer, siteUrl: String?, load: @escaping @Sendable (String) async throws -> MyStats, signOut: @escaping @Sendable () async -> Void) {
         self.viewer = viewer
+        self.siteUrl = siteUrl
         self.signOut = signOut
         let id = viewer.id
         _loader = State(initialValue: Loader { try await load(id) })
@@ -24,6 +26,9 @@ struct MyStatsScreen: View {
             VStack(alignment: .leading, spacing: 14) {
                 PageHeader(title: "My stats", sub: seasonName, padding: EdgeInsets(top: 20, leading: 0, bottom: 6, trailing: 0))
                 ProfileCard(viewer: viewer)
+                // Only a member who can be challenged: anyone else's QR would
+                // open a form that clears itself.
+                if let siteUrl, isApproved(viewer) { MemberQrCard(siteUrl: siteUrl, playerId: viewer.id) }
 
                 switch loader.state {
                 case .loading:

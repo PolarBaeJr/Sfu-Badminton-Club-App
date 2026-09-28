@@ -5,7 +5,9 @@ version within minutes. Nobody is running an old client. Every assumption in thi
 repository rests on that quietly.
 
 App stores end it. Review latency is measured in days, and users update whenever they
-feel like it. Somebody will be running the February build in October.
+feel like it. Somebody will be running the February build in October. With both an
+Android and an iOS app there are two stores, two review queues and two populations
+of old builds, and the two apps will not ship on the same day.
 
 Two consequences, both of which are ongoing costs rather than one time work:
 

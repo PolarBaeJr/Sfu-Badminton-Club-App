@@ -40,6 +40,17 @@
 		<string>barlow_condensed_bold.ttf</string>
 		<string>jetbrains_mono.ttf</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.sfubadminton.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>sfubadminton</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>SFU Badminton uses the camera to scan club QR codes: the door code at a session and a member's challenge QR.</string>
 	<key>UIUserInterfaceStyle</key>

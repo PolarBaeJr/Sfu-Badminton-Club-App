@@ -14,4 +14,10 @@ transcription of the site header's mark (`apps/player/src/components/shuttle-mar
 on the header's striped red tile, not the `assets/brand` mark. `make-icons.py`
 still owns the web favicons.
 
+The iOS app icon follows the Android one, not `assets/brand`:
+`ios/scripts/render-app-icon.swift` draws the same tile, stripes and shuttle mark
+from the Android launcher's vector geometry into the single 1024 px image in
+`ios/SFUBadminton/Resources/Assets.xcassets/AppIcon.appiconset`. Change the Android
+drawables first and re-run it.
+
 The app's fonts are described in `fonts/README.md`.
