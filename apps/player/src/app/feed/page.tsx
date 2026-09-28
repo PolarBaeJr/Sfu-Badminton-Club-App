@@ -514,7 +514,7 @@ export default async function FeedPage() {
 
   /** The viewer's own standing in one running event, or null if they are not in
    *  it. `occupiesAPlace` rather than a fresh status check, so this agrees with
-   *  the "You are in" section on /tournaments about the same member: a withdrawn
+   *  the "Current tournaments" section on /tournaments about the same member: a withdrawn
    *  or disqualified entry is not an entry. */
   const myEntryIn = (eventId: string): ActiveEntry['mine'] => {
     const solo = tournamentEntryRows.find(
