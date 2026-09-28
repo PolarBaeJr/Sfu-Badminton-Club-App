@@ -12,6 +12,7 @@ import {
   type ParsedParams,
 } from './params.js';
 import { TokenBuckets } from './rate-limit.js';
+import { RpcCache } from './rpc-cache.js';
 import type { DataApiScope } from './scopes.js';
 import { UpstreamError, type Upstream } from './upstream.js';
 
@@ -500,7 +501,10 @@ export function createHandler(deps: HandlerDeps) {
   const verifier = new KeyVerifier(deps.upstream, now);
   const keyBuckets = new TokenBuckets(KEY_RATE.capacity, KEY_RATE.windowMs, 1000, now);
   const failBuckets = new TokenBuckets(FAILED_AUTH_RATE.capacity, FAILED_AUTH_RATE.windowMs, 10_000, now);
-  const rpc = (fn: string, args: Record<string, unknown>) => deps.upstream.rpc(fn, args) as Promise<Row[]>;
+  const cache = new RpcCache(now);
+  // Reads only. The verifier above talks to deps.upstream directly, uncached here.
+  const rpc = (fn: string, args: Record<string, unknown>) =>
+    cache.get(fn, args, () => deps.upstream.rpc(fn, args)) as Promise<Row[]>;
 
   function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
     const payload = JSON.stringify(body);
@@ -771,7 +775,9 @@ export function createHandler(deps: HandlerDeps) {
       }
 
       case 'season_standings': {
-        const seasons = await rpc('data_api_seasons', { ...c, p_season_id: v.id });
+        // The header, not data_api_seasons: that one scans every match for totals
+        // this route does not print (00267).
+        const seasons = await rpc('data_api_season_header', { ...c, p_season_id: v.id });
         const season = seasons[0];
         if (!season) return notFound(res);
         const rows = await rpc('data_api_season_standings', { ...c, p_season_id: v.id });

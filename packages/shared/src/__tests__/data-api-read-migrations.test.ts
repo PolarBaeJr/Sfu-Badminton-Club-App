@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_API_SCOPES } from '../utils/data-api-key';
 
-// 00264, 00265 AND 00266, READ OFF DISK. The data API's read surface is a set
+// 00264 TO 00267, READ OFF DISK. The data API's read surface is a set
 // of SECURITY DEFINER functions, which run as their owner and so bypass every
 // grant and policy the reader role would otherwise meet. What they return is
 // therefore the whole privacy boundary, and these properties pin it: a later
@@ -21,7 +21,8 @@ function migration(prefix: string): string {
 const scopes = migration('00264_');
 const history = migration('00265_');
 const schedule = migration('00266_');
-const both = `${history}\n${schedule}`;
+const header = migration('00267_');
+const both = `${history}\n${schedule}\n${header}`;
 
 /** The body of one CREATE FUNCTION, from its header to the closing tag. */
 function functionBody(name: string): string {
@@ -50,6 +51,7 @@ const PUBLIC_FUNCTIONS: Record<string, string> = {
   data_api_rating_history: 'uuid, text, text, uuid, timestamptz, timestamptz, int, int',
   data_api_seasons: 'uuid, uuid',
   data_api_season_standings: 'uuid, uuid',
+  data_api_season_header: 'uuid, uuid',
   data_api_tournaments: 'uuid, uuid, uuid',
   data_api_tournament_events: 'uuid, uuid',
   data_api_tournament_entrants: 'uuid, uuid',
@@ -82,7 +84,7 @@ describe('00264: the scope vocabulary', () => {
   });
 });
 
-describe('00265 and 00266: every data API read function', () => {
+describe('00265 to 00267: every data API read function', () => {
   const all = { ...PUBLIC_FUNCTIONS, ...INTERNAL_FUNCTIONS };
 
   for (const [name, args] of Object.entries(all)) {

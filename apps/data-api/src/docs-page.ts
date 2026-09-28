@@ -399,6 +399,7 @@ export const DOCS_HTML = `<!doctype html>
 <li>The limits are enforced per server process, and the club's network edge applies its own limits in front of them. Do not rely on the exact figures; honour <code>Retry-After</code>.</li>
 </ul>
 <p>The data changes slowly. Pull the roster on a schedule measured in hours, and keep match history in sync with <code>updated_since</code> rather than re-reading it.</p>
+<p>Responses may be up to 15 seconds old: the server reuses a recent answer to the same request rather than asking the database again. <code>generated_at</code> is when the response was sent, not when the data was read.</p>
 
 <h2 id="versioning">Versioning and stability</h2>
 <p>The <code>/v1</code> prefix is the contract. Within it, new fields and new routes may be added, and existing fields will not be removed or change meaning. Ignore fields you do not recognise. A breaking change becomes <code>/v2</code>. <code>/health</code> reports the running version.</p>

@@ -6,6 +6,7 @@ import { get, grant, newKey, playerRow, startHarness, type Harness } from './hel
 // test that imported the constant would follow it wherever it was changed to.
 const POSITIVE_TTL_MS = 30_000;
 const NEGATIVE_TTL_MS = 5_000;
+const READ_CACHE_TTL_MS = 15_000;
 
 const REF_A = 'a'.repeat(64);
 const REF_B = 'b'.repeat(64);
@@ -336,8 +337,71 @@ describe('upstream failure', () => {
     const key = newKey();
     grant(h, key, ['players:read']);
     await get(h, '/v1/players', key);
+    // Past the read cache, inside the key's.
+    h.clock.t += READ_CACHE_TTL_MS + 1;
     h.failNext = { status: 503 };
     expect((await get(h, '/v1/players', key)).status).toBe(503);
+  });
+});
+
+describe('read cache', () => {
+  const reads = () => h.calls.filter((c) => c.fn === 'data_api_players');
+
+  it('answers a repeat read from the cache for 15 seconds, then asks again', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    expect((await get(h, '/v1/players', key)).status).toBe(200);
+    h.clock.t += READ_CACHE_TTL_MS - 1;
+    expect((await get(h, '/v1/players', key)).status).toBe(200);
+    expect(reads()).toHaveLength(1);
+    h.clock.t += 2;
+    expect((await get(h, '/v1/players', key)).status).toBe(200);
+    expect(reads()).toHaveLength(2);
+  });
+
+  it('shares one database call between concurrent identical reads', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    await get(h, '/v1/players', key);
+    h.clock.t += READ_CACHE_TTL_MS + 1;
+    const statuses = await Promise.all(Array.from({ length: 10 }, () => get(h, '/v1/players', key).then((r) => r.status)));
+    expect(statuses).toEqual(Array(10).fill(200));
+    expect(reads()).toHaveLength(2);
+  });
+
+  it('never serves one consumer the answer computed for another', async () => {
+    const first = newKey();
+    const second = newKey();
+    grant(h, first, ['players:read']);
+    grant(h, second, ['players:read'], '99999999-2222-3333-4444-555555555555').consumer_id =
+      'bbbbbbbb-0000-0000-0000-000000000002';
+    await get(h, '/v1/players', first);
+    await get(h, '/v1/players', second);
+    expect(reads().map((c) => c.body.p_consumer_id)).toEqual([
+      'aaaaaaaa-0000-0000-0000-000000000001',
+      'bbbbbbbb-0000-0000-0000-000000000002',
+    ]);
+  });
+
+  it('does not keep a failure', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    await get(h, '/v1/players', key);
+    h.clock.t += READ_CACHE_TTL_MS + 1;
+    h.failFn = { fn: 'data_api_players', status: 500 };
+    expect((await get(h, '/v1/players', key)).status).toBe(503);
+    h.failFn = null;
+    expect((await get(h, '/v1/players', key)).status).toBe(200);
+    expect(reads()).toHaveLength(3);
+  });
+
+  it('does not cache key verification beyond its own contract', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    await get(h, '/v1/players', key);
+    h.keys.clear();
+    h.clock.t += POSITIVE_TTL_MS + 1;
+    expect((await get(h, '/v1/players', key)).status).toBe(401);
   });
 });
 
