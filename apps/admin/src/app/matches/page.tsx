@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader, TableCard, Atomic } from '@badminton/ui';
-import { MATCH_FORMAT_LABELS, formatDateTime, unwrap, scopeToActiveSeason } from '@badminton/shared';
+import { describeMatchShape, formatDateTime, unwrap, scopeToActiveSeason } from '@badminton/shared';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
 import { SearchableTable } from '@/components/searchable-table';
@@ -310,7 +310,7 @@ export default async function MatchesPage({
             </>
           }
           fields={[
-            { label: 'Format', value: MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS] },
+            { label: 'Format', value: describeMatchShape({ match_format: m.format, games_per_match: m.games_per_match, points_per_game: m.points_per_game }) },
             { label: 'Date', value: m.played_at ? formatDateTime(m.played_at) : '-' },
             { label: 'Elo', wide: true, value: eloDeltas(m, false) },
           ]}
@@ -345,7 +345,7 @@ export default async function MatchesPage({
             </div>
           </td>
           <td className="px-5 py-4 text-sm text-[var(--text-muted)]">
-            {MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS]}
+            {describeMatchShape({ match_format: m.format, games_per_match: m.games_per_match, points_per_game: m.points_per_game })}
           </td>
           <td className="px-5 py-4">{eloDeltas(m, true)}</td>
           <td className="px-5 py-4">

@@ -12,6 +12,9 @@ import {
   CUSTOM_FORMAT_BOUNDS,
   ExpectedError,
   requireActiveSeasonId,
+  getRulesFor,
+  validateGamesForRules,
+  type MatchFormat,
 } from '@badminton/shared';
 import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
@@ -278,6 +281,13 @@ async function adminCreateMatchImpl(data: {
   admin_note?: string;
 }) {
   parseOrThrow(adminMatchCreateSchema, data);
+  // The schema bounds scores only by the highest cap; judge each game against
+  // this match's own target and best-of.
+  const check = validateGamesForRules(
+    data.games,
+    getRulesFor(data.format as MatchFormat, data.games_per_match, data.points_per_game),
+  );
+  if (!check.ok) throw new ExpectedError(check.message);
   const admin = await requireCapability('matches.create.write');
   const adminClient = createAdminClient();
   const { getFormatWeight, derivedFormatWeight } = await import('@badminton/shared');

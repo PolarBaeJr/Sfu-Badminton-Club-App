@@ -1,3 +1,5 @@
+import { isLegalGameCount, isLegalGameScore } from './constants';
+
 // Who won, derived from the game scores.
 //
 // The tournament bracket already worked this out for itself; the challenge form
@@ -53,4 +55,90 @@ function toScore(value: number | string): number {
 /** Convenience for callers that only need the side. */
 export function deriveWinnerSide(games: readonly GameScore[]): 'a' | 'b' | null {
   return tallyGames(games).winner;
+}
+
+/** Games a side must win to take a best-of-N: 2 of 3, 3 of 5, 4 of 7. */
+export function gamesNeededToWin(bestOf: number): number {
+  return Math.floor(bestOf / 2) + 1;
+}
+
+export interface ScoreSlot {
+  game_number: number;
+  side_a_score: string;
+  side_b_score: string;
+}
+
+/**
+ * The blank rows a score form opens with: the fewest games that could decide
+ * the match. More are added only while nobody has clinched.
+ */
+export function initialScoreSlots(bestOf: number): ScoreSlot[] {
+  const count = Math.max(1, gamesNeededToWin(bestOf));
+  return Array.from({ length: count }, (_, i) => ({
+    game_number: i + 1,
+    side_a_score: '',
+    side_b_score: '',
+  }));
+}
+
+function isBlank(value: number | string): boolean {
+  return typeof value === 'string' && value.trim() === '';
+}
+
+/** Drops trailing rows where both sides are blank: games that were never played. */
+export function trimUnplayedGames<T extends GameScore>(slots: readonly T[]): T[] {
+  let end = slots.length;
+  while (end > 0) {
+    const last = slots[end - 1];
+    if (!last || !isBlank(last.side_a_score) || !isBlank(last.side_b_score)) break;
+    end--;
+  }
+  return slots.slice(0, end);
+}
+
+export type GamesValidation = { ok: true } | { ok: false; message: string };
+
+/**
+ * Judges a whole scoreline against the match's own rules: every game a legal
+ * finish for its target and cap, no game played after someone clinched, and
+ * the winner on exactly the clinching number of games.
+ */
+export function validateGamesForRules(
+  games: readonly GameScore[],
+  rules: { bestOf: number; target: number; cap: number },
+): GamesValidation {
+  const { bestOf, target, cap } = rules;
+  const needed = gamesNeededToWin(bestOf);
+  const stopsAt = bestOf > 1
+    ? `A best of ${bestOf} stops at ${needed} games won.`
+    : 'A one-game match is a single game.';
+
+  if (games.length === 0) return { ok: false, message: 'Enter the score of at least one game.' };
+  if (games.length > bestOf) return { ok: false, message: stopsAt };
+
+  let aWon = 0;
+  let bWon = 0;
+  for (const [i, game] of games.entries()) {
+    const a = toScore(game.side_a_score);
+    const b = toScore(game.side_b_score);
+    if (aWon === needed || bWon === needed) return { ok: false, message: stopsAt };
+    if (!isLegalGameScore(a, b, 'single_21', bestOf, target)) {
+      return {
+        ok: false,
+        message: `Game ${i + 1}: ${a}-${b} is not a finished game. Win by two, or at ${cap}.`,
+      };
+    }
+    if (a > b) aWon++;
+    else bWon++;
+  }
+
+  const winnerGames = Math.max(aWon, bWon);
+  const loserGames = Math.min(aWon, bWon);
+  if (!isLegalGameCount(winnerGames, loserGames, 'single_21', bestOf)) {
+    return {
+      ok: false,
+      message: `The match is not finished. The winner needs ${needed} game${needed === 1 ? '' : 's'}.`,
+    };
+  }
+  return { ok: true };
 }
