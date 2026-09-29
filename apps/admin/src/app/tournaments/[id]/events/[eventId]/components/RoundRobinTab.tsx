@@ -185,7 +185,7 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, 
                 <thead>
                   <tr className="border-b border-[var(--border)]">
                     <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-4 py-2 w-10">#</th>
-                    <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-4 py-2">Player</th>
+                    <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-4 py-2">{isDoubles ? 'Pair' : 'Player'}</th>
                     <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-2 w-12">W</th>
                     <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-2 w-12">L</th>
                     <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-2 w-14">PF</th>

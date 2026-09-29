@@ -31,6 +31,20 @@ describe('formatDate', () => {
   });
 });
 
+describe('formatDate on a plain DATE', () => {
+  // Node re-reads TZ when it changes, so this runs as a runtime behind UTC.
+  it('shows the day as written on a clock behind UTC', () => {
+    const before = process.env.TZ;
+    process.env.TZ = 'America/Vancouver';
+    try {
+      expect(formatDate('2026-09-29')).toBe('Sep 29, 2026');
+      expect(formatDate('2026-01-01')).toBe('Jan 1, 2026');
+    } finally {
+      if (before === undefined) delete process.env.TZ; else process.env.TZ = before;
+    }
+  });
+});
+
 describe('formatDateTime', () => {
   it('includes time components', () => {
     const result = formatDateTime('2024-06-20T14:30:00Z');
