@@ -97,6 +97,13 @@ describe('countEnteredPlayers', () => {
     );
     expect(n).toBe(2);
   });
+
+  it('counts each external team as two people, however many there are', () => {
+    const external = { player1_id: null, player2_id: null, status: 'registered' };
+    expect(countEnteredPlayers([], [external])).toBe(2);
+    expect(countEnteredPlayers([], [external, external])).toBe(4);
+    expect(countEnteredPlayers([], [external, { ...external, status: 'withdrawn' }])).toBe(2);
+  });
 });
 
 describe('spotsLeft', () => {

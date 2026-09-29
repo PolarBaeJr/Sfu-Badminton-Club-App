@@ -181,6 +181,9 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'result_edited',
   'result_undone',
   'participant_removed',
+  // An external team (00269) has no fee row or member record behind it, so this
+  // row is the only trace it was ever entered.
+  'external_pair_removed',
   'seeds_cleared',
   'draw_unlocked',
 ]);

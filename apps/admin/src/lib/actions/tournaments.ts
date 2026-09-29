@@ -343,7 +343,16 @@ async function updateTournamentStatusImpl(tournamentId: string, status: Tourname
   // This guard catches the SEQUENTIAL double-click (the second request reads
   // 'active' and says nothing); the predicate on the UPDATE above catches the
   // CONCURRENT one, where both requests read 'draft'.
+  //
+  // Not for a tournament made only of external events (00269): members cannot sign
+  // up to any of it, so there is nothing to announce.
+  let externalOnly = false;
   if (status === 'active' && old.status !== 'active') {
+    const { data: events } = await adminClient
+      .from('tournament_events').select('external_event').eq('tournament_id', tournamentId);
+    externalOnly = (events ?? []).length > 0 && (events ?? []).every((e) => e.external_event === true);
+  }
+  if (status === 'active' && old.status !== 'active' && !externalOnly) {
     const { data: players } = await adminClient
       .from('players')
       .select('id')

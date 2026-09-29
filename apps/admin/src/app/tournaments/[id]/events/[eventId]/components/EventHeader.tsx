@@ -427,6 +427,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             <Badge variant="default">
               {TOURNAMENT_EVENT_FORMAT_LABELS[format as keyof typeof TOURNAMENT_EVENT_FORMAT_LABELS] ?? format}
             </Badge>
+            {event.external_event === true && <Badge variant="default">External, unrated</Badge>}
             {poolToBracket && (
               <Badge variant="default">
                 {groupCount >= 2

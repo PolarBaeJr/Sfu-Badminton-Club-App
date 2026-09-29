@@ -92,7 +92,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, existingPairRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships)')
+      .select('id, status, event_type, tournament_id, max_participants, external_event, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -130,6 +130,9 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
 
   const event = eventRes.data;
   if (!event) throw new Error('Event not found');
+  // An external event (00269) is entered by the organisers, by name. The DB refuses
+  // the participant row too; this says why.
+  if (event.external_event) throw new ExpectedError('This event is entered by the organisers.');
   const regTournament = pickSuspension(event.tournament);
   if (regTournament?.suspended_at) {
     throw new ExpectedError(`This tournament is currently suspended${regTournament.suspension_reason ? `: ${regTournament.suspension_reason}` : ''}`);

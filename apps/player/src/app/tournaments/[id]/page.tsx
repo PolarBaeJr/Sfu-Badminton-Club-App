@@ -312,6 +312,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                       {event.max_participants ? ` / ${event.max_participants}` : ''}
                     </span>
                   </div>
+                  {/* An external event (00269) is entered by the organisers. */}
+                  {event.external_event ? (
+                    <span className="mono muted" style={{ fontSize: 12 }}>External</span>
+                  ) : (
                   <EventRegistrationButton
                     eventId={event.id}
                     eventStatus={eventStatus}
@@ -320,6 +324,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     suspended={!!tournament.suspended_at}
                     eventWaiverText={tournament.waiver_text}
                   />
+                  )}
                 </div>
               </div>
             );

@@ -2812,6 +2812,7 @@ export type Database = {
           format: string
           games_per_match: number | null
           group_count: number | null
+          external_event: boolean
           id: string
           match_format: string
           max_participants: number | null
@@ -2835,6 +2836,7 @@ export type Database = {
           format: string
           games_per_match?: number | null
           group_count?: number | null
+          external_event?: boolean
           id?: string
           match_format?: string
           max_participants?: number | null
@@ -2858,6 +2860,7 @@ export type Database = {
           format?: string
           games_per_match?: number | null
           group_count?: number | null
+          external_event?: boolean
           id?: string
           match_format?: string
           max_participants?: number | null
@@ -3226,10 +3229,12 @@ export type Database = {
           event_id: string
           final_position: number | null
           group_number: number | null
+          external1_name: string | null
+          external2_name: string | null
           id: string
           pair_name: string | null
-          player1_id: string
-          player2_id: string
+          player1_id: string | null
+          player2_id: string | null
           points: number | null
           seed_number: number | null
           status: string
@@ -3243,10 +3248,12 @@ export type Database = {
           event_id: string
           final_position?: number | null
           group_number?: number | null
+          external1_name?: string | null
+          external2_name?: string | null
           id?: string
           pair_name?: string | null
-          player1_id: string
-          player2_id: string
+          player1_id?: string | null
+          player2_id?: string | null
           points?: number | null
           seed_number?: number | null
           status?: string
@@ -3260,10 +3267,12 @@ export type Database = {
           event_id?: string
           final_position?: number | null
           group_number?: number | null
+          external1_name?: string | null
+          external2_name?: string | null
           id?: string
           pair_name?: string | null
-          player1_id?: string
-          player2_id?: string
+          player1_id?: string | null
+          player2_id?: string | null
           points?: number | null
           seed_number?: number | null
           status?: string
@@ -3864,6 +3873,16 @@ export type Database = {
           p_season_id: string
         }
         Returns: undefined
+      }
+      add_external_tournament_pair: {
+        Args: {
+          p_added_by: string
+          p_event_id: string
+          p_external1_name: string
+          p_external2_name: string
+          p_team_name?: string
+        }
+        Returns: string
       }
       add_participants_under_field_lock: {
         Args: { p_admin_id: string; p_entries: Json; p_event_id: string }

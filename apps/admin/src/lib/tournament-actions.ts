@@ -32,6 +32,7 @@ export {
   withdrawPair,
   disqualifyPair,
   addPairToEvent,
+  addExternalPairToEvent,
   removePairFromEvent,
   unpairEntry,
   withdrawPairMember,

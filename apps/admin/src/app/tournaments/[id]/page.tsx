@@ -230,6 +230,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     </span>
                     <span>&middot;</span>
                     <span>{describeMatchShape(ev)}</span>
+                    {ev.external_event && (<><span>&middot;</span><span>External, unrated</span></>)}
                   </div>
                 </div>
               </Link>

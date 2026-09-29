@@ -966,6 +966,23 @@ const makeClient = vi.hoisted(() => () => {
       });
     }
 
+    // Mirrors add_external_tournament_pair (00269): the row it writes, nothing else.
+    if (name === 'add_external_tournament_pair') {
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === args.p_event_id);
+      if (!ev) return Promise.resolve({ data: null, error: { message: 'Event not found.', code: 'P0002' } });
+      if (!ev.external_event) {
+        return Promise.resolve({ data: null, error: { message: 'External teams can only be entered in an external event.', code: '23514' } });
+      }
+      const id = `external-pair-${(store.db.tournament_pairs ?? []).length + 1}`;
+      (store.db.tournament_pairs ??= []).push({
+        id, event_id: ev.id, player1_id: null, player2_id: null,
+        external1_name: args.p_external1_name, external2_name: args.p_external2_name,
+        pair_name: (args.p_team_name as string | undefined) ?? `${args.p_external1_name} / ${args.p_external2_name}`,
+        status: 'registered',
+      });
+      return Promise.resolve({ data: id, error: null });
+    }
+
     if (name === 'remove_field_entry') {
       const entryId = args.p_entry_id as string;
       const isPair = args.p_is_pair as boolean;
@@ -1429,7 +1446,9 @@ import { toFormatPayload, EMPTY_FORMAT_VALUES } from '@/app/tournaments/[id]/eve
 // refusal and these tests must all be reading the same arithmetic.
 import { maxFirstRoundByes, nextPowerOf2 } from '@badminton/shared';
 import { autoSeedEventByElo } from '../tournament-actions/seeding';
-import { addParticipantToEvent, withdrawParticipant } from '../tournament-actions/participants';
+import {
+  addParticipantToEvent, withdrawParticipant, addExternalPairToEvent, removePairFromEvent,
+} from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
   computeRoundRobinStandings,
@@ -6842,5 +6861,135 @@ describe('a non-grant kind is never a paid subject', () => {
 
     expect(ratingOf('pl-alice')).toBe(1032);
     expect(ratingOf('pl-bob')).toBe(1020);
+  });
+});
+
+// ============================================================
+// External teams (00269)
+// ============================================================
+//
+// Teams entered by name in an unrated round robin. The database refuses a
+// rating on an external match; these prove the application never asks for one, and
+// never tries to notify, charge or rank an external team as if it were members.
+describe('an external event', () => {
+  function externalEvent() {
+    Object.assign(event(), {
+      event_type: 'mixed_doubles', format: 'round_robin', external_event: true,
+      placement_bonus_enabled: false, status: 'live', draw_locked: false,
+      games_per_match: 1, points_per_game: 15,
+    });
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = [
+      { id: 'g-a', event_id: 'e1', player1_id: null, player2_id: null, external1_name: 'Alder Finch', external2_name: 'Birch Wren', pair_name: 'Alder Finch / Birch Wren', status: 'registered', group_number: null },
+      { id: 'g-b', event_id: 'e1', player1_id: null, player2_id: null, external1_name: 'Cedar Lark', external2_name: 'Dogwood Teal', pair_name: 'Cedar Lark / Dogwood Teal', status: 'registered', group_number: null },
+      { id: 'g-c', event_id: 'e1', player1_id: null, player2_id: null, external1_name: 'Elm Heron', external2_name: 'Fir Robin', pair_name: 'Elm Heron / Fir Robin', status: 'registered', group_number: null },
+    ];
+    store.db.tournament_matches = [{
+      id: 'gm-1', event_id: 'e1', status: 'ready', is_bye: false, round_number: 1, bracket_position: 1,
+      pair_a_id: 'g-a', pair_b_id: 'g-b', winner_pair_id: null, loser_pair_id: null,
+      participant_a_id: null, participant_b_id: null,
+      winner_to_match_id: null, winner_to_position: null, scores: null, elo_snapshot: null, notes: null,
+    }];
+  }
+
+  it('records a result without rating it or notifying anybody', async () => {
+    externalEvent();
+    const before = JSON.stringify(store.db.ratings);
+
+    const res = await enterMatchResult('gm-1', [{ a: 15, b: 12 }], 'a');
+
+    expect(res.ok).toBe(true);
+    expect(match('gm-1').status).toBe('completed');
+    expect(match('gm-1').winner_pair_id).toBe('g-a');
+    expect(match('gm-1').elo_snapshot).toBeNull();
+    expect(store.rpcCalls.map((c) => c.name)).not.toContain('apply_tournament_match_rating');
+    expect(JSON.stringify(store.db.ratings)).toBe(before);
+    expect(store.db.notifications).toEqual([]);
+  });
+
+  it('ranks a tie on wins by point difference, not head-to-head', async () => {
+    externalEvent();
+    // A beats B narrowly, B beats C, C beats A heavily: one win each, so
+    // head-to-head is circular and point difference decides it.
+    store.db.tournament_matches = [
+      ['gm-1', 'g-a', 'g-b', 'g-a', 15, 14],
+      ['gm-2', 'g-b', 'g-c', 'g-b', 15, 13],
+      ['gm-3', 'g-c', 'g-a', 'g-c', 15, 3],
+    ].map(([id, a, b, w, sa, sb], i) => ({
+      id, event_id: 'e1', status: 'completed', is_bye: false, round_number: 1, bracket_position: i + 1,
+      pair_a_id: a, pair_b_id: b, winner_pair_id: w, loser_pair_id: w === a ? b : a,
+      scores: [{ a: sa, b: sb }], elo_snapshot: null,
+    }));
+
+    const standings = await computeRoundRobinStandings('e1');
+
+    // C: +12 -1 = +11. B: -1 +2 = +1. A: +1 -12 = -11.
+    expect(standings.map((s) => s.id)).toEqual(['g-c', 'g-b', 'g-a']);
+    expect(standings.map((s) => s.groupRank)).toEqual([1, 2, 3]);
+  });
+
+  it('enters a team by name through the RPC, tidied, and writes the trail', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    const res = await addExternalPairToEvent('e1', '  Gum   Swift ', 'Hazel Owl');
+
+    expect(res.ok).toBe(true);
+    const call = store.rpcCalls.find((c) => c.name === 'add_external_tournament_pair');
+    expect(call?.args).toMatchObject({ p_event_id: 'e1', p_external1_name: 'Gum Swift', p_external2_name: 'Hazel Owl', p_added_by: 'admin-1' });
+    expect(store.db.tournament_audit_log!.some((r) => r.action === 'external_pair_added')).toBe(true);
+  });
+
+  it('passes a tidied team name and omits a blank one', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl', '  Night   Owls ');
+    await addExternalPairToEvent('e1', 'Ivy Jay', 'Kelp Loon', '   ');
+
+    const calls = store.rpcCalls.filter((c) => c.name === 'add_external_tournament_pair');
+    expect(calls[0]?.args).toMatchObject({ p_team_name: 'Night Owls' });
+    expect(calls[1]?.args).not.toHaveProperty('p_team_name');
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'external_pair_added');
+    expect(audit.map((r) => (r.details as { team_name: string | null }).team_name)).toEqual(['Night Owls', null]);
+  });
+
+  it('refuses a team name over 60 characters before any round trip', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl', 'x'.repeat(61));
+
+    expect(res.ok === false && res.error).toMatch(/at most 60/);
+    expect(store.rpcCalls).toEqual([]);
+  });
+
+  it('refuses an external team in a member event without calling the RPC', async () => {
+    Object.assign(event(), { event_type: 'mixed_doubles', status: 'registration', external_event: false });
+
+    const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl');
+
+    expect(res.ok).toBe(false);
+    expect(store.rpcCalls.map((c) => c.name)).not.toContain('add_external_tournament_pair');
+  });
+
+  it('refuses two names that are the same person before any round trip', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    const res = await addExternalPairToEvent('e1', 'Gum Swift', ' gum swift');
+
+    expect(res.ok === false && res.error).toMatch(/different names/);
+    expect(store.rpcCalls).toEqual([]);
+  });
+
+  it('writes the trail when an external team is removed', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    await removePairFromEvent('g-c');
+
+    expect(store.db.tournament_pairs!.map((p) => p.id)).not.toContain('g-c');
+    expect(store.db.tournament_audit_log!.some((r) => r.action === 'external_pair_removed')).toBe(true);
   });
 });

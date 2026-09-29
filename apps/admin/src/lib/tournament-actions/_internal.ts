@@ -392,11 +392,13 @@ export async function assertDrawFieldEventWaiverSigned(
     };
     return {
       id: r.id as string,
+      // An external team (00269) has no member ids and no account to sign with, so
+      // it has no members to screen and passes, as an entry with none does.
       members: doubles
         ? [
-          { id: r.player1_id as string, name: name(r.player1, r.player1_id as string) },
-          { id: r.player2_id as string, name: name(r.player2, r.player2_id as string) },
-        ]
+          { id: r.player1_id as string | null, name: name(r.player1, r.player1_id as string) },
+          { id: r.player2_id as string | null, name: name(r.player2, r.player2_id as string) },
+        ].filter((m): m is { id: string; name: string } => m.id != null)
         : [{ id: r.player_id as string, name: name(r.player, 'This player') }],
     };
   });
@@ -462,8 +464,8 @@ export async function assertNobodyLeftUnpaired(
  * refusal still names two distinct people.
  */
 export function pairWaiverMembers(pair: {
-  player1_id: string;
-  player2_id: string;
+  player1_id: string | null;
+  player2_id: string | null;
   player1?: { full_name?: string | null } | { full_name?: string | null }[] | null;
   player2?: { full_name?: string | null } | { full_name?: string | null }[] | null;
 }): { id: string; name: string }[] {
@@ -471,6 +473,8 @@ export function pairWaiverMembers(pair: {
     const row = Array.isArray(embed) ? embed[0] : embed;
     return (row as { full_name?: string | null } | null)?.full_name || fallback;
   };
+  // An external team (00269) has no members to screen.
+  if (pair.player1_id == null || pair.player2_id == null) return [];
   return [
     { id: pair.player1_id, name: name(pair.player1, pair.player1_id) },
     { id: pair.player2_id, name: name(pair.player2, pair.player2_id) },
@@ -596,12 +600,14 @@ export async function unsignedAmong(
 
 export async function notifyPlayers(
   adminClient: ReturnType<typeof createAdminClient>,
-  playerIds: string[],
+  rawPlayerIds: ReadonlyArray<string | null | undefined>,
   title: string,
   body: string,
   metadata?: Record<string, unknown>,
   notificationType: 'general' | 'tournament_bracket_published' | 'tournament_match_ready' | 'tournament_match_result' | 'tournament_event_completed' | 'tournament_checkin_open' = 'general'
 ) {
+  // An external team (00269) has no player ids; there is nobody to notify.
+  const playerIds = rawPlayerIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
   if (playerIds.length === 0) return;
   try {
     const rows = playerIds.map(pid => ({
@@ -1232,6 +1238,9 @@ export async function applyTournamentMatchElo(matchId: string) {
   if (match.elo_snapshot) return;
 
   const event = match.event as Record<string, unknown>;
+  // An external event (00269) is unrated: its teams have no ratings rows. The
+  // tournament_matches_external_unrated trigger refuses the snapshot as a backstop.
+  if (event.external_event === true) return;
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
   // THE MATCH'S OWN SHAPE, falling back to the event's (00108). A draw whose
   // rounds are played to different lengths has to rate them differently or the
@@ -2265,6 +2274,18 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   // groupRank is carried on BOTH shapes so callers never have to branch on
   // which one they got. A flat round robin has one implicit group, so its
   // groupRank is just the finishing place — which is what it means.
+  //
+  // AN EXTERNAL EVENT (00269) ranks by wins, then point difference, then points for:
+  // the organisers' rule, with no head-to-head and no game difference. The sort
+  // is handed copies with those two keys blanked, and the rows returned carry
+  // their real figures back.
+  if ((event as { external_event?: boolean }).external_event === true) {
+    const real = new Map(rankable.map(e => [e.id, e]));
+    const keyed = rankable.map(e => ({ ...e, h2h: {} as Record<string, number>, gamesFor: 0, gamesAgainst: 0 }));
+    const restore = <T extends { id: string }>(s: T) => ({ ...s, ...real.get(s.id)! });
+    if (grouped) return qualificationOrder(keyed, seedBy).map(restore);
+    return sortStandings(keyed, seedBy).map((s, i) => ({ ...restore(s), groupRank: i + 1 }));
+  }
   if (grouped) return qualificationOrder(rankable, seedBy);
   return sortStandings(rankable, seedBy).map((s, i) => ({ ...s, groupRank: i + 1 }));
 }
