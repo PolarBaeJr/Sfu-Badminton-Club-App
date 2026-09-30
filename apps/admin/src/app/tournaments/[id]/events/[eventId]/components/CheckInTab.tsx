@@ -15,7 +15,7 @@ import { useToast } from '@/components/toast-provider';
 import { CheckCircle, XCircle, Clock, Users, UserCheck, Undo2 } from 'lucide-react';
 import { getName } from './entry-name';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
-import type { EventWaiverStatus } from '@badminton/shared';
+import { CLUB_TIMEZONE, type EventWaiverStatus } from '@badminton/shared';
 import { WaiverState, blocksCheckIn } from './WaiverState';
 
 interface Props {
@@ -252,7 +252,9 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                   <div className="flex items-center gap-1.5">
                     {entry.checked_in_at && (
                       <span className="text-[10px] text-[var(--text-muted)] font-mono">
-                        {new Date(entry.checked_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {/* Pinned locale and zone: the server renders in UTC, so the default
+                            showed the wrong hour and failed hydration. */}
+                        {new Date(entry.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: CLUB_TIMEZONE })}
                       </span>
                     )}
                     {canUndo && entry.status === 'checked_in' && (

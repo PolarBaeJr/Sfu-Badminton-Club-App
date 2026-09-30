@@ -4,6 +4,7 @@ import { useState, useTransition, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, Check, Loader2, AlertCircle, Play, Square, ArrowRight } from 'lucide-react';
 import { courtLabel, isPlayedMatch, eventIsPlaying } from '@badminton/shared';
+import { SearchFilter } from '@badminton/ui';
 import { setMatchCourt, setMatchReadyForPlayer, setMatchLive } from '@/lib/tournament-actions';
 import type {
   TournamentMatchRow,
@@ -219,6 +220,7 @@ export function CourtManagementTab({
    * something to say.
    */
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
 
   // Only while the event is actually being played — but the UNION of what the two
@@ -295,6 +297,15 @@ export function CourtManagementTab({
   const callableCount = rows.filter((r) => r.state === 'callable').length;
   const uncourted = rows.filter((r) => !courtLabel(r.match.court)).length;
 
+  // THE SEARCH ONLY NARROWS THE LIST. Next up and the counts above it still
+  // read the whole event, so typing a name never changes what is next.
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? rows.filter(({ match, a, b }) =>
+        [a.label, b.label, courtLabel(match.court) ?? '', roundLine(match)]
+          .some((text) => text.toLowerCase().includes(needle)))
+    : rows;
+
   if (rows.length === 0) {
     return (
       <div className="p-8 text-center text-sm text-[var(--text-muted)]">
@@ -346,7 +357,21 @@ export function CourtManagementTab({
           </div>
         </div>
 
-        {rows.map(({ match, a, b, state }) => (
+        <SearchFilter
+          value={query}
+          onChange={setQuery}
+          label="Search matches by name, court or match number"
+          placeholder="Search a name, court or M12"
+          resultCount={shown.length}
+          noun="match"
+          nounPlural="matches"
+        />
+
+        {shown.length === 0 && (
+          <p className="p-4 text-center text-sm text-[var(--text-muted)]">No unplayed match fits that search.</p>
+        )}
+
+        {shown.map(({ match, a, b, state }) => (
           <DeskRow
             key={match.id}
             match={match}
