@@ -39,6 +39,8 @@ export {
   swapPairMember,
   checkInPair,
   markPairNoShow,
+  undoCheckIn,
+  undoNoShow,
   bulkCheckIn,
   autoPairWaitingEntrants,
 } from './tournament-actions/participants';

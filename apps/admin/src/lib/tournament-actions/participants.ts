@@ -1974,6 +1974,69 @@ export async function markPairNoShow(pairId: string) {
 // Bulk check-in
 // ============================================================
 
+// THE UNDO for a check-in or a no-show pressed on the wrong row. Both go back
+// to waiting through the same fenced RPC (00271), and only while check-in is
+// open: once the draw is published the field is what was drawn. A no-show
+// comes back as waiting, not checked in, so the waiver check at the door still
+// runs when they do turn up. Each undo asks for the capability of the press it
+// reverses.
+export async function undoCheckIn(entryId: string, isPair: boolean): Promise<ActionResult> {
+  return runAction(async () => {
+    const admin = await requireCapability('tournaments.draw.checkin.mark.write');
+    await returnEntryToWaiting(entryId, isPair, 'checked_in', admin.id);
+  });
+}
+
+export async function undoNoShow(entryId: string, isPair: boolean): Promise<ActionResult> {
+  return runAction(async () => {
+    const admin = await requireCapability('tournaments.draw.noshow.write');
+    await returnEntryToWaiting(entryId, isPair, 'no_show', admin.id);
+  });
+}
+
+async function returnEntryToWaiting(
+  entryId: string,
+  isPair: boolean,
+  expected: 'checked_in' | 'no_show',
+  actorId: string,
+) {
+  const adminClient = createAdminClient();
+  const { data: entry } = await adminClient
+    .from(isPair ? 'tournament_pairs' : 'tournament_participants')
+    .select('status')
+    .eq('id', entryId)
+    .maybeSingle();
+  if (!entry) throw new ExpectedError(isPair ? 'Pair not found' : 'Participant not found');
+  // The capability asked for is the one for THIS undo, so an undo of the other
+  // kind is refused here rather than let through the shared RPC.
+  if (entry.status !== expected) {
+    throw new ExpectedError(
+      expected === 'checked_in'
+        ? 'This entry is no longer checked in. Reload the page to see where it stands.'
+        : 'This entry is no longer marked as a no-show. Reload the page to see where it stands.',
+    );
+  }
+
+  const { data, error } = await adminClient.rpc('set_field_entry_status', {
+    p_entry_id: entryId,
+    p_is_pair: isPair,
+    p_new_status: 'registered',
+    p_actor: actorId,
+  });
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  const result = data as FencedFieldResult | null;
+  if (!result?.ok) fencedRefusal(result, isPair ? 'Pair not found' : 'Participant not found');
+
+  if (!result.tournament_id || !result.event_id) {
+    Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable, page not revalidated'));
+    throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
+  }
+  revalidateEventPaths(result.tournament_id, result.event_id);
+}
+
 /** What "Check In All Present" reports back when it could not take everybody. */
 export interface BulkCheckInResult {
   checkedIn: number;
