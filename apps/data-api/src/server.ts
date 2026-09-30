@@ -253,8 +253,17 @@ function shapeSide(value: unknown): Row[] {
   });
 }
 
+// A draw side. An external team (00269) is one element with no player_ref and
+// an external_ref; a member is one element each, with external false.
 function shapeRefSide(value: unknown): Row[] {
-  return asArray(value).map((p) => ({ player_ref: orNull(asObject(p)?.player_ref) }));
+  return asArray(value).map((p) => {
+    const o = asObject(p);
+    return {
+      player_ref: orNull(o?.player_ref),
+      external: o?.external === true,
+      external_ref: orNull(o?.external_ref),
+    };
+  });
 }
 
 function shapeSeasonRef(id: unknown, name: unknown): Row | null {
@@ -352,12 +361,17 @@ function shapeTournament(row: Row): Row {
 function shapeEvent(row: Row): Row {
   const out: Row = {};
   for (const field of EVENT_FIELDS) out[field] = orNull(row[field]);
+  // An event of external teams (00269): unrated, and its entrants have no
+  // player_refs.
+  out.external = row.external_event === true;
   return out;
 }
 
 function shapeEntrant(row: Row): Row {
   return {
     players: asArray(row.player_refs).map((r) => ({ player_ref: r })),
+    external: row.external === true,
+    external_ref: orNull(row.external_ref),
     seed: orNull(row.seed),
     status: orNull(row.status),
     final_position: orNull(row.final_position),

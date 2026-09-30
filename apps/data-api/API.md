@@ -201,6 +201,19 @@ below, is **withheld**: it keeps its place in the bracket (`round_number`,
 played does not. Entrants with an unpublished player are left out of the
 entrant list, and a pair needs both players published.
 
+### External teams
+
+An event with `"external": true` is an unrated round robin of teams who are
+not club members, entered by the organisers. Such a team is served without a
+name and without `player_ref`s: an entrant has `"players": []`,
+`"external": true` and an `external_ref`, and in a draw each side of its slot
+is one element, `{"player_ref": null, "external": true, "external_ref": "..."}`.
+An `external_ref` is opaque, stable and per-consumer like a `player_ref`, names
+the team rather than a person, and never equals a `player_ref`. Every member
+entrant and draw element carries `"external": false` and `"external_ref": null`.
+A slot in an external event is withheld only when disputed. External matches
+move no rating, so they are not in `/v1/matches` or any match history.
+
 ### `GET /v1/players`
 
 Every member on the roster, one object each, with lifetime figures. See "who is

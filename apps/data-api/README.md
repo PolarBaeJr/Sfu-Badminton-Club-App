@@ -41,9 +41,9 @@ key. It calls these functions and nothing else:
 | `data_api_season_standings` | 00265 | `/v1/seasons/:id/standings` |
 | `data_api_season_header` | 00267 | the standings 404 check, without the totals scan |
 | `data_api_tournaments` | 00266 | `/v1/tournaments`, `/v1/tournaments/:id` |
-| `data_api_tournament_events` | 00266 | tournament detail, and the event route's ownership check |
-| `data_api_tournament_entrants` | 00266 | tournament detail |
-| `data_api_tournament_draw` | 00266 | `/v1/tournaments/:id/events/:event_id` |
+| `data_api_tournament_events` | 00266, 00270 | tournament detail, and the event route's ownership check |
+| `data_api_tournament_entrants` | 00266, 00270 | tournament detail |
+| `data_api_tournament_draw` | 00266, 00270 | `/v1/tournaments/:id/events/:event_id` |
 | `data_api_sessions` | 00266 | `/v1/sessions` |
 | `data_api_club_events` | 00266 | `/v1/events` |
 

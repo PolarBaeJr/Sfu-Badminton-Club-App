@@ -10,6 +10,8 @@ const CONSUMER = 'aaaaaaaa-0000-0000-0000-000000000001';
 const REF_A = 'a'.repeat(64);
 const REF_B = 'b'.repeat(64);
 const MATCH_REF = 'd'.repeat(64);
+const EXT_REF_A = 'f'.repeat(64);
+const EXT_REF_B = '9'.repeat(64);
 const SEASON = '15af1db0-ac97-499d-b583-98082a921368';
 const TOURNAMENT = '22222222-0000-0000-0000-000000000001';
 const EVENT = '33333333-0000-0000-0000-000000000001';
@@ -118,6 +120,7 @@ function eventRow(): Record<string, unknown> {
     group_count: null,
     qualifiers_per_group: null,
     seeded_from_event_id: null,
+    external_event: false,
     notes: 'leak',
   };
 }
@@ -218,7 +221,27 @@ function answerAll(): void {
         elo_after: null,
         elo_change: null,
         combined_elo: 2216,
+        external: false,
+        external_ref: null,
         pair_name: 'leak',
+      },
+      {
+        event_id: EVENT,
+        player_refs: [],
+        seed: null,
+        status: 'registered',
+        final_position: null,
+        group_number: 1,
+        points: 2,
+        elo_before: null,
+        elo_after: null,
+        elo_change: null,
+        combined_elo: null,
+        external: true,
+        external_ref: EXT_REF_A,
+        pair_name: 'leak',
+        external1_name: 'leak',
+        external2_name: 'leak',
       },
     ],
     data_api_tournament_draw: () => [
@@ -236,7 +259,10 @@ function answerAll(): void {
         winner_to: null,
         loser_to: null,
         withheld: false,
-        sides: { a: [{ player_ref: REF_A }], b: [{ player_ref: REF_B }] },
+        sides: {
+          a: [{ player_ref: REF_A, external: false, external_ref: null }],
+          b: [{ player_ref: REF_B, external: false, external_ref: null }],
+        },
         winner_side: 'a',
         games: [{ game: 1, a: 21, b: 10 }],
         court: 'leak',
@@ -260,6 +286,27 @@ function answerAll(): void {
         sides: { a: [{ player_ref: REF_A }], b: [] },
         winner_side: 'a',
         games: [{ game: 1, a: 21, b: 19 }],
+      },
+      {
+        match_ref: 'c'.repeat(64),
+        round_number: 1,
+        round_name: null,
+        phase: 'group',
+        bracket_position: 3,
+        match_number: 3,
+        is_bye: false,
+        is_third_place: false,
+        scheduled_time: null,
+        status: 'completed',
+        winner_to: null,
+        loser_to: null,
+        withheld: false,
+        sides: {
+          a: [{ player_ref: null, external: true, external_ref: EXT_REF_A, name: 'leak' }],
+          b: [{ player_ref: null, external: true, external_ref: EXT_REF_B }],
+        },
+        winner_side: 'b',
+        games: [{ game: 1, a: 9, b: 15 }],
       },
     ],
     data_api_sessions: () => [
@@ -714,9 +761,12 @@ describe('/v1/tournaments', () => {
     const t = b.tournament as Record<string, unknown>;
     const events = t.events as Record<string, unknown>[];
     expect(events).toHaveLength(1);
+    expect(events[0]!.external).toBe(false);
     expect(events[0]!.entrants).toEqual([
       {
         players: [{ player_ref: REF_A }, { player_ref: REF_B }],
+        external: false,
+        external_ref: null,
         seed: 1,
         status: 'active',
         final_position: 1,
@@ -724,6 +774,19 @@ describe('/v1/tournaments', () => {
         points: null,
         elo: { before: null, after: null, change: null },
         combined_elo: 2216,
+      },
+      // An external team (00269): no players, an anonymous ref, and no name.
+      {
+        players: [],
+        external: true,
+        external_ref: EXT_REF_A,
+        seed: null,
+        status: 'registered',
+        final_position: null,
+        group: 1,
+        points: 2,
+        elo: { before: null, after: null, change: null },
+        combined_elo: null,
       },
     ]);
     expect(JSON.stringify(b)).not.toContain('leak');
@@ -733,8 +796,22 @@ describe('/v1/tournaments', () => {
   it('event draw withholds a slot entirely and never serves a court', async () => {
     const b = await body(`/v1/tournaments/${TOURNAMENT}/events/${EVENT}`);
     expect(all('data_api_tournament_draw')).toEqual([{ p_consumer_id: CONSUMER, p_event_id: EVENT }]);
-    const [shown, withheld] = b.draw as Record<string, unknown>[];
-    expect(shown).toMatchObject({ withheld: false, sides: { a: [{ player_ref: REF_A }], b: [{ player_ref: REF_B }] } });
+    const [shown, withheld, external] = b.draw as Record<string, unknown>[];
+    expect(shown).toMatchObject({
+      withheld: false,
+      sides: {
+        a: [{ player_ref: REF_A, external: false, external_ref: null }],
+        b: [{ player_ref: REF_B, external: false, external_ref: null }],
+      },
+    });
+    expect(external).toMatchObject({
+      withheld: false,
+      sides: {
+        a: [{ player_ref: null, external: true, external_ref: EXT_REF_A }],
+        b: [{ player_ref: null, external: true, external_ref: EXT_REF_B }],
+      },
+      winner_side: 'b',
+    });
     expect(withheld).toMatchObject({
       withheld: true,
       sides: null,

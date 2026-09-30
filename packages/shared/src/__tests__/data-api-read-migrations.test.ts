@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_API_SCOPES } from '../utils/data-api-key';
 
-// 00264 TO 00267, READ OFF DISK. The data API's read surface is a set
+// 00264 TO 00267, AND 00270, READ OFF DISK. The data API's read surface is a set
 // of SECURITY DEFINER functions, which run as their owner and so bypass every
 // grant and policy the reader role would otherwise meet. What they return is
 // therefore the whole privacy boundary, and these properties pin it: a later
@@ -22,11 +22,15 @@ const scopes = migration('00264_');
 const history = migration('00265_');
 const schedule = migration('00266_');
 const header = migration('00267_');
-const both = `${history}\n${schedule}\n${header}`;
+const external = migration('00270_');
+const both = `${history}\n${schedule}\n${header}\n${external}`;
 
-/** The body of one CREATE FUNCTION, from its header to the closing tag. */
+/**
+ * The body of one CREATE FUNCTION, from its header to the closing tag. The
+ * LAST definition, since that is the one a database ends up with.
+ */
 function functionBody(name: string): string {
-  const start = both.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
+  const start = both.lastIndexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
   expect(start, `${name} is not defined`).toBeGreaterThan(-1);
   const end = both.indexOf('$function$;', start);
   return both.slice(start, end);
@@ -69,6 +73,8 @@ const INTERNAL_FUNCTIONS: Record<string, string> = {
   data_api_tournament_match_publishable: 'uuid',
   data_api_match_rows: '',
   data_api_sides: 'uuid, jsonb, boolean',
+  data_api_external_ref: 'uuid, uuid',
+  data_api_draw_side: 'uuid, uuid, text',
 };
 
 describe('00264: the scope vocabulary', () => {
@@ -84,7 +90,7 @@ describe('00264: the scope vocabulary', () => {
   });
 });
 
-describe('00265 to 00267: every data API read function', () => {
+describe('00265 to 00270: every data API read function', () => {
   const all = { ...PUBLIC_FUNCTIONS, ...INTERNAL_FUNCTIONS };
 
   for (const [name, args] of Object.entries(all)) {
@@ -101,8 +107,11 @@ describe('00265 to 00267: every data API read function', () => {
 
   for (const [name, args] of Object.entries(PUBLIC_FUNCTIONS)) {
     it(`${name} is granted to data_api_reader and nobody else`, () => {
+      // 00270 recreates three of them and grants again, so a function may be
+      // granted more than once, but always the same thing to the same role.
       const grants = [...both.matchAll(new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${name}\\(([^)]*)\\) TO (\\w+);`, 'g'))];
-      expect(grants.map((g) => [g[1], g[2]])).toEqual([[args, 'data_api_reader']]);
+      expect(grants.length).toBeGreaterThan(0);
+      expect([...new Set(grants.map((g) => `${g[1]} TO ${g[2]}`))]).toEqual([`${args} TO data_api_reader`]);
     });
 
     it(`${name} takes the consumer id first`, () => {
@@ -178,6 +187,34 @@ describe('the one gate', () => {
   });
 });
 
+describe('00270: external teams', () => {
+  it('every function 00270 drops is recreated and revoked in the same file', () => {
+    const dropped = [...external.matchAll(/DROP FUNCTION IF EXISTS public\.(\w+)\(([^)]*)\);/g)];
+    expect(dropped.length).toBeGreaterThan(0);
+    for (const [, name, args] of dropped) {
+      expect(external).toContain(`CREATE OR REPLACE FUNCTION public.${name}(`);
+      expect(external).toContain(`REVOKE ALL ON FUNCTION public.${name}(${args}) FROM PUBLIC, anon, authenticated;`);
+    }
+  });
+
+  it('an external ref is tagged apart from player and match refs', () => {
+    const body = code(functionBody('data_api_external_ref'));
+    expect(body).toContain("':x:'");
+    expect(body).toContain('sha256(');
+  });
+
+  it('the draw still withholds by the match gate outside an external event', () => {
+    const body = code(functionBody('data_api_tournament_draw'));
+    expect(body).toMatch(/NOT te\.external_event AND NOT data_api_tournament_match_publishable\(tm\.id\)/);
+    expect(body).toContain("tm.status = 'disputed'");
+  });
+
+  it('the match gate is not touched, so external matches stay out of history', () => {
+    expect(code(external)).not.toContain('FUNCTION public.data_api_match_rows(');
+    expect(code(external)).not.toContain('FUNCTION public.data_api_tournament_match_publishable(');
+  });
+});
+
 describe('no identity, no free text', () => {
   // Columns that name a member, or that hold text a person wrote. None may be
   // selected by any function in these files. Comments that name them as NOT
@@ -202,6 +239,8 @@ describe('no identity, no free text', () => {
     'court',
     'description',
     'waiver_text',
+    'external1_name',
+    'external2_name',
   ];
 
   for (const column of FORBIDDEN) {

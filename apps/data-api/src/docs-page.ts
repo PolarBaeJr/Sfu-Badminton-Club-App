@@ -327,13 +327,16 @@ export const DOCS_HTML = `<!doctype html>
 <h3 id="tournament">GET /v1/tournaments/:id</h3>
 <p>Requires <code>tournaments:read</code>. One tournament with its events, and each event's entrants:</p>
 <pre><code>{ "players": [ { "player_ref": "${EXAMPLE_REF}" }, { "player_ref": "${EXAMPLE_REF_2}" } ],
+  "external": false, "external_ref": null,
   "seed": 1, "status": "active", "final_position": 1, "group": null, "points": null,
   "elo": { "before": null, "after": null, "change": null }, "combined_elo": 2170 }</code></pre>
 <p>A singles entrant has one player; a pair has two. An entrant with a player who fails the history test is left out (a pair needs both players to pass), so seeds may have gaps. Pair names are never served.</p>
+<p><strong>External teams.</strong> An event with <code>"external": true</code> is an unrated round robin of teams who are not club members. Such a team has <code>"players": []</code>, <code>"external": true</code> and an <code>external_ref</code>: opaque, stable and per consumer like a <code>player_ref</code>, naming the team rather than a person. Its names are never served.</p>
 
 <h3 id="draw">GET /v1/tournaments/:id/events/:event_id</h3>
 <p>Requires <code>tournaments:read</code>. One event and its draw: every slot in bracket order, with <code>match_ref</code>, <code>round_number</code>, <code>round_name</code>, <code>phase</code> (<code>pool</code> or <code>bracket</code>), <code>bracket_position</code>, <code>match_number</code>, <code>is_bye</code>, <code>is_third_place</code>, <code>scheduled_time</code>, <code>status</code>, <code>winner_to</code> and <code>loser_to</code> (the <code>match_ref</code> and <code>position</code> a player advances to), <code>sides</code>, <code>winner_side</code> and <code>games</code>.</p>
 <p><strong>Withheld slots.</strong> A slot that is disputed, or has a player who fails the history test, keeps its place with <code>"withheld": true</code> and <code>sides</code>, <code>winner_side</code> and <code>games</code> all <code>null</code>, so the shape of the bracket survives without saying who played. Court labels are never served.</p>
+<p><strong>Sides.</strong> Each side is a list of <code>{ player_ref, external, external_ref }</code>: one element per member with <code>"external": false</code>, or a single element <code>{ "player_ref": null, "external": true, "external_ref": "..." }</code> for an external team. A slot in an external event is withheld only when disputed. External matches move no rating and are not in <code>/v1/matches</code>.</p>
 
 <h3 id="schedule">GET /v1/sessions and GET /v1/events</h3>
 <p>Require <code>schedule:read</code>. Club sessions and club events that start in a window, soonest first. Parameters: <code>from</code> and <code>to</code>. With neither, the window is the next 30 days; with one, the window is 30 days on its other side. <code>to</code> must be after <code>from</code> and the window at most 366 days, or it is a <code>400</code> naming <code>to</code>. The envelope echoes <code>from</code> and <code>to</code>.</p>
