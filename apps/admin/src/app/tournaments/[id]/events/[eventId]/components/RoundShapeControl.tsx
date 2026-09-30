@@ -223,7 +223,9 @@ export function RoundShapeControl({
     ? 'What the third-place playoff is played to'
     : `What round ${roundNumber} is played to`;
 
-  const weightLine = (
+  // An external event rates nothing (00269), so a rating weight here would be a
+  // figure that never applies.
+  const weightLine = event.external_event === true ? null : (
     <span
       className="block font-mono text-[10px] leading-tight text-[var(--text-muted)]"
       title={elo.spoken}

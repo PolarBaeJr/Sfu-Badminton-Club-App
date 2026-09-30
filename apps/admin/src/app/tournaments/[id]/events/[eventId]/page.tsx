@@ -260,7 +260,7 @@ export default async function EventPage({
           (doubles
             ? [...pairs.flatMap((p) => [p.player1_id, p.player2_id]), ...participants.map((p) => p.player_id)]
             : participants.map((p) => p.player_id)
-          ).map((playerId) => [
+          ).filter((id): id is string => id != null).map((playerId) => [
             playerId,
             eventWaiverStatus(playerId, eventWaiverHash(waiverText), waiverAcceptances),
           ]),

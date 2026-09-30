@@ -416,7 +416,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   if (view === 'summary' && summary) {
     return (
       <Dialog open={true} onClose={onClose} title={title}>
-        <OutcomeSummary summary={summary} onClose={onClose} />
+        <OutcomeSummary summary={summary} unrated={event.external_event === true} onClose={onClose} />
       </Dialog>
     );
   }
@@ -800,7 +800,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
 // a scoreline typed into the wrong card shows up here as the wrong name in
 // green — which is the check that used to require closing the dialog and
 // finding the card again.
-function OutcomeSummary({ summary, onClose }: { summary: MatchOutcomeSummary; onClose: () => void }) {
+function OutcomeSummary({ summary, unrated, onClose }: { summary: MatchOutcomeSummary; unrated: boolean; onClose: () => void }) {
   const scoreline = summary.scores && summary.scores.length > 0
     ? summary.scores.map((g) => `${g.a}-${g.b}`).join(', ')
     : null;
@@ -826,7 +826,11 @@ function OutcomeSummary({ summary, onClose }: { summary: MatchOutcomeSummary; on
           movement from a doubles match goes to the two players' own ladders and
           there is no pair row for it to land on — so the panel names the gap
           rather than showing an empty rating line that reads as "no change". */}
-      {summary.doubles && (
+      {unrated ? (
+        <p className="text-xs text-[var(--text-muted)]">
+          External event: this result moves nobody&rsquo;s rating.
+        </p>
+      ) : summary.doubles && (
         <p className="text-xs text-[var(--text-muted)]">
           Rating movement is not tracked per pair: a doubles result moves each player&rsquo;s own doubles
           rating, which is on their player page rather than on this event&rsquo;s entry.

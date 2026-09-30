@@ -48,6 +48,8 @@ export function CreateEventButton({
   const [maxParticipants, setMaxParticipants] = useState('');
   const [seedingMethod, setSeedingMethod] = useState<TournamentSeedingMethod>('elo');
   const [eloMultiplier, setEloMultiplier] = useState(String(defaultEloMultiplier ?? 1.25));
+  // External teams (00269): entered by name, unrated, always a doubles round robin.
+  const [externalEvent, setExternalEvent] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
@@ -103,6 +105,7 @@ export function CreateEventButton({
         max_participants: maxParticipants ? Number(maxParticipants) : undefined,
         seeding_method: seedingMethod,
         elo_multiplier: Number(eloMultiplier) || 1.25,
+        external_event: externalEvent,
       });
       // Format and pool-link validation come back as a refusal message, not an
       // exception — show the exec which field they need to fix.
@@ -125,11 +128,38 @@ export function CreateEventButton({
       </Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Tournament Event">
         <form onSubmit={handleCreate} className="space-y-4">
+          <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={externalEvent}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setExternalEvent(on);
+                if (on) {
+                  setFormat('round_robin');
+                  if (!isDoublesEvent(eventType)) setEventType('open_doubles');
+                  setFormatValues({ ...formatValues, seededFrom: '' });
+                }
+              }}
+              className="mt-0.5 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+            />
+            <span>
+              <span className="text-sm font-medium text-[var(--text-primary)] block">
+                External event (teams entered by name, unrated)
+              </span>
+              <span className="text-xs text-[var(--text-muted)]">
+                For teams without member accounts. You add each team by typing two names; members cannot sign up.
+                Always a doubles Round Robin, and no result moves anybody&rsquo;s rating. Cannot be changed later.
+              </span>
+            </span>
+          </label>
           <Select
             label="Event Type"
             value={eventType}
             onChange={(e) => setEventType(e.target.value as TournamentEventType)}
-            options={eventTypeOptions}
+            options={externalEvent
+              ? eventTypeOptions.filter((o) => isDoublesEvent(o.value as TournamentEventType))
+              : eventTypeOptions}
           />
           <Select
             label="Format"
@@ -146,7 +176,9 @@ export function CreateEventButton({
                 setFormatValues({ ...formatValues, qualifiersPerGroup: '4' });
               }
             }}
-            options={Object.entries(TOURNAMENT_EVENT_FORMAT_LABELS).map(([value, label]) => ({ value, label }))}
+            options={Object.entries(TOURNAMENT_EVENT_FORMAT_LABELS)
+              .filter(([value]) => !externalEvent || value === 'round_robin')
+              .map(([value, label]) => ({ value, label }))}
           />
           <p className="text-xs text-[var(--text-muted)] -mt-2">
             {TOURNAMENT_EVENT_FORMAT_HINTS[format]}
@@ -190,6 +222,7 @@ export function CreateEventButton({
               CHECK, eventEloMultiplier() is `Number(raw) || 1.25`, and so a
               negative inverted the event, a 0 silently became 1.25, and 125 for
               1.25 multiplied every rating change in the draw by a hundred. */}
+          {!externalEvent && (<>
           <Input
             label="Elo Multiplier"
             type="number"
@@ -205,6 +238,7 @@ export function CreateEventButton({
             <span className="font-mono text-[var(--text-secondary)]">1.25</span>. It can still be changed from Event
             Settings, up until the draw is generated.
           </p>
+          </>)}
           <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
             <Button type="submit" loading={loading}>Create Event</Button>

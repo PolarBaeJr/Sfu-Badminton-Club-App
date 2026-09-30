@@ -12,7 +12,8 @@ import { sectionForSettingKey, settingsForSection } from '../platform-setting-se
 
 /**
  * The blobs as the migrations actually leave them: 00006 seeds, 00029 adds
- * sweep_margin_multiplier, 00041 adds max_elo/min_elo, 00055 adds tier_size.
+ * sweep_margin_multiplier, 00041 adds max_elo/min_elo, 00055 adds tier_size,
+ * 00268 adds the three repeat challenge keys.
  * Written out by hand rather than derived from the layout, so that a field
  * dropped from the layout fails here instead of agreeing with itself.
  */
@@ -29,6 +30,9 @@ const LIVE_ROWS = [
       sweep_margin_multiplier: 1.15,
       max_elo: 1500,
       min_elo: 100,
+      repeat_decay_pct: 25,
+      repeat_window_days: 30,
+      repeat_min_factor: 0.1,
     },
   },
   {

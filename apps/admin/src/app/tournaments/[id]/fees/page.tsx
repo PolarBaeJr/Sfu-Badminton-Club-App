@@ -84,9 +84,10 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         .neq('status', 'withdrawn'),
     ]);
     for (const row of participants.data ?? []) playerIds.add(row.player_id);
+    // An external team (00269) has no member ids and owes the club nothing here.
     for (const row of pairs.data ?? []) {
-      playerIds.add(row.player1_id);
-      playerIds.add(row.player2_id);
+      if (row.player1_id) playerIds.add(row.player1_id);
+      if (row.player2_id) playerIds.add(row.player2_id);
     }
   }
 

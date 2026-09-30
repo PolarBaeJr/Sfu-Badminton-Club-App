@@ -220,6 +220,7 @@ async function createTournamentEventImpl(
     seeding_method?: TournamentSeedingMethod;
     elo_multiplier?: number;
     placement_bonus_enabled?: boolean;
+    external_event?: boolean;
   }
 ) {
   const admin = await requireCapability('tournaments.manage.event.create.write');
@@ -241,6 +242,12 @@ async function createTournamentEventImpl(
   }
   if (config.seeded_from_event_id) {
     await assertSeedSourceUsable(adminClient, tournamentId, null, config.seeded_from_event_id);
+  }
+  // EXTERNAL TEAMS (00269): a round robin of doubles, unrated, with no placement
+  // bonus and no pool link. The CHECK in 00269 says the same; this says it first.
+  const external = config.external_event === true;
+  if (external && (config.format !== 'round_robin' || !isDoublesEvent(config.event_type) || config.seeded_from_event_id)) {
+    throw new ExpectedError('An external event must be a doubles Round Robin, not seeded from another event.');
   }
 
   const { data, error } = await adminClient.from('tournament_events').insert({
@@ -280,10 +287,12 @@ async function createTournamentEventImpl(
     max_participants: config.max_participants ?? null,
     seeding_method: config.seeding_method ?? 'elo',
     elo_multiplier: eloMultiplier ?? 1.25,
-    placement_bonus_enabled: config.placement_bonus_enabled ?? true,
+    placement_bonus_enabled: external ? false : (config.placement_bonus_enabled ?? true),
+    external_event: external,
   }).select().single();
 
   if (error) {
+    if (error.code === '23514') throw new ExpectedError(error.message);
     Sentry.captureException(error);
     throw new Error(error.message);
   }
@@ -365,6 +374,8 @@ async function updateTournamentEventImpl(
   }
 
   const patch: Record<string, unknown> = { ...updates };
+  // Set at creation only (00269); the trigger refuses a flip once anybody is in.
+  delete patch.external_event;
 
   if ('games_per_match' in updates || 'points_per_game' in updates) {
     Object.assign(patch, normalizeTypedFormat(updates.games_per_match, updates.points_per_game));
@@ -491,6 +502,8 @@ async function updateTournamentEventImpl(
     .eq('id', eventId);
 
   if (error) {
+    // 23514: e.g. the placement bonus switched on for an external event (00269).
+    if (error.code === '23514') throw new ExpectedError(error.message);
     Sentry.captureException(error);
     throw new Error(error.message);
   }

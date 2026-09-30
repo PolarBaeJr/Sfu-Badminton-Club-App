@@ -121,19 +121,26 @@ export function occupiesAPlace(status: string): boolean {
  */
 export function countEnteredPlayers(
   participants: Array<{ player_id: string; status: string }>,
-  pairs: Array<{ player1_id: string; player2_id: string; status: string }>,
+  pairs: Array<{ player1_id: string | null; player2_id: string | null; status: string }>,
 ): number {
   const players = new Set<string>();
+  // An external team (00269) has no ids to key on, and its two people are never in
+  // another entry as members, so each one simply counts as two.
+  let externals = 0;
   for (const p of participants) {
     if (occupiesAPlace(p.status)) players.add(p.player_id);
   }
   for (const p of pairs) {
     if (occupiesAPlace(p.status)) {
+      if (p.player1_id == null || p.player2_id == null) {
+        externals += 2;
+        continue;
+      }
       players.add(p.player1_id);
       players.add(p.player2_id);
     }
   }
-  return players.size;
+  return players.size + externals;
 }
 
 /**

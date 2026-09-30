@@ -138,7 +138,7 @@ export default async function EventDetailPage({
         // filters and sorts it. player1_id/player2_id are NOT here — the only
         // code that compares them is the "who is my partner" lookup below, which
         // has always had its own narrow select.
-        .select('id, seed_number, status, final_position, points, pair_name, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
+        .select('id, seed_number, status, final_position, points, pair_name, external1_name, external2_name, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
         .eq('event_id', eventId)
         .order('seed_number'),
       'TRN-101',
@@ -290,8 +290,13 @@ export default async function EventDetailPage({
     for (const p of pairs) {
       const p1 = p.player1 as Record<string, unknown> | null;
       const p2 = p.player2 as Record<string, unknown> | null;
-      const name = [p1?.full_name, p2?.full_name].filter(Boolean).join(' & ');
-      participantNameMap[p.id as string] = name || 'Unknown Pair';
+      // An external team (00269) has no player embeds; its names are on the row,
+      // and pair_name is its team name when the desk gave one.
+      const teamNamed = p.external1_name != null && p.pair_name !== `${p.external1_name} / ${p.external2_name}`;
+      const name = teamNamed
+        ? (p.pair_name as string)
+        : [p1?.full_name ?? p.external1_name, p2?.full_name ?? p.external2_name].filter(Boolean).join(' & ');
+      participantNameMap[p.id as string] = name || (p.pair_name as string | null) || 'Unknown Pair';
       participantSeedMap[p.id as string] = p.seed_number as number | null;
     }
   } else {
@@ -316,8 +321,8 @@ export default async function EventDetailPage({
           status:        p.status as string,
           finalPosition: p.final_position as number | null,
           avatars: [
-            { name: (p1?.full_name as string) || '', url: (p1?.avatar_url as string | null) ?? null },
-            { name: (p2?.full_name as string) || '', url: (p2?.avatar_url as string | null) ?? null },
+            { name: (p1?.full_name as string) || (p.external1_name as string | null) || '', url: (p1?.avatar_url as string | null) ?? null },
+            { name: (p2?.full_name as string) || (p.external2_name as string | null) || '', url: (p2?.avatar_url as string | null) ?? null },
           ],
         };
       })

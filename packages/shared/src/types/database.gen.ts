@@ -1546,6 +1546,7 @@ export type Database = {
           completed_flag: boolean
           confirmed_by: string | null
           created_at: string
+          elo_boost: number | null
           elo_weight_override: number | null
           event_multiplier: number
           event_type: Database["public"]["Enums"]["event_type_enum"]
@@ -1559,6 +1560,8 @@ export type Database = {
           played_at: string | null
           points_per_game: number | null
           rated_flag: boolean
+          repeat_factor: number | null
+          repeat_index: number | null
           result_status: Database["public"]["Enums"]["result_status"]
           score_summary: string | null
           season_id: string | null
@@ -1574,6 +1577,7 @@ export type Database = {
           completed_flag?: boolean
           confirmed_by?: string | null
           created_at?: string
+          elo_boost?: number | null
           elo_weight_override?: number | null
           event_multiplier?: number
           event_type?: Database["public"]["Enums"]["event_type_enum"]
@@ -1587,6 +1591,8 @@ export type Database = {
           played_at?: string | null
           points_per_game?: number | null
           rated_flag?: boolean
+          repeat_factor?: number | null
+          repeat_index?: number | null
           result_status?: Database["public"]["Enums"]["result_status"]
           score_summary?: string | null
           season_id?: string | null
@@ -1602,6 +1608,7 @@ export type Database = {
           completed_flag?: boolean
           confirmed_by?: string | null
           created_at?: string
+          elo_boost?: number | null
           elo_weight_override?: number | null
           event_multiplier?: number
           event_type?: Database["public"]["Enums"]["event_type_enum"]
@@ -1615,6 +1622,8 @@ export type Database = {
           played_at?: string | null
           points_per_game?: number | null
           rated_flag?: boolean
+          repeat_factor?: number | null
+          repeat_index?: number | null
           result_status?: Database["public"]["Enums"]["result_status"]
           score_summary?: string | null
           season_id?: string | null
@@ -2824,6 +2833,7 @@ export type Database = {
           draw_locked: boolean | null
           elo_multiplier: number | null
           event_type: string
+          external_event: boolean
           format: string
           games_per_match: number | null
           group_count: number | null
@@ -2847,6 +2857,7 @@ export type Database = {
           draw_locked?: boolean | null
           elo_multiplier?: number | null
           event_type: string
+          external_event?: boolean
           format: string
           games_per_match?: number | null
           group_count?: number | null
@@ -2870,6 +2881,7 @@ export type Database = {
           draw_locked?: boolean | null
           elo_multiplier?: number | null
           event_type?: string
+          external_event?: boolean
           format?: string
           games_per_match?: number | null
           group_count?: number | null
@@ -3239,12 +3251,14 @@ export type Database = {
           combined_elo: number | null
           created_at: string | null
           event_id: string
+          external1_name: string | null
+          external2_name: string | null
           final_position: number | null
           group_number: number | null
           id: string
           pair_name: string | null
-          player1_id: string
-          player2_id: string
+          player1_id: string | null
+          player2_id: string | null
           points: number | null
           seed_number: number | null
           status: string
@@ -3256,12 +3270,14 @@ export type Database = {
           combined_elo?: number | null
           created_at?: string | null
           event_id: string
+          external1_name?: string | null
+          external2_name?: string | null
           final_position?: number | null
           group_number?: number | null
           id?: string
           pair_name?: string | null
-          player1_id: string
-          player2_id: string
+          player1_id?: string | null
+          player2_id?: string | null
           points?: number | null
           seed_number?: number | null
           status?: string
@@ -3273,12 +3289,14 @@ export type Database = {
           combined_elo?: number | null
           created_at?: string | null
           event_id?: string
+          external1_name?: string | null
+          external2_name?: string | null
           final_position?: number | null
           group_number?: number | null
           id?: string
           pair_name?: string | null
-          player1_id?: string
-          player2_id?: string
+          player1_id?: string | null
+          player2_id?: string | null
           points?: number | null
           seed_number?: number | null
           status?: string
@@ -3880,6 +3898,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      add_external_tournament_pair: {
+        Args: {
+          p_added_by: string
+          p_event_id: string
+          p_external1_name: string
+          p_external2_name: string
+          p_team_name?: string
+        }
+        Returns: string
+      }
       add_participants_under_field_lock: {
         Args: { p_admin_id: string; p_entries: Json; p_event_id: string }
         Returns: Json
@@ -3940,6 +3968,15 @@ export type Database = {
       auto_rollover_season: { Args: Record<PropertyKey, never>; Returns: Json }
       auto_seed_field_by_rating: {
         Args: { p_event_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
+      boost_match_rating: {
+        Args: {
+          p_actor_id: string
+          p_boost: number
+          p_match_id: string
+          p_reason: string
+        }
         Returns: Json
       }
       bulk_check_in_field: {

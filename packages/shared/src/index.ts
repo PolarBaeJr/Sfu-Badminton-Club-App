@@ -62,6 +62,7 @@ export * from './utils/entry-membership';
 export * from './utils/match-result';
 export * from './utils/season';
 export * from './utils/standings';
+export * from './utils/external-team';
 export * from './utils/tournament-phases';
 export * from './utils/bracket-layout';
 export * from './utils/draw-rounds';

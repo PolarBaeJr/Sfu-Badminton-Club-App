@@ -750,6 +750,8 @@ export interface TournamentEvent {
   elo_multiplier: number;
   placement_bonus_enabled: boolean;
   draw_locked: boolean;
+  // External teams entered by name, unrated (00269). Set at creation only.
+  external_event: boolean;
   status: TournamentEventStatus;
   created_at: string;
   updated_at: string;
@@ -776,8 +778,12 @@ export interface TournamentEventParticipant {
 export interface TournamentPair {
   id: string;
   event_id: string;
-  player1_id: string;
-  player2_id: string;
+  // Both NULL on an external team (00269), whose people are external1_name and
+  // external2_name instead. Never one of each.
+  player1_id: string | null;
+  player2_id: string | null;
+  external1_name: string | null;
+  external2_name: string | null;
   pair_name: string | null;
   seed_number: number | null;
   status: TournamentParticipantStatus;

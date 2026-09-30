@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Button, Dialog, PlayerPicker, AvatarChip, Select, useConfirm } from '@badminton/ui';
+import { Button, Dialog, Input, PlayerPicker, AvatarChip, Select, useConfirm } from '@badminton/ui';
 import {
   addParticipantsToEvent,
   removeParticipantFromEvent,
   addPairToEvent,
+  addExternalPairToEvent,
   removePairFromEvent,
   unpairEntry,
   withdrawPairMember,
@@ -258,6 +259,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [incomingId, setIncomingId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // An external event (00269): teams are typed in by name, never picked from members.
+  const externalEvent = event.external_event === true;
+  const [externalOpen, setExternalOpen] = useState(false);
+  const [externalName1, setExternalName1] = useState('');
+  const [externalName2, setExternalName2] = useState('');
+  const [externalTeamName, setExternalTeamName] = useState('');
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
@@ -703,6 +710,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
    */
   function renderPairSplitActions(pair: PairWithPlayers) {
     if (isOutOfEvent(pair.status)) return null;
+    // An external team has nobody to swap in or return to a waiting list.
+    if (pair.player1_id == null) return null;
     return (
       <>
         {/* Offered even when the waiting list is empty, and that is deliberate:
@@ -767,6 +776,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const registeredPlayerIds = new Set(
     isDoubles
       ? [...pairs.flatMap((p) => [p.player1_id, p.player2_id]), ...participants.map((p) => p.player_id)]
+        .filter((id): id is string => id != null)
       : participants.map((p) => p.player_id)
   );
 
@@ -780,7 +790,25 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     || (isDoubles && (controls.unpair || controls.withdrawMember || controls.swapMember));
   // The Add button opens a dialog that may offer either route, so it appears
   // for a holder of either key. Which panels are inside it is decided again.
-  const showAddButton = controls.add || (isDoubles && controls.addSolo);
+  const showAddButton = !externalEvent && (controls.add || (isDoubles && controls.addSolo));
+
+  async function handleAddExternalPair(e: React.FormEvent) {
+    e.preventDefault();
+    if (!externalName1.trim() || !externalName2.trim()) {
+      toast('Type a name for both players.', 'error');
+      return;
+    }
+    setLoading(true);
+    const res = await addExternalPairToEvent(event.id, externalName1, externalName2, externalTeamName);
+    setLoading(false);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    toast('External team added', 'success');
+    setExternalName1('');
+    setExternalName2('');
+    setExternalTeamName('');
+    setExternalOpen(false);
+    router.refresh();
+  }
 
   function unpairedName(p: ParticipantWithPlayer): string {
     return p.player?.full_name ?? 'Unknown';
@@ -852,6 +880,11 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           {showAssignGroups && (
             <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={handleAssignGroups} loading={loading}>
               <LayoutGrid className="w-3.5 h-3.5 mr-1" /> Assign Groups
+            </Button>
+          )}
+          {externalEvent && controls.add && (
+            <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => setExternalOpen(true)}>
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add external team
             </Button>
           )}
           {showAddButton && (
@@ -948,10 +981,17 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     <span className="text-sm font-medium text-[var(--text-primary)]">
                       {pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`}
                     </span>
+                    {pair.external1_name != null && pair.pair_name !== `${pair.external1_name} / ${pair.external2_name}` && (
+                      <span className="block text-xs text-[var(--text-muted)]">
+                        {pair.external1_name} / {pair.external2_name}
+                      </span>
+                    )}
                   </td>
                   {waiverStates && (
                     <td className="px-4 py-3">
-                      <WaiverState states={waiverStates} playerIds={[pair.player1_id, pair.player2_id]} />
+                      {pair.player1_id == null || pair.player2_id == null
+                        ? <span className="text-xs text-[var(--text-muted)]">External</span>
+                        : <WaiverState states={waiverStates} playerIds={[pair.player1_id, pair.player2_id]} />}
                     </td>
                   )}
                   <td className="px-4 py-3">
@@ -1322,8 +1362,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               <p className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-2">Who is leaving the team?</p>
               <div className="space-y-1.5">
                 {[
-                  { id: swapping.player1_id, name: swapping.player1?.full_name ?? 'Player 1' },
-                  { id: swapping.player2_id, name: swapping.player2?.full_name ?? 'Player 2' },
+                  { id: swapping.player1_id ?? '', name: swapping.player1?.full_name ?? 'Player 1' },
+                  { id: swapping.player2_id ?? '', name: swapping.player2?.full_name ?? 'Player 2' },
                 ].map((half) => (
                   <button
                     key={half.id}
@@ -1426,8 +1466,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               their event waiver and their place in the tournament. Withdrawing does not refund.
             </p>
             {[
-              { id: splitting.player1_id, name: splitting.player1?.full_name ?? 'Player 1' },
-              { id: splitting.player2_id, name: splitting.player2?.full_name ?? 'Player 2' },
+              { id: splitting.player1_id ?? '', name: splitting.player1?.full_name ?? 'Player 1' },
+              { id: splitting.player2_id ?? '', name: splitting.player2?.full_name ?? 'Player 2' },
             ].map((half) => (
               <Button
                 key={half.id}
@@ -1454,6 +1494,37 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         the viewer may actually take, and a viewer holding one key sees one
         panel with no toggle at all.
       */}
+      <Dialog open={externalOpen} onClose={() => setExternalOpen(false)} title="Add external team">
+        <form onSubmit={handleAddExternalPair} className="space-y-4">
+          <Input
+            label="Player 1 name"
+            value={externalName1}
+            maxLength={60}
+            onChange={(e) => setExternalName1(e.target.value)}
+            autoFocus
+          />
+          <Input
+            label="Player 2 name"
+            value={externalName2}
+            maxLength={60}
+            onChange={(e) => setExternalName2(e.target.value)}
+          />
+          <Input
+            label="Team name (optional)"
+            value={externalTeamName}
+            maxLength={60}
+            onChange={(e) => setExternalTeamName(e.target.value)}
+          />
+          <p className="text-xs text-[var(--text-muted)]">
+            External teams play unrated. Nobody here needs a member account.
+          </p>
+          <div className="flex gap-2">
+            <Button type="submit" loading={loading} className="flex-1">Add</Button>
+            <Button variant="ghost" onClick={() => setExternalOpen(false)} type="button">Cancel</Button>
+          </div>
+        </form>
+      </Dialog>
+
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={isDoubles ? 'Add Entry' : 'Add Participant'}>
         <form onSubmit={isDoubles && addMode === 'pair' ? handleAddPair : handleAddMany} className="space-y-4">
           {isDoubles && controls.add && controls.addSolo && (

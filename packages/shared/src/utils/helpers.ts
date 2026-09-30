@@ -1,11 +1,16 @@
 import { CLUB_TIMEZONE } from './constants';
 import type { UserRole } from '../types/database';
 
+// A plain DATE ('2026-09-29') is read by `new Date()` as UTC midnight, so it is
+// formatted in UTC too: otherwise any runtime behind UTC (a browser, or a dev
+// server on Pacific time) showed the day before. Anything with a time part keeps
+// the runtime zone it always had.
 export function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
+    ...(/^\d{4}-\d{2}-\d{2}$/.test(dateString) ? { timeZone: 'UTC' } : {}),
   });
 }
 

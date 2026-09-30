@@ -322,6 +322,10 @@ export interface RatingSettings {
    * placement window.
    */
   provisional_k_enabled?: boolean | null;
+  // Repeat challenges diminish (00268). Read by repeatChallengeFactor().
+  repeat_decay_pct?: number | null;
+  repeat_window_days?: number | null;
+  repeat_min_factor?: number | null;
 }
 
 function num(value: unknown, fallback: number): number {
@@ -484,4 +488,32 @@ export function previewEloChange(
   });
 
   return { winDelta: winResult.delta, lossDelta: lossResult.delta };
+}
+
+/**
+ * The share of a normal rating change a rated challenge keeps when `prior`
+ * other confirmed rated challenges between the same players already fall
+ * inside the window.
+ *
+ * MIRRORS apply_match_result (00268) and must stay that way: the SQL is what
+ * writes the rating, this is what the console shows an officer before they
+ * change the percentage. Same clamps, and the same rounding to four places,
+ * because matches.repeat_factor is NUMERIC(5,4) and the SQL multiplies by the
+ * ROUNDED factor.
+ *
+ * NOT num(). That helper treats 0 as unset, and here 0 means something: a
+ * decay of 0 turns the rule off and a floor of 0 lets a repeat move nothing.
+ */
+export function repeatChallengeFactor(
+  prior: number,
+  settings?: RatingSettings | null,
+): number {
+  const read = (value: unknown, fallback: number) => {
+    const n = Number(value);
+    return value === null || value === undefined || value === '' || !Number.isFinite(n) ? fallback : n;
+  };
+  const pct = Math.min(100, Math.max(0, read(settings?.repeat_decay_pct, 25)));
+  const floor = Math.min(1, Math.max(0, read(settings?.repeat_min_factor, 0.1)));
+  const factor = Math.max(floor, (1 - pct / 100) ** Math.max(0, prior));
+  return Math.round(factor * 1e4) / 1e4;
 }

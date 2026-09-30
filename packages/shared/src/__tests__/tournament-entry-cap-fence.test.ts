@@ -106,6 +106,14 @@ const ENTRANT_WRITERS: Record<string, { countsCap: boolean; openGap?: true; why:
       'the pair. They are counted before and after. The outgoing player leaves, ' +
       'which only ever lowers a count.',
   },
+  add_external_tournament_pair: {
+    countsCap: false,
+    why:
+      'CAP-NEUTRAL BY CONSTRUCTION: 00269. It writes a pair with no member ids ' +
+      '(an external team, in an external event that no member can enter), so no member ' +
+      'is entered and no cross-event count can move. It still takes the event ' +
+      'field key and the tournaments row, in 00196 order.',
+  },
   promote_pool_qualifier: {
     countsCap: false,
     why:

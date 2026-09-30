@@ -28,7 +28,9 @@ interface Props {
 /** Whose signature this entry needs — one person, or both halves of a pair. */
 function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDoubles: boolean): string[] {
   return isDoubles
+    // An external team (00269) has no member ids and nobody to ask for a waiver.
     ? [(entry as PairWithPlayers).player1_id, (entry as PairWithPlayers).player2_id]
+      .filter((id): id is string => id != null)
     : [(entry as ParticipantWithPlayer).player_id];
 }
 

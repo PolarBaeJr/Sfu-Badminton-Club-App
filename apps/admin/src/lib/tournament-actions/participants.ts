@@ -28,6 +28,7 @@ import {
   toCompetitionCategory,
   isOutOfEvent,
   isExpectedFailure,
+  normalizeExternalTeamNames,
   ExpectedError,
   selectInChunks,
   type CompetitionCategory,
@@ -52,6 +53,11 @@ import {
   type DrawExitStatus,
   type FencedFieldResult,
 } from './_internal';
+
+// An external event (00269) holds only teams entered by name. The DB triggers refuse
+// every member entry path too; these refusals only make the message readable.
+const EXTERNAL_EVENT_REFUSAL = 'This is an external event: add teams by name with Add external team.';
+const EXTERNAL_PAIR_SPLIT_REFUSAL = 'An external team cannot be split or changed. Remove it, or withdraw it once the draw exists.';
 
 // ---------------------------------------------------------------------------
 // THE FIELD FENCE (00199)
@@ -348,6 +354,7 @@ export async function addParticipantToEvent(
   if (event.status !== 'registration' && event.status !== 'checkin') {
     throw new ExpectedError('Cannot add participants in current status');
   }
+  if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
@@ -532,6 +539,7 @@ export async function addParticipantsToEvent(
   if (event.status !== 'registration' && event.status !== 'checkin') {
     throw new ExpectedError('Cannot add participants in current status');
   }
+  if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
@@ -1223,6 +1231,7 @@ async function addPairToEventImpl(
   if (event.status !== 'registration' && event.status !== 'checkin') {
     throw new ExpectedError('Cannot add pairs in current status');
   }
+  if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
 
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
@@ -1427,6 +1436,68 @@ async function addPairToEventImpl(
   return data;
 }
 
+/**
+ * AN EXTERNAL TEAM (00269): two names, no member accounts, in an external event only.
+ *
+ * No fee row, no waiver request and no entry-cap count, because there is no
+ * member to charge, ask or count. add_external_tournament_pair re-checks
+ * everything below under the field lock and is the only writer of the row.
+ */
+export async function addExternalPairToEvent(
+  eventId: string,
+  name1: string,
+  name2: string,
+  teamName?: string | null,
+): Promise<ActionResult<unknown>> {
+  return runAction(() => addExternalPairToEventImpl(eventId, name1, name2, teamName));
+}
+
+async function addExternalPairToEventImpl(eventId: unknown, name1: unknown, name2: unknown, teamName: unknown) {
+  const admin = await requireCapability('tournaments.draw.pairs.add.write');
+  const adminClient = createAdminClient();
+
+  if (typeof eventId !== 'string' || eventId.length === 0) throw new Error('Event not found');
+  const names = normalizeExternalTeamNames(name1, name2, teamName);
+  if (!names.ok) throw new ExpectedError(names.error);
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).maybeSingle();
+  if (!event) throw new Error('Event not found');
+  if (event.external_event !== true) throw new ExpectedError('External teams can only be entered in an external event.');
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('Cannot add pairs in current status');
+  }
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
+  const [first, second] = names.names;
+  const team = names.teamName;
+  const { data: newPairId, error } = await adminClient.rpc('add_external_tournament_pair', {
+    p_event_id: eventId,
+    p_external1_name: first,
+    p_external2_name: second,
+    p_added_by: admin.id,
+    ...(team ? { p_team_name: team } : {}),
+  });
+  if (error) {
+    if (error.code === '23505' || error.code === '23514' || error.code === 'P0002') {
+      throw new ExpectedError(error.message);
+    }
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'external_pair_added',
+    performed_by: admin.id,
+    details: { pair_id: newPairId, external_names: [first, second], team_name: team },
+  });
+
+  revalidateEventPaths(event.tournament_id, eventId);
+  return { id: newPairId as string };
+}
+
 // ============================================================
 // Taking a team APART — the two ways out that are not "remove"
 // ============================================================
@@ -1513,6 +1584,7 @@ async function splitPairImpl(
     id: string; status: string; tournament_id: string; draw_locked: boolean;
   } | null;
   if (!event) throw new ExpectedError('Pair is not attached to an event');
+  if (pair.player1_id == null) throw new ExpectedError(EXTERNAL_PAIR_SPLIT_REFUSAL);
 
   if (withdrawnPlayerId && withdrawnPlayerId !== pair.player1_id && withdrawnPlayerId !== pair.player2_id) {
     throw new ExpectedError('That player is not in this pair.');
@@ -1636,6 +1708,7 @@ async function swapPairMemberImpl(
     id: string; status: string; event_type: string; tournament_id: string; draw_locked: boolean;
   } | null;
   if (!event) throw new ExpectedError('Pair is not attached to an event');
+  if (pair.player1_id == null) throw new ExpectedError(EXTERNAL_PAIR_SPLIT_REFUSAL);
 
   if (outgoingPlayerId !== pair.player1_id && outgoingPlayerId !== pair.player2_id) {
     throw new ExpectedError('That player is not in this pair.');
@@ -1793,6 +1866,18 @@ export async function removePairFromEvent(pairId: string) {
   }
   const removedPairResult = removedPair as FencedFieldResult | null;
   if (!removedPairResult?.ok) fencedRefusal(removedPairResult, 'Pair not found');
+
+  // An external team has no fee row or member trail to show it ever existed, so its
+  // removal is written down here.
+  if (pair.player1_id == null) {
+    await logAudit(adminClient, {
+      tournament_id: event.tournament_id as string,
+      event_id: pair.event_id as string,
+      action: 'external_pair_removed',
+      performed_by: admin.id,
+      details: { pair_id: pairId, pair_name: pair.pair_name ?? null },
+    });
+  }
 
   revalidateEventPaths(event.tournament_id as string, pair.event_id as string);
 }
@@ -2086,6 +2171,7 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
   if (event.status !== 'registration' && event.status !== 'checkin') {
     throw new ExpectedError('Cannot pair in current status');
   }
+  if (event.external_event === true) throw new ExpectedError(EXTERNAL_EVENT_REFUSAL);
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 

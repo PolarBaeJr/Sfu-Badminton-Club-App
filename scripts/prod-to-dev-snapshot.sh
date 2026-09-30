@@ -1193,6 +1193,18 @@ BEGIN
     END IF;
   END IF;
 
+  -- External teams (00269) are two people with no account, named only here and in
+  -- pair_name. Guarded on the column, since a source without 00269 lacks it.
+  -- The two names must differ (tournament_pairs_member_or_external).
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'tournament_pairs' AND column_name = 'external1_name') THEN
+    UPDATE public.tournament_pairs
+       SET external1_name = 'External ' || left(id::text, 8) || ' A',
+           external2_name = 'External ' || left(id::text, 8) || ' B',
+           pair_name   = 'External ' || left(id::text, 8) || ' A / External ' || left(id::text, 8) || ' B'
+     WHERE external1_name IS NOT NULL;
+  END IF;
+
   -- The audit log's old_value/new_value hold whole field-level diffs, which is
   -- exactly where a pre-scrub name or email survives a scrub of its own table.
   -- Rows and action types stay so the audit screen still has something to sort,
