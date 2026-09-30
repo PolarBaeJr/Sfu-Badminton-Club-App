@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition, useMemo } from 'react';
+import { useState, useTransition, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, Check, Loader2, AlertCircle, Play, Square, ArrowRight } from 'lucide-react';
 import { courtLabel, isPlayedMatch, eventIsPlaying } from '@badminton/shared';
@@ -13,6 +13,7 @@ import type {
   PairWithPlayers,
 } from '@/lib/tournament-types';
 import { getName } from './entry-name';
+import { groupLabel } from './RoundRobinTab';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 
 // ---------------------------------------------------------------------------
@@ -91,7 +92,12 @@ interface DeskSide {
   entryId: string | null;
   label: string;
   players: DeskPlayer[];
+  /** The entry's round-robin group, null outside a group stage. */
+  group: number | null;
 }
+
+const entryGroup = (e: unknown): number | null =>
+  (e as { group_number?: number | null }).group_number ?? null;
 
 /**
  * The three states an unplayed match can be in, which is the whole information
@@ -171,7 +177,7 @@ export function CourtManagementTab({
         // render the shared form, and a pair reading "A & B" here while the
         // bracket says "A / B" is the kind of drift that makes an exec ask
         // whether they are looking at the same match.
-        map.set(p.id, { entryId: p.id, label: getName(p, isDoubles), players: people });
+        map.set(p.id, { entryId: p.id, label: getName(p, isDoubles), players: people, group: entryGroup(p) });
       }
     } else {
       for (const p of participants) {
@@ -179,6 +185,7 @@ export function CourtManagementTab({
           entryId: p.id,
           label: getName(p, isDoubles),
           players: p.player ? [{ playerId: p.player.id, name: p.player.full_name }] : [],
+          group: entryGroup(p),
         });
       }
     }
@@ -221,6 +228,23 @@ export function CourtManagementTab({
    */
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+
+  // WHICH GROUPS THIS DESK RUNS. On a big round robin the groups are split
+  // between volunteers, so each one picks theirs and Next up, the counts and
+  // the list all follow that pick. Empty means every group. Remembered per
+  // device and per event, read after mount so the server render matches.
+  const groupsKey = `court-desk-groups:${event.id}`;
+  const [myGroups, setMyGroups] = useState<number[]>([]);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(groupsKey) ?? '[]');
+      if (Array.isArray(saved)) setMyGroups(saved.filter((g): g is number => typeof g === 'number'));
+    } catch { /* no storage: start with every group */ }
+  }, [groupsKey]);
+  function pickGroups(next: number[]) {
+    setMyGroups(next);
+    try { window.localStorage.setItem(groupsKey, JSON.stringify(next)); } catch { /* not remembered */ }
+  }
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
 
   // Only while the event is actually being played — but the UNION of what the two
@@ -244,7 +268,7 @@ export function CourtManagementTab({
   const rows = useMemo(() => {
     const sideOf = (entryId: unknown): DeskSide =>
       (typeof entryId === 'string' ? sides.get(entryId) : undefined) ??
-      { entryId: null, label: 'TBD', players: [] };
+      { entryId: null, label: 'TBD', players: [], group: null };
 
     return matches
       .filter((m) => !isPlayedMatch(m) && !m.is_bye && m.status !== 'voided')
@@ -254,7 +278,10 @@ export function CourtManagementTab({
         const bothKnown = !!a.entryId && !!b.entryId;
         const state: DeskState =
           m.status === 'live' ? 'live' : bothKnown ? 'callable' : 'waiting';
-        return { match: m, a, b, state };
+        // A group match is between two teams of the same group; a knockout
+        // match has no group even when its entrants came out of one.
+        const group = m.phase === 'bracket' ? null : (a.group ?? b.group);
+        return { match: m, a, b, state, group };
       })
       .sort((x, y) => {
         if (phaseRank(x.match) !== phaseRank(y.match)) return phaseRank(x.match) - phaseRank(y.match);
@@ -291,20 +318,28 @@ export function CourtManagementTab({
    * reads down. That is the whole reason ordering by the draw's own sequence and
    * marking a single next are the same feature rather than two.
    */
-  const nextRow = rows.find((r) => r.state === 'callable') ?? null;
+  const groupsInPlay = [...new Set(rows.map((r) => r.group).filter((g): g is number => g != null))].sort((x, y) => x - y);
+  // A saved pick of groups that have all finished would hide everything, so
+  // only groups still in play count.
+  const activeGroups = myGroups.filter((g) => groupsInPlay.includes(g));
+  const deskRows = activeGroups.length > 0
+    ? rows.filter((r) => r.group != null && activeGroups.includes(r.group))
+    : rows;
 
-  const liveCount = rows.filter((r) => r.state === 'live').length;
-  const callableCount = rows.filter((r) => r.state === 'callable').length;
-  const uncourted = rows.filter((r) => !courtLabel(r.match.court)).length;
+  const nextRow = deskRows.find((r) => r.state === 'callable') ?? null;
+
+  const liveCount = deskRows.filter((r) => r.state === 'live').length;
+  const callableCount = deskRows.filter((r) => r.state === 'callable').length;
+  const uncourted = deskRows.filter((r) => !courtLabel(r.match.court)).length;
 
   // THE SEARCH ONLY NARROWS THE LIST. Next up and the counts above it still
   // read the whole event, so typing a name never changes what is next.
   const needle = query.trim().toLowerCase();
   const shown = needle
-    ? rows.filter(({ match, a, b }) =>
-        [a.label, b.label, courtLabel(match.court) ?? '', roundLine(match)]
+    ? deskRows.filter(({ match, a, b, group }) =>
+        [a.label, b.label, courtLabel(match.court) ?? '', roundLine(match, group)]
           .some((text) => text.toLowerCase().includes(needle)))
-    : rows;
+    : deskRows;
 
   if (rows.length === 0) {
     return (
@@ -333,7 +368,7 @@ export function CourtManagementTab({
                   {nextRow.a.label} <span className="text-[var(--text-muted)]">vs</span> {nextRow.b.label}
                 </p>
                 <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)] mt-0.5">
-                  {roundLine(nextRow.match)}
+                  {roundLine(nextRow.match, nextRow.group)}
                   {' · '}
                   {courtLabel(nextRow.match.court) ?? 'no court yet'}
                 </p>
@@ -351,11 +386,29 @@ export function CourtManagementTab({
             {/* THE UNCOURTED COUNT SURVIVED THE SORT CHANGE, because it is
                 genuinely useful — it just no longer decides the order. */}
             <p role="status">
-              {liveCount} on court · {callableCount} ready to call · {rows.length - liveCount - callableCount} waiting
+              {activeGroups.length > 0 && `${activeGroups.length === 1 ? 'Group' : 'Groups'} ${activeGroups.map(groupLabel).join(', ')}: `}
+              {liveCount} on court · {callableCount} ready to call · {deskRows.length - liveCount - callableCount} waiting
               {uncourted > 0 && ` · ${uncourted} with no court yet (entrants see “Court TBC”)`}
             </p>
           </div>
         </div>
+
+        {groupsInPlay.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Groups this desk is running">
+            <span className="text-[11px] uppercase tracking-wide text-[var(--text-muted)] mr-1">My groups</span>
+            <GroupChip label="All" pressed={activeGroups.length === 0} onClick={() => pickGroups([])} />
+            {groupsInPlay.map((g) => (
+              <GroupChip
+                key={g}
+                label={groupLabel(g)}
+                pressed={activeGroups.includes(g)}
+                onClick={() => pickGroups(
+                  activeGroups.includes(g) ? activeGroups.filter((x) => x !== g) : [...activeGroups, g],
+                )}
+              />
+            ))}
+          </div>
+        )}
 
         <SearchFilter
           value={query}
@@ -371,10 +424,11 @@ export function CourtManagementTab({
           <p className="p-4 text-center text-sm text-[var(--text-muted)]">No unplayed match fits that search.</p>
         )}
 
-        {shown.map(({ match, a, b, state }) => (
+        {shown.map(({ match, a, b, state, group }) => (
           <DeskRow
             key={match.id}
             match={match}
+            group={group}
             a={a}
             b={b}
             state={state}
@@ -410,9 +464,10 @@ export function CourtManagementTab({
   );
 }
 
-/** "Pool · Round 2 · M4" / "Knockout · Round of 128 · M4". */
-function roundLine(m: TournamentMatchRow): string {
+/** "Group C · Round 2 · M4" / "Pool · Round 2 · M4" / "Knockout · Round of 128 · M4". */
+function roundLine(m: TournamentMatchRow, group: number | null = null): string {
   const parts: string[] = [];
+  if (group != null) parts.push(`Group ${groupLabel(group)}`);
   if (m.phase === 'pool') parts.push('Pool');
   else if (m.phase === 'bracket') parts.push('Knockout');
   parts.push(m.round_name || `Round ${m.round_number}`);
@@ -420,8 +475,26 @@ function roundLine(m: TournamentMatchRow): string {
   return parts.join(' · ');
 }
 
+function GroupChip({ label, pressed, onClick }: { label: string; pressed: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={`min-w-[40px] min-h-[36px] px-3 text-xs font-semibold uppercase tracking-wide border transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none ${
+        pressed
+          ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
+          : 'bg-[var(--bg-elevated)] border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
 function DeskRow({
   match,
+  group,
   a,
   b,
   state,
@@ -431,6 +504,7 @@ function DeskRow({
   onEnterScore,
 }: {
   match: TournamentMatchRow;
+  group: number | null;
   a: DeskSide;
   b: DeskSide;
   state: DeskState;
@@ -483,7 +557,7 @@ function DeskRow({
             {a.label} <span className="text-[var(--text-muted)]">vs</span> {b.label}
           </p>
           <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)] mt-0.5">
-            {roundLine(match)}
+            {roundLine(match, group)}
             {everyone.length > 0 ? ` · ${readyCount} of ${everyone.length} here` : ''}
           </p>
           {/* A WAITING ROW SAYS WHY. Without this the desk sees "TBD vs TBD" and
