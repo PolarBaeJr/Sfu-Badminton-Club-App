@@ -358,7 +358,8 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
 
   const actionLabel: Record<string, string> = {
     registration: 'Open Check-In',
-    checkin: poolToBracket ? 'Generate Round Robin' : 'Generate Bracket',
+    // A plain round robin has no bracket; the button draws its fixtures.
+    checkin: poolToBracket || format === 'round_robin' ? 'Generate Round Robin' : 'Generate Bracket',
     pool_generated: 'Start Round Robin',
     // THE BUTTON SAYS WHAT IT DOES. "Next Step" on the one press the format
     // exists for would leave the exec guessing whether it starts the knockout

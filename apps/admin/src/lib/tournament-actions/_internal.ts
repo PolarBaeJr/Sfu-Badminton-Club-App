@@ -2413,6 +2413,10 @@ export function fencedRefusal(result: FencedFieldResult | null, notFound: string
       throw new ExpectedError(
         `This entry is "${result.entry_status ?? 'in another state'}" and cannot be checked in. Reload the page to see where it stands.`,
       );
+    case 'not_undoable':
+      throw new ExpectedError(
+        `This entry is "${result.entry_status ?? 'in another state'}", so there is no check-in or no-show to undo. Reload the page to see where it stands.`,
+      );
     // ---- 00209: the seeding, grouping and finalisation fences ----------
     case 'not_a_group_stage':
       throw new ExpectedError('This event is not split into groups. Set a group count on the event first.');
