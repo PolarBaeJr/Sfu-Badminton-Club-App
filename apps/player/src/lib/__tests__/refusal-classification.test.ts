@@ -30,10 +30,20 @@ const REFUSALS = [
   'Event is full',
   'Not registered',
   'Cannot check in',
+  // 00276: past the member's own check-in window.
+  'Check-in has closed, see the desk',
   'This session is closed',
   'Invalid check-in code',
   'Not authenticated',
   'No deletion is scheduled for this account',
+  // 00278: the waitlist.
+  'Others are waiting for this event, join the waitlist',
+  'Event is full, join the waitlist',
+  'You must accept the event waiver to join the waitlist',
+  'This event does not have a waitlist.',
+  'You are already on the waitlist for this event.',
+  'This event has room, so you can enter it now.',
+  'You are not on the waitlist for this event.',
 ];
 
 // Faults, and each one has a specific reason to stay loud.
@@ -50,6 +60,8 @@ const FAULTS = [
   // The RPC came back with a refusal nobody has written a sentence for yet, or
   // with no payload at all. Not a rule saying no — something is wrong.
   'Could not complete your entry — please try again shortly.',
+  'Could not add you to the waitlist, please try again shortly.',
+  'Could not take you off the waitlist, please try again shortly.',
 ];
 
 describe('player refusal classification', () => {
@@ -63,11 +75,31 @@ describe('player refusal classification', () => {
     expect(ALL).not.toMatch(new RegExp(`throw new ExpectedError\\('${escape(message)}'\\)`));
   });
 
+  it('says the waitlist is not available yet, as a refusal, before 00278 runs', () => {
+    expect(ALL).toContain("const WAITLIST_NOT_AVAILABLE = 'The waitlist is not available yet';");
+    expect(ALL).toMatch(/throw new ExpectedError\(WAITLIST_NOT_AVAILABLE\)/);
+    expect(ALL).not.toMatch(/throw new Error\(WAITLIST_NOT_AVAILABLE\)/);
+  });
+
   it('interpolated refusals are marked too', () => {
     // Template literal, so the message cannot be matched as a whole string.
     const suspended = ALL.match(/throw new (\w+)\(`This tournament is currently suspended/g) ?? [];
     expect(suspended.length).toBeGreaterThan(0);
     for (const hit of suspended) expect(hit).toContain('ExpectedError');
+  });
+
+  it('marks the 00276 window refusals, which carry a time', () => {
+    for (const lead of ['Registration opens ', 'Registration closed ', 'Check-in opens ']) {
+      const hits = ALL.match(new RegExp(`throw new (\\w+)\\(\\s*\`${escape(lead)}`, 'g')) ?? [];
+      expect(hits.length, lead).toBeGreaterThan(0);
+      for (const hit of hits) expect(hit).toContain('ExpectedError');
+    }
+    // The RPC's reasons are mapped too, not left to the generic fault.
+    for (const reason of ['registration_not_open', 'registration_window_closed']) {
+      expect(ALL).toContain(`case '${reason}':`);
+    }
+    expect(ALL).toContain("reason === 'checkin_not_open'");
+    expect(ALL).toContain("reason === 'checkin_window_closed'");
   });
 
   it('keeps the missing-event half of the check-in guard reportable', () => {

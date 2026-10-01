@@ -15,9 +15,13 @@ import {
   phaseValueFor,
   knockoutLadder,
   POOL_LADDER_SHAPE,
+  circleMethodRounds,
   isPlayedMatch,
   CUSTOM_FORMAT_BOUNDS,
   maxFirstRoundByes,
+  shuffleWithRng,
+  groupLabel,
+  poolQualifierCount,
 } from '@badminton/shared';
 import type { SeedBy, TournamentMatchPhase } from '@badminton/shared';
 import {
@@ -35,6 +39,7 @@ import {
   drawWithinTiers,
   makeDrawRng,
   newDrawSeed,
+  inIdOrder,
   planGroupAssignment,
   drawAvoidingSameGroupRound1,
   assertFieldDidNotGrow,
@@ -793,9 +798,7 @@ async function buildFieldFromPool(
  * single flat pool.
  */
 function ownPoolCapacity(event: Record<string, unknown>): number {
-  const groupCount = (event.group_count as number | null) ?? 1;
-  const perGroup = (event.qualifiers_per_group as number | null) ?? (groupCount >= 2 ? 2 : 4);
-  return groupCount >= 2 ? groupCount * perGroup : perGroup;
+  return poolQualifierCount(event.group_count as number | null, event.qualifiers_per_group as number | null);
 }
 
 /**
@@ -1074,6 +1077,9 @@ async function generateSingleEliminationBracketImpl(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
+  if (event.format === 'staged') {
+    throw new ExpectedError('This event is played in stages, so it is drawn one stage at a time from its Stages tab.');
+  }
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before generating bracket.');
   // The knockout half of the finalisation block, which only ever reached the
   // round-robin path (1922133 wired it into one of the two generators). The
@@ -1228,10 +1234,16 @@ async function generateSingleEliminationBracketImpl(
     adminClient, event.tournament_id, entries.map(e => e.id), doubles,
   );
 
+  // seeding_method = 'random' is a full shuffle of the field, hand seeds
+  // discarded, made from drawSeed so the audit row reproduces it. The field is
+  // put in id order first: it was read in seed order, which is arbitrary among
+  // NULLs and is rewritten by the previous random draw.
+  const randomSeeding = !seededFromPool && event.seeding_method === 'random';
   // If not yet seeded, auto-seed by Elo
-  const needsSeeding = !seededFromPool && entries.some(e => e.seed === null);
+  const needsSeeding = !seededFromPool && (randomSeeding || entries.some(e => e.seed === null));
   if (needsSeeding) {
-    entries.sort((a, b) => b.elo - a.elo);
+    if (randomSeeding) entries = shuffleWithRng(inIdOrder(entries), makeDrawRng(drawSeed));
+    else entries.sort((a, b) => b.elo - a.elo);
     entries.forEach((e, i) => { e.seed = i + 1; });
     // Persist seeds in parallel — independent rows, no contention. Same
     // reasoning as the pool path: the in-memory `entries` order is what builds
@@ -1245,7 +1257,7 @@ async function generateSingleEliminationBracketImpl(
         adminClient.from(seedTable).update({ seed_number: e.seed }).eq('id', e.id),
       ] as const)
     );
-    assertWritesSucceeded('Auto-seeding the draw by rating', failures);
+    assertWritesSucceeded(randomSeeding ? 'Seeding the draw at random' : 'Auto-seeding the draw by rating', failures);
   } else {
     entries.sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999));
   }
@@ -1314,7 +1326,9 @@ async function generateSingleEliminationBracketImpl(
     entries = drawn.entries;
     drawAttempts = drawn.attempts;
     sameGroupR1 = drawn.conflicts === 0 ? 'avoided' : 'unavoidable';
-  } else if (drawIsRandomised) {
+  } else if (drawIsRandomised && !randomSeeding) {
+    // A random field is already shuffled whole above; tier bands would only
+    // shuffle it again.
     entries = drawWithinTiers(entries, makeDrawRng(drawSeed), seedSkip);
   }
 
@@ -1715,41 +1729,10 @@ async function generateSingleEliminationBracketImpl(
 // ASSIGNMENT — who is in which group — and that is decided by seed, not by
 // chance, precisely so the groups come out balanced. Inside a group the circle
 // method is complete again, so there is still no draw to make.
-
-/**
- * The circle method's fixtures for one set of entries.
- *
- * Lifted out of generateRoundRobinMatchesImpl unchanged in behaviour so it can
- * run once per group instead of once per event. It returns pairings by round
- * rather than writing them, because the caller has to interleave several
- * groups' rounds into one shared numbering — see the note at the call site.
- */
-function circleMethodRounds<T>(entries: readonly T[]): Array<Array<[T, T]>> {
-  // A phantom entry gives an odd field the bye it needs; the pairing it appears
-  // in is dropped, which is what makes that entrant's round a rest.
-  const padded: Array<T | null> = [...entries];
-  if (padded.length % 2 !== 0) padded.push(null);
-
-  const numRounds = padded.length - 1;
-  const halfSize = padded.length / 2;
-  const indices = padded.map((_, i) => i);
-  const rounds: Array<Array<[T, T]>> = [];
-
-  for (let round = 0; round < numRounds; round++) {
-    const fixtures: Array<[T, T]> = [];
-    for (let i = 0; i < halfSize; i++) {
-      const home = padded[indices[i]!];
-      const away = padded[indices[padded.length - 1 - i]!];
-      if (home != null && away != null) fixtures.push([home, away]);
-    }
-    rounds.push(fixtures);
-    // Rotate: keep index 0 fixed, rotate the rest.
-    const last = indices.pop()!;
-    indices.splice(1, 0, last);
-  }
-
-  return rounds;
-}
+//
+// The one exception is seeding_method = 'random', where the exec asked for
+// chance over balance: the field is shuffled before it is dealt into groups.
+// See planGroupAssignment.
 
 async function generateRoundRobinMatchesImpl(eventId: string) {
   const admin = await requireCapability('tournaments.draw.generate.write');
@@ -1757,6 +1740,9 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
+  if (event.format === 'staged') {
+    throw new ExpectedError('This event is played in stages, so it is drawn one stage at a time from its Stages tab.');
+  }
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before generating matches.');
   assertNotFinalised(event, 'regenerated');
 
@@ -1842,6 +1828,10 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   // produced — the flat behaviour is not reimplemented on top of the group one,
   // it IS the group one with one group.
   const groupCount = (event as { group_count?: number | null }).group_count ?? 1;
+  // seeding_method = 'random' deals a shuffled field into the groups instead of
+  // a seeded one. The seed goes in the audit row so the deal can be explained.
+  const randomSeeding = event.seeding_method === 'random';
+  const drawSeed = newDrawSeed();
 
   if (groupCount >= 2) {
     // FILL THE GAPS, DO NOT RE-DEAL. An exec who moved somebody between groups
@@ -1850,7 +1840,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
     // every valid existing group and only places the entries that have none —
     // which is the whole field the first time, and just the late entrant the
     // second time.
-    const plan = planGroupAssignment(entries, groupCount);
+    const plan = planGroupAssignment(entries, groupCount, randomSeeding ? { rng: makeDrawRng(drawSeed) } : undefined);
 
     // CHECKED BEFORE ANYTHING IS WRITTEN, and the order is the point. A group of
     // one has nobody to play, so the event would hand that entrant no matches at
@@ -1865,7 +1855,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       .filter(g => g.size < 2);
     if (short.length > 0) {
       throw new ExpectedError(
-        `Group ${short.map(g => String.fromCharCode(64 + g.number)).join(', ')} ` +
+        `Group ${short.map(g => groupLabel(g.number)).join(', ')} ` +
         `${short.length === 1 ? 'has' : 'have'} fewer than 2 entries, so nobody there would have a match. ` +
         'Lower the group count or move somebody across.',
       );
@@ -2010,6 +2000,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       ...(groupCount >= 2
         ? { group_sizes: groups.map(g => g.entries.length), matches: matchNumber - 1 }
         : {}),
+      ...(groupCount >= 2 && randomSeeding ? { draw_seed: drawSeed } : {}),
     },
   });
 
@@ -2140,6 +2131,8 @@ async function setRoundMatchShapeImpl(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
+  // A staged event's scoring is its stage's, set in the event's stages.
+  if (event.format === 'staged') throw new ExpectedError('This event is played in stages: change a stage\'s scoring in its stages instead.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
   assertNotFinalised(event, 'changed');
 

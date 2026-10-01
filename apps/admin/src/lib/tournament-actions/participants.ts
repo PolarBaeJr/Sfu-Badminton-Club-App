@@ -29,6 +29,10 @@ import {
   isOutOfEvent,
   isExpectedFailure,
   normalizeExternalTeamNames,
+  parseFormatConfig,
+  suggestCategory,
+  categoryForEventType,
+  pickCategory,
   ExpectedError,
   selectInChunks,
   type CompetitionCategory,
@@ -50,8 +54,12 @@ import {
   forfeitOpenMatchesForEntry,
   FORFEIT_REASON,
   fencedRefusal,
+  fillFromWaitlistAfterFree,
+  settleWaitlistPromotions,
+  isWaitlistMissing,
   type DrawExitStatus,
   type FencedFieldResult,
+  type WaitlistFillResult,
 } from './_internal';
 
 // An external event (00269) holds only teams entered by name. The DB triggers refuse
@@ -866,6 +874,9 @@ export async function removeParticipantFromEvent(participantId: string) {
     details: { player_id: participant.player_id },
   });
 
+  // A place may have freed: the waitlist's head goes in (00278). Never throws.
+  await fillFromWaitlistAfterFree(adminClient, participant.event_id as string, admin.id);
+
   revalidateEventPaths(event.tournament_id as string, participant.event_id as string);
 }
 
@@ -1170,6 +1181,10 @@ async function exitDrawImpl(
     },
   });
 
+  // Before the draw, a withdrawal frees a place for the waitlist (00278). The
+  // fill refuses quietly once a draw exists. Never throws.
+  if (!alreadyOut) await fillFromWaitlistAfterFree(adminClient, event.id, admin.id);
+
   revalidateEventPaths(event.tournament_id, event.id);
   return outcome;
 }
@@ -1393,6 +1408,23 @@ async function addPairToEventImpl(
     throw new Error(error.message);
   }
 
+  // A staged event's head starts read the team's category. Best effort: the
+  // members' declared categories, else what the event type implies, and only
+  // when the event lists it. The organiser can change it on the tab, so a
+  // failure here is reported and does not undo the pair.
+  if (event.format === 'staged' && newPairId) {
+    const suggested = pickCategory(
+      parseFormatConfig(event.format_config),
+      suggestCategory([categoryFor(player1Id), categoryFor(player2Id)].map((c) => ({ competition_category: c })))
+        ?? categoryForEventType(event.event_type),
+    );
+    if (suggested) {
+      const { error: categoryError } = await adminClient.from('tournament_pairs')
+        .update({ team_category: suggested }).eq('id', newPairId as string);
+      if (categoryError) Sentry.captureException(categoryError);
+    }
+  }
+
   const { data } = await adminClient.from('tournament_pairs').select().eq('id', newPairId as string).maybeSingle();
 
   // BOTH HALVES OF THE PAIR, each priced off their own membership_type. A pair
@@ -1448,17 +1480,22 @@ export async function addExternalPairToEvent(
   name1: string,
   name2: string,
   teamName?: string | null,
+  category?: string | null,
 ): Promise<ActionResult<unknown>> {
-  return runAction(() => addExternalPairToEventImpl(eventId, name1, name2, teamName));
+  return runAction(() => addExternalPairToEventImpl(eventId, name1, name2, teamName, category));
 }
 
-async function addExternalPairToEventImpl(eventId: unknown, name1: unknown, name2: unknown, teamName: unknown) {
+async function addExternalPairToEventImpl(
+  eventId: unknown, name1: unknown, name2: unknown, teamName: unknown, category: unknown,
+) {
   const admin = await requireCapability('tournaments.draw.pairs.add.write');
   const adminClient = createAdminClient();
 
   if (typeof eventId !== 'string' || eventId.length === 0) throw new Error('Event not found');
   const names = normalizeExternalTeamNames(name1, name2, teamName);
   if (!names.ok) throw new ExpectedError(names.error);
+  if (category != null && typeof category !== 'string') throw new ExpectedError('Choose a category from the list.');
+  const teamCategory = typeof category === 'string' && category.trim() !== '' ? category.trim() : null;
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).maybeSingle();
   if (!event) throw new Error('Event not found');
@@ -1468,16 +1505,35 @@ async function addExternalPairToEventImpl(eventId: unknown, name1: unknown, name
   }
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
+  if (teamCategory !== null) {
+    if (event.format !== 'staged') throw new ExpectedError('A category applies to staged events only.');
+    const cfg = parseFormatConfig(event.format_config);
+    if (!cfg?.categories.some((c) => c.key === teamCategory)) {
+      throw new ExpectedError(`"${teamCategory}" is not a category of this event.`);
+    }
+  }
 
   const [first, second] = names.names;
   const team = names.teamName;
-  const { data: newPairId, error } = await adminClient.rpc('add_external_tournament_pair', {
+  const args = {
     p_event_id: eventId,
     p_external1_name: first,
     p_external2_name: second,
     p_added_by: admin.id,
     ...(team ? { p_team_name: team } : {}),
+  };
+  // 00274's v2 takes the category in the same transaction. An older database
+  // has only the 00269 function: without a category that is the same write,
+  // with one it would silently drop it, so it is refused instead.
+  let { data: newPairId, error } = await adminClient.rpc('add_external_tournament_pair_v2', {
+    ...args,
+    // Always sent, null included, so PostgREST resolves the six-argument v2.
+    p_category: teamCategory as string,
   });
+  if (error && (error.code === 'PGRST202' || error.code === '42883')) {
+    if (teamCategory !== null) throw new ExpectedError('Run migration 00274 first');
+    ({ data: newPairId, error } = await adminClient.rpc('add_external_tournament_pair', args));
+  }
   if (error) {
     if (error.code === '23505' || error.code === '23514' || error.code === 'P0002') {
       throw new ExpectedError(error.message);
@@ -1491,7 +1547,7 @@ async function addExternalPairToEventImpl(eventId: unknown, name1: unknown, name
     event_id: eventId,
     action: 'external_pair_added',
     performed_by: admin.id,
-    details: { pair_id: newPairId, external_names: [first, second], team_name: team },
+    details: { pair_id: newPairId, external_names: [first, second], team_name: team, team_category: teamCategory },
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
@@ -1643,6 +1699,10 @@ async function splitPairImpl(
   // nothing is refunded because the club owner has ruled that a withdrawal does
   // not refund. Nor is the event-waiver acceptance touched: it is per member per
   // TOURNAMENT and was never a fact about who they were playing with.
+  //
+  // A withdrawn half can free a draw slot when the pool count turns odd, so
+  // the waitlist is offered it (00278). Never throws.
+  await fillFromWaitlistAfterFree(adminClient, event.id, admin.id);
   revalidateEventPaths(event.tournament_id, event.id);
   // Both rows exist either way; only one of them is still IN the event when a
   // member withdrew, and that is the number the toast should say.
@@ -1879,7 +1939,132 @@ export async function removePairFromEvent(pairId: string) {
     });
   }
 
+  // A place freed: the waitlist's head goes in (00278). Never throws.
+  await fillFromWaitlistAfterFree(adminClient, pair.event_id as string, admin.id);
+
   revalidateEventPaths(event.tournament_id as string, pair.event_id as string);
+}
+
+// ============================================================
+// The waitlist (00278)
+// ============================================================
+
+const WAITLIST_MIGRATION_MISSING = 'Run migration 00278 first';
+const NOT_WAITING = 'That member is no longer on the waitlist. Reload the page.';
+
+function waitlistRefusal(result: WaitlistFillResult | null): string {
+  switch (result?.reason) {
+    case 'event_full':
+      return 'The event is full. Free a place, or raise the event limit, before promoting anybody.';
+    case 'not_waiting':
+      return NOT_WAITING;
+    case 'event_status':
+      return 'Members can only be promoted while the event is taking entries or checking in.';
+    case 'draw_locked':
+      return 'Draw is locked. Unlock it before making changes.';
+    case 'tournament_suspended':
+      return 'This tournament is suspended, so nobody can be promoted.';
+    case 'tournament_closed':
+      return 'This tournament has ended, so nobody can be promoted.';
+    case 'external_event':
+      return EXTERNAL_EVENT_REFUSAL;
+    case 'player_suspended':
+      return 'This member is suspended, so they cannot be entered.';
+    case 'inactive':
+      return 'This member is inactive, so they cannot be entered.';
+    case 'already_registered':
+      return 'This member already has an entry in this event. Remove them from the waitlist instead.';
+    case 'already_in_pair':
+      return 'This member is already in a pair in this event. Remove them from the waitlist instead.';
+    case 'no_rating':
+      return 'This member has no club rating yet, so they cannot be entered. Contact an exec to set one up.';
+    case 'entry_cap':
+      return result.cap
+        ? `This member is already entered in ${result.cap} ${result.cap === 1 ? 'event' : 'events'} at this tournament, which is the limit.`
+        : 'This member is already entered in as many events as this tournament allows.';
+    default:
+      return 'This member could not be promoted. Reload the page and try again.';
+  }
+}
+
+/**
+ * THE DESK PROMOTES ONE NAMED MEMBER OFF THE WAITLIST.
+ *
+ * The same capability as adding somebody by hand, because that is what it is:
+ * an entry the desk decided on. fill_event_from_waitlist re-asks every
+ * question under the field lock and writes nothing when it refuses, so the
+ * member stays waiting and the desk reads why.
+ */
+export async function promoteFromWaitlist(waitlistId: string): Promise<ActionResult<{ promoted: number }>> {
+  return runAction(() => promoteFromWaitlistImpl(waitlistId));
+}
+
+async function promoteFromWaitlistImpl(waitlistId: string): Promise<{ promoted: number }> {
+  const admin = await requireCapability('tournaments.draw.participants.add.write');
+  const adminClient = createAdminClient();
+
+  const { data: row, error: rowError } = await adminClient.from('tournament_event_waitlist')
+    .select('id, event_id, status, event:tournament_events(tournament_id)')
+    .eq('id', waitlistId)
+    .maybeSingle();
+  if (rowError) {
+    if (isWaitlistMissing(rowError)) throw new ExpectedError(WAITLIST_MIGRATION_MISSING);
+    Sentry.captureException(rowError);
+    throw new Error(rowError.message);
+  }
+  if (!row || row.status !== 'waiting') throw new ExpectedError(NOT_WAITING);
+  const ctx = extractEventContext(row);
+  if (!ctx) throw new Error('Could not read this waitlist entry. Nothing was changed, try again.');
+  await assertTournamentNotSuspended(adminClient, ctx.tid);
+
+  const { data, error } = await adminClient.rpc('fill_event_from_waitlist', {
+    p_event_id: ctx.eventId,
+    p_actor: admin.id,
+    p_waitlist_id: waitlistId,
+  });
+  if (error) {
+    if (isWaitlistMissing(error)) throw new ExpectedError(WAITLIST_MIGRATION_MISSING);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  const result = data as WaitlistFillResult | null;
+  if (!result?.ok) throw new ExpectedError(waitlistRefusal(result));
+
+  const promoted = await settleWaitlistPromotions(adminClient, result, admin.id, false);
+  revalidateEventPaths(ctx.tid, ctx.eventId);
+  return { promoted };
+}
+
+/** The desk takes a member off the waitlist. Their history row stays, as 'removed'. */
+export async function removeFromWaitlist(waitlistId: string): Promise<ActionResult> {
+  return runAction(() => removeFromWaitlistImpl(waitlistId));
+}
+
+async function removeFromWaitlistImpl(waitlistId: string): Promise<void> {
+  const admin = await requireCapability('tournaments.draw.participants.remove.write');
+  const adminClient = createAdminClient();
+
+  const { data, error } = await adminClient.rpc('remove_from_event_waitlist', {
+    p_waitlist_id: waitlistId,
+    p_actor: admin.id,
+  });
+  if (error) {
+    if (isWaitlistMissing(error)) throw new ExpectedError(WAITLIST_MIGRATION_MISSING);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  const result = data as { ok: boolean; reason?: string; event_id?: string; tournament_id?: string; player_id?: string } | null;
+  if (!result?.ok || !result.event_id || !result.tournament_id) throw new ExpectedError(NOT_WAITING);
+
+  await logAudit(adminClient, {
+    tournament_id: result.tournament_id,
+    event_id: result.event_id,
+    action: 'waitlist_remove',
+    performed_by: admin.id,
+    details: { waitlist_id: waitlistId, player_id: result.player_id ?? null },
+  });
+
+  revalidateEventPaths(result.tournament_id, result.event_id);
 }
 
 export async function checkInPair(pairId: string): Promise<ActionResult> {

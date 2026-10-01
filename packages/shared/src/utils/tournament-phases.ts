@@ -30,6 +30,7 @@ export const TOURNAMENT_EVENT_FORMAT_LABELS: Record<TournamentEventFormat, strin
   single_elimination: 'Single Elimination',
   round_robin: 'Round Robin',
   pool_to_bracket: 'Round Robin + Knockout',
+  staged: 'Stages',
 };
 
 /**
@@ -41,6 +42,7 @@ export const TOURNAMENT_EVENT_FORMAT_HINTS: Record<TournamentEventFormat, string
   pool_to_bracket:
     'A round robin first, then the qualifiers go straight into a knockout — in this same event. '
     + 'Nobody re-enters and nobody checks in twice.',
+  staged: 'Stages you set out: groups, knockouts or named matches, each fed by the stage before it.',
 };
 
 /** True for the format that plays a pool and then a knockout in one event. */
@@ -56,13 +58,39 @@ export function isPoolToBracket(format: string | null | undefined): boolean {
  * pool_to_bracket is BOTH, and the half that decides the placings is the
  * knockout. Every one of those comparisons was replaced with this.
  */
-export function endsInKnockout(format: string | null | undefined): boolean {
+export function endsInKnockout(format: string | null | undefined, formatConfig?: unknown): boolean {
+  if (format === 'staged') {
+    // A staged event ends in a knockout when its last stage is not groups. Read
+    // raw, so a caller without a parsed config still gets an answer.
+    const stages = (formatConfig as { stages?: unknown } | null | undefined)?.stages;
+    const last = Array.isArray(stages) ? (stages[stages.length - 1] as { kind?: unknown } | undefined) : undefined;
+    return last != null && last.kind !== 'groups';
+  }
   return format === 'single_elimination' || format === 'pool_to_bracket';
 }
 
 /** Does this format play a round robin at some point? */
 export function playsRoundRobin(format: string | null | undefined): boolean {
   return format === 'round_robin' || format === 'pool_to_bracket';
+}
+
+/**
+ * Group 1 is "A". Numbers on a scoresheet read as seeds; letters read as groups.
+ *
+ * Bijective base 26, the spreadsheet column scheme: Z is followed by AA, AB, so
+ * every positive integer has a label and no label is shared. Anything that is
+ * not a positive integer comes back as its number rather than as punctuation.
+ */
+export function groupLabel(n: number): string {
+  if (!Number.isInteger(n) || n < 1) return String(n);
+  let label = '';
+  let rest = n;
+  while (rest > 0) {
+    const digit = (rest - 1) % 26;
+    label = String.fromCharCode(65 + digit) + label;
+    rest = Math.floor((rest - 1) / 26);
+  }
+  return label;
 }
 
 // ============================================================

@@ -369,6 +369,13 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       min: 0,
       step: 1,
     },
+    singles_thirdplace: {
+      label: 'Singles 3rd place',
+      hint: 'Bonus Elo for winning the singles third-place play-off. Fourth takes the semifinalist amount.',
+      type: 'number',
+      min: 0,
+      step: 1,
+    },
     singles_semifinalist: {
       label: 'Singles semifinalist',
       hint: 'Bonus Elo for reaching a singles semifinal.',
@@ -393,6 +400,13 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
     doubles_finalist: {
       label: 'Doubles finalist',
       hint: 'Bonus Elo for reaching a doubles final.',
+      type: 'number',
+      min: 0,
+      step: 1,
+    },
+    doubles_thirdplace: {
+      label: 'Doubles 3rd place',
+      hint: 'Bonus Elo for winning the doubles third-place play-off. Fourth takes the semifinalist amount.',
       type: 'number',
       min: 0,
       step: 1,

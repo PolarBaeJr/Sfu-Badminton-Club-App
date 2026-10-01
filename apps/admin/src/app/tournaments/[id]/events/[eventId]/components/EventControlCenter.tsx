@@ -18,14 +18,16 @@ import type {
   TournamentEventStatus,
   TournamentBonusSettings,
   EventWaiverStatus,
+  TournamentCourt,
 } from '@badminton/shared';
-import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered, Pause, MapPin } from 'lucide-react';
+import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered, Pause, MapPin, Layers } from 'lucide-react';
 import type {
   TournamentRow,
   TournamentEventRow,
   TournamentMatchRow,
   ParticipantWithPlayer,
   PairWithPlayers,
+  WaitlistEntry,
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
 import type { DrawCapabilities } from '@/lib/participant-controls';
@@ -35,6 +37,7 @@ import { ParticipantsTab } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
+import { StagesTab } from './StagesTab';
 import { ResultsTab } from './ResultsTab';
 import { LeaderboardTab } from './LeaderboardTab';
 import { CourtManagementTab } from './CourtManagementTab';
@@ -61,7 +64,7 @@ import { hasCourtsTab } from '@/lib/live-desk';
 // localStorage — so renaming it from 'desk' orphans nothing. Capability strings
 // are the opposite (they live in permission_grants and
 // permission_baselines.capabilities as data) and none of them was touched.
-type TabId = 'participants' | 'checkin' | 'courts' | 'pool' | 'bracket' | 'results' | 'leaderboard';
+type TabId = 'participants' | 'checkin' | 'courts' | 'pool' | 'bracket' | 'stages' | 'results' | 'leaderboard';
 
 interface Props {
   tournament: TournamentRow;
@@ -94,9 +97,15 @@ interface Props {
   // empty map would read as "nobody has signed", which is a different and much
   // more alarming claim.
   waiverStates: Record<string, EventWaiverStatus> | null;
+  // The tournament's courts (00273), null before that migration, and the ids
+  // of the courts a live match is on anywhere in the tournament.
+  courts: TournamentCourt[] | null;
+  busyCourtIds: string[];
+  // The members waiting for a place (00278), null before that migration.
+  waitlist: WaitlistEntry[] | null;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -129,6 +138,14 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
     // never wrap it. The text is also `hidden sm:inline`, so on a phone this is
     // the icon alone. Measured at 390 / 768 / 1280 against the compiled CSS.
     tabs.push({ id: 'courts', label: 'Court Management', icon: <MapPin className="w-4 h-4" /> });
+  }
+
+  // A STAGED EVENT (00272) HAS ONE TAB FOR ALL ITS STAGES, from check-in on,
+  // because that is where stage 1 is drawn. playsRoundRobin and endsInKnockout
+  // are both false for it here, so the legacy tabs never show.
+  const staged = format === 'staged';
+  if (staged && status !== 'registration') {
+    tabs.push({ id: 'stages', label: 'Stages', icon: <Layers className="w-4 h-4" /> });
   }
 
   if (hasDraw && playsRoundRobin(format)) {
@@ -165,6 +182,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // opening this page mid-event is as likely to be reading the draw as calling a
   // match, and moving the landing tab under them is a change nobody asked for.
   const defaultTab: TabId = hasResultsTab(status) ? 'results'
+    : staged && ['bracket_generated', 'live'].includes(status) ? 'stages'
     : ['pool_generated', 'pool_live'].includes(status) ? 'pool'
     : ['bracket_generated', 'live'].includes(status) ? (endsInKnockout(format) ? 'bracket' : 'pool')
     : status === 'checkin' ? 'checkin'
@@ -244,6 +262,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         // `checkin`) or silently add one, which is the same defect from the
         // other side.
         hasThirdPlace={bracketMatches.some((m) => m.is_third_place)}
+        stagesDrawn={[...new Set(matches.flatMap((m) => (m.stage != null ? [m.stage] : [])))]}
       />
 
       {/* Suspension Banner — server actions enforce the actual blocking */}
@@ -268,6 +287,8 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         pairs={pairs}
         isDoubles={isDoubles}
         canEnterResult={drawCapabilities.enterResult}
+        courts={courts}
+        busyCourtIds={busyCourtIds}
         onOpenCourts={() => setActiveTab('courts')}
       />
 
@@ -305,6 +326,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             isDoubles={isDoubles}
             capabilities={drawCapabilities}
             waiverStates={waiverStates}
+            waitlist={waitlist}
           />
         )}
         {activeTab === 'checkin' && (
@@ -329,6 +351,8 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             // not the same permission as deciding who won.
             canManageCourts={drawCapabilities.manageCourts}
             canEnterResult={drawCapabilities.enterResult}
+            courts={courts}
+            busyCourtIds={busyCourtIds}
           />
         )}
         {activeTab === 'pool' && (
@@ -339,6 +363,16 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             isDoubles={isDoubles}
             phase={poolToBracket ? 'pool' : null}
+          />
+        )}
+        {activeTab === 'stages' && (
+          <StagesTab
+            event={event}
+            matches={matches}
+            participants={participants}
+            pairs={pairs}
+            isDoubles={isDoubles}
+            canGenerate={drawCapabilities.generate}
           />
         )}
         {activeTab === 'bracket' && (

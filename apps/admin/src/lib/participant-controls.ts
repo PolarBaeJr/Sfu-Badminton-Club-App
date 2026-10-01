@@ -179,6 +179,12 @@ export interface ParticipantControls {
    * already unpair and re-pair can do it in a single step, and nobody else can.
    */
   swapMember: boolean;
+  /**
+   * A team's category in a staged event (setPairCategory, seed.set.write).
+   * Open until the event is finalised: the action itself refuses a team that
+   * has already played with head starts.
+   */
+  editCategory: boolean;
 }
 
 /**
@@ -202,7 +208,7 @@ const DRAWN_STATUSES = new Set<string>([
 ]);
 
 export function participantControls(
-  event: { status: string; drawLocked: boolean },
+  event: { status: string; drawLocked: boolean; staged?: boolean },
   can: DrawCapabilities,
 ): ParticipantControls {
   // The entry list is open for editing: still taking registrations, and not
@@ -262,6 +268,7 @@ export function participantControls(
     unpair: pairingOpen && can.remove,
     withdrawMember: pairingOpen && can.exit,
     swapMember: pairingOpen && can.add && can.remove,
+    editCategory: event.staged === true && !event.drawLocked && event.status !== 'completed' && can.seedSet,
   };
 }
 

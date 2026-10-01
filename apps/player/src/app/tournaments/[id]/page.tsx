@@ -3,14 +3,17 @@ import {
   formatDate,
   isDoublesEvent,
   TOURNAMENT_EVENT_TYPE_LABELS,
-  TOURNAMENT_EVENT_STATUS_LABELS,
+  eventStatusLabel,
   TOURNAMENT_STATUS_TAG,
   hasTournamentEnded,
   getAccountStanding,
   resolveEventWaiverText,
   TOURNAMENT_EVENT_FORMAT_LABELS,
   membershipUnpaidMessage,
+  registrationWindowNotice,
+  checkinWindowNotice,
 } from '@badminton/shared';
+import { loadEntryWindows, windowsFor } from '@/lib/tournament-windows';
 import { loadMyEventWaiver } from '@/lib/event-waiver';
 import { loadMyMembershipScreen } from '@/lib/membership-screen';
 import { getFeatureFlags } from '@/lib/feature-gate';
@@ -83,6 +86,18 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     .select('*, tournament_participants(count), tournament_pairs(count)')
     .eq('tournament_id', id)
     .order('event_type');
+
+  // The registration and check-in windows (00276), on their own read so a
+  // database without them shows no window rather than no page.
+  const windows = await loadEntryWindows(supabase, {
+    eventIds: (events ?? []).map((e) => e.id as string),
+    tournamentIds: [id],
+  });
+  const now = new Date();
+  const notices = (eventId: string) => {
+    const w = windowsFor(windows, eventId, id);
+    return { registration: registrationWindowNotice(w.registration, now), checkin: checkinWindowNotice(w.checkin, now) };
+  };
 
   const { player: currentPlayer } = await getViewer();
   // `paired` is the discriminator and `partnerName` is only ever display: a
@@ -171,7 +186,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     !!currentPlayer &&
     !tournament.suspended_at &&
     refuseClosedTournament(tournament.status, 'enter this event') === null &&
-    (events ?? []).some((e) => e.status === 'registration' && !registrationMap[e.id]);
+    (events ?? []).some((e) => e.status === 'registration' && !registrationMap[e.id] && !notices(e.id).registration);
   const [membership, flags] = couldEnter
     ? await Promise.all([loadMyMembershipScreen(supabase, tournament, currentPlayer), getFeatureFlags()])
     : [null, null];
@@ -305,6 +320,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               ? (event.tournament_pairs as unknown as { count: number }[])?.[0]?.count ?? 0
               : (event.tournament_participants as unknown as { count: number }[])?.[0]?.count ?? 0;
             const myReg = registrationMap[event.id] ?? null;
+            const windowNotices = notices(event.id);
 
             return (
               <div
@@ -334,7 +350,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                       </div>
                       <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                         <span className={TOURNAMENT_STATUS_TAG[eventStatus] ?? 'tag'}>
-                          {TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]?.toUpperCase()}
+                          {eventStatusLabel(event.format as string, eventStatus).toUpperCase()}
                         </span>
                         <span className="tag">
                           {(TOURNAMENT_EVENT_FORMAT_LABELS[event.format as keyof typeof TOURNAMENT_EVENT_FORMAT_LABELS]
@@ -366,6 +382,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     suspended={!!tournament.suspended_at}
                     eventWaiverText={tournament.waiver_text}
                     membershipBlocked={feeNeeded ? 'Club fee needed' : null}
+                    registrationNotice={windowNotices.registration}
+                    checkinNotice={windowNotices.checkin}
                   />
                   )}
                 </div>

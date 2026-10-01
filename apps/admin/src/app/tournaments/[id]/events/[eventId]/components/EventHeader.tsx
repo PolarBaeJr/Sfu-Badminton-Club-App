@@ -4,8 +4,10 @@ import { useRef, useState } from 'react';
 import { Badge, Button, useConfirm } from '@badminton/ui';
 import {
   TOURNAMENT_EVENT_TYPE_LABELS,
-  TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
+  anyStageRated,
+  eventStatusLabel,
+  parseFormatConfig,
   nextPowerOf2,
   describeMatchShape,
   TOURNAMENT_EVENT_FORMAT_LABELS,
@@ -14,6 +16,9 @@ import {
   playsRoundRobin,
   statusStepsFor,
   currentPhase,
+  effectiveWindows,
+  formatWindowInstant,
+  windowState,
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
 import {
@@ -24,11 +29,13 @@ import {
   lockDraw,
   unlockDraw,
   updateTournamentEvent,
+  drawStage,
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock, SlidersHorizontal, RefreshCw } from 'lucide-react';
+import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock, SlidersHorizontal, RefreshCw, Clock } from 'lucide-react';
 import { EventSettingsDialog } from './EventSettingsDialog';
+import { EventWindowsDialog } from './EventWindowsDialog';
 import { regenerateDrawControl, type DrawCapabilities } from '@/lib/participant-controls';
 import type { SiblingEvent } from '../../../event-format-fields';
 import type { TournamentEventRow } from '@/lib/tournament-types';
@@ -69,13 +76,16 @@ interface Props {
   drawCapabilities: DrawCapabilities;
   /** Does the draw that exists right now carry a 3rd place playoff match? */
   hasThirdPlace: boolean;
+  /** A staged event: the stage numbers that have matches. Empty otherwise. */
+  stagesDrawn: number[];
 }
 
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolTotal, poolDecided, drawCapabilities, hasThirdPlace }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolTotal, poolDecided, drawCapabilities, hasThirdPlace, stagesDrawn }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [windowsOpen, setWindowsOpen] = useState(false);
   // The third-place playoff is a generation-time choice, so it lives next to the
   // button that generates. It is NOT persisted on the event — the generated
   // match is the record — so this is deliberately plain local state that resets
@@ -113,6 +123,14 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   // about what happens next.
   const STATUS_STEPS = statusStepsFor(format);
   const poolToBracket = isPoolToBracket(format);
+  // A STAGED EVENT (00272) is drawn a stage at a time from its Stages tab. The
+  // header's only draw is stage 1 at check-in; there is no whole-event redraw
+  // and no third-place tick box, because both live in the config.
+  const staged = format === 'staged';
+  const stagedCfg = staged ? parseFormatConfig(event.format_config) : null;
+  const firstStage = stagedCfg?.stages[0];
+  const undrawnStages = stagedCfg ? stagedCfg.stages.filter((_, i) => !stagesDrawn.includes(i + 1)).map((s) => s.name) : [];
+  const statusLabel = (s: TournamentEventStatus) => eventStatusLabel(format, s);
   const phaseNow = currentPhase(format, status);
   const currentStepIdx = STATUS_STEPS.indexOf(status);
   const groupCount = (event.group_count as number | null) ?? 1;
@@ -139,7 +157,13 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   const offerThirdPlace = thirdPlaceApplies
     && (poolToBracket ? status === 'pool_live' : status === 'checkin');
   // Same rule the server applies: the format is editable until a draw exists.
-  const settingsEditable = totalMatches === 0 && (status === 'registration' || status === 'checkin');
+  // A staged event's stages not yet drawn stay editable until it is finalised
+  // (updateTournamentEventImpl refuses a change to a drawn one). A legacy
+  // event's points table is read only at finalisation, so it too stays
+  // editable until then (00275): past the draw the dialog offers it alone.
+  const settingsEditable = status !== 'completed';
+  const pointsOnlySettings = !staged
+    && (totalMatches > 0 || (status !== 'registration' && status !== 'checkin'));
   const seededFromPool = Boolean(event.seeded_from_event_id);
   // Mirrors generateSingleEliminationBracketImpl exactly. Kept in step by the
   // dialog reading the same two fields the generator reads — a third rule here
@@ -163,6 +187,11 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         const res = await setEventStatus(event.id as string, 'checkin');
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Check-in opened', 'success');
+      } else if (status === 'checkin' && staged) {
+        if (!firstStage) { toast('The stages are not set out correctly. Fix them in Event Settings.', 'error'); setLoading(false); return; }
+        const res = await drawStage(event.id as string, firstStage.key);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
+        toast(`${firstStage.name} drawn`, 'success');
       } else if (status === 'checkin') {
         // WHICH HALF IS BUILT FIRST. playsRoundRobin covers both round_robin and
         // pool_to_bracket, because the first thing a pool_to_bracket event
@@ -208,10 +237,11 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     setLoading(false);
   }
 
-  const regenerate = regenerateDrawControl(
+  const regenerateLegacy = regenerateDrawControl(
     { status, drawLocked, playedMatches, liveMatches, ratedMatches },
     drawCapabilities,
   );
+  const regenerate = staged ? { ...regenerateLegacy, show: false } : regenerateLegacy;
   const eventLabel = TOURNAMENT_EVENT_TYPE_LABELS[eventType] ?? eventType;
 
   /**
@@ -327,9 +357,11 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     // seeding_method is not consulted on that path at all.
     //
     // Turning the draw back on writes 'elo' rather than restoring a previous
-    // 'random', and that loses nothing today: nothing anywhere reads the
-    // difference between those two, both mean "drawn", and 'elo' is the default
-    // every event in the club already carries.
+    // 'random'. The two differ: 'random' shuffles the whole field and ignores
+    // ratings, 'elo' draws within rating tiers. 'elo' is the default every
+    // event in the club already carries; 'random' is chosen when the event is
+    // created. A 'random' event that stays drawn is never rewritten here,
+    // because its mode does not change.
     const modeShouldChange = !seededFromPool && !poolToBracket && endsInKnockout(format)
       && regenExactDraw.current === drawIsRandomised;
     if (modeShouldChange) {
@@ -359,7 +391,8 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   const actionLabel: Record<string, string> = {
     registration: 'Open Check-In',
     // A plain round robin has no bracket; the button draws its fixtures.
-    checkin: poolToBracket || format === 'round_robin' ? 'Generate Round Robin' : 'Generate Bracket',
+    checkin: staged ? `Draw ${firstStage?.name ?? 'Stage 1'}`
+      : poolToBracket || format === 'round_robin' ? 'Generate Round Robin' : 'Generate Bracket',
     pool_generated: 'Start Round Robin',
     // THE BUTTON SAYS WHAT IT DOES. "Next Step" on the one press the format
     // exists for would leave the exec guessing whether it starts the knockout
@@ -383,7 +416,20 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     // end of an event and got an error for a state the page already knew about.
     // totalMatches/completedMatches are already props, so the button can say so
     // before it is pressed rather than after.
-    || (status === 'live' && completedMatches < totalMatches);
+    || (status === 'live' && completedMatches < totalMatches)
+    // A staged event finishes with its last stage, so every stage has to be drawn.
+    || (status === 'live' && undrawnStages.length > 0)
+    || (status === 'checkin' && staged && !firstStage);
+
+  // The windows (00276). select('*') names every column, so a database without
+  // the migration has nothing to edit. The check-in window never opens
+  // check-in by itself: when it is open and the event is still taking
+  // entries, the primary button says so and the exec decides.
+  const windowsAvailable = 'registration_opens_at' in event;
+  const checkinWindow = windowsAvailable ? effectiveWindows({ event, tournament }).checkin : null;
+  const checkinOpensAt = checkinWindow?.opens_at ?? null;
+  const checkinWindowOpened = status === 'registration' && checkinOpensAt !== null
+    && windowState(checkinOpensAt, checkinWindow?.closes_at, new Date()) === 'open';
 
   // Why it is disabled, not just that it is. "Finalize" greyed with no reason
   // sends someone hunting through the bracket for what is missing.
@@ -394,6 +440,12 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         ? `${poolOutstanding} round-robin match${poolOutstanding === 1 ? '' : 'es'} still to be played`
       : status === 'live' && completedMatches < totalMatches
         ? `${totalMatches - completedMatches} match${totalMatches - completedMatches === 1 ? '' : 'es'} still to be decided`
+      : status === 'live' && undrawnStages.length > 0
+        ? `${undrawnStages.join(', ')} still to be drawn`
+      : status === 'checkin' && staged && !firstStage
+        ? 'The stages are not set out correctly. Fix them in Event Settings.'
+      : checkinWindowOpened && checkinOpensAt
+        ? `Check-in window opened at ${formatWindowInstant(checkinOpensAt)}. Open check-in?`
         : undefined;
 
   return (
@@ -423,12 +475,13 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
                 backgroundColor: `${TOURNAMENT_EVENT_STATUS_COLORS[status]}15`,
               }}
             >
-              <span className="sr-only">Event status: </span>{TOURNAMENT_EVENT_STATUS_LABELS[status]}
+              <span className="sr-only">Event status: </span>{statusLabel(status)}
             </span>
             <Badge variant="default">
               {TOURNAMENT_EVENT_FORMAT_LABELS[format as keyof typeof TOURNAMENT_EVENT_FORMAT_LABELS] ?? format}
             </Badge>
             {event.external_event === true && <Badge variant="default">External, unrated</Badge>}
+            {staged && event.external_event !== true && stagedCfg && !anyStageRated(stagedCfg) && <Badge variant="default">Unrated</Badge>}
             {poolToBracket && (
               <Badge variant="default">
                 {groupCount >= 2
@@ -441,14 +494,14 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
                 never played to — the badge announced "Best of 3 to 21" above a
                 first round played to 11. The Bracket tab's "Played to" strip is
                 where the real shapes live. */}
-            {!isPoolToBracket(event.format as string) && (
+            {!isPoolToBracket(event.format as string) && !staged && (
               <Badge variant="default">{describeMatchShape(event as unknown as TournamentEventRow)}</Badge>
             )}
             {/* THE ONLY PLACE seed_by IS VISIBLE AFTER THE DRAW, which is why
-                it covers pool_to_bracket too. Event Settings is offered only
-                while `totalMatches === 0` (see settingsEditable below), so once
-                a draw exists the criterion is frozen and there is no form left
-                to disable — this badge is the read-only view of it. Gating on
+                it covers pool_to_bracket too. Once a draw exists Event Settings
+                offers only the points table (see pointsOnlySettings below), so
+                the criterion is frozen and has no form left to disable; this
+                badge is the read-only view of it. Gating on
                 `seededFromPool` alone hid it on the one format that ranks its
                 OWN pool: pool_to_bracket has no seeded_from_event_id by
                 construction, yet brackets.ts picks its qualifiers by seed_by and
@@ -479,6 +532,17 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             >
               <SlidersHorizontal className="w-4 h-4 mr-1" />
               Settings
+            </Button>
+          )}
+          {settingsEditable && windowsAvailable && (
+            <Button
+              variant="ghost"
+              aria-label="Registration and check-in windows"
+              className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+              onClick={() => setWindowsOpen(true)}
+            >
+              <Clock className="w-4 h-4 mr-1" />
+              Windows
             </Button>
           )}
           {['pool_generated', 'pool_live', 'bracket_generated', 'live'].includes(status) && (
@@ -586,7 +650,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       )}
 
       {/* Status Stepper */}
-      <div className="flex items-center gap-1" role="progressbar" aria-label={`Event progress: ${TOURNAMENT_EVENT_STATUS_LABELS[status]}`} aria-valuenow={currentStepIdx + 1} aria-valuemin={1} aria-valuemax={STATUS_STEPS.length}>
+      <div className="flex items-center gap-1" role="progressbar" aria-label={`Event progress: ${statusLabel(status)}`} aria-valuenow={currentStepIdx + 1} aria-valuemin={1} aria-valuemax={STATUS_STEPS.length}>
         {STATUS_STEPS.map((step, i) => {
           const isActive = i === currentStepIdx;
           const isPast = i < currentStepIdx;
@@ -609,7 +673,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       <div className="flex justify-between text-[10px] text-[var(--text-muted)] uppercase tracking-wider px-1">
         {STATUS_STEPS.map((step) => (
           <span key={step} className={step === status ? 'text-[var(--text-primary)] font-semibold' : ''}>
-            {TOURNAMENT_EVENT_STATUS_LABELS[step]}
+            {statusLabel(step)}
           </span>
         ))}
       </div>
@@ -636,12 +700,14 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         />
         <StatCard
           icon={<BarChart3 className="w-4 h-4" />}
-          label="Bracket Info"
+          label={staged ? 'Stages' : 'Bracket Info'}
           value={
             // Before the knockout is drawn there is no bracket size to report —
             // the field is decided by the pool, not by how many entered — so a
             // pool_to_bracket event shows what it is playing right now.
-            (poolToBracket && phaseNow !== 'bracket') || format === 'round_robin'
+            staged
+              ? `${stagedCfg ? stagedCfg.stages.length - undrawnStages.length : 0}/${stagedCfg?.stages.length ?? 0} drawn`
+              : (poolToBracket && phaseNow !== 'bracket') || format === 'round_robin'
               ? `${totalEntries} entries`
               : `${bracketSize}-slot${byes > 0 ? ` (${byes} skip${byes > 1 ? 's' : ''})` : ''}`
           }
@@ -657,7 +723,17 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           // dialog needs the same number to tell an exec how many byes their
           // draw would actually have (00124).
           totalEntries={totalEntries}
+          stagesDrawn={stagesDrawn}
+          pointsOnly={pointsOnlySettings}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+      {windowsOpen && (
+        <EventWindowsDialog
+          eventId={event.id as string}
+          event={event}
+          tournament={tournament}
+          onClose={() => setWindowsOpen(false)}
         />
       )}
     </div>
@@ -717,8 +793,8 @@ function ThirdPlaceChoice({ defaultChecked, onChange }: { defaultChecked: boolea
  *
  * IT HAS TO BE HERE AND NOT ONLY IN EVENT SETTINGS. The exec who wants it is
  * the one who hand-set every seed, pressed this button, and watched the draw
- * move — which is after a draw exists, and Event Settings is not offered then
- * (the format must not change under matches that exist). The seeding method is
+ * move, which is after a draw exists, and Event Settings then offers only the
+ * points table (the format must not change under matches that exist). The seeding method is
  * not a format: nothing about the existing matches depends on it, and the
  * server lets it through on its own for exactly that reason.
  *

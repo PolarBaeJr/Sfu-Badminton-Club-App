@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MIN_ELO, MAX_ELO, CUSTOM_FORMAT_BOUNDS, pointsCap } from '../utils/constants';
+import { MIN_ELO, MAX_ELO, CUSTOM_FORMAT_BOUNDS, ELO_MULTIPLIER_BOUNDS, pointsCap } from '../utils/constants';
 import {
   EXPENSE_CATEGORY_VALUES,
   OTHER_INCOME_CATEGORY_VALUES,
@@ -126,9 +126,9 @@ export const challengeCreateSchema = z.object({
 });
 
 // A sanity bound only: the deuce cap of the highest target anyone can set (a
-// game to 21 caps at 30). Which scores can actually end a game is
+// game to 30 caps at 39). Which scores can actually end a game is
 // isLegalGameScore, judged against that match's own target. Player and admin
-// entry share it now that no target goes above 21.
+// entry share it.
 const matchGameSchema = z.object({
   game_number: z.number().int().positive(),
   side_a_score: z.number().int().min(0).max(pointsCap(CUSTOM_FORMAT_BOUNDS.maxPoints)),
@@ -278,6 +278,13 @@ export const attendanceMarkSchema = z.object({
 // Ahead-of-time session RSVP: players signal whether they intend to attend.
 export const sessionIntentSchema = z.enum(['going', 'declined']);
 
+// A club wall-clock time from a datetime-local input; blank is null.
+const clubWallClockSchema = z.string().regex(CLUB_WALL_CLOCK_PATTERN, 'Invalid date and time');
+const optionalClubWallClock = z.preprocess(
+  (val) => (val === '' || val === undefined ? null : val),
+  clubWallClockSchema.nullable(),
+);
+
 export const tournamentCreateSchema = z.object({
   name: z.string().min(2),
   // .min(1), because `tournaments.start_date` is NOT NULL and a blank date
@@ -290,7 +297,7 @@ export const tournamentCreateSchema = z.object({
   // it is start_date, the required one, that had no floor.
   start_date: z.string().min(1),
   end_date: z.string().optional(),
-  event_multiplier: z.number().min(1).max(2).default(1.15),
+  event_multiplier: z.number().min(ELO_MULTIPLIER_BOUNDS.min).max(ELO_MULTIPLIER_BOUNDS.max).default(1.15),
   placement_bonus_enabled: z.boolean().default(true),
   // Which membership groups may register. Defaults to all three so a tournament
   // created without touching this stays open, matching the column default.
@@ -315,6 +322,12 @@ export const tournamentCreateSchema = z.object({
   // events than it has events, so a cap above that is merely redundant rather
   // than dangerous, and nothing here loops over it.
   max_events_per_player: z.number().int().min(1).max(100).nullable().optional(),
+  // The tournament-wide registration and check-in windows (00276), as club
+  // wall-clock strings. Each event inherits any bound it leaves blank.
+  registration_opens_at: optionalClubWallClock,
+  registration_closes_at: optionalClubWallClock,
+  checkin_opens_at: optionalClubWallClock,
+  checkin_closes_at: optionalClubWallClock,
 });
 
 // A club event as the console form posts it (00244). Mirrors the table's
@@ -322,11 +335,6 @@ export const tournamentCreateSchema = z.object({
 // club wall-clock strings, converted to instants by the action; cost is in
 // dollars here and stored as integer cents. No status and no created_by: the
 // action decides both.
-const clubWallClockSchema = z.string().regex(CLUB_WALL_CLOCK_PATTERN, 'Invalid date and time');
-const optionalClubWallClock = z.preprocess(
-  (val) => (val === '' || val === undefined ? null : val),
-  clubWallClockSchema.nullable(),
-);
 const optionalText = (max: number) =>
   z.preprocess(
     (val) => (typeof val === 'string' && val.trim() === '' ? null : val),

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import * as Sentry from '@sentry/nextjs';
 import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import {
   CLUB_TIMEZONE,
@@ -8,11 +9,13 @@ import {
   TOURNAMENT_EVENT_TYPE_LABELS,
   type PricingTier,
   type TournamentEventType,
+  windowState,
 } from '@badminton/shared';
 import { AvatarChip, Badge } from '@badminton/ui';
 import { clubDayKey, dayLabel } from '@/lib/feed-activity';
 import { SeasonPick } from '@/components/my-stats/season-pick';
 import { loadMyMembershipScreen } from '@/lib/membership-screen';
+import { loadEntryWindows, windowsFor } from '@/lib/tournament-windows';
 import { finishedSeasonIds, seasonPickerOptions, type HistorySeason } from '@/lib/season-history';
 import {
   countEnteredPlayers,
@@ -179,9 +182,32 @@ export default async function TournamentsPage({
       : Promise.resolve({ data: [] as unknown[] }),
   ]);
 
-  const tournaments = ((tournamentsRes.data ?? []) as unknown as IndexTournament[]).map((t) => ({
+  const calendar = (tournamentsRes.data ?? []) as unknown as IndexTournament[];
+
+  // The registration windows (00276), for the events taking entries. A failed
+  // read leaves them unknown, which this page shows as open: registerForEvent
+  // reads them again and refuses, so nobody enters through a shut window.
+  const registrationIds = calendar.flatMap((t) =>
+    (t.tournament_events ?? []).filter((e) => e.status === 'registration').map((e) => e.id),
+  );
+  const entryWindows = registrationIds.length === 0
+    ? null
+    : await loadEntryWindows(supabase, {
+        eventIds: registrationIds,
+        tournamentIds: calendar.map((t) => t.id),
+      }).catch((err) => {
+        Sentry.captureException(err, { extra: { action: 'tournaments:entryWindows' } });
+        return null;
+      });
+  const now = new Date();
+
+  const tournaments = calendar.map((t) => ({
     ...t,
-    tournament_events: t.tournament_events ?? [],
+    tournament_events: (t.tournament_events ?? []).map((e) => {
+      if (!entryWindows || e.status !== 'registration') return e;
+      const { registration } = windowsFor(entryWindows, e.id, t.id);
+      return { ...e, registration_window: windowState(registration.opens_at, registration.closes_at, now) };
+    }),
   }));
 
   // Fold singles rows and pair rows into one shape, because from the member's

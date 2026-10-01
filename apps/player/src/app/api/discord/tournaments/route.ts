@@ -7,8 +7,10 @@ import {
   loadPaidDues,
   readFeatureFlags,
   resolveEntrySeasonId,
+  windowState,
 } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { loadEntryWindows, windowsFor, type EntryWindows } from '@/lib/tournament-windows';
 import {
   discordServiceUnauthorized,
   isAuthorizedDiscordService,
@@ -66,7 +68,7 @@ interface Row {
   end_date: string | null;
   allowed_memberships: string[] | null;
   season_id: string | null;
-  tournament_events: { event_type: string; status: string }[] | null;
+  tournament_events: { id: string; event_type: string; status: string }[] | null;
 }
 
 /** The linked member asking, with what entryMembership needs. */
@@ -149,7 +151,7 @@ export async function GET(request: Request) {
   const { data, error } = await supabase
     .from('tournaments')
     .select(
-      'id, name, start_date, end_date, allowed_memberships, season_id, tournament_events(event_type, status)'
+      'id, name, start_date, end_date, allowed_memberships, season_id, tournament_events(id, event_type, status)'
     )
     .eq('status', 'active')
     .is('suspended_at', null)
@@ -222,6 +224,20 @@ export async function GET(request: Request) {
     }
   }
 
+  // The registration windows (00276), read on their own so an image ahead of
+  // the migration still lists tournaments. A failed read is a 503, not "open".
+  let windows: EntryWindows;
+  try {
+    windows = await loadEntryWindows(supabase, {
+      eventIds: pageRows.flatMap((t) => (t.tournament_events ?? []).map((e) => e.id)),
+      tournamentIds: pageRows.map((t) => t.id),
+    });
+  } catch (err) {
+    console.error('[discord] tournaments window lookup failed', err);
+    return NextResponse.json({ error: 'tournaments_unavailable' }, { status: 503 });
+  }
+  const now = new Date();
+
   const tournaments = pageRows.map((t) => {
     const allowed = t.allowed_memberships ?? [];
     return {
@@ -233,7 +249,11 @@ export async function GET(request: Request) {
       // Registration is open somewhere in this tournament. Reported rather than
       // used to filter: a member wants to know the thing exists even once the
       // draws are locked.
-      registrationOpen: (t.tournament_events ?? []).some((e) => e.status === 'registration'),
+      registrationOpen: (t.tournament_events ?? []).some((e) => {
+        if (e.status !== 'registration') return false;
+        const { registration } = windowsFor(windows, e.id, t.id);
+        return windowState(registration.opens_at, registration.closes_at, now) === 'open';
+      }),
       // null for an unlinked caller — "we do not know", which is a different
       // thing from "not eligible" and the bot renders it differently.
       eligible: caller

@@ -156,7 +156,23 @@ const EVENT_FIELDS = [
   'group_count',
   'qualifiers_per_group',
   'seeded_from_event_id',
+  'rated',
+  'current_stage',
 ] as const;
+
+/** STAGE_TIEBREAKS in packages/shared staged-format/schema.ts. */
+const STAGE_TIEBREAKS = new Set([
+  'wins',
+  'point_diff',
+  'points_for',
+  'points_against_low',
+  'game_diff',
+  'h2h',
+  'seed',
+]);
+
+/** How long a v2 reader PostgREST does not know is skipped before it is asked again. */
+const V2_RETRY_MS = 60_000;
 
 const DOCS_BODY = Buffer.from(DOCS_HTML, 'utf8');
 
@@ -216,6 +232,22 @@ function asObject(value: unknown): Row | null {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function numOrNull(value: unknown): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+function boolOrNull(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function strOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function numOrAuto(value: unknown): number | 'auto' | null {
+  return typeof value === 'number' || value === 'auto' ? value : null;
 }
 
 function shapePlayer(row: Row): Row {
@@ -290,6 +322,10 @@ function shapeMatchTournament(value: unknown): Row | null {
     round_name: orNull(o.round_name),
     phase: orNull(o.phase),
     is_third_place: orNull(o.is_third_place),
+    stage: orNull(o.stage),
+    match_label: orNull(o.match_label),
+    handicap_a: orNull(o.handicap_a),
+    handicap_b: orNull(o.handicap_b),
   };
 }
 
@@ -358,12 +394,100 @@ function shapeTournament(row: Row): Row {
   };
 }
 
+// The structure of a staged event (00272). The database already rebuilds each
+// of these from an allowlist; they are rebuilt again here, so a key the stored
+// config grows (a stage's courts, say) cannot reach a consumer either way. A
+// v1 row has none of them and every one comes back null.
+function shapeScoring(value: unknown): Row | null {
+  const o = asObject(value);
+  if (!o) return null;
+  const forfeit = asObject(o.forfeit);
+  return {
+    best_of: numOrNull(o.best_of),
+    target: numOrNull(o.target),
+    win_by_two: boolOrNull(o.win_by_two),
+    cap: numOrNull(o.cap),
+    handicap: boolOrNull(o.handicap),
+    forfeit: forfeit ? { winner: numOrNull(forfeit.winner), loser: numOrNull(forfeit.loser) } : null,
+  };
+}
+
+function shapeStages(value: unknown): Row[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.map((s) => {
+    const o = asObject(s) ?? {};
+    return {
+      index: numOrNull(o.index),
+      key: strOrNull(o.key),
+      name: strOrNull(o.name),
+      kind: strOrNull(o.kind),
+      rated: boolOrNull(o.rated),
+      scoring: shapeScoring(o.scoring),
+      pools: numOrNull(o.pools),
+      groups_per_pool: numOrNull(o.groups_per_pool),
+      group_size: numOrAuto(o.group_size),
+      tiebreaks: Array.isArray(o.tiebreaks)
+        ? o.tiebreaks.filter((t): t is string => typeof t === 'string' && STAGE_TIEBREAKS.has(t))
+        : null,
+      size: numOrAuto(o.size),
+      third_place: boolOrNull(o.third_place),
+      matches: Array.isArray(o.matches)
+        ? o.matches.map((m) => {
+            const d = asObject(m) ?? {};
+            return {
+              label: strOrNull(d.label),
+              name: strOrNull(d.name),
+              winner_place: numOrNull(d.winner_place),
+              loser_place: numOrNull(d.loser_place),
+            };
+          })
+        : null,
+    };
+  });
+}
+
+function shapeCategories(value: unknown): Row[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.map((c) => {
+    const o = asObject(c) ?? {};
+    return { key: strOrNull(o.key), label: strOrNull(o.label) };
+  });
+}
+
+function shapeHeadStarts(value: unknown): Record<string, Record<string, number>> | null {
+  const o = asObject(value);
+  if (!o) return null;
+  const out: Record<string, Record<string, number>> = {};
+  for (const [row, cols] of Object.entries(o)) {
+    const c = asObject(cols);
+    if (!c) continue;
+    out[row] = {};
+    for (const [col, start] of Object.entries(c)) if (typeof start === 'number') out[row][col] = start;
+  }
+  return out;
+}
+
+function shapePointsTable(value: unknown): Row | null {
+  const o = asObject(value);
+  if (!o) return null;
+  return {
+    by_place: asArray(o.by_place).filter((n): n is number => typeof n === 'number'),
+    rest: numOrNull(o.rest) ?? 0,
+    participation: numOrNull(o.participation),
+    per_win: numOrNull(o.per_win),
+  };
+}
+
 function shapeEvent(row: Row): Row {
   const out: Row = {};
   for (const field of EVENT_FIELDS) out[field] = orNull(row[field]);
   // An event of external teams (00269): unrated, and its entrants have no
   // player_refs.
   out.external = row.external_event === true;
+  out.stages = shapeStages(row.stages);
+  out.categories = shapeCategories(row.categories);
+  out.head_starts = shapeHeadStarts(row.head_starts);
+  out.points_table = shapePointsTable(row.points_table);
   return out;
 }
 
@@ -379,6 +503,7 @@ function shapeEntrant(row: Row): Row {
     points: orNull(row.points),
     elo: { before: orNull(row.elo_before), after: orNull(row.elo_after), change: orNull(row.elo_change) },
     combined_elo: orNull(row.combined_elo),
+    team_category: orNull(row.team_category),
   };
 }
 
@@ -409,6 +534,13 @@ function shapeDrawRow(row: Row): Row {
     sides: withheld || !sides ? null : { a: shapeRefSide(sides.a), b: shapeRefSide(sides.b) },
     winner_side: withheld ? null : orNull(row.winner_side),
     games: withheld ? null : shapeGames(row.games),
+    stage: orNull(row.stage),
+    pool_number: orNull(row.pool_number),
+    group_number: orNull(row.group_number),
+    slot: orNull(row.slot),
+    match_label: orNull(row.match_label),
+    handicap_a: withheld ? null : orNull(row.handicap_a),
+    handicap_b: withheld ? null : orNull(row.handicap_b),
   };
 }
 
@@ -519,6 +651,25 @@ export function createHandler(deps: HandlerDeps) {
   // Reads only. The verifier above talks to deps.upstream directly, uncached here.
   const rpc = (fn: string, args: Record<string, unknown>) =>
     cache.get(fn, args, () => deps.upstream.rpc(fn, args)) as Promise<Row[]>;
+
+  // A v2 reader is newer than the image that calls it only during a rollout:
+  // images update before migrations run. Until PostgREST knows the v2 (404,
+  // PGRST202) the v1 answers, without the newer fields. Any other failure of
+  // the v2 is a failure, never a reason to read v1.
+  const v2MissingUntil = new Map<string, number>();
+  async function rpcPrefer(v2: string, v1: string, args: Record<string, unknown>): Promise<Row[]> {
+    const until = v2MissingUntil.get(v2);
+    if (until === undefined || until <= now()) {
+      try {
+        return await rpc(v2, args);
+      } catch (err) {
+        if (!(err instanceof UpstreamError) || err.fn !== v2 || err.status !== 404) throw err;
+        v2MissingUntil.set(v2, now() + V2_RETRY_MS);
+        log(JSON.stringify({ level: 'warn', msg: 'v2_unavailable', fn: v2, upstream_status: 404 }));
+      }
+    }
+    return rpc(v1, args);
+  }
 
   function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
     const payload = JSON.stringify(body);
@@ -819,8 +970,14 @@ export function createHandler(deps: HandlerDeps) {
       case 'tournament': {
         const rows = await rpc('data_api_tournaments', { ...c, p_tournament_id: v.id });
         if (!rows[0]) return notFound(res);
-        const events = await rpc('data_api_tournament_events', { ...c, p_tournament_id: v.id });
-        const entrants = await rpc('data_api_tournament_entrants', { ...c, p_tournament_id: v.id });
+        const events = await rpcPrefer('data_api_tournament_events_v2', 'data_api_tournament_events', {
+          ...c,
+          p_tournament_id: v.id,
+        });
+        const entrants = await rpcPrefer('data_api_tournament_entrants_v2', 'data_api_tournament_entrants', {
+          ...c,
+          p_tournament_id: v.id,
+        });
         return ok(res, {
           generated_at: generatedAt,
           tournament: {
@@ -836,10 +993,16 @@ export function createHandler(deps: HandlerDeps) {
       case 'tournament_event': {
         // The event list is the tournament's visibility check as well: a draft
         // tournament or a hidden season returns no events, so the event 404s.
-        const events = await rpc('data_api_tournament_events', { ...c, p_tournament_id: v.id });
+        const events = await rpcPrefer('data_api_tournament_events_v2', 'data_api_tournament_events', {
+          ...c,
+          p_tournament_id: v.id,
+        });
         const event = events.find((e) => e.id === v.event_id);
         if (!event) return notFound(res);
-        const draw = await rpc('data_api_tournament_draw', { ...c, p_event_id: v.event_id });
+        const draw = await rpcPrefer('data_api_tournament_draw_v2', 'data_api_tournament_draw', {
+          ...c,
+          p_event_id: v.event_id,
+        });
         return ok(res, {
           generated_at: generatedAt,
           tournament_id: v.id,

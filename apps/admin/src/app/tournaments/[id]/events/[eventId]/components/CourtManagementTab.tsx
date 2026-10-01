@@ -1,12 +1,15 @@
 'use client';
 
-import { useState, useTransition, useMemo } from 'react';
+import { useState, useTransition, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, Check, Loader2, AlertCircle, Play, Square, ArrowRight } from 'lucide-react';
-import { courtLabel } from '@badminton/shared';
+import { courtKey, courtLabel, courtsInOrder, parseFormatConfig, type FormatConfig, type TournamentCourt } from '@badminton/shared';
+import { SearchFilter } from '@badminton/ui';
 import { setMatchCourt, setMatchReadyForPlayer, setMatchLive } from '@/lib/tournament-actions';
 import {
-  deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, type DeskState,
+  deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, deskRowGroup, groupsInPlay,
+  filterDeskRows, deskRoundLine, deskRowMatchesSearch, deskGroupLabel, deskGroupChipLabel, deskPools, deskCourtSuggestion,
+  type DeskState,
 } from '@/lib/live-desk';
 import type {
   TournamentMatchRow,
@@ -53,6 +56,10 @@ interface Props {
   canManageCourts: boolean;
   /** tournaments.results.enter.write — a DIFFERENT key. See participant-controls.ts. */
   canEnterResult: boolean;
+  /** The tournament's courts (00273); null before that migration, empty when it lists none. */
+  courts: TournamentCourt[] | null;
+  /** Courts a live match is on anywhere in the tournament. See deskCourtSuggestion. */
+  busyCourtIds: string[];
 }
 
 /** One person on one side of a match — the unit the ready control acts on. */
@@ -65,7 +72,12 @@ interface DeskSide {
   entryId: string | null;
   label: string;
   players: DeskPlayer[];
+  /** The entry's round-robin group, null outside a group stage. */
+  group: number | null;
 }
+
+const entryGroup = (e: unknown): number | null =>
+  (e as { group_number?: number | null }).group_number ?? null;
 
 /**
  * A TINTED SURFACE THAT ACTUALLY RENDERS.
@@ -117,6 +129,8 @@ export function CourtManagementTab({
   isDoubles,
   canManageCourts,
   canEnterResult,
+  courts,
+  busyCourtIds,
 }: Props) {
   // Entry id -> the people behind it. A singles entry is one person; a doubles
   // entry is two, and 00135 exists because knowing one of four has turned up is
@@ -132,7 +146,7 @@ export function CourtManagementTab({
         // render the shared form, and a pair reading "A & B" here while the
         // bracket says "A / B" is the kind of drift that makes an exec ask
         // whether they are looking at the same match.
-        map.set(p.id, { entryId: p.id, label: getName(p, isDoubles), players: people });
+        map.set(p.id, { entryId: p.id, label: getName(p, isDoubles), players: people, group: entryGroup(p) });
       }
     } else {
       for (const p of participants) {
@@ -140,6 +154,7 @@ export function CourtManagementTab({
           entryId: p.id,
           label: getName(p, isDoubles),
           players: p.player ? [{ playerId: p.player.id, name: p.player.full_name }] : [],
+          group: entryGroup(p),
         });
       }
     }
@@ -171,23 +186,52 @@ export function CourtManagementTab({
    * something to say.
    */
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+
+  // WHICH GROUPS THIS DESK RUNS. See filterDeskRows. Remembered per device and
+  // per event, read after mount so the server render matches.
+  const groupsKey = `court-desk-groups:${event.id}`;
+  const [myGroups, setMyGroups] = useState<number[]>([]);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(groupsKey) ?? '[]');
+      if (Array.isArray(saved)) setMyGroups(saved.filter((g): g is number => typeof g === 'number'));
+    } catch { /* no storage: start with every group */ }
+  }, [groupsKey]);
+  function pickGroups(next: number[]) {
+    setMyGroups(next);
+    try { window.localStorage.setItem(groupsKey, JSON.stringify(next)); } catch { /* not remembered */ }
+  }
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
 
   // The union of what the two half-tabs ask. See deskEventPlaying for why.
-  const eventPlaying = deskEventPlaying(event.status);
+  const eventPlaying = deskEventPlaying(event.status, event.format as string);
 
   const rows = useMemo(() => {
     const sideOf = (entryId: string | null): DeskSide =>
       (typeof entryId === 'string' ? sides.get(entryId) : undefined) ??
-      { entryId: null, label: 'TBD', players: [] };
+      { entryId: null, label: 'TBD', players: [], group: null };
 
     return deskRows(matches, sideOf, isDoubles);
   }, [matches, sides, isDoubles]);
 
-  // One "next", never a live match and never a TBD one. See nextCallable.
-  const nextRow = nextCallable(rows);
+  const cfg = useMemo(
+    () => (event.format === 'staged' ? parseFormatConfig(event.format_config) : null),
+    [event.format, event.format_config],
+  );
+  const inPlay = groupsInPlay(rows);
+  const pools = deskPools(inPlay, cfg);
+  const { rows: myRows, active: activeGroups } = filterDeskRows(rows, myGroups);
 
-  const { live: liveCount, callable: callableCount, waiting: waitingCount, uncourted } = deskCounts(rows);
+  // One "next", never a live match and never a TBD one. See nextCallable.
+  const nextRow = nextCallable(myRows);
+  const busy = useMemo(() => new Set(busyCourtIds), [busyCourtIds]);
+  const nextSuggestion = nextRow ? deskCourtSuggestion(nextRow, courts, busy) : null;
+
+  const { live: liveCount, callable: callableCount, waiting: waitingCount, uncourted } = deskCounts(myRows);
+
+  // The search narrows the list only, after next and the counts are worked out.
+  const shown = myRows.filter((row) => deskRowMatchesSearch(row, query, cfg));
 
   if (rows.length === 0) {
     return (
@@ -216,9 +260,10 @@ export function CourtManagementTab({
                   {nextRow.a.label} <span className="text-[var(--text-muted)]">vs</span> {nextRow.b.label}
                 </p>
                 <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)] mt-0.5">
-                  {roundLine(nextRow.match)}
+                  {deskRoundLine(nextRow.match, deskRowGroup(nextRow), cfg)}
                   {' · '}
                   {courtLabel(nextRow.match.court) ?? 'no court yet'}
+                  {nextSuggestion && ` · ${courtLabel(nextSuggestion.label)} is free`}
                 </p>
               </div>
             </div>
@@ -234,16 +279,65 @@ export function CourtManagementTab({
             {/* THE UNCOURTED COUNT SURVIVED THE SORT CHANGE, because it is
                 genuinely useful — it just no longer decides the order. */}
             <p role="status">
+              {activeGroups.length > 0 && `${activeGroups.map((g) => deskGroupLabel(g, cfg)).join(', ')}: `}
               {liveCount} on court · {callableCount} ready to call · {waitingCount} waiting
               {uncourted > 0 && ` · ${uncourted} with no court yet (entrants see “Court TBC”)`}
             </p>
           </div>
         </div>
 
-        {rows.map(({ match, a, b, state }) => (
+        {inPlay.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Groups this desk is running">
+            <span className="text-[11px] uppercase tracking-wide text-[var(--text-muted)] mr-1">My groups</span>
+            <GroupChip label="All" pressed={activeGroups.length === 0} onClick={() => pickGroups([])} />
+            {pools.map((pool) => {
+              const all = pool.groups.every((g) => activeGroups.includes(g));
+              return (
+                <GroupChip
+                  key={pool.key}
+                  label={pool.label}
+                  pressed={all}
+                  onClick={() => pickGroups(
+                    all
+                      ? activeGroups.filter((x) => !pool.groups.includes(x))
+                      : [...activeGroups, ...pool.groups.filter((g) => !activeGroups.includes(g))],
+                  )}
+                />
+              );
+            })}
+            {inPlay.map((g) => (
+              <GroupChip
+                key={g}
+                label={deskGroupChipLabel(g, cfg)}
+                pressed={activeGroups.includes(g)}
+                onClick={() => pickGroups(
+                  activeGroups.includes(g) ? activeGroups.filter((x) => x !== g) : [...activeGroups, g],
+                )}
+              />
+            ))}
+          </div>
+        )}
+
+        <SearchFilter
+          value={query}
+          onChange={setQuery}
+          label="Search matches by name, court or match number"
+          placeholder="Search a name, court or M12"
+          resultCount={shown.length}
+          noun="match"
+          nounPlural="matches"
+        />
+
+        {shown.length === 0 && (
+          <p className="p-4 text-center text-sm text-[var(--text-muted)]">No unplayed match fits that search.</p>
+        )}
+
+        {shown.map(({ match, a, b, state }) => (
           <DeskRow
             key={match.id}
             match={match}
+            group={deskRowGroup({ match, a, b })}
+            cfg={cfg}
             a={a}
             b={b}
             state={state}
@@ -251,6 +345,8 @@ export function CourtManagementTab({
             canManageCourts={canManageCourts}
             canEnterResult={canEnterResult && eventPlaying}
             onEnterScore={() => setScoreMatchId(match.id)}
+            courts={courts}
+            busy={busy}
           />
         ))}
       </div>
@@ -279,18 +375,27 @@ export function CourtManagementTab({
   );
 }
 
-/** "Pool · Round 2 · M4" / "Knockout · Round of 128 · M4". */
-function roundLine(m: TournamentMatchRow): string {
-  const parts: string[] = [];
-  if (m.phase === 'pool') parts.push('Pool');
-  else if (m.phase === 'bracket') parts.push('Knockout');
-  parts.push(m.round_name || `Round ${m.round_number}`);
-  if (m.match_number) parts.push(`M${m.match_number}`);
-  return parts.join(' · ');
+function GroupChip({ label, pressed, onClick }: { label: string; pressed: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={`min-w-[40px] min-h-[36px] px-3 text-xs font-semibold uppercase tracking-wide border transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none ${
+        pressed
+          ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
+          : 'bg-[var(--bg-elevated)] border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
+      }`}
+    >
+      {label}
+    </button>
+  );
 }
 
 function DeskRow({
   match,
+  group,
+  cfg,
   a,
   b,
   state,
@@ -298,8 +403,12 @@ function DeskRow({
   canManageCourts,
   canEnterResult,
   onEnterScore,
+  courts,
+  busy,
 }: {
   match: TournamentMatchRow;
+  group: number | null;
+  cfg: FormatConfig | null;
   a: DeskSide;
   b: DeskSide;
   state: DeskState;
@@ -307,7 +416,10 @@ function DeskRow({
   canManageCourts: boolean;
   canEnterResult: boolean;
   onEnterScore: () => void;
+  courts: TournamentCourt[] | null;
+  busy: ReadonlySet<string>;
 }) {
+  const suggestion = state === 'callable' ? deskCourtSuggestion({ match }, courts, busy) : null;
   const readyIds = new Set(match.ready_player_ids ?? []);
   const everyone = [...a.players, ...b.players];
   const readyCount = everyone.filter((p) => readyIds.has(p.playerId)).length;
@@ -352,7 +464,7 @@ function DeskRow({
             {a.label} <span className="text-[var(--text-muted)]">vs</span> {b.label}
           </p>
           <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)] mt-0.5">
-            {roundLine(match)}
+            {deskRoundLine(match, group, cfg)}
             {everyone.length > 0 ? ` · ${readyCount} of ${everyone.length} here` : ''}
           </p>
           {/* A WAITING ROW SAYS WHY. Without this the desk sees "TBD vs TBD" and
@@ -369,7 +481,19 @@ function DeskRow({
         </span>
       </div>
 
-      <CourtField matchId={match.id} current={match.court ?? ''} disabled={!canManageCourts} />
+      {courts?.length ? (
+        <CourtPicker
+          matchId={match.id}
+          court={match.court}
+          courtId={match.court_id ?? null}
+          courts={courts}
+          busy={busy}
+          suggestion={suggestion}
+          disabled={!canManageCourts}
+        />
+      ) : (
+        <CourtField matchId={match.id} current={match.court ?? ''} disabled={!canManageCourts} />
+      )}
 
       {everyone.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -389,8 +513,9 @@ function DeskRow({
           about which it is offering — see participant-controls.ts for why running
           the door and deciding who won are not the same key. */}
       <div className="flex flex-wrap gap-1.5">
+        {/* Keyed on the court so a refusal for the old court clears once the desk picks another. */}
         {state !== 'waiting' && canManageCourts && (
-          <StartStopButton matchId={match.id} live={state === 'live'} />
+          <StartStopButton key={match.court ?? ''} matchId={match.id} live={state === 'live'} />
         )}
         {state !== 'waiting' && canEnterResult && (
           <button
@@ -460,9 +585,10 @@ function StartStopButton({ matchId, live }: { matchId: string; live: boolean }) 
 /**
  * The court, as an exec types it.
  *
- * A TEXT BOX AND NOT A PICKER, and 00135 argues it at length: the club has no
- * court model, no agreed numbering, and no request for one, so a picker would be
- * a setup step somebody has to remember at 9am on a Saturday. `courtLabel`
+ * A TEXT BOX AND NOT A PICKER while the tournament lists no courts, and 00135
+ * argues it at length: a picker would be a setup step somebody has to remember
+ * at 9am on a Saturday. Once the organiser lists courts (00273) the desk gets
+ * CourtPicker instead. `courtLabel`
  * absorbs "Court 3" as readily as "3", so the desk does not have to be taught a
  * convention either.
  *
@@ -523,6 +649,95 @@ function CourtField({ matchId, current, disabled }: { matchId: string; current: 
         />
         {pending && <Loader2 className="w-4 h-4 animate-spin text-[var(--text-muted)]" aria-hidden />}
       </label>
+      {error && <p className="mt-1 text-[11px] text-[var(--color-accent)]" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * The court, picked from the tournament's own list (00273).
+ *
+ * A SELECT RATHER THAN THE TEXT BOX once a tournament lists its courts: the
+ * server refuses any other name, so offering a free box would only invite a
+ * refusal. Courts a live match is on are marked "in use" and still offered,
+ * because the list can be stale (see deskCourtSuggestion) and the database is
+ * the real guard. Saves on change. "Use Court Y" is the one-tap form of the
+ * same write for a callable match whose court is missing or busy.
+ */
+function CourtPicker({
+  matchId,
+  court,
+  courtId,
+  courts,
+  busy,
+  suggestion,
+  disabled,
+}: {
+  matchId: string;
+  court: string | null;
+  courtId: string | null;
+  courts: TournamentCourt[];
+  busy: ReadonlySet<string>;
+  suggestion: TournamentCourt | null;
+  disabled: boolean;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const current = courtId
+    ? courts.find((c) => c.id === courtId) ?? null
+    : courts.find((c) => courtLabel(court) != null && courtKey(c.label) === courtKey(court)) ?? null;
+  // A court typed before the list existed and not on it: shown, not offered.
+  const stray = !current && courtLabel(court) ? court : null;
+  const options = courtsInOrder(courts).filter((c) => c.active || c.id === current?.id);
+
+  function save(label: string) {
+    setError(null);
+    startTransition(async () => {
+      const res = await setMatchCourt(matchId, label);
+      if (!res.ok) { setError(res.error); return; }
+      router.refresh();
+    });
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <MapPin className="w-4 h-4 text-[var(--text-muted)] shrink-0" aria-hidden />
+        <label className="flex-1 min-w-0">
+          <span className="sr-only">Court for this match</span>
+          <select
+            value={current?.id ?? (stray ? '__stray' : '')}
+            disabled={disabled || pending}
+            onChange={(e) => {
+              const picked = courts.find((c) => c.id === e.target.value);
+              save(picked?.label ?? '');
+            }}
+            className="w-full min-h-[44px] px-3 bg-[var(--bg-surface)] border border-[var(--border)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-60"
+          >
+            <option value="">No court</option>
+            {stray && <option value="__stray" disabled>{courtLabel(stray)} (not on the list)</option>}
+            {options.map((c) => (
+              <option key={c.id} value={c.id}>
+                {courtLabel(c.label)}
+                {!c.active ? ' (off)' : busy.has(c.id) && c.id !== current?.id ? ' (in use)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        {pending && <Loader2 className="w-4 h-4 animate-spin text-[var(--text-muted)]" aria-hidden />}
+      </div>
+      {suggestion && !disabled && (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => save(suggestion.label)}
+          className="mt-1.5 inline-flex items-center gap-1.5 min-h-[44px] px-3 border border-[var(--border)] bg-[var(--bg-surface)] text-xs font-medium text-[var(--text-primary)] hover:border-[var(--border-hover)] transition-colors duration-150 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        >
+          Use {courtLabel(suggestion.label)}
+        </button>
+      )}
       {error && <p className="mt-1 text-[11px] text-[var(--color-accent)]" role="alert">{error}</p>}
     </div>
   );

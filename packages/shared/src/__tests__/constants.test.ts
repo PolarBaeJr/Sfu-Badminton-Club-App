@@ -18,6 +18,7 @@ import {
   isLegalCustomGames,
   isLegalCustomPoints,
   customFormatHint,
+  pointsCap,
 } from '../utils/constants';
 import type {
   PlayerStatus,
@@ -415,11 +416,13 @@ describe('custom format validation', () => {
     expect(isLegalCustomPoints(21.5)).toBe(false);
   });
 
-  it('plays a game to at most 21', () => {
-    expect(CUSTOM_FORMAT_BOUNDS.maxPoints).toBe(21);
-    expect(isLegalCustomPoints(22)).toBe(false);
-    expect(isLegalCustomPoints(30)).toBe(false);
-    expect(customFormatHint(3, 30)).toContain('Points per game');
+  it('plays a game to at most 30, matching the SQL CHECKs', () => {
+    expect(CUSTOM_FORMAT_BOUNDS.maxPoints).toBe(30);
+    expect(isLegalCustomPoints(22)).toBe(true);
+    expect(isLegalCustomPoints(30)).toBe(true);
+    expect(isLegalCustomPoints(31)).toBe(false);
+    expect(customFormatHint(3, 31)).toContain('Points per game');
+    expect(pointsCap(30)).toBe(39);
   });
 
   it('writes its hints without an em dash', () => {

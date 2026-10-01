@@ -24,6 +24,10 @@ const TS = readFileSync(
   join(REPO, 'apps/admin/src/lib/tournament-actions/brackets.ts'), 'utf8');
 const SQL = readFileSync(
   join(REPO, 'supabase/migrations/00202_round10_field_defects.sql'), 'utf8');
+const STAGE_TS = readFileSync(
+  join(REPO, 'apps/admin/src/lib/tournament-actions/stages.ts'), 'utf8');
+const STAGE_SQL = readFileSync(
+  join(REPO, 'supabase/migrations/00272_staged_event_format.sql'), 'utf8');
 
 /** Keys of the single object literal a named one-expression builder returns. */
 function tsReturnKeys(fnName: string): string[] {
@@ -55,7 +59,8 @@ function tsReturnKeys(fnName: string): string[] {
 }
 
 /** Keys of the Nth jsonb_build_object inside publish_event_draw's comparison. */
-function sqlDigestKeys(column: string): string[] {
+function sqlDigestKeys(column: string, SQL_SOURCE = SQL): string[] {
+  const SQL = SQL_SOURCE;
   // Anchor on the join column so doubles and singles cannot be confused, and
   // so an accidental match against one of the many other jsonb_build_object
   // calls in the migration is impossible.
@@ -103,5 +108,24 @@ describe('publish_event_draw digest key contract', () => {
     const d = new Set(sqlDigestKeys('tournament_pairs pr'));
     const s = new Set(sqlDigestKeys('tournament_participants tp'));
     expect(d).not.toEqual(s);
+  });
+});
+
+/** Keys of every `identity: { ... }` literal in stages.ts, in source order. */
+function stageIdentityKeys(): string[][] {
+  return [...STAGE_TS.matchAll(/identity: \{([^}]*)\}/g)].map((m) =>
+    m[1]!.split(',').map((part) => /^\s*(\w+)\s*:/.exec(part)![1]!));
+}
+
+describe('publish_stage_draw digest key contract', () => {
+  it('the stage draw builds the same digest keys publish_stage_draw compares', () => {
+    const [doubles, singles] = stageIdentityKeys();
+    expect(STAGE_TS).toContain('({ ...e.identity, seed: e.seed, grp: e.grp })');
+    expect([...doubles!, 'seed', 'grp']).toEqual(['p1', 'p2', 'ce', 'seed', 'grp']);
+    expect([...singles!, 'seed', 'grp']).toEqual(['p', 'eb', 'ea', 'seed', 'grp']);
+    expect(new Set([...doubles!, 'seed', 'grp']))
+      .toEqual(new Set(sqlDigestKeys('tournament_pairs pr', STAGE_SQL)));
+    expect(new Set([...singles!, 'seed', 'grp']))
+      .toEqual(new Set(sqlDigestKeys('tournament_participants tp', STAGE_SQL)));
   });
 });

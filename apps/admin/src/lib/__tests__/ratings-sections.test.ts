@@ -13,7 +13,8 @@ import { sectionForSettingKey, settingsForSection } from '../platform-setting-se
 /**
  * The blobs as the migrations actually leave them: 00006 seeds, 00029 adds
  * sweep_margin_multiplier, 00041 adds max_elo/min_elo, 00055 adds tier_size,
- * 00268 adds the three repeat challenge keys.
+ * 00268 adds the three repeat challenge keys, 00275 the two third-place
+ * bonus keys.
  * Written out by hand rather than derived from the layout, so that a field
  * dropped from the layout fails here instead of agreeing with itself.
  */
@@ -41,10 +42,12 @@ const LIVE_ROWS = [
       enabled: true,
       singles_champion: 32,
       singles_finalist: 20,
+      singles_thirdplace: 16,
       singles_semifinalist: 12,
       singles_quarterfinalist: 6,
       doubles_champion: 28,
       doubles_finalist: 18,
+      doubles_thirdplace: 14,
       doubles_semifinalist: 10,
       doubles_quarterfinalist: 4,
     },

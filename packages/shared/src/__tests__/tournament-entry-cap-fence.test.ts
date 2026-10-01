@@ -51,7 +51,15 @@ const MIGRATIONS_DIR = join(__dirname, '../../../../supabase/migrations');
  * WHO COUNTS THE CAP. Exactly these three, and each is an entry path a member
  * or an exec can drive: self-entry, admin bulk add, and pairing.
  */
-const CAP_READERS = new Set(['enter_tournament_event', 'add_participants_under_field_lock', 'pair_tournament_entrants']);
+const CAP_READERS = new Set([
+  'enter_tournament_event',
+  'add_participants_under_field_lock',
+  'pair_tournament_entrants',
+  // 00278: the waitlist fill enters members, and joining refuses a member who
+  // could never be entered, so both count the cap under the same two locks.
+  'fill_event_from_waitlist',
+  'join_event_waitlist',
+]);
 
 /**
  * WHO TAKES THE TOURNAMENT ROW WITHOUT COUNTING — 00218. A third category, and
@@ -82,6 +90,13 @@ const ENTRANT_WRITERS: Record<string, { countsCap: boolean; openGap?: true; why:
   add_participants_under_field_lock: {
     countsCap: true,
     why: 'An exec adding entrants in bulk. Same cap, same count, same locks.',
+  },
+  fill_event_from_waitlist: {
+    countsCap: true,
+    why:
+      'Entering the head of an event waitlist (00278). A promoted member gains ' +
+      'an event exactly as if they had entered themselves, so the cap is counted ' +
+      'for each one under both locks and an over-cap member is skipped.',
   },
   pair_tournament_entrants: {
     countsCap: true,
@@ -310,7 +325,7 @@ describe('cross-event entry cap — the lock discipline 00201 established', () =
     .map(([key]) => nameOf(key))
     .sort();
 
-  it('the set of cap counters is exactly the three entry paths', () => {
+  it('the set of cap counters is exactly the entry paths', () => {
     expect(
       capReaders,
       'A function started reading max_events_per_player. Classify it: if it is ' +

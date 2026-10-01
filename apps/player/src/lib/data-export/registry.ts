@@ -414,6 +414,15 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     // ready, so it is filtered down to the requester's own id.
     why: 'The draw matches you appear in. The "ready" list is filtered down to you alone, because the rest of it is other entrants. Who entered the result is reduced to "you" or a club officer.',
   },
+  tournament_event_waitlist: {
+    playerColumns: ['player_id', 'resolved_by'],
+    disposition: 'export',
+    // resolved_by is the OFFICER who promoted or removed the member (00278),
+    // not the member. Projected to a role descriptor under `resolved_by_role`,
+    // for the same reason as session_attendance.marked_by.
+    withheldColumns: ['resolved_by'],
+    why: 'Every tournament event waitlist you joined, when, and whether you were entered from it, left it, were skipped or were removed.',
+  },
   legacy_tournament_participants: {
     playerColumns: ['player_id', 'partner_id'],
     disposition: 'project',
@@ -821,6 +830,7 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   schema_migrations: 'Which migrations have been applied.',
   seasons: 'The club\'s seasons. A club-wide object.',
   tournament_fee_tiers: 'Tournament price tiers. A club-wide object.',
+  tournament_courts: 'The courts of a tournament (00273). A venue object, with no player reference.',
   match_games:
     'Game scores hanging off a match id, with no player reference. Exported as the context for the member\'s own matches.',
   tournament_events:

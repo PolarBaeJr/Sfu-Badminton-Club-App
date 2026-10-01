@@ -15,6 +15,16 @@ import {
   endsInKnockout,
   SEED_SKIP_BOUNDS,
   ELO_MULTIPLIER_BOUNDS,
+  anyStageRated,
+  checkFormatConfig,
+  parseFormatConfig,
+  stagedConfigEditRefusal,
+  withEveryStageUnrated,
+  normalizePointsConfig,
+  effectiveWindows,
+  validateEffectiveWindows,
+  windowColumnsFromWallClock,
+  type WindowColumns,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -23,6 +33,7 @@ import type {
   TournamentSeedingMethod,
   TournamentEventStatus,
   SeedBy,
+  FormatConfig,
 } from '@badminton/shared';
 import { isDoublesEvent } from '@badminton/shared';
 import {
@@ -30,6 +41,10 @@ import {
   revalidateEventPaths,
   assertTournamentNotSuspended,
   forfeitOutOfEventEntries,
+  fillFromWaitlistAfterFree,
+  settleWaitlistPromotions,
+  isWaitlistMissing,
+  type WaitlistFillResult,
 } from './_internal';
 
 // ============================================================
@@ -203,6 +218,44 @@ async function assertSeedSourceUsable(
   }
 }
 
+// A staged event's stages (00272), checked with the same schema the form
+// checks with, and every refusal said in words. An external event never moves
+// ratings, so its stages are stored unrated whatever the form sent.
+function normalizeFormatConfig(raw: unknown, external: boolean): FormatConfig {
+  const checked = checkFormatConfig(raw);
+  if (!checked.ok) {
+    throw new ExpectedError(`The stages are not set out correctly. ${checked.errors.join(' ')}`);
+  }
+  return external ? withEveryStageUnrated(checked.config) : checked.config;
+}
+
+const STAGED_MIGRATION_MISSING = 'Run migration 00272 first';
+const POINTS_MIGRATION_MISSING = 'Run migration 00275 first';
+
+// A column this code writes that the database does not have yet.
+function isColumnMissing(error: { code?: string; message?: string } | null): boolean {
+  return !!error && ['42703', 'PGRST204'].includes(error.code ?? '');
+}
+
+// ...or, for a staged event, the format CHECK from before 'staged' existed.
+function isStagedSchemaMissing(error: { code?: string; message?: string } | null): boolean {
+  return isColumnMissing(error)
+    || (!!error && error.code === '23514' && /format_check/.test(error.message ?? ''));
+}
+
+// A legacy event's points table (00275), checked and stored only when it
+// differs from the format's default. A staged event keeps its table in its
+// stages, so one sent here is refused rather than dropped.
+function normalizeEventPoints(format: string, raw: unknown) {
+  if (format === 'staged') {
+    if (raw != null) throw new ExpectedError('Set points in the stages editor.');
+    return null;
+  }
+  const res = normalizePointsConfig(format, raw);
+  if (!res.ok) throw new ExpectedError(res.error);
+  return res.table;
+}
+
 async function createTournamentEventImpl(
   tournamentId: string,
   config: {
@@ -221,6 +274,10 @@ async function createTournamentEventImpl(
     elo_multiplier?: number;
     placement_bonus_enabled?: boolean;
     external_event?: boolean;
+    /** Required for, and only for, a staged event. */
+    format_config?: unknown;
+    /** A legacy event's points table (00275). Absent or the default stores nothing. */
+    points_config?: unknown;
   }
 ) {
   const admin = await requireCapability('tournaments.manage.event.create.write');
@@ -245,10 +302,24 @@ async function createTournamentEventImpl(
   }
   // EXTERNAL TEAMS (00269): a round robin of doubles, unrated, with no placement
   // bonus and no pool link. The CHECK in 00269 says the same; this says it first.
+  //
+  // A staged event (00272) may be external too: its stages are stored unrated.
   const external = config.external_event === true;
-  if (external && (config.format !== 'round_robin' || !isDoublesEvent(config.event_type) || config.seeded_from_event_id)) {
-    throw new ExpectedError('An external event must be a doubles Round Robin, not seeded from another event.');
+  if (external && ((config.format !== 'round_robin' && config.format !== 'staged') || !isDoublesEvent(config.event_type) || config.seeded_from_event_id)) {
+    throw new ExpectedError('An external event must be a doubles Round Robin or Stages event, not seeded from another event.');
   }
+  const staged = config.format === 'staged';
+  if (!staged && config.format_config != null) {
+    throw new ExpectedError('Only an event played in stages has stage settings.');
+  }
+  if (staged && config.seeded_from_event_id) {
+    throw new ExpectedError('An event played in stages draws its own field, so it cannot be seeded from another event.');
+  }
+  const formatConfig = staged ? normalizeFormatConfig(config.format_config, external) : null;
+  const pointsConfig = normalizeEventPoints(config.format, config.points_config);
+  // A placement bonus is paid into ratings, so an event none of whose stages
+  // is rated pays none.
+  const bonusAllowed = !external && (!formatConfig || anyStageRated(formatConfig));
 
   const { data, error } = await adminClient.from('tournament_events').insert({
     tournament_id: tournamentId,
@@ -287,11 +358,18 @@ async function createTournamentEventImpl(
     max_participants: config.max_participants ?? null,
     seeding_method: config.seeding_method ?? 'elo',
     elo_multiplier: eloMultiplier ?? 1.25,
-    placement_bonus_enabled: external ? false : (config.placement_bonus_enabled ?? true),
+    placement_bonus_enabled: bonusAllowed ? (config.placement_bonus_enabled ?? true) : false,
     external_event: external,
+    // Only named on a staged event, so a database without 00272 still takes
+    // every other format.
+    ...(formatConfig ? { format_config: formatConfig as never, rated: !external } : {}),
+    // Likewise only named when it differs from the default (00275).
+    ...(pointsConfig ? { points_config: pointsConfig as never } : {}),
   }).select().single();
 
   if (error) {
+    if (staged && isStagedSchemaMissing(error)) throw new ExpectedError(STAGED_MIGRATION_MISSING);
+    if (pointsConfig && isColumnMissing(error)) throw new ExpectedError(POINTS_MIGRATION_MISSING);
     if (error.code === '23514') throw new ExpectedError(error.message);
     Sentry.captureException(error);
     throw new Error(error.message);
@@ -324,6 +402,10 @@ async function updateTournamentEventImpl(
     seeding_method?: TournamentSeedingMethod;
     elo_multiplier?: number;
     placement_bonus_enabled?: boolean;
+    /** A staged event's stages. Sent on its own once a stage is drawn. */
+    format_config?: unknown;
+    /** A legacy event's points table (00275). Sent on its own once the event is drawn. */
+    points_config?: unknown;
   }
 ) {
   const admin = await requireCapability('tournaments.manage.event.update.write');
@@ -351,13 +433,36 @@ async function updateTournamentEventImpl(
    * bundled with a format change it would carry that change past the gate.
    */
   const seedingMethodOnly = Object.keys(updates).length === 1 && 'seeding_method' in updates;
+  // A STAGED EVENT'S STAGES ARE THE OTHER CARVE-OUT (00272). Its later stages
+  // are drawn while the event is live, so the stages not yet drawn stay
+  // editable after the first is; stagedConfigEditRefusal below keeps every
+  // drawn stage, and the categories and head starts, exactly as they were.
+  // Only on its own, for the seeding method's reason.
+  const stagedConfigOnly = event.format === 'staged'
+    && Object.keys(updates).length === 1 && 'format_config' in updates;
+  // THE POINTS TABLE IS THE THIRD (00275). It is read once, when the event is
+  // finalised, and nothing about the draw or a result depends on it, so it
+  // stays editable until then. Refused on a staged event before this can let
+  // it through: that table lives in the stages.
+  if ('points_config' in updates && event.format === 'staged' && updates.points_config != null) {
+    throw new ExpectedError('Set points in the stages editor.');
+  }
+  const pointsOnly = Object.keys(updates).length === 1 && 'points_config' in updates;
 
   // The old gate was status === 'registration', which locked the match format
   // the moment check-in opened — the exact point at which an exec discovers the
   // day is running late and wants to shorten the games. What actually must not
   // change is a format the draw has already been played under, so the gate is
   // now the existence of matches: no bracket, still editable.
-  if (!seedingMethodOnly) {
+  if (stagedConfigOnly) {
+    if (event.status === 'completed') {
+      throw new ExpectedError('This event has been finalised, so its stages can no longer be changed.');
+    }
+  } else if (pointsOnly) {
+    if (event.status === 'completed') {
+      throw new ExpectedError('This event has been finalised, so its points can no longer be changed.');
+    }
+  } else if (!seedingMethodOnly) {
     const { count: matchCount } = await adminClient.from('tournament_matches')
       .select('id', { count: 'exact', head: true })
       .eq('event_id', eventId);
@@ -376,6 +481,36 @@ async function updateTournamentEventImpl(
   const patch: Record<string, unknown> = { ...updates };
   // Set at creation only (00269); the trigger refuses a flip once anybody is in.
   delete patch.external_event;
+  // The waitlist has its own action, which takes the field lock (00278).
+  delete patch.waitlist_enabled;
+  delete patch.waitlist_auto_promote;
+
+  if ('format_config' in updates) {
+    if (event.format !== 'staged') throw new ExpectedError('Only an event played in stages has stage settings.');
+    const cfg = normalizeFormatConfig(updates.format_config, event.external_event === true);
+    const { data: drawnRows, error: drawnError } = await adminClient.from('tournament_matches')
+      .select('stage')
+      .eq('event_id', eventId)
+      .not('stage', 'is', null);
+    if (isStagedSchemaMissing(drawnError)) throw new ExpectedError(STAGED_MIGRATION_MISSING);
+    if (drawnError) throw new Error(`Could not read which stages are drawn: ${drawnError.message}`);
+    const drawn = new Set((drawnRows ?? []).map((r) => r.stage as number));
+    const refusal = stagedConfigEditRefusal(parseFormatConfig(event.format_config), cfg, drawn);
+    if (refusal) throw new ExpectedError(refusal);
+    patch.format_config = cfg;
+    if (!anyStageRated(cfg)) patch.placement_bonus_enabled = false;
+  }
+
+  if ('points_config' in updates) {
+    const table = normalizeEventPoints(event.format as string, updates.points_config);
+    // select('*') names every column the database has, so a row without the
+    // key is a database without 00275. Back to the default there is nothing to
+    // write; anything else cannot be stored yet.
+    const hasColumn = 'points_config' in event;
+    if (table && !hasColumn) throw new ExpectedError(POINTS_MIGRATION_MISSING);
+    if (hasColumn) patch.points_config = table;
+    else delete patch.points_config;
+  }
 
   if ('games_per_match' in updates || 'points_per_game' in updates) {
     Object.assign(patch, normalizeTypedFormat(updates.games_per_match, updates.points_per_game));
@@ -502,6 +637,8 @@ async function updateTournamentEventImpl(
     .eq('id', eventId);
 
   if (error) {
+    if ('format_config' in updates && isStagedSchemaMissing(error)) throw new ExpectedError(STAGED_MIGRATION_MISSING);
+    if ('points_config' in patch && isColumnMissing(error)) throw new ExpectedError(POINTS_MIGRATION_MISSING);
     // 23514: e.g. the placement bonus switched on for an external event (00269).
     if (error.code === '23514') throw new ExpectedError(error.message);
     Sentry.captureException(error);
@@ -515,6 +652,9 @@ async function updateTournamentEventImpl(
     performed_by: admin.id,
     details: patch,
   });
+
+  // A raised or cleared limit may have room for the waitlist (00278). Never throws.
+  if ('max_participants' in patch) await fillFromWaitlistAfterFree(adminClient, eventId, admin.id);
 
   revalidateEventPaths(event.tournament_id, eventId);
 }
@@ -538,6 +678,134 @@ export async function updateTournamentEvent(
   updates: Parameters<typeof updateTournamentEventImpl>[1],
 ): Promise<ActionResult<void>> {
   return runAction(async () => { await updateTournamentEventImpl(eventId, updates); });
+}
+
+const WINDOWS_MIGRATION_MISSING = 'Run migration 00276 first';
+
+/**
+ * An event's own registration and check-in windows (00276), as club wall-clock
+ * strings from the form. Blank clears a bound, so the tournament's applies.
+ * These gate only the member's own entry and check-in: an exec still opens
+ * and closes the statuses by hand, and still adds and checks people in.
+ */
+async function setEventWindowsImpl(
+  eventId: string,
+  windows: Partial<Record<keyof WindowColumns, string | null>>,
+) {
+  const admin = await requireCapability('tournaments.manage.event.update.write');
+  const adminClient = createAdminClient();
+  const patch = windowColumnsFromWallClock(windows);
+
+  const { data: event, error: eventError } = await adminClient
+    .from('tournament_events').select('*').eq('id', eventId).single();
+  if (eventError || !event) throw new Error(eventError?.message ?? 'Event not found');
+  if (!('registration_opens_at' in event)) throw new ExpectedError(WINDOWS_MIGRATION_MISSING);
+  if (event.status === 'completed') throw new ExpectedError('This event is finished, so its windows are fixed.');
+
+  const { data: tournament, error: tournamentError } = await adminClient
+    .from('tournaments').select('*').eq('id', event.tournament_id).single();
+  if (tournamentError || !tournament) throw new Error(tournamentError?.message ?? 'Tournament not found');
+
+  const refusal = validateEffectiveWindows(effectiveWindows({ event: { ...event, ...patch }, tournament }));
+  if (refusal) throw new ExpectedError(refusal);
+
+  const { error } = await adminClient
+    .from('tournament_events')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', eventId);
+  if (error) {
+    if (isColumnMissing(error)) throw new ExpectedError(WINDOWS_MIGRATION_MISSING);
+    if (error.code === '23514') throw new ExpectedError(error.message);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'event_windows_updated',
+    performed_by: admin.id,
+    details: { ...patch },
+  });
+
+  revalidateEventPaths(event.tournament_id, eventId);
+}
+
+export async function setEventWindows(
+  eventId: string,
+  windows: Parameters<typeof setEventWindowsImpl>[1],
+): Promise<ActionResult<void>> {
+  return runAction(async () => { await setEventWindowsImpl(eventId, windows); });
+}
+
+const WAITLIST_MIGRATION_MISSING = 'Run migration 00278 first';
+
+/**
+ * Switch an event's waitlist on or off, and choose whether a freed place goes
+ * to the head of the queue automatically (00278). Switching to automatic with
+ * people already waiting hands out any free place straight away.
+ */
+async function setEventWaitlistImpl(
+  eventId: string,
+  settings: { enabled: boolean; autoPromote: boolean },
+): Promise<{ promoted: number }> {
+  const admin = await requireCapability('tournaments.manage.event.update.write');
+  const adminClient = createAdminClient();
+
+  const { data: event, error: eventError } = await adminClient
+    .from('tournament_events').select('*').eq('id', eventId).single();
+  if (eventError || !event) throw new Error(eventError?.message ?? 'Event not found');
+  if (!('waitlist_enabled' in event)) throw new ExpectedError(WAITLIST_MIGRATION_MISSING);
+  if (event.external_event === true) {
+    throw new ExpectedError('An external event has no waitlist: its teams are entered by name.');
+  }
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('The waitlist can only be changed while the event is taking entries or checking in.');
+  }
+
+  const { data, error } = await adminClient.rpc('set_event_waitlist', {
+    p_event_id: eventId,
+    p_enabled: settings.enabled,
+    p_auto: settings.autoPromote,
+    p_actor: admin.id,
+  });
+  if (error) {
+    if (isWaitlistMissing(error)) throw new ExpectedError(WAITLIST_MIGRATION_MISSING);
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  const result = data as WaitlistFillResult | null;
+  if (!result?.ok) {
+    switch (result?.reason) {
+      case 'waitlist_not_empty':
+        throw new ExpectedError('People are still waiting. Promote or remove them before switching the waitlist off.');
+      case 'external_event':
+        throw new ExpectedError('An external event has no waitlist: its teams are entered by name.');
+      case 'event_status':
+        throw new ExpectedError('The waitlist can only be changed while the event is taking entries or checking in.');
+      default:
+        throw new ExpectedError('The waitlist could not be changed. Reload the page and try again.');
+    }
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'event_waitlist_updated',
+    performed_by: admin.id,
+    details: { enabled: settings.enabled, auto_promote: settings.autoPromote },
+  });
+  const promoted = await settleWaitlistPromotions(adminClient, result, admin.id, true);
+
+  revalidateEventPaths(event.tournament_id, eventId);
+  return { promoted };
+}
+
+export async function setEventWaitlist(
+  eventId: string,
+  settings: Parameters<typeof setEventWaitlistImpl>[1],
+): Promise<ActionResult<{ promoted: number }>> {
+  return runAction(() => setEventWaitlistImpl(eventId, settings));
 }
 
 export async function deleteTournamentEvent(eventId: string) {

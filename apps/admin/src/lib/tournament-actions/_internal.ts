@@ -3,6 +3,7 @@
 // imported by the per-domain action files.
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
+import { logAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import {
   calculateEloUpdate,
@@ -15,9 +16,11 @@ import {
   isOpenMatch,
   forfeitOutcome,
   OPEN_MATCH_STATUSES,
-  sortStandings,
-  qualificationOrder,
   snakeGroupAssignment,
+  tallyRoundRobin,
+  rankRoundRobin,
+  shuffleWithRng,
+  getStandardSeedPositions,
   resolveEventWaiverText,
   screenForEventWaiver,
   eventWaiverRefusal,
@@ -25,6 +28,11 @@ import {
   phaseValueFor,
   resolveMatchShape,
   ExpectedError,
+  parseFormatConfig,
+  stageAt,
+  stageMatchRules,
+  stagedMatchRated,
+  ensureEntryFees,
 } from '@badminton/shared';
 // By SUBPATH, never through the barrel — eventWaiverHash uses node:crypto and
 // the barrel is imported by client components in both apps.
@@ -684,30 +692,9 @@ export function routedEntryId(
   return (match[field] as string | null) ?? null;
 }
 
-/**
- * Standard tournament seeding positions.
- * For a bracket of size B, returns an array of length B where
- * index = bracket position, value = seed number (1-based).
- * Ensures seed 1 and 2 are on opposite halves, 3/4 in opposite quarters, etc.
- */
-export function getStandardSeedPositions(bracketSize: number): number[] {
-  if (bracketSize < 2) return [1];
-
-  // Start with seeds 1 and 2
-  let positions = [1, 2];
-
-  while (positions.length < bracketSize) {
-    const nextRound: number[] = [];
-    const sum = positions.length * 2 + 1;
-    for (const seed of positions) {
-      nextRound.push(seed);
-      nextRound.push(sum - seed);
-    }
-    positions = nextRound;
-  }
-
-  return positions;
-}
+// Moved to packages/shared (draw-order.ts) so the staged draw builds knockouts
+// the same way; re-exported here for the existing importers.
+export { getStandardSeedPositions };
 
 // ============================================================
 // Drawing the seeds — randomised WITHIN tiers, never across them
@@ -891,6 +878,11 @@ export type GroupCandidate = {
   group: number | null;
 };
 
+/** A copy in id order: the canonical order a seeded shuffle starts from. */
+export function inIdOrder<T extends { id: string }>(entries: readonly T[]): T[] {
+  return [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 /**
  * The order the field is dealt into groups in — best first.
  *
@@ -934,13 +926,20 @@ export function seedingOrderForGroups<T extends GroupCandidate>(entries: readonl
  * A group number outside 1..groupCount counts as unassigned. It can only come
  * from group_count having been lowered after the fact, and leaving it would put
  * somebody in a group that no longer exists.
+ *
+ * `rng` is passed for seeding_method = 'random': the field is shuffled instead
+ * of put in seed order, so the serpentine deals a random field. Seeds and
+ * ratings are ignored. The field is put in id order first so the same rng
+ * always deals the same groups, whatever order the rows were read in.
  */
 export function planGroupAssignment<T extends GroupCandidate>(
   entries: readonly T[],
   groupCount: number,
-  opts?: { reassignAll?: boolean },
+  opts?: { reassignAll?: boolean; rng?: () => number },
 ): Map<string, number> {
-  const ordered = seedingOrderForGroups(entries);
+  const ordered = opts?.rng
+    ? shuffleWithRng(inIdOrder(entries), opts.rng)
+    : seedingOrderForGroups(entries);
   const out = new Map<string, number>();
   if (groupCount < 2) {
     for (const e of ordered) out.set(e.id, 1);
@@ -1241,6 +1240,9 @@ export async function applyTournamentMatchElo(matchId: string) {
   // An external event (00269) is unrated: its teams have no ratings rows. The
   // tournament_matches_external_unrated trigger refuses the snapshot as a backstop.
   if (event.external_event === true) return;
+  // An unrated staged event or stage (00272). The same trigger refuses the
+  // snapshot as the backstop.
+  if (!stagedMatchRated(event as { rated?: boolean | null; format_config?: unknown }, match.stage)) return;
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
   // THE MATCH'S OWN SHAPE, falling back to the event's (00108). A draw whose
   // rounds are played to different lengths has to rate them differently or the
@@ -1977,10 +1979,78 @@ async function settleAdvancedMatch(
   // destroyed a result (see routeEntry). Silent rather than throwing: the
   // withdrawal cascade calls this in a loop, and one throw mid-loop would leave
   // half the forfeits committed.
+  // A staged knockout row learns its sides here, so this is where its head
+  // starts are snapshotted (00272).
+  const starts = next.stage != null ? await stagedHeadStarts(adminClient, next, doubles, aId, bId) : {};
   await adminClient.from('tournament_matches')
-    .update({ status: 'ready' })
+    .update({ status: 'ready', ...starts })
     .eq('id', matchId)
     .in('status', ['pending', 'ready']);
+}
+
+async function stagedHeadStarts(
+  adminClient: ReturnType<typeof createAdminClient>,
+  match: { event_id: string; stage: number | null },
+  doubles: boolean,
+  aId: string,
+  bId: string,
+): Promise<{ handicap_a?: number; handicap_b?: number }> {
+  const { data: event } = await adminClient.from('tournament_events')
+    .select('format_config').eq('id', match.event_id).maybeSingle();
+  const cfg = parseFormatConfig(event?.format_config);
+  const stage = cfg ? stageAt(cfg, match.stage) : undefined;
+  if (!cfg || !stage) return {};
+  let catA: string | null = null;
+  let catB: string | null = null;
+  if (doubles) {
+    const { data: pairs } = await adminClient.from('tournament_pairs')
+      .select('id, team_category').in('id', [aId, bId]);
+    catA = pairs?.find(p => p.id === aId)?.team_category ?? null;
+    catB = pairs?.find(p => p.id === bId)?.team_category ?? null;
+  }
+  const rules = stageMatchRules(cfg, stage, catA, catB);
+  return { handicap_a: rules.startA, handicap_b: rules.startB };
+}
+
+/**
+ * Re-read a staged row's sides and snapshot their head starts again (00272):
+ * 0-0 while a side is empty, the stage's matrix once both are known. Called by
+ * every writer that sets a side by hand or re-routes one, so the starts a
+ * score is judged by always belong to the two entries now in the match.
+ * A legacy row (stage NULL) is left alone.
+ *
+ * `onlyOpen` writes only while the row is still pending or ready, and a row
+ * that has moved on meanwhile is skipped rather than refused: a category
+ * change must not touch a match already on court.
+ */
+export async function refreshStagedHandicaps(
+  adminClient: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  doubles: boolean,
+  opts?: { onlyOpen?: boolean },
+): Promise<void> {
+  const { data: m, error } = await adminClient.from('tournament_matches')
+    .select('id, event_id, stage, pair_a_id, pair_b_id, participant_a_id, participant_b_id')
+    .eq('id', matchId)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read match ${matchId} to set its head starts: ${error.message}`);
+  if (!m || m.stage == null) return;
+  const aId = (doubles ? m.pair_a_id : m.participant_a_id) as string | null;
+  const bId = (doubles ? m.pair_b_id : m.participant_b_id) as string | null;
+  const starts = aId && bId
+    ? await stagedHeadStarts(adminClient, m, doubles, aId, bId)
+    : { handicap_a: 0, handicap_b: 0 };
+  if (starts.handicap_a == null) return;
+  if (opts?.onlyOpen) {
+    const { error: writeError } = await adminClient.from('tournament_matches')
+      .update(starts).eq('id', matchId).in('status', ['pending', 'ready']);
+    if (writeError) throw new Error(`Setting the head starts of match ${matchId} failed: ${writeError.message}`);
+    return;
+  }
+  await mustWrite(
+    `Setting the head starts of match ${matchId}`,
+    adminClient.from('tournament_matches').update(starts).eq('id', matchId).select('id'),
+  );
 }
 
 /**
@@ -2204,90 +2274,28 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
       group: (p as { group_number?: number | null }).group_number ?? null,
     }));
   }
-  // Who may be RANKED. A withdrawn entry's results still count towards everyone
-  // else's record; the entry itself does not take a placing.
-  const rankableIds = new Set(entries.filter(e => !e.out).map(e => e.id));
-
-  // Build standings
-  const stats: Record<string, {
-    id: string;
-    name: string;
-    /** 1-based group, or null outside a group stage. */
-    group: number | null;
-    wins: number;
-    losses: number;
-    pointsFor: number;
-    pointsAgainst: number;
-    gamesFor: number;
-    gamesAgainst: number;
-    // Head-to-head wins against every other entry — used as a tiebreaker
-    // before resorting to point differentials.
-    h2h: Record<string, number>;
-  }> = {};
-
-  for (const e of entries) {
-    stats[e.id] = { id: e.id, name: e.name, group: e.group, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, gamesFor: 0, gamesAgainst: 0, h2h: {} };
-  }
-
-  for (const m of matches ?? []) {
-    const aId = doubles ? m.pair_a_id : m.participant_a_id;
-    const bId = doubles ? m.pair_b_id : m.participant_b_id;
-    if (!aId || !bId || !stats[aId] || !stats[bId]) continue;
-
-    const winnerId = doubles ? m.winner_pair_id : m.winner_participant_id;
-    if (winnerId === aId) {
-      stats[aId].wins++;
-      stats[bId].losses++;
-      stats[aId].h2h[bId] = (stats[aId].h2h[bId] ?? 0) + 1;
-    } else if (winnerId === bId) {
-      stats[bId].wins++;
-      stats[aId].losses++;
-      stats[bId].h2h[aId] = (stats[bId].h2h[aId] ?? 0) + 1;
-    }
-
-    // Sum points from scores
-    const scores = (m.scores as Array<{ a: number; b: number }>) ?? [];
-    for (const g of scores) {
-      stats[aId].pointsFor += g.a;
-      stats[aId].pointsAgainst += g.b;
-      stats[bId].pointsFor += g.b;
-      stats[bId].pointsAgainst += g.a;
-
-      if (g.a > g.b) {
-        stats[aId].gamesFor++;
-        stats[bId].gamesAgainst++;
-      } else if (g.b > g.a) {
-        stats[bId].gamesFor++;
-        stats[aId].gamesAgainst++;
-      }
-    }
-  }
-
-  // Ranked at the END, after every played match has been counted. A withdrawn
-  // entry's games still shaped everyone else's record — that is what makes the
-  // table agree with the ratings — but the entry itself does not take a placing.
-  const rankable = Object.values(stats).filter(e => rankableIds.has(e.id));
-
-  // Ordering lives in @badminton/shared so it is testable without a database
-  // and so seeding a bracket off this table cannot drift from the table itself.
+  // The tally and the order live in @badminton/shared (tallyRoundRobin,
+  // rankRoundRobin) so they are testable without a database and so the admin
+  // round-robin table reads the same order this returns. A withdrawn entry's
+  // results still count towards everyone else's record; the entry itself does
+  // not take a placing. An external event (00269) drops head-to-head and game
+  // difference from the order; see rankRoundRobin.
   //
   // groupRank is carried on BOTH shapes so callers never have to branch on
   // which one they got. A flat round robin has one implicit group, so its
-  // groupRank is just the finishing place — which is what it means.
-  //
-  // AN EXTERNAL EVENT (00269) ranks by wins, then point difference, then points for:
-  // the organisers' rule, with no head-to-head and no game difference. The sort
-  // is handed copies with those two keys blanked, and the rows returned carry
-  // their real figures back.
-  if ((event as { external_event?: boolean }).external_event === true) {
-    const real = new Map(rankable.map(e => [e.id, e]));
-    const keyed = rankable.map(e => ({ ...e, h2h: {} as Record<string, number>, gamesFor: 0, gamesAgainst: 0 }));
-    const restore = <T extends { id: string }>(s: T) => ({ ...s, ...real.get(s.id)! });
-    if (grouped) return qualificationOrder(keyed, seedBy).map(restore);
-    return sortStandings(keyed, seedBy).map((s, i) => ({ ...restore(s), groupRank: i + 1 }));
-  }
-  if (grouped) return qualificationOrder(rankable, seedBy);
-  return sortStandings(rankable, seedBy).map((s, i) => ({ ...s, groupRank: i + 1 }));
+  // groupRank is just the finishing place, which is what it means.
+  const tallied = tallyRoundRobin(entries, (matches ?? []).map(m => ({
+    status: m.status as string,
+    sideA: doubles ? m.pair_a_id : m.participant_a_id,
+    sideB: doubles ? m.pair_b_id : m.participant_b_id,
+    winner: doubles ? m.winner_pair_id : m.winner_participant_id,
+    scores: (m.scores as Array<{ a: number; b: number }> | null) ?? null,
+  })));
+  return rankRoundRobin(tallied, {
+    seedBy,
+    grouped,
+    external: (event as { external_event?: boolean }).external_event === true,
+  });
 }
 
 /**
@@ -2442,5 +2450,99 @@ export function fencedRefusal(result: FencedFieldResult | null, notFound: string
       );
     default:
       throw new ExpectedError('That change could not be saved. Reload the page and try again.');
+  }
+}
+
+// ============================================================
+// The waitlist (00278)
+// ============================================================
+
+/** The waitlist functions are unknown to this database: 00278 is pending. */
+export function isWaitlistMissing(error: { code?: string } | null | undefined): boolean {
+  return !!error && ['42883', 'PGRST202', '42P01', 'PGRST205'].includes(error.code ?? '');
+}
+
+/** What fill_event_from_waitlist reports back. */
+export interface WaitlistFillResult {
+  ok: boolean;
+  reason?: string;
+  cap?: number;
+  event_status?: string;
+  tournament_id?: string;
+  event_id?: string;
+  promoted?: Array<{ player_id: string; participant_id: string; waitlist_id: string }>;
+  skipped?: Array<{ player_id: string; waitlist_id: string; reason: string }>;
+}
+
+/**
+ * Settle what a promotion wrote: the entry fee for everybody promoted, and one
+ * audit row. Never throws, because the promotion has already committed.
+ */
+export async function settleWaitlistPromotions(
+  adminClient: ReturnType<typeof createAdminClient>,
+  result: WaitlistFillResult | null | undefined,
+  actorId: string,
+  automatic: boolean,
+): Promise<number> {
+  const promoted = result?.promoted ?? [];
+  const tournamentId = result?.tournament_id;
+  if (promoted.length === 0 || !tournamentId) return 0;
+  const playerIds = promoted.map((p) => p.player_id);
+  await ensureEntryFees(adminClient, tournamentId, playerIds);
+  await logAudit(adminClient, {
+    tournament_id: tournamentId,
+    event_id: result?.event_id,
+    action: 'waitlist_promote',
+    performed_by: actorId,
+    details: { player_ids: playerIds, automatic },
+  });
+  return promoted.length;
+}
+
+/**
+ * After an action frees a place in an event, hand it to the head of the
+ * waitlist, when the event has one set to promote automatically.
+ *
+ * A SEPARATE STEP THAT NEVER FAILS THE ACTION. The place was freed by a write
+ * that has already committed, so a failure here (00278 not applied yet, the
+ * read failing, the fill refusing) is logged and the action still succeeds.
+ * The settings are read on their own, never added to an existing select, so a
+ * database without the columns is simply "no waitlist".
+ */
+export async function fillFromWaitlistAfterFree(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  actorId: string,
+): Promise<number> {
+  try {
+    const { data: ev, error: evError } = await adminClient
+      .from('tournament_events')
+      .select('waitlist_enabled, waitlist_auto_promote')
+      .eq('id', eventId)
+      .maybeSingle();
+    if (evError) {
+      if (!['42703', 'PGRST204'].includes(evError.code ?? '')) Sentry.captureException(evError);
+      return 0;
+    }
+    const settings = ev as { waitlist_enabled?: boolean; waitlist_auto_promote?: boolean } | null;
+    if (!settings?.waitlist_enabled || !settings.waitlist_auto_promote) return 0;
+
+    const { data, error } = await adminClient.rpc('fill_event_from_waitlist', {
+      p_event_id: eventId,
+      p_actor: actorId,
+      p_waitlist_id: null,
+    });
+    if (error) {
+      Sentry.captureException(new Error(
+        isWaitlistMissing(error)
+          ? `Waitlist fill skipped, migration 00278 is not applied: ${error.message}`
+          : `Waitlist fill failed: ${error.message}`,
+      ));
+      return 0;
+    }
+    return await settleWaitlistPromotions(adminClient, data as WaitlistFillResult | null, actorId, true);
+  } catch (err) {
+    Sentry.captureException(err);
+    return 0;
   }
 }

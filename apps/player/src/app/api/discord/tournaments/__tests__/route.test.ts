@@ -22,6 +22,8 @@ let readError: { message: string } | null = null;
 let dues: { player_id: string; paid_at: string | null }[] = [];
 let duesError: { message: string } | null = null;
 let activeSeason: { id: string } | null = null;
+let eventWindows: Record<string, unknown>[] = [];
+let windowsError: { code?: string; message: string } | null = null;
 
 function caller(membership_type: string, over: Partial<Caller> = {}): { players: Caller } {
   return { players: { id: "p1", membership_type, is_exec: false, fee_exempt: false, ...over } };
@@ -49,6 +51,7 @@ vi.mock("@/lib/supabase-server", () => ({
       if (table === "player_discord_links") return thenable(link, linkError);
       if (table === "tournaments") return thenable(tournaments, readError);
       if (table === "seasons") return thenable(activeSeason);
+      if (table === "tournament_events") return thenable(eventWindows, windowsError);
       if (table === "club_fees") return thenable(duesError ? null : dues, duesError);
       throw new Error(`unexpected table ${table}`);
     },
@@ -108,6 +111,8 @@ beforeEach(() => {
   link = null;
   linkError = null;
   readError = null;
+  eventWindows = [];
+  windowsError = null;
   dues = [{ player_id: "p1", paid_at: "2026-09-01T00:00:00Z" }];
   duesError = null;
   activeSeason = null;
@@ -120,8 +125,8 @@ beforeEach(() => {
       allowed_memberships: ["internal"],
       season_id: "s1",
       tournament_events: [
-        { event_type: "mens_singles", status: "registration" },
-        { event_type: "womens_doubles", status: "bracket_generated" },
+        { id: "e1", event_type: "mens_singles", status: "registration" },
+        { id: "e2", event_type: "womens_doubles", status: "bracket_generated" },
       ],
     },
   ];
@@ -177,10 +182,30 @@ describe("GET /api/discord/tournaments", () => {
     tournaments = [
       {
         ...(tournaments[0] as object),
-        tournament_events: [{ event_type: "mens_singles", status: "live" }],
+        tournament_events: [{ id: "e1", event_type: "mens_singles", status: "live" }],
       },
     ];
     expect(only((await list()).body.tournaments).registrationOpen).toBe(false);
+  });
+
+  it("reports registration closed while the event's window has not opened", async () => {
+    eventWindows = [{ id: "e1", registration_opens_at: "2999-01-01T00:00:00Z" }];
+    expect(only((await list()).body.tournaments).registrationOpen).toBe(false);
+  });
+
+  it("reports registration closed once the event's window has closed", async () => {
+    eventWindows = [{ id: "e1", registration_closes_at: "2000-01-01T00:00:00Z" }];
+    expect(only((await list()).body.tournaments).registrationOpen).toBe(false);
+  });
+
+  it("ignores the windows on a database without 00276", async () => {
+    windowsError = { code: "42703", message: "column does not exist" };
+    expect(only((await list()).body.tournaments).registrationOpen).toBe(true);
+  });
+
+  it("is a 503 when the windows cannot be read", async () => {
+    windowsError = { code: "57014", message: "canceling statement" };
+    expect((await list()).status).toBe(503);
   });
 
   it("does NOT quietly degrade a failed link lookup to 'unlinked'", async () => {

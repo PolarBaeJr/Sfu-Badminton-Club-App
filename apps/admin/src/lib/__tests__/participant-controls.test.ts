@@ -53,6 +53,22 @@ const shown = (c: ParticipantControls) =>
 const registration = { status: 'registration', drawLocked: false };
 const drawn = { status: 'bracket_generated', drawLocked: true };
 
+describe('participantControls: a team category in a staged event', () => {
+  it('is offered on a staged event to a holder of seed.set.write, through play', () => {
+    for (const status of ['registration', 'checkin', 'bracket_generated', 'live']) {
+      expect(participantControls({ status, drawLocked: false, staged: true }, only('seedSet')).editCategory).toBe(true);
+    }
+  });
+
+  it('is not offered without the capability, on a locked or finalised event, or off a staged one', () => {
+    expect(participantControls({ status: 'live', drawLocked: false, staged: true }, NOBODY).editCategory).toBe(false);
+    expect(participantControls({ status: 'live', drawLocked: true, staged: true }, EVERYTHING).editCategory).toBe(false);
+    expect(participantControls({ status: 'completed', drawLocked: false, staged: true }, EVERYTHING).editCategory).toBe(false);
+    expect(participantControls({ status: 'live', drawLocked: false }, EVERYTHING).editCategory).toBe(false);
+    expect(participantControls({ status: 'live', drawLocked: false, staged: false }, EVERYTHING).editCategory).toBe(false);
+  });
+});
+
 describe('participantControls — capability, not just status', () => {
   it('offers nothing at all to a viewer holding none of the six', () => {
     // The whole bug, in one assertion. This viewer could open the event page,

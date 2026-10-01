@@ -16,12 +16,14 @@
 // there rather than re-implemented, so "you are in" on the feed and "Current
 // tournaments" on /tournaments cannot disagree about the same member.
 
-import type { TournamentEventStatus, TournamentEventType } from '@badminton/shared';
+import type { TournamentEventStatus, TournamentEventType, WindowState } from '@badminton/shared';
 
 export type FeedEvent = {
   id: string;
   event_type: TournamentEventType;
   status: string;
+  /** Where now falls in the event's check-in window (00276). Absent reads as open. */
+  checkin_window?: WindowState;
 };
 
 export type FeedTournament = {
@@ -127,6 +129,11 @@ export function runningEvents(t: FeedTournament): FeedEvent[] {
  * means the desk is taking names and nothing has been drawn yet. A single label
  * covering both would send somebody looking for a court that does not exist.
  */
-export function underWayEyebrow(events: FeedEvent[]): 'UNDER WAY' | 'CHECK-IN OPEN' {
-  return events.some(isPlayingEvent) ? 'UNDER WAY' : 'CHECK-IN OPEN';
+export function underWayEyebrow(events: FeedEvent[]): 'UNDER WAY' | 'CHECK-IN OPEN' | 'CHECK-IN SOON' | 'CHECK-IN CLOSED' {
+  if (events.some(isPlayingEvent)) return 'UNDER WAY';
+  // The check-in window (00276): an event in check-in whose window has not
+  // opened is not taking names yet, and one past its close sends people to
+  // the desk. Open wins over either, since somebody can act on it.
+  if (events.length === 0 || events.some((e) => (e.checkin_window ?? 'open') === 'open')) return 'CHECK-IN OPEN';
+  return events.some((e) => e.checkin_window === 'not_open_yet') ? 'CHECK-IN SOON' : 'CHECK-IN CLOSED';
 }

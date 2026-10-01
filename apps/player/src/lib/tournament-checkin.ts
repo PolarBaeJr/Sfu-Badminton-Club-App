@@ -12,6 +12,7 @@ import { createServiceRoleClient } from './supabase-server';
 import { assertMyEventWaiverSigned, loadTournamentWaiverContext } from './event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
 import { assertFeatureOn } from './feature-gate';
+import { classifyScanWindow, loadEntryWindows, windowsFor } from './tournament-windows';
 
 export interface TournamentCheckInResult {
   tournamentName: string;
@@ -113,6 +114,16 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   const pending: Array<{ event: string }> = [];
   const toClaim: ScanEntry[] = [];
 
+  // THE CHECK-IN WINDOWS (00276), read once for the whole scan. Asked only of
+  // events already in check-in: before the window opens is `pending` like an
+  // event still in registration, after it closes is a refusal like an event
+  // past check-in. The fence asks again under the lock.
+  const windows = await loadEntryWindows(service, {
+    eventIds: rows.flatMap((r) => (r.event ? [r.event.id] : [])),
+    tournamentIds: [tokenRow.tournament_id],
+  });
+  const now = new Date();
+
   for (const row of rows) {
     const label = row.event?.event_type ?? 'Event';
     // Withdrawn or disqualified entries are not re-openable by scanning a code
@@ -146,6 +157,12 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     if (row.event?.status !== 'checkin') {
       if (row.event?.status === 'registration') pending.push({ event: label });
       else refused.push({ event: label, detail: refusalDetail('event_closed') });
+      continue;
+    }
+    const scanWindow = classifyScanWindow(windowsFor(windows, row.event.id, tokenRow.tournament_id).checkin, now);
+    if (scanWindow === 'pending') { pending.push({ event: label }); continue; }
+    if (scanWindow === 'refused') {
+      refused.push({ event: label, detail: refusalDetail('checkin_window_closed') });
       continue;
     }
     toClaim.push(row);
@@ -211,6 +228,13 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
     if (result?.ok) {
       if (result.already) alreadyIn.push(label);
       else checkedIn.push(label);
+      continue;
+    }
+
+    // The window had not opened when the fence asked (00276): early, not
+    // refused, for the same reason as the prefilter above.
+    if (result?.reason === 'checkin_not_open') {
+      pending.push({ event: label });
       continue;
     }
 
@@ -431,6 +455,8 @@ function refusalDetail(reason: string | undefined): string {
     case 'event_status':
     case 'event_completed':
       return 'check-in has closed for this event — see the desk';
+    case 'checkin_window_closed':
+      return 'check-in has closed for this event, see the desk';
     case 'entry_not_found':
     case 'event_not_found':
       return 'this entry could not be found — see the desk';

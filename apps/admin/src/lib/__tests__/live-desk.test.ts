@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, hasCourtsTab,
+  deskRowGroup, groupsInPlay, filterDeskRows, deskRoundLine, deskRowMatchesSearch,
+  stagedGroupKey, stagedGroupParts, deskGroupLabel, deskGroupChipLabel, deskPools, deskCourtSuggestion,
   type DeskMatch,
 } from '../live-desk';
+import { poolsThenPlacement, type TournamentCourt } from '@badminton/shared';
 
 function match(over: Partial<DeskMatch> & { id: string }): DeskMatch {
   return {
@@ -145,11 +148,211 @@ describe('the event-level predicates', () => {
     expect(deskEventPlaying('live')).toBe(true);
     expect(deskEventPlaying('completed')).toBe(false);
     expect(deskEventPlaying('checkin')).toBe(false);
+    expect(deskEventPlaying('bracket_generated', 'staged')).toBe(false);
+    expect(deskEventPlaying('live', 'staged')).toBe(true);
   });
 
   it('offers the courts tab only on a drawn event that is not finished', () => {
     expect(hasCourtsTab('live')).toBe(true);
     expect(hasCourtsTab('completed')).toBe(false);
     expect(hasCourtsTab('registration')).toBe(false);
+  });
+});
+
+// A grouped round robin: entries g1-* are in group 1 (A), g2-* in group 2 (B),
+// g3-* in group 3 (C). The desk sides carry the group and the people behind them.
+const groupOfEntry: Record<string, number> = {
+  'g1-kestrel': 1, 'g1-heron': 1, 'g1-osprey': 1, 'g1-plover': 1,
+  'g2-egret': 2, 'g2-finch': 2, 'g2-wren': 2, 'g2-swift': 2,
+  'g3-rook': 3, 'g3-crane': 3,
+};
+const groupedSideOf = (entryId: string | null) => ({
+  entryId,
+  label: entryId ? `Team ${entryId.slice(3, 4).toUpperCase()}${entryId.slice(4)}` : 'TBD',
+  players: entryId ? [{ name: `Player ${entryId.slice(3)}` }] : [],
+  group: entryId ? groupOfEntry[entryId] ?? null : null,
+});
+const groupedRows = () => deskRows([
+  match({ id: 'a1', phase: 'pool', match_number: 1, participant_a_id: 'g1-kestrel', participant_b_id: 'g1-heron', court: '1' }),
+  match({ id: 'b1', phase: 'pool', match_number: 2, participant_a_id: 'g2-egret', participant_b_id: 'g2-finch' }),
+  match({ id: 'c1', phase: 'pool', match_number: 3, status: 'live', participant_a_id: 'g3-rook', participant_b_id: 'g3-crane' }),
+  match({ id: 'a2', phase: 'pool', match_number: 4, participant_a_id: 'g1-osprey', participant_b_id: 'g1-plover' }),
+  match({ id: 'b2', phase: 'pool', match_number: 5, round_name: 'Round 1', participant_a_id: 'g2-wren', participant_b_id: 'g2-swift' }),
+  match({ id: 'qf', phase: 'bracket', round_number: 1, match_number: 6, round_name: 'Quarter-final', participant_a_id: 'g1-kestrel' }),
+], groupedSideOf, false);
+
+describe('deskRowGroup and groupsInPlay', () => {
+  it('reads the group off side a, or side b while a is TBD, and never on a knockout row', () => {
+    const rows = groupedRows();
+    expect(rows.map((r) => deskRowGroup(r))).toEqual([1, 2, 3, 1, 2, null]);
+    expect(deskRowGroup({ match: { phase: 'pool' }, a: { group: null }, b: { group: 2 } })).toBe(2);
+    expect(deskRowGroup({ match: { phase: null }, a: {}, b: {} })).toBeNull();
+  });
+
+  it('lists the groups still in play, ascending, without the knockout', () => {
+    expect(groupsInPlay(groupedRows())).toEqual([1, 2, 3]);
+    expect(groupsInPlay(groupedRows().filter((r) => r.match.id !== 'c1'))).toEqual([1, 2]);
+  });
+});
+
+describe('filterDeskRows', () => {
+  it('keeps every row when nothing is picked', () => {
+    const rows = groupedRows();
+    const { rows: mine, active } = filterDeskRows(rows, []);
+    expect(mine).toBe(rows);
+    expect(active).toEqual([]);
+  });
+
+  it('narrows to the picked groups, and next and the counts follow it', () => {
+    const rows = groupedRows();
+    const { rows: mine, active } = filterDeskRows(rows, [2]);
+    expect(active).toEqual([2]);
+    expect(ids(mine)).toEqual(['b1', 'b2']);
+    expect(nextCallable(mine)?.match.id).toBe('b1');
+    expect(deskCounts(mine)).toEqual({ live: 0, callable: 2, waiting: 0, uncourted: 2 });
+
+    const both = filterDeskRows(rows, [3, 1]);
+    expect(both.active).toEqual([1, 3]);
+    expect(ids(both.rows)).toEqual(['a1', 'c1', 'a2']);
+    expect(nextCallable(both.rows)?.match.id).toBe('a1');
+    expect(deskCounts(both.rows).live).toBe(1);
+  });
+
+  it('ignores a saved pick of groups that have all finished, rather than hiding everything', () => {
+    const rows = groupedRows();
+    const { rows: mine, active } = filterDeskRows(rows, [7]);
+    expect(active).toEqual([]);
+    expect(mine).toBe(rows);
+    expect(filterDeskRows(rows, [7, 3]).active).toEqual([3]);
+  });
+});
+
+describe('deskRoundLine', () => {
+  it('names the group, the phase, the round and the match number', () => {
+    const [a1, , , , b2, qf] = groupedRows();
+    expect(deskRoundLine(a1!.match, 1)).toBe('Group A · Pool · Round 1 · M1');
+    expect(deskRoundLine(b2!.match, 2)).toBe('Group B · Pool · Round 1 · M5');
+    expect(deskRoundLine(qf!.match)).toBe('Knockout · Quarter-final · M6');
+    expect(deskRoundLine(match({ id: 'x', round_number: 3 }))).toBe('Round 3');
+  });
+});
+
+describe('deskRowMatchesSearch', () => {
+  const rows = groupedRows();
+  const find = (q: string) => ids(rows.filter((r) => deskRowMatchesSearch(r, q)));
+
+  it('fits every row on a blank query', () => {
+    expect(find('')).toEqual(ids(rows));
+    expect(find('   ')).toEqual(ids(rows));
+  });
+
+  it('matches a side label or a player name, case-insensitively', () => {
+    expect(find('team egret')).toEqual(['b1']);
+    expect(find('PLAYER wren')).toEqual(['b2']);
+  });
+
+  it('matches the court, the match number and the group', () => {
+    expect(find('court 1')).toEqual(['a1']);
+    expect(find('m5')).toEqual(['b2']);
+    expect(find('group c')).toEqual(['c1']);
+    expect(find('knockout')).toEqual(['qf']);
+  });
+
+  it('narrows only the list: next and the counts are worked out before it', () => {
+    const { rows: mine } = filterDeskRows(rows, []);
+    const next = nextCallable(mine);
+    const counts = deskCounts(mine);
+    const shown = mine.filter((r) => deskRowMatchesSearch(r, 'team swift'));
+    expect(ids(shown)).toEqual(['b2']);
+    expect(next?.match.id).toBe('a1');
+    expect(counts).toEqual(deskCounts(rows));
+  });
+});
+
+describe('a staged event on the desk', () => {
+  const cfg = poolsThenPlacement({ pools: 4, groupsPerPool: 2, groupSize: 3 });
+  const staged = (id: string, over: Partial<DeskMatch>) =>
+    match({ id, stage: 1, phase: null, participant_a_id: `${id}a`, participant_b_id: `${id}b`, ...over });
+  const rowsOf = (ms: DeskMatch[]) => deskRows(ms, (e) => ({ ...sideOf(e), group: 9 }), false);
+
+  it('runs stage by stage, then slot, then match number, whatever the round says', () => {
+    const rows = rowsOf([
+      staged('final', { stage: 2, round_number: 1, match_number: 1, match_label: 'final' }),
+      staged('s2m3', { pool_number: 2, group_number: 1, slot: 2, round_number: 1, match_number: 3 }),
+      staged('s1m2', { pool_number: 1, group_number: 2, slot: 1, round_number: 1, match_number: 2 }),
+      staged('s1m1', { pool_number: 2, group_number: 2, slot: 1, round_number: 2, match_number: 1 }),
+    ]);
+    expect(ids(rows)).toEqual(['s1m1', 's1m2', 's2m3', 'final']);
+  });
+
+  it('reads the group off the row, so group A of pool 1 and of pool 2 stay apart', () => {
+    const rows = rowsOf([
+      staged('p1a', { pool_number: 1, group_number: 1, match_number: 1 }),
+      staged('p2a', { pool_number: 2, group_number: 1, match_number: 2 }),
+      staged('final', { stage: 2, match_label: 'final', match_number: 3 }),
+    ]);
+    expect(rows.map(deskRowGroup)).toEqual([stagedGroupKey(1, 1, 1), stagedGroupKey(1, 2, 1), null]);
+    expect(groupsInPlay(rows)).toEqual([10101, 10201]);
+    const { rows: mine } = filterDeskRows(rows, [stagedGroupKey(1, 2, 1)]);
+    expect(ids(mine)).toEqual(['p2a']);
+  });
+
+  it('round-trips a group key and leaves a legacy group number alone', () => {
+    expect(stagedGroupParts(stagedGroupKey(1, 3, 2))).toEqual({ stage: 1, pool: 3, group: 2 });
+    expect(stagedGroupParts(4)).toBeNull();
+  });
+
+  it('labels groups by pool, as on the sheet', () => {
+    expect(deskGroupLabel(stagedGroupKey(1, 2, 2), cfg)).toBe('G2 Group B');
+    expect(deskGroupChipLabel(stagedGroupKey(1, 2, 2), cfg)).toBe('G2 B');
+    expect(deskGroupLabel(3)).toBe('Group C');
+    expect(deskGroupChipLabel(3)).toBe('C');
+  });
+
+  it('offers a chip per pool holding its groups in play', () => {
+    const keys = [stagedGroupKey(1, 1, 1), stagedGroupKey(1, 1, 2), stagedGroupKey(1, 2, 1)];
+    expect(deskPools(keys, cfg)).toEqual([{ key: '1:1', label: 'G1', groups: [10101, 10102] }]);
+    expect(deskPools([1, 2], cfg)).toEqual([]);
+  });
+
+  it('names the group and slot, the stage, and a placement match by its name', () => {
+    const g = staged('g', { pool_number: 2, group_number: 2, round_number: 3, round_name: 'Round 3', match_number: 12 });
+    expect(deskRoundLine(g, stagedGroupKey(1, 2, 2), cfg)).toBe('G2 Group B · Round 3 · M12');
+    const third = staged('t', { stage: 2, match_label: 'third', round_name: 'Finals', match_number: 14 });
+    expect(deskRoundLine(third, null, cfg)).toBe('Finals · Third place · M14');
+    expect(deskRowMatchesSearch({ match: third, a: { label: 'x' }, b: { label: 'y' } }, 'third place', cfg)).toBe(true);
+  });
+});
+
+describe('deskCourtSuggestion', () => {
+  const courts: TournamentCourt[] = [
+    { id: 'c1', label: '1', sort_order: 1, active: true },
+    { id: 'c2', label: '2', sort_order: 2, active: true },
+    { id: 'c3', label: '3', sort_order: 3, active: false },
+  ];
+  const row = (over: Partial<DeskMatch>) => ({ match: match({ id: 'm', ...over }) });
+
+  it('suggests nothing when the tournament lists no courts', () => {
+    expect(deskCourtSuggestion(row({}), null, new Set())).toBeNull();
+    expect(deskCourtSuggestion(row({}), [], new Set())).toBeNull();
+  });
+
+  it('suggests the first free court for a match with none', () => {
+    expect(deskCourtSuggestion(row({}), courts, new Set())?.id).toBe('c1');
+    expect(deskCourtSuggestion(row({}), courts, new Set(['c1']))?.id).toBe('c2');
+  });
+
+  it('suggests nothing for a match already on a free active court, linked or typed', () => {
+    expect(deskCourtSuggestion(row({ court: '2', court_id: 'c2' }), courts, new Set())).toBeNull();
+    expect(deskCourtSuggestion(row({ court: 'Court 2' }), courts, new Set())).toBeNull();
+  });
+
+  it('moves a match off a busy or switched-off court', () => {
+    expect(deskCourtSuggestion(row({ court: '1', court_id: 'c1' }), courts, new Set(['c1']))?.id).toBe('c2');
+    expect(deskCourtSuggestion(row({ court: '3', court_id: 'c3' }), courts, new Set())?.id).toBe('c1');
+  });
+
+  it('suggests nothing when every active court is busy', () => {
+    expect(deskCourtSuggestion(row({}), courts, new Set(['c1', 'c2']))).toBeNull();
   });
 });

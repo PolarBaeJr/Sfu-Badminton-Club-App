@@ -16,7 +16,14 @@ import {
   classifyEventForCompletion,
   selectAllInChunks,
   TOURNAMENT_EVENT_TYPE_LABELS,
-  TOURNAMENT_EVENT_STATUS_LABELS,
+  eventStatusLabel,
+  TOURNAMENT_BONUS_AMOUNT_KEYS,
+  normalizeTournamentBonusAmounts,
+  sameTournamentBonusAmounts,
+  effectiveWindows,
+  validateEffectiveWindows,
+  windowColumnsFromWallClock,
+  type WindowColumns,
 } from '@badminton/shared';
 import type {
   TournamentStatus,
@@ -46,50 +53,67 @@ export async function createTournament(data: {
   placement_bonus_enabled: boolean;
   waiver_text?: string;
   max_events_per_player?: number | null;
-}) {
-  parseOrThrow(tournamentCreateSchema, data);
-  const admin = await requireCapability('tournaments.manage.create.write');
-  const adminClient = createAdminClient();
+} & TournamentWindowFields): Promise<ActionResult<string>> {
+  // Returned as a value, so a refusal (bad windows, no active season, missing
+  // migration) reaches the exec as its own text instead of the generic message
+  // a production build puts on a thrown server-action error.
+  return runAction(async () => {
+    parseOrThrow(tournamentCreateSchema, data);
+    const admin = await requireCapability('tournaments.manage.create.write');
+    const adminClient = createAdminClient();
 
-  const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).maybeSingle();
-  // Refuse rather than stamp NULL — see requireActiveSeasonId. A row with no
-  // season is invisible to every season total and there is no page that lists
-  // the orphans. maybeSingle() so TWO active seasons surface as an error here
-  // rather than as a silent "no active season".
-  const seasonId = requireActiveSeasonId(activeSeason.data?.id, 'tournament');
+    // Only the bounds actually set are written, so a tournament created without
+    // windows still saves on a database that has not run 00276.
+    const windows = Object.fromEntries(
+      Object.entries(windowColumnsFromWallClock(data)).filter(([, v]) => v !== null),
+    ) as WindowColumns;
+    const windowRefusal = validateEffectiveWindows(effectiveWindows({ event: null, tournament: windows }));
+    if (windowRefusal) throw new ExpectedError(windowRefusal);
 
-  const { data: tournament, error } = await adminClient.from('tournaments').insert({
-    name: data.name,
-    // Omitted -> leave the column default (all three) rather than writing
-    // an empty array, which the CHECK constraint rejects.
-    ...(data.allowed_memberships?.length ? { allowed_memberships: data.allowed_memberships } : {}),
-    start_date: data.start_date,
-    end_date: data.end_date || null,
-    event_multiplier: data.event_multiplier,
-    placement_bonus_enabled: data.placement_bonus_enabled,
-    waiver_text: data.waiver_text?.trim() || null,
-    // undefined and null both mean uncapped, and both write NULL. `?? null`
-    // rather than a spread, because on the UPDATE path an omitted field has to
-    // CLEAR the cap — an exec emptying the box is removing the limit, and a
-    // spread would silently leave the old number in place.
-    max_events_per_player: data.max_events_per_player ?? null,
-    status: 'draft',
-    season_id: seasonId,
-    created_by: admin.id,
-  }).select().single();
+    const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).maybeSingle();
+    // Refuse rather than stamp NULL — see requireActiveSeasonId. A row with no
+    // season is invisible to every season total and there is no page that lists
+    // the orphans. maybeSingle() so TWO active seasons surface as an error here
+    // rather than as a silent "no active season".
+    const seasonId = requireActiveSeasonId(activeSeason.data?.id, 'tournament');
 
-  if (error) throw new Error(error.message);
+    const { data: tournament, error } = await adminClient.from('tournaments').insert({
+      name: data.name,
+      // Omitted -> leave the column default (all three) rather than writing
+      // an empty array, which the CHECK constraint rejects.
+      ...(data.allowed_memberships?.length ? { allowed_memberships: data.allowed_memberships } : {}),
+      start_date: data.start_date,
+      end_date: data.end_date || null,
+      event_multiplier: data.event_multiplier,
+      placement_bonus_enabled: data.placement_bonus_enabled,
+      waiver_text: data.waiver_text?.trim() || null,
+      // undefined and null both mean uncapped, and both write NULL. `?? null`
+      // rather than a spread, because on the UPDATE path an omitted field has to
+      // CLEAR the cap — an exec emptying the box is removing the limit, and a
+      // spread would silently leave the old number in place.
+      max_events_per_player: data.max_events_per_player ?? null,
+      ...windows,
+      status: 'draft',
+      season_id: seasonId,
+      created_by: admin.id,
+    }).select().single();
 
-  await logAdminAudit(adminClient, {
-    actor_id: admin.id,
-    action_type: 'tournament_created',
-    target_type: 'tournament',
-    target_id: tournament.id,
-    new_value: data,
+    if (error) {
+      if (Object.keys(windows).length > 0 && isColumnMissing(error)) throw new ExpectedError(WINDOWS_MIGRATION_MISSING);
+      throw new Error(error.message);
+    }
+
+    await logAdminAudit(adminClient, {
+      actor_id: admin.id,
+      action_type: 'tournament_created',
+      target_type: 'tournament',
+      target_id: tournament.id,
+      new_value: data,
   });
 
   revalidatePath('/tournaments');
-  return tournament.id;
+  return tournament.id as string;
+  });
 }
 
 // ============================================================
@@ -131,7 +155,7 @@ async function loadEventCompletionBlockers(
 ): Promise<EventCompletionBlocker[]> {
   const { data: events, error: eventsError } = await adminClient
     .from('tournament_events')
-    .select('id, event_type, status')
+    .select('id, event_type, status, format')
     .eq('tournament_id', tournamentId)
     .neq('status', 'completed')
     .order('event_type');
@@ -171,7 +195,7 @@ async function loadEventCompletionBlockers(
       id: e.id as string,
       label: TOURNAMENT_EVENT_TYPE_LABELS[eventType] ?? eventType,
       status,
-      statusLabel: TOURNAMENT_EVENT_STATUS_LABELS[status] ?? status,
+      statusLabel: eventStatusLabel(e.format as string, status) ?? status,
       bucket: counts.bucket,
       incomplete: counts.incomplete,
       matchCount: eventMatches.length,
@@ -389,7 +413,19 @@ export async function updateTournamentStatus(
   return runAction(async () => { await updateTournamentStatusImpl(tournamentId, status); });
 }
 
-export async function updateTournament(tournamentId: string, data: {
+/**
+ * The tournament-wide registration and check-in windows (00276), as club
+ * wall-clock strings. Blank or null clears a bound; omitted leaves it alone.
+ */
+type TournamentWindowFields = Partial<Record<keyof WindowColumns, string | null>>;
+
+const WINDOWS_MIGRATION_MISSING = 'Run migration 00276 first';
+
+function isColumnMissing(error: { code?: string } | null): boolean {
+  return !!error && ['42703', 'PGRST204'].includes(error.code ?? '');
+}
+
+type TournamentUpdate = TournamentWindowFields & {
   name: string;
   allowed_memberships?: string[];
   start_date: string;
@@ -398,11 +434,98 @@ export async function updateTournament(tournamentId: string, data: {
   placement_bonus_enabled: boolean;
   waiver_text?: string;
   max_events_per_player?: number | null;
-}) {
+  /**
+   * This tournament's own placement bonus amounts (00275), in the flat
+   * platform_settings keys. A blank key takes the club's amount; null clears
+   * them all. Omitted means unchanged.
+   */
+  placement_bonus_amounts?: Record<string, unknown> | null;
+};
+
+// Public entry point: the refusals below come back as a value, for the reason
+// updateTournamentStatus gives above.
+export async function updateTournament(tournamentId: string, data: TournamentUpdate): Promise<ActionResult<void>> {
+  return runAction(async () => { await updateTournamentImpl(tournamentId, data); });
+}
+
+async function updateTournamentImpl(tournamentId: string, data: TournamentUpdate) {
   const admin = await requireCapability('tournaments.manage.update.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
+
+  // A TOURNAMENT'S OWN BONUS AMOUNTS (00275), written only when they changed.
+  // Compared key by key rather than as JSON text, because jsonb hands an object
+  // back in its own key order: a text comparison would see every save as a
+  // change and the lock below would refuse every edit of a paid tournament.
+  let bonusAmounts: { value: ReturnType<typeof normalizeTournamentBonusAmounts> } | null = null;
+  if (data.placement_bonus_amounts !== undefined) {
+    const raw = data.placement_bonus_amounts ?? {};
+    for (const key of TOURNAMENT_BONUS_AMOUNT_KEYS) {
+      const v = raw[key];
+      if (v == null || (typeof v === 'string' && v.trim() === '')) continue;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new ExpectedError('Each bonus amount must be a number of 0 or more, or left blank for the club amount.');
+      }
+    }
+    const next = normalizeTournamentBonusAmounts(raw);
+    const stored = (old as { placement_bonus_amounts?: unknown } | null)?.placement_bonus_amounts;
+    if (!sameTournamentBonusAmounts(stored, next)) bonusAmounts = { value: next };
+  }
+  if (bonusAmounts) {
+    // select('*') names every column the database has.
+    if (old && !('placement_bonus_amounts' in old)) throw new ExpectedError('Run migration 00275 first');
+    // A bonus already paid went into ratings and cannot be taken back, so the
+    // amounts are fixed once any event here has paid one: changing them would
+    // leave earlier and later events paid at different rates with nothing
+    // recording which. A read that fails refuses for the same reason.
+    const { data: events, error: eventsError } = await adminClient
+      .from('tournament_events').select('id').eq('tournament_id', tournamentId);
+    if (eventsError) {
+      throw new ExpectedError(`Could not check whether this tournament has paid any bonuses, so the amounts were not changed: ${eventsError.message}`);
+    }
+    const eventIds = (events ?? []).map((e) => e.id as string);
+    if (eventIds.length > 0) {
+      const { count, error: grantsError } = await adminClient
+        .from('tournament_bonus_grants')
+        .select('id', { count: 'exact', head: true })
+        .in('event_id', eventIds);
+      if (grantsError) {
+        throw new ExpectedError(`Could not check whether this tournament has paid any bonuses, so the amounts were not changed: ${grantsError.message}`);
+      }
+      if ((count ?? 0) > 0) {
+        throw new ExpectedError('This tournament has already paid placement bonuses, so its bonus amounts are fixed.');
+      }
+    }
+  }
+
+  // THE WINDOWS (00276). Written only on a database that has the columns;
+  // setting one on a database without them is refused rather than dropped.
+  // Each event inherits a bound it left blank, so a tournament edit can invert
+  // an event's EFFECTIVE window without touching the event, and no CHECK sees
+  // that: every child is checked here, and the first inversion refuses.
+  let windows = windowColumnsFromWallClock(data);
+  if (old && !('registration_opens_at' in old)) {
+    if (Object.values(windows).some((v) => v !== null)) throw new ExpectedError(WINDOWS_MIGRATION_MISSING);
+    windows = {};
+  } else if (Object.keys(windows).length > 0) {
+    const tournamentWindows = { ...(old as WindowColumns | null), ...windows };
+    const ownRefusal = validateEffectiveWindows(effectiveWindows({ event: null, tournament: tournamentWindows }));
+    if (ownRefusal) throw new ExpectedError(ownRefusal);
+    const { data: children, error: childrenError } = await adminClient
+      .from('tournament_events').select('*').eq('tournament_id', tournamentId);
+    if (childrenError) {
+      throw new ExpectedError(`Could not check this tournament's events against the new windows, so nothing was changed: ${childrenError.message}`);
+    }
+    for (const child of children ?? []) {
+      const refusal = validateEffectiveWindows(effectiveWindows({ event: child, tournament: tournamentWindows }));
+      if (refusal) {
+        const label = TOURNAMENT_EVENT_TYPE_LABELS[child.event_type as TournamentEventType] ?? child.event_type;
+        throw new ExpectedError(`${label}: ${refusal} Change that event's own windows first.`);
+      }
+    }
+  }
 
   // EDITING THE WAIVER UN-SIGNS EVERYONE WHO SIGNED THE OLD WORDING, because an
   // acceptance is pinned to a hash of the exact text (00015). That is correct —
@@ -432,9 +555,17 @@ export async function updateTournament(tournamentId: string, data: {
     // CLEAR the cap — an exec emptying the box is removing the limit, and a
     // spread would silently leave the old number in place.
     max_events_per_player: data.max_events_per_player ?? null,
+    ...(bonusAmounts ? { placement_bonus_amounts: bonusAmounts.value } : {}),
+    ...windows,
   }).eq('id', tournamentId);
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (bonusAmounts && ['42703', 'PGRST204'].includes(error.code ?? '')) {
+      throw new ExpectedError('Run migration 00275 first');
+    }
+    if (isColumnMissing(error) && Object.keys(windows).length > 0) throw new ExpectedError(WINDOWS_MIGRATION_MISSING);
+    throw new Error(error.message);
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,

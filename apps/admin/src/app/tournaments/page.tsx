@@ -28,6 +28,7 @@ import {
   type WaiverTemplateContext,
 } from './actions';
 import { RowLink } from '@/components/row-link';
+import { readTournamentBonusSettingsForDisplay } from '@/lib/platform-settings';
 import { EntriesByEvent } from './entries-by-event';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
@@ -448,6 +449,11 @@ export default async function TournamentsPage({
     };
   }
 
+  // The club's bonus amounts, shown behind each blank box of the edit dialog's
+  // per-tournament amounts (00275). Only for somebody who can open it; null on
+  // a failed read, and the boxes then show no placeholder.
+  const clubBonusSettings = canEdit ? await readTournamentBonusSettingsForDisplay(supabase) : null;
+
   // ---- The four stat cells -------------------------------------------------
   const openCount = openTournaments.length;
   const entriesIn = [...entriesByTournament.values()].reduce((a, b) => a + b, 0);
@@ -571,6 +577,7 @@ export default async function TournamentsPage({
                         <TournamentRowActions
                           tournament={t as unknown as TournamentData}
                           waiverTemplates={waiverTemplateContext}
+                          clubBonusSettings={clubBonusSettings}
                           canEdit={canEdit}
                           canArchive={canArchive}
                           canDelete={canDelete}
@@ -635,6 +642,7 @@ export default async function TournamentsPage({
                             <TournamentRowActions
                               tournament={t as unknown as TournamentData}
                               waiverTemplates={waiverTemplateContext}
+                              clubBonusSettings={clubBonusSettings}
                               canEdit={canEdit}
                               canArchive={canArchive}
                               canDelete={canDelete}

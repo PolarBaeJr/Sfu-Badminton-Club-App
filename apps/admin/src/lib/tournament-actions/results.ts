@@ -18,6 +18,9 @@ import {
   eventIsPlaying,
   resolveMatchShape,
   eventRecordFor,
+  parseFormatConfig,
+  stagedMatchRules,
+  validateMatch,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -25,6 +28,7 @@ import type {
   EventMatchShape,
   MatchShapeOverride,
   EventRecordMatch,
+  MatchRules,
 } from '@badminton/shared';
 import {
   requireCapability,
@@ -42,6 +46,7 @@ import {
   routeOf,
   routedEntryId,
   MATCH_ROUTES,
+  refreshStagedHandicaps,
   type MatchRoute,
 } from './_internal';
 
@@ -91,6 +96,9 @@ async function clearRoutedEntry(
     }, { count: 'exact' })
     .eq('id', target.nextId)
     .eq(field, entryId);
+
+  // A staged row with a side gone starts level again until it is refilled.
+  if ((count ?? 0) > 0 && nextRow.stage != null) await refreshStagedHandicaps(adminClient, target.nextId, doubles);
 
   // PostgREST reports "matched no rows" as success, so the count is the only way
   // to tell a clear that fired from one that was overtaken. Reported rather than
@@ -339,48 +347,14 @@ async function recomputeStandingsAfterCorrection(eventId: string, lead: string):
   }
 }
 
-async function enterMatchResultImpl(
-  matchId: string,
+/** The legacy formats' score checks, as enterMatchResult has always applied them. */
+function assertLegacyScoreline(
+  match: Record<string, unknown>,
+  event: Record<string, unknown>,
   scores: Array<{ a: number; b: number }>,
   winnerSide: 'a' | 'b',
-  timeExceeded: boolean
-) {
-  const admin = await requireCapability('tournaments.results.enter.write');
-  const adminClient = createAdminClient();
-
-  const { data: match } = await adminClient.from('tournament_matches')
-    .select('*, event:tournament_events(*)')
-    .eq('id', matchId)
-    .single();
-
-  if (!match) throw new Error('Match not found');
-  if (match.status !== 'pending' && match.status !== 'ready' && match.status !== 'live') {
-    throw new Error('Match is not in a playable state');
-  }
-
-  const event = match.event as Record<string, unknown>;
-  await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
-  // The event must actually be under way. match.status alone does not say so:
-  // a match is created 'pending' the moment the bracket is generated, which is
-  // one step BEFORE the event goes live (registration -> checkin ->
-  // bracket_generated -> live). Without this, results could be recorded — and
-  // Elo applied — for a tournament that had not started.
-  //
-  // eventIsPlaying, NOT `=== 'live'` (00107). THIS IS THE ONE-WORD CONDITION
-  // THAT WOULD HAVE KILLED THE POOL-TO-BRACKET FORMAT END TO END: its round
-  // robin is played at `pool_live`, so left as it was, every pool score anybody
-  // tried to enter would have come back "Start the event before entering
-  // results" on an event that was visibly running. No type check and no test of
-  // the generators would have caught it. For the other two formats
-  // eventIsPlaying is exactly `=== 'live'`.
-  if (!eventIsPlaying(event.status as string)) {
-    throw new ExpectedError(
-      event.status === 'completed'
-        ? 'This event is finished. Edit the result instead of entering a new one.'
-        : 'Start the event before entering results.',
-    );
-  }
-
+  timeExceeded: boolean,
+): void {
   // The event's typed shape wins over the match_format enum when it has one
   // (00046) — a pool run at 1 game to 15 must reject a 21-19 that the enum
   // fallback would have waved through.
@@ -437,6 +411,87 @@ async function enterMatchResultImpl(
   // count check above passes for a legal 2-0 no matter WHO the caller then names
   // as the winner.
   assertWinnerMatchesScores(scores, winnerSide);
+}
+
+/** The rules a staged match is judged by, or a refusal when its stage has gone from the config. */
+function stagedRulesFor(match: Record<string, unknown>, event: Record<string, unknown>): MatchRules {
+  const rules = stagedMatchRules(
+    parseFormatConfig(event.format_config),
+    match as { stage?: number | null; handicap_a?: number | null; handicap_b?: number | null },
+  );
+  if (!rules) {
+    throw new ExpectedError('This match\'s stage is not in the event\'s stages any more, so its score cannot be checked.');
+  }
+  return rules;
+}
+
+/**
+ * A staged scoreline: every game legal under the stage's rules from the row's
+ * head starts (cut short when the clock ran out), the match clinched, and the
+ * declared winner the side that won it.
+ */
+function assertStagedScoreline(
+  rules: MatchRules,
+  scores: Array<{ a: number; b: number }>,
+  winnerSide: 'a' | 'b',
+  timeExceeded: boolean,
+): void {
+  const verdict = validateMatch(scores, rules, { cutShort: timeExceeded });
+  if (!verdict.ok) throw new ExpectedError(verdict.error);
+  assertWinnerMatchesScores(scores, winnerSide);
+}
+
+async function enterMatchResultImpl(
+  matchId: string,
+  scores: Array<{ a: number; b: number }>,
+  winnerSide: 'a' | 'b',
+  timeExceeded: boolean
+) {
+  const admin = await requireCapability('tournaments.results.enter.write');
+  const adminClient = createAdminClient();
+
+  const { data: match } = await adminClient.from('tournament_matches')
+    .select('*, event:tournament_events(*)')
+    .eq('id', matchId)
+    .single();
+
+  if (!match) throw new Error('Match not found');
+  if (match.status !== 'pending' && match.status !== 'ready' && match.status !== 'live') {
+    throw new Error('Match is not in a playable state');
+  }
+
+  const event = match.event as Record<string, unknown>;
+  await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
+  // The event must actually be under way. match.status alone does not say so:
+  // a match is created 'pending' the moment the bracket is generated, which is
+  // one step BEFORE the event goes live (registration -> checkin ->
+  // bracket_generated -> live). Without this, results could be recorded — and
+  // Elo applied — for a tournament that had not started.
+  //
+  // eventIsPlaying, NOT `=== 'live'` (00107). THIS IS THE ONE-WORD CONDITION
+  // THAT WOULD HAVE KILLED THE POOL-TO-BRACKET FORMAT END TO END: its round
+  // robin is played at `pool_live`, so left as it was, every pool score anybody
+  // tried to enter would have come back "Start the event before entering
+  // results" on an event that was visibly running. No type check and no test of
+  // the generators would have caught it. For the other two formats
+  // eventIsPlaying is exactly `=== 'live'`.
+  if (!eventIsPlaying(event.status as string)) {
+    throw new ExpectedError(
+      event.status === 'completed'
+        ? 'This event is finished. Edit the result instead of entering a new one.'
+        : 'Start the event before entering results.',
+    );
+  }
+
+  // A STAGED MATCH (00272) is judged by its stage's scoring and the head starts
+  // snapshotted on the row, through the same shared validateMatch the dialog
+  // uses. Not on top of the legacy checks: a group game to 15 without win by
+  // two ends 15-14, which the legacy shape refuses.
+  if (match.stage != null) {
+    assertStagedScoreline(stagedRulesFor(match, event), scores, winnerSide, timeExceeded);
+  } else {
+    assertLegacyScoreline(match, event, scores, winnerSide, timeExceeded);
+  }
 
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
 
@@ -1326,6 +1381,8 @@ async function setMatchEntryImpl(
       'moved an entry into it. Reload the bracket and check it before editing again.',
     );
   }
+  // A staged row's head starts belong to whoever is in it now (00272).
+  if (match.stage != null) await refreshStagedHandicaps(adminClient, matchId, doubles);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
@@ -1456,7 +1513,16 @@ async function editMatchResultImpl(
   // score agreement is enforced here — the full legality checks stay off the
   // correction path on purpose, because this is the action an admin uses to
   // repair data that is already odd.
-  assertWinnerMatchesScores(newScores, newWinnerSide);
+  //
+  // A STAGED MATCH (00272) is the exception: its rules are the organiser's own
+  // per stage, and a correction is checked against them like an entry is, with
+  // the clock as the row recorded it. No scores is a walkover, which keeps its
+  // forfeit and writes no scoreline.
+  if (match.stage != null && newScores.length > 0) {
+    assertStagedScoreline(stagedRulesFor(match, event), newScores, newWinnerSide, match.time_exceeded === true);
+  } else {
+    assertWinnerMatchesScores(newScores, newWinnerSide);
+  }
 
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
 
@@ -1549,6 +1615,7 @@ async function editMatchResultImpl(
     await adminClient.from('tournament_matches')
       .update({ [entrySideField(target.side, doubles)]: entryId })
       .eq('id', target.nextId);
+    await refreshStagedHandicaps(adminClient, target.nextId, doubles);
   }
 
   // Reapply Elo with the corrected winner. Walkovers count too — enterWalkover

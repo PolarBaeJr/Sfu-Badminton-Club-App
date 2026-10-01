@@ -182,8 +182,10 @@ and its result entry, because that table has no update trigger.
 A match object carries `match_ref`, `source` (`club` or `tournament`),
 `status`, `counts_toward_stats`, `played_at`, `updated_at`, `season`, `type`,
 `kind`, `rated`, `format`, `games_per_match`, `points_per_game`, `walkover`,
-`winner_side`, `score_summary`, `games` and `sides`, plus `tournament` (round,
-phase, event) for a tournament match. Each side is a list of
+`winner_side`, `score_summary`, `games` and `sides`, plus `tournament` for a
+tournament match: `{id, event_id, event_type, round_number, round_name, phase,
+is_third_place, stage, match_label, handicap_a, handicap_b}`. The last four are
+`null` (`0` for the handicaps) outside a staged event; see "Staged events". Each side is a list of
 `{player_ref, won, rating: {before, after, delta} | null, points_scored,
 points_allowed, games_won, games_lost}`. A voided match keeps its result but its
 `rating` is `null`, because the change was reversed.
@@ -213,6 +215,61 @@ the team rather than a person, and never equals a `player_ref`. Every member
 entrant and draw element carries `"external": false` and `"external_ref": null`.
 A slot in an external event is withheld only when disputed. External matches
 move no rating, so they are not in `/v1/matches` or any match history.
+
+### Staged events
+
+An event with `"format": "staged"` is played as a list of stages: groups, a
+knockout, or a set of named matches, each fed by the field or by places out of
+the stages before it. Every event also carries `rated` (whether the event moves
+ratings at all) and `current_stage` (the latest stage drawn, 1-based, or
+`null`). On a staged event four more fields describe it; on any other event
+`stages`, `categories` and `head_starts` are `null`:
+
+- `stages`: one object per stage, in order, with `index` (1-based), `key`,
+  `name`, `kind` (`groups`, `knockout` or `matches`), `rated` (`false` for a
+  stage that moves no rating even in a rated event) and `scoring`
+  (`{best_of, target, win_by_two, cap, handicap, forfeit}`, where `forfeit` is
+  the score a walkover is recorded as, `{winner, loser}`, or `null` for
+  target to nil). A groups stage fills `pools`, `groups_per_pool`, `group_size`
+  (a number or `"auto"`) and `tiebreaks` (in order; any of `wins`,
+  `point_diff`, `points_for`, `points_against_low`, `game_diff`, `h2h`,
+  `seed`). A knockout fills `size` (a power of 2 or `"auto"`) and
+  `third_place`. A matches stage fills `matches`, a list of
+  `{label, name, winner_place, loser_place}`. A field a stage's kind does not
+  use is `null`.
+- `categories`: the team categories, `[{key, label}]`. `null` means the
+  defaults: `mens`, `womens` and `mixed`.
+- `head_starts`: row category, then column category, then the points a team of
+  the row category starts each game on against one of the column category, for
+  example `{"womens": {"mens": 3}}`. A pair not listed starts on 0.
+- `points_table`: the ladder points the event pays, `{by_place, rest,
+  participation, per_win}`: `by_place[0]` is first place, a place past the end
+  of the list takes `rest`, and every entrant also gets `participation` plus
+  `per_win` for each win. It is served on every event, staged or not, and is
+  `null` when the event pays its format's default: `single_elimination` and
+  `pool_to_bracket` pay `[100, 75, 50, 40, 25, 25, 25, 25]` by place with
+  `rest` 10 and nothing for taking part or winning; `round_robin` pays
+  `participation` 1 and `per_win` 3 and nothing by place. A staged event pays the knockout default unless its last
+  stage is groups, which pays the round robin default.
+
+An entrant carries `team_category`, the category key the team plays as, or
+`null` (always `null` for a singles entrant).
+
+A staged draw slot has `phase: null` and these instead: `stage` (the 1-based
+index into `stages`), `pool_number`, `group_number`, `slot`, `match_label` (the
+`label` of a named match), and `handicap_a` and `handicap_b`, the head start
+each side started every game on. **Recorded scores include the head start**:
+`games` is the score as it was played, so subtract the handicap to get the
+points won from play. A withheld slot keeps `stage`, `pool_number`,
+`group_number`, `slot` and `match_label`, and has both handicaps `null`. On a
+slot outside a staged event the stage fields are `null` and the handicaps `0`.
+
+Courts are still not served: neither a match's court nor the courts a stage
+plays on.
+
+A staged event of club members with `"rated": false` moves no rating, but
+unlike an external event its matches are member matches: they appear in
+`/v1/matches` and the match history with `"rated": false` and a `null` rating.
 
 ### `GET /v1/players`
 

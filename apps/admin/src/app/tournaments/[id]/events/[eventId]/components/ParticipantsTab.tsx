@@ -21,15 +21,22 @@ import {
   withdrawParticipant,
   withdrawPair,
   autoPairWaitingEntrants,
+  setPairCategory,
+  promoteFromWaitlist,
+  removeFromWaitlist,
 } from '@/lib/tournament-actions';
 import { summarizeBulk } from '@/lib/bulk-add';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
-import { nextPowerOf2, pickOne, isOutOfEvent, eventIsPlaying, categoryRequiredBy, type TournamentEventType } from '@badminton/shared';
+import {
+  nextPowerOf2, pickOne, isOutOfEvent, eventIsPlaying, categoryRequiredBy, groupLabel,
+  parseFormatConfig, pickCategory, categoryForEventType, suggestCategory, toCompetitionCategory,
+  doublesDrawSlots, wouldExceedCapacity, formatDateTime,
+  type FormatCategory, type TournamentEventType,
+} from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle, LayoutGrid } from 'lucide-react';
-import { groupLabel } from './RoundRobinTab';
-import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
+import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle, LayoutGrid, Clock } from 'lucide-react';
+import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers, WaitlistEntry } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
 
@@ -45,6 +52,9 @@ interface Props {
   capabilities: DrawCapabilities;
   // null = draw no waiver column. See WaiverState.
   waiverStates: Record<string, EventWaiverStatus> | null;
+  // Members queueing for a place (00278), first in line first. null before
+  // that migration, and for an external event: no section at all.
+  waitlist?: WaitlistEntry[] | null;
 }
 
 // Raw enum values ("checked_in") leaked straight into the table. Underscores
@@ -223,7 +233,69 @@ function GroupCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates }: Props) {
+/**
+ * A team's category in a staged event (00272): what the stage's head starts
+ * read for it. A key the event no longer lists is shown as removed and stays
+ * selectable, so the cell never claims a team is something it is not.
+ */
+function CategoryCell({
+  pairId,
+  category,
+  categories,
+  suggestion,
+  canEdit,
+  onSave,
+}: {
+  pairId: string;
+  category: string | null;
+  categories: FormatCategory[];
+  suggestion: string | null;
+  canEdit: boolean;
+  onSave: (id: string, category: string | null) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const known = category == null || categories.some((c) => c.key === category);
+  const labelOf = (key: string) => categories.find((c) => c.key === key)?.label ?? `${key} (removed)`;
+  const hint = category == null && suggestion
+    ? <span className="block text-xs text-[var(--text-muted)]">Suggested: {labelOf(suggestion)}</span>
+    : null;
+
+  if (!canEdit) {
+    return (
+      <>
+        <span className="text-sm text-[var(--text-muted)]">{category != null ? labelOf(category) : 'Unset'}</span>
+        {hint}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Select
+        variant="bare"
+        value={category ?? ''}
+        disabled={saving}
+        aria-label="Category"
+        onChange={async (e) => {
+          const next = e.target.value === '' ? null : e.target.value;
+          if (next === category) return;
+          setSaving(true);
+          await onSave(pairId, next);
+          setSaving(false);
+        }}
+        options={[
+          { value: '', label: 'Unset' },
+          ...categories.map((c) => ({ value: c.key, label: c.label })),
+          ...(known || category == null ? [] : [{ value: category, label: labelOf(category) }]),
+        ]}
+        className="text-sm bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[6px] px-1.5 py-0.5 text-[var(--text-primary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50"
+      />
+      {hint}
+    </>
+  );
+}
+
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
   // single-select fields. Singles adds any number of individuals at once.
@@ -265,6 +337,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [externalName1, setExternalName1] = useState('');
   const [externalName2, setExternalName2] = useState('');
   const [externalTeamName, setExternalTeamName] = useState('');
+  // A staged event (00272): each team's category drives its head starts.
+  const stagedCfg = event.format === 'staged' ? parseFormatConfig(event.format_config) : null;
+  const defaultExternalCategory = pickCategory(stagedCfg, categoryForEventType(event.event_type)) ?? '';
+  const [externalCategory, setExternalCategory] = useState(defaultExternalCategory);
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
@@ -326,9 +402,23 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // moment the player themselves is no longer allowed to do it. That rule has
   // not moved; it now has to be held by somebody who may actually perform it.
   const controls = participantControls(
-    { status: event.status as string, drawLocked },
+    { status: event.status as string, drawLocked, staged: event.format === 'staged' },
     capabilities,
   );
+
+  // Whether a promotion has room, by the rule enter_tournament_event uses:
+  // rows for singles, pairs plus one slot per two unpaired for doubles. The
+  // function decides under its lock; this only disables a button that would
+  // be refused.
+  const eventFull = isDoubles
+    ? wouldExceedCapacity(
+      doublesDrawSlots(activeEntries.length, activeUnpaired.length),
+      doublesDrawSlots(activeEntries.length, activeUnpaired.length + 1),
+      event.max_participants,
+    )
+    : event.max_participants != null && event.max_participants > 0
+      && activeEntries.length >= event.max_participants;
+  const waitlistOpen = (event.status === 'registration' || event.status === 'checkin') && !drawLocked;
 
   // GROUPS (00106). Structural reads, following max_events_per_player: the
   // columns are not in the generated Database type until the migration has been
@@ -432,6 +522,35 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setActionLoading(null);
+  }
+
+  // THE WAITLIST (00278). Promote enters the member under the field lock,
+  // with the same checks as their own entry; the function decides, this only
+  // says what it decided.
+  async function handlePromoteWaiting(entry: WaitlistEntry) {
+    setActionLoading(entry.id);
+    const res = await promoteFromWaitlist(entry.id);
+    setActionLoading(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    toast(`${entry.player?.full_name ?? 'Member'} entered from the waitlist`, 'success');
+    router.refresh();
+  }
+
+  async function handleRemoveWaiting(entry: WaitlistEntry) {
+    const name = entry.player?.full_name ?? 'this member';
+    const ok = await confirm({
+      title: 'Remove from the waitlist?',
+      message: `${name} loses their place in the queue. They can join again while the event is full.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    setActionLoading(entry.id);
+    const res = await removeFromWaitlist(entry.id);
+    setActionLoading(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    toast(`${name} removed from the waitlist`, 'success');
+    router.refresh();
   }
 
   /**
@@ -694,6 +813,14 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setLoading(false);
   }
 
+  async function handleCategorySave(id: string, category: string | null) {
+    const res = await setPairCategory(id, category);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    const n = res.data.rehandicapped;
+    if (n > 0) toast(`Category saved; head starts updated on ${n} match${n === 1 ? '' : 'es'}`, 'success');
+    router.refresh();
+  }
+
   async function handleGroupSave(id: string, group: number) {
     const res = isDoubles ? await updatePairGroup(id, group) : await updateParticipantGroup(id, group);
     if (res.ok) router.refresh();
@@ -799,15 +926,28 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
       return;
     }
     setLoading(true);
-    const res = await addExternalPairToEvent(event.id, externalName1, externalName2, externalTeamName);
+    const res = await addExternalPairToEvent(
+      event.id, externalName1, externalName2, externalTeamName, externalCategory === '' ? null : externalCategory,
+    );
     setLoading(false);
     if (!res.ok) { toast(res.error, 'error'); return; }
     toast('External team added', 'success');
     setExternalName1('');
     setExternalName2('');
     setExternalTeamName('');
+    setExternalCategory(defaultExternalCategory);
     setExternalOpen(false);
     router.refresh();
+  }
+
+  // A member pair with no category yet: what its members' declared categories
+  // say it is. Shown, never written; the organiser sets it.
+  function pairSuggestion(pair: PairWithPlayers): string | null {
+    if (pair.team_category != null || pair.player1_id == null || pair.player2_id == null) return null;
+    type WithCategory = { competition_category?: unknown } | null;
+    const members = [pair.player1 as WithCategory, pair.player2 as WithCategory]
+      .map((p) => ({ competition_category: toCompetitionCategory(p?.competition_category) }));
+    return pickCategory(stagedCfg, suggestCategory(members));
   }
 
   function unpairedName(p: ParticipantWithPlayer): string {
@@ -835,7 +975,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 somebody waiting for a partner is not an entry in the draw. */}
             {activeUnpaired.length > 0 && (
               <span className="text-[var(--color-warning)]">
-                {' '}+ {activeUnpaired.length} waiting for a partner
+                {' '}+ {activeUnpaired.length} unpaired
               </span>
             )}
             {showsBracketSize && ` → ${bracketSize}-slot bracket`}
@@ -883,7 +1023,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             </Button>
           )}
           {externalEvent && controls.add && (
-            <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => setExternalOpen(true)}>
+            <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => { setExternalCategory(defaultExternalCategory); setExternalOpen(true); }}>
               <Plus className="w-3.5 h-3.5 mr-1" /> Add external team
             </Button>
           )}
@@ -936,6 +1076,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               {isGroupStage && (
                 <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-20">Group</th>
               )}
+              {stagedCfg && isDoubles && (
+                <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-32">Category</th>
+              )}
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3">
                 {isDoubles ? 'Pair' : 'Player'}
               </th>
@@ -974,6 +1117,18 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         groupCount={groupCount}
                         canEdit={canEditGroup}
                         onSave={handleGroupSave}
+                      />
+                    </td>
+                  )}
+                  {stagedCfg && (
+                    <td className="px-4 py-3">
+                      <CategoryCell
+                        pairId={pair.id}
+                        category={pair.team_category ?? null}
+                        categories={stagedCfg.categories}
+                        suggestion={pairSuggestion(pair)}
+                        canEdit={controls.editCategory}
+                        onSave={handleCategorySave}
                       />
                     </td>
                   )}
@@ -1129,7 +1284,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-[var(--border)]">
             <div className="flex items-center gap-2">
               <Users className="w-4 h-4 text-[var(--color-warning)]" />
-              <span className="text-sm font-medium text-[var(--text-primary)]">Waiting for a partner</span>
+              <span className="text-sm font-medium text-[var(--text-primary)]">Unpaired players</span>
               <span className="text-xs text-[var(--text-muted)]">
                 {activeUnpaired.length} {activeUnpaired.length === 1 ? 'person' : 'people'}
               </span>
@@ -1174,7 +1329,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             <div className="flex items-start gap-2 px-4 py-3 bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] border-b border-[color-mix(in_oklab,var(--color-warning)_20%,transparent)]">
               <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
               <span className="text-sm text-[var(--color-warning)]">
-                The draw cannot be generated while anyone is waiting. Pair them up, or take them out of the event.
+                The draw cannot be generated while anyone is unpaired. Pair them up, or take them out of the event.
               </span>
             </div>
           )}
@@ -1337,6 +1492,61 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       already left. */}
                   {isDoubles && controls.removeSolo && (
                     <Button size="sm" variant="ghost" onClick={() => handleRemoveUnpaired(p.id)} loading={actionLoading === p.id} aria-label={`Remove ${unpairedName(p)}'s withdrawn entry`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                      <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
+                    </Button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {waitlist && waitlist.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-[var(--border)]">
+            <Clock className="w-4 h-4 text-[var(--text-muted)]" />
+            <span className="text-sm font-medium text-[var(--text-primary)]">Waitlist</span>
+            <span className="text-xs text-[var(--text-muted)]">
+              {waitlist.length} {waitlist.length === 1 ? 'person' : 'people'}
+            </span>
+            {eventFull && waitlistOpen && (
+              <span className="text-xs text-[var(--text-muted)]">Full: raise the limit or free a place to promote.</span>
+            )}
+          </div>
+          <ul className="divide-y divide-[var(--border)]">
+            {waitlist.map((entry, index) => (
+              <li key={entry.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="w-6 text-sm font-mono text-[var(--text-muted)]">{index + 1}</span>
+                  <span className="text-sm font-medium text-[var(--text-primary)] truncate">
+                    {entry.player?.full_name ?? 'Unknown member'}
+                  </span>
+                  <span className="text-xs text-[var(--text-muted)]">Joined {formatDateTime(entry.joined_at)}</span>
+                </div>
+                <div className="inline-flex flex-nowrap items-center gap-2 [&_button]:min-h-[44px]">
+                  {capabilities.soloAdd && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handlePromoteWaiting(entry)}
+                      disabled={eventFull || !waitlistOpen}
+                      loading={actionLoading === entry.id}
+                      aria-label={`Promote ${entry.player?.full_name ?? 'member'} from the waitlist`}
+                      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                    >
+                      Promote
+                    </Button>
+                  )}
+                  {capabilities.soloRemove && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleRemoveWaiting(entry)}
+                      loading={actionLoading === entry.id}
+                      aria-label={`Remove ${entry.player?.full_name ?? 'member'} from the waitlist`}
+                      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                    >
                       <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
                     </Button>
                   )}
@@ -1515,6 +1725,17 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             maxLength={60}
             onChange={(e) => setExternalTeamName(e.target.value)}
           />
+          {stagedCfg && (
+            <Select
+              label="Category"
+              value={externalCategory}
+              onChange={(e) => setExternalCategory(e.target.value)}
+              options={[
+                { value: '', label: 'None' },
+                ...stagedCfg.categories.map((c) => ({ value: c.key, label: c.label })),
+              ]}
+            />
+          )}
           <p className="text-xs text-[var(--text-muted)]">
             External teams play unrated. Nobody here needs a member account.
           </p>

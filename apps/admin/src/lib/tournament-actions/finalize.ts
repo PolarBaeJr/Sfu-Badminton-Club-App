@@ -11,6 +11,17 @@ import {
   phaseValueFor,
   isRealIncompleteMatch,
   isOutOfEvent,
+  anyStageRated,
+  finalPlacings,
+  formatResultsFrom,
+  isTalliedStatus,
+  matchSides,
+  parseFormatConfig,
+  pointsFor,
+  parsePointsTable,
+  defaultPointsTable,
+  pointsForPlace,
+  applyTournamentBonusOverride,
 } from '@badminton/shared';
 import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings, type TournamentBonusSettings } from '../platform-settings';
@@ -130,6 +141,11 @@ export async function applyPlacementBonuses(eventId: string) {
   if (!event) throw new Error('Event not found');
   if (event.status !== 'completed') throw new ExpectedError('Event must be completed first');
   if (!event.placement_bonus_enabled) throw new ExpectedError('Placement bonuses not enabled for this event');
+  // A bonus is paid into ratings, so an event that moves no rating pays none.
+  if (event.rated === false
+    || (event.format === 'staged' && !anyStageRated(parseFormatConfig(event.format_config) ?? { stages: [] }))) {
+    throw new ExpectedError('This event is unrated, so it pays no placement bonus.');
+  }
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   // Two gates, both must allow it: the global master switch in
@@ -139,10 +155,24 @@ export async function applyPlacementBonuses(eventId: string) {
   // bonuses. Callers reaching this action directly (the admin button) get a
   // clear error; finalizeEvent checks the same flag up front so it never
   // half-finalises — see the guard there.
-  const bonusSettings = await getTournamentBonusSettings(adminClient);
-  if (!bonusSettings.enabled) {
+  const clubSettings = await getTournamentBonusSettings(adminClient);
+  if (!clubSettings.enabled) {
     throw new ExpectedError('Placement bonuses are disabled platform-wide (Settings → Tournament Bonuses)');
   }
+  // THE TOURNAMENT'S OWN AMOUNTS (00275), laid over the club's. Read with
+  // select('*') so a database without the column pays the club's amounts; a
+  // failed read throws, for the reason the settings read above does: paying
+  // the club's amounts on a tournament that set its own is a wrong payment
+  // with no unpay.
+  const { data: tournamentRow, error: tournamentErr } = await adminClient
+    .from('tournaments').select('*').eq('id', event.tournament_id).single();
+  if (tournamentErr) {
+    throw new Error(`This tournament's bonus amounts could not be read (${tournamentErr.message}), so no bonuses were paid.`);
+  }
+  const bonusSettings = applyTournamentBonusOverride(
+    clubSettings,
+    (tournamentRow as { placement_bonus_amounts?: unknown } | null)?.placement_bonus_amounts,
+  );
 
   const doubles = isDoublesEvent(event.event_type);
   const bonuses = doubles ? bonusSettings.doubles : bonusSettings.singles;
@@ -382,6 +412,78 @@ export async function applyPlacementBonuses(eventId: string) {
  * cannot quietly redo the money; recomputeEventStandings reports when a
  * placement moved under a paid bonus and leaves that for a human.
  */
+/**
+ * A staged event's placings and points (00272), from the shared engine:
+ * finalPlacings for the order, pointsFor for the points. Withdrawn and
+ * disqualified entries are not placed. Computes only, like its caller.
+ */
+async function stagedPositionsAndPoints(
+  adminClient: ReturnType<typeof createAdminClient>,
+  event: Record<string, unknown>,
+  eventId: string,
+  doubles: boolean,
+  table: string,
+): Promise<{ positions: Map<string, number>; points: Map<string, number> }> {
+  const cfg = parseFormatConfig(event.format_config);
+  if (!cfg) {
+    throw new ExpectedError('This event\'s stages are not set out correctly, so its placings cannot be worked out. Fix them in the event settings first.');
+  }
+  const [entriesRes, matchesRes] = await Promise.all([
+    adminClient.from(table as 'tournament_pairs').select('id, seed_number, status').eq('event_id', eventId),
+    adminClient.from('tournament_matches')
+      .select('stage, status, pool_number, group_number, round_number, match_label, is_third_place, scores, participant_a_id, participant_b_id, pair_a_id, pair_b_id, winner_participant_id, winner_pair_id')
+      .eq('event_id', eventId)
+      .not('stage', 'is', null),
+  ]);
+  // Thrown for the reason the other branches throw: an empty read would place
+  // nobody and still let the event complete.
+  if (entriesRes.error) throw new Error(`This event's entries could not be read, so no placings were worked out: ${entriesRes.error.message}`);
+  if (matchesRes.error) throw new Error(`This event's matches could not be read, so no placings were worked out: ${matchesRes.error.message}`);
+
+  const rows = (matchesRes.data ?? []).map((m) => ({ ...m, ...matchSides(m, doubles) }));
+  const results = formatResultsFrom(
+    cfg,
+    (entriesRes.data ?? []).map((e) => ({ id: e.id as string, seed: e.seed_number as number | null, status: e.status as string })),
+    rows,
+  );
+  const positions = finalPlacings(cfg, results);
+  const wins = new Map<string, number>();
+  for (const m of results.matches) {
+    if (isTalliedStatus(m.status) && m.winner && m.a && m.b) wins.set(m.winner, (wins.get(m.winner) ?? 0) + 1);
+  }
+  const points = new Map<string, number>();
+  for (const [id, place] of positions) points.set(id, pointsFor(cfg, place, wins.get(id) ?? 0));
+  return { positions, points };
+}
+
+/**
+ * Has every stage of a staged event been drawn? finalizeEvent already refuses
+ * an unplayed match; this refuses a stage with no matches at all, which would
+ * otherwise read as finished.
+ */
+async function assertEveryStageDrawn(
+  adminClient: ReturnType<typeof createAdminClient>,
+  event: Record<string, unknown>,
+  eventId: string,
+): Promise<void> {
+  const cfg = parseFormatConfig(event.format_config);
+  if (!cfg) {
+    throw new ExpectedError('This event\'s stages are not set out correctly. Fix them in the event settings before finalising.');
+  }
+  const { data, error } = await adminClient.from('tournament_matches')
+    .select('stage')
+    .eq('event_id', eventId)
+    .not('stage', 'is', null);
+  if (error) throw new Error(`Could not read which stages are drawn: ${error.message}`);
+  const drawn = new Set((data ?? []).map((r) => r.stage as number));
+  const missing = cfg.stages.filter((_, i) => !drawn.has(i + 1)).map((s) => `"${s.name}"`);
+  if (missing.length > 0) {
+    throw new ExpectedError(
+      `${missing.join(' and ')} ${missing.length === 1 ? 'has' : 'have'} not been drawn yet. Draw and play every stage before finalising.`,
+    );
+  }
+}
+
 async function assignPositionsAndPoints(
   adminClient: ReturnType<typeof createAdminClient>,
   event: Record<string, unknown>,
@@ -432,8 +534,18 @@ async function assignPositionsAndPoints(
   const knockout = endsInKnockout(event.format as string);
   const poolToBracket = isPoolToBracket(event.format as string);
   const bracketPhase = phaseValueFor(event.format as string, 'bracket');
+  // A STAGED EVENT (00272) is placed by its stages, and every placing in it is
+  // earned against the whole field, as a round robin's is.
+  let stagedPoints: Map<string, number> | null = null;
 
-  if (knockout) {
+  if (event.format === 'staged') {
+    const staged = await stagedPositionsAndPoints(adminClient, event, eventId, doubles, table);
+    for (const [id, place] of staged.positions) {
+      positionMap.set(id, place);
+      wonTheirPosition.add(id);
+    }
+    stagedPoints = staged.points;
+  } else if (knockout) {
     // PHASE-FILTERED (00107), and this is not optional. The pool's matches sit
     // in this same table on a pool_to_bracket event, and every one of them has
     // a round_number in the same range as the bracket's. Unfiltered, the
@@ -723,8 +835,13 @@ async function assignPositionsAndPoints(
     .map(r => r.id);
 
 
-  // Assign points based on format. Compute (id → points) in memory then issue
-  // one parallel batch of UPDATEs.
+  // Assign points from the event's points table (00275), then issue one
+  // parallel batch of UPDATEs. With no table of its own an event pays its
+  // format's default (defaultPointsTable), which is exactly what was written
+  // into this function before: 100/75/50/40, 25 to the rest of the last eight
+  // and 10 to everyone else on a knockout; 1 to take part and 3 a win on a
+  // round robin. An unreadable stored table pays the default too, rather than
+  // refusing to finish the event over a setting.
   //
   // A pool_to_bracket event is scored on POSITION, like the knockout it ends
   // in, and not on the round robin's 3-per-win. Everybody in it now has a
@@ -733,24 +850,22 @@ async function assignPositionsAndPoints(
   // that reflects what the event was actually for. It also keeps the pool from
   // outscoring the knockout: five pool wins would be 16 points on the
   // round-robin rule, more than the 10 a beaten quarter-finalist takes.
+  const pointsTable = parsePointsTable(event.points_config) ?? defaultPointsTable(event.format as string);
   const pointsMap = new Map<string, number>();
-  if (knockout) {
-    // Position-based points: 1st=100, 2nd=75, 3rd=50, 4th=40, 5th-8th=25, else 10
-    //
-    // THIRD AND FOURTH ARE NOT THE SAME, at the club owner's instruction. They
-    // used to share 50, which made the third-place play-off — a best of 3 to 21,
-    // the same length as the final — decide a label and nothing else. A club
-    // does not ask two people to play a deciding match for identical reward.
-    //
-    // 40 rather than 25: fourth still reached a semi-final and must stay clear
-    // of the quarter-final band, so the gap says "you lost the play-off", not
-    // "you went out a round earlier".
+  if (stagedPoints) {
+    for (const [id, pts] of stagedPoints) pointsMap.set(id, pts);
+  } else if (knockout) {
+    // THIRD AND FOURTH ARE NOT THE SAME in the default table, at the club
+    // owner's instruction. They used to share 50, which made the third-place
+    // play-off (a best of 3 to 21, the same length as the final) decide a
+    // label and nothing else. 40 rather than 25: fourth still reached a
+    // semi-final and must stay clear of the quarter-final band.
     //
     // Where there was NO play-off the two are genuinely unseparated, but they
-    // still hold distinct final_positions (assigned by the tiebreak), so this
-    // splits them anyway. That is the pre-existing behaviour of that tiebreak
-    // rather than something introduced here, and it is why the RESULTS table
-    // only says "3rd place" when a play-off was actually played.
+    // still hold distinct final_positions (assigned by the tiebreak), so the
+    // table splits them anyway. That is the pre-existing behaviour of that
+    // tiebreak, and it is why the RESULTS table only says "3rd place" when a
+    // play-off was actually played.
     //
     // Read off positionMap rather than back out of the table. It used to
     // re-select every row with a non-null final_position, which only worked
@@ -759,18 +874,13 @@ async function assignPositionsAndPoints(
     // what kept the two writes from moving under one lock. The two are
     // equivalent: the clear below nulls exactly the rows positionMap omits, so
     // the re-read could never return anything positionMap does not hold.
-    for (const [id, pos] of positionMap) {
-      let pts: number;
-      if (pos === 1) pts = 100;
-      else if (pos === 2) pts = 75;
-      else if (pos === 3) pts = 50;
-      else if (pos === 4) pts = 40;
-      else if (pos <= 8) pts = 25;
-      else pts = 10;
-      pointsMap.set(id, pts);
-    }
+    //
+    // A knockout's table pays no per-win figure (normalizePointsConfig clears
+    // it), so wins are not counted here.
+    for (const [id, pos] of positionMap) pointsMap.set(id, pointsForPlace(pointsTable, pos, 0));
   } else {
-    // Round Robin: 3 points per win, 1 point for participation
+    // Round Robin: everyone still in the event takes the participation figure,
+    // a placed entry its place's points, and each win the per-win figure.
     const [rrMatchesRes, allEntriesRes] = await Promise.all([
       adminClient.from('tournament_matches')
         .select('winner_pair_id, winner_participant_id')
@@ -797,12 +907,13 @@ async function assignPositionsAndPoints(
         `The round-robin results could not be read, so no standings were worked out: ${rrMatchesRes.error.message}`
       );
     }
-    for (const e of allEntriesRes.data ?? []) pointsMap.set(e.id, 1); // 1 participation point
+    const wins = new Map<string, number>();
     for (const m of rrMatchesRes.data ?? []) {
       const winnerId = (doubles ? m.winner_pair_id : m.winner_participant_id) as string | null;
-      if (winnerId && pointsMap.has(winnerId)) {
-        pointsMap.set(winnerId, (pointsMap.get(winnerId) ?? 0) + 3);
-      }
+      if (winnerId) wins.set(winnerId, (wins.get(winnerId) ?? 0) + 1);
+    }
+    for (const e of allEntriesRes.data ?? []) {
+      pointsMap.set(e.id, pointsForPlace(pointsTable, positionMap.get(e.id) ?? null, wins.get(e.id) ?? 0));
     }
   }
 
@@ -1188,6 +1299,7 @@ export async function finalizeEvent(eventId: string) {
   if (realIncomplete.length > 0) {
     throw new Error(`${realIncomplete.length} match(es) still incomplete`);
   }
+  if (event.format === 'staged') await assertEveryStageDrawn(adminClient, event, eventId);
 
   // A VOIDED FINAL IS NOT AN INCOMPLETE ONE, and the query above says so
   // explicitly -- "voided" is one of the four statuses it excludes. So an event

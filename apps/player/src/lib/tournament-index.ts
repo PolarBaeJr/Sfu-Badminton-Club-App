@@ -9,7 +9,7 @@
 // hoped for.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isDoublesEvent, doublesDrawSlots, scopeToActiveSeason, type TournamentEventType } from '@badminton/shared';
+import { isDoublesEvent, doublesDrawSlots, scopeToActiveSeason, type TournamentEventType, type WindowState } from '@badminton/shared';
 
 /**
  * The tournament calendar read behind /tournaments, as a builder so
@@ -48,6 +48,11 @@ export type IndexEvent = {
   event_type: TournamentEventType;
   status: string;
   max_participants: number | null;
+  /**
+   * Where now falls in the event's effective registration window (00276),
+   * resolved by the page from its own window read. Absent reads as open.
+   */
+  registration_window?: WindowState;
 };
 
 export type IndexTournament = {
@@ -66,7 +71,7 @@ export type IndexTournament = {
  *  `registration` is the only status registerForEventImpl accepts (see
  *  tournament-actions.ts:81) — every other status makes the button a lie. */
 export function isOpenForEntry(event: IndexEvent): boolean {
-  return event.status === 'registration';
+  return event.status === 'registration' && (event.registration_window ?? 'open') === 'open';
 }
 
 /**

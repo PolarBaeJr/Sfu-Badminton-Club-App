@@ -277,11 +277,18 @@ export async function assembleMemberExport(
   const ownDiscordLinks = await reader.all('player_discord_links', (q) =>
     q.eq('player_id', playerId),
   );
+  const ownWaitlist = await reader.all('tournament_event_waitlist', (q) =>
+    q.eq('player_id', playerId),
+  );
 
   const matchIds = ids(ownMatchParticipants, 'match_id');
   const participantIds = ids(ownTournamentParticipants, 'id');
   const pairIds = ids(ownPairs, 'id');
-  const eventIds = [...new Set([...ids(ownTournamentParticipants, 'event_id'), ...ids(ownPairs, 'event_id')])];
+  const eventIds = [...new Set([
+    ...ids(ownTournamentParticipants, 'event_id'),
+    ...ids(ownPairs, 'event_id'),
+    ...ids(ownWaitlist, 'event_id'),
+  ])];
   const discordUserId =
     ownDiscordLinks.length === 1 && typeof ownDiscordLinks[0]!.discord_user_id === 'string'
       ? (ownDiscordLinks[0]!.discord_user_id as string)
@@ -494,6 +501,14 @@ export async function assembleMemberExport(
     ),
     checked_in_by_role: officerDescriptor(row.checked_in_by as string | null),
     added_by_role: officerDescriptor(row.added_by as string | null),
+  }));
+
+  // The member's own waitlist places (00278). resolved_by is the officer who
+  // promoted or removed them, so it goes the way session_attendance.marked_by
+  // does.
+  data.tournament_event_waitlist = ownWaitlist.map((row) => ({
+    ...dropColumns(row, ['resolved_by']),
+    resolved_by_role: officerDescriptor(row.resolved_by as string | null),
   }));
 
   // The draw matches the member's own entries appear in.

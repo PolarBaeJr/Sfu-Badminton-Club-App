@@ -14,7 +14,7 @@
 // SOURCE DATABASE: production — container "supabase-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 69 tables, 3 views and 26 enums.
+// Covers 70 tables, 3 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -2826,23 +2826,130 @@ export type Database = {
           },
         ]
       }
+      tournament_courts: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          label: string
+          notes: string | null
+          sort_order: number
+          tournament_id: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          label: string
+          notes?: string | null
+          sort_order?: number
+          tournament_id: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          label?: string
+          notes?: string | null
+          sort_order?: number
+          tournament_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_courts_tournament_id_fkey"
+            columns: ["tournament_id"]
+            isOneToOne: false
+            referencedRelation: "tournaments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tournament_event_waitlist: {
+        Row: {
+          event_id: string
+          id: string
+          joined_at: string
+          player_id: string
+          promoted_participant_id: string | null
+          reason: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+        }
+        Insert: {
+          event_id: string
+          id?: string
+          joined_at?: string
+          player_id: string
+          promoted_participant_id?: string | null
+          reason?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+        }
+        Update: {
+          event_id?: string
+          id?: string
+          joined_at?: string
+          player_id?: string
+          promoted_participant_id?: string | null
+          reason?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_event_waitlist_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_event_waitlist_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_event_waitlist_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_events: {
         Row: {
+          checkin_closes_at: string | null
+          checkin_opens_at: string | null
           created_at: string | null
+          current_stage: number | null
           draw_generation_id: string | null
           draw_locked: boolean | null
           elo_multiplier: number | null
           event_type: string
           external_event: boolean
           format: string
+          format_config: Json | null
           games_per_match: number | null
           group_count: number | null
           id: string
           match_format: string
           max_participants: number | null
           placement_bonus_enabled: boolean | null
+          points_config: Json | null
           points_per_game: number | null
           qualifiers_per_group: number | null
+          rated: boolean
+          registration_closes_at: string | null
+          registration_opens_at: string | null
           seed_by: string | null
           seed_skip_count: number
           seeded_from_event_id: string | null
@@ -2850,23 +2957,33 @@ export type Database = {
           status: string
           tournament_id: string
           updated_at: string | null
+          waitlist_auto_promote: boolean
+          waitlist_enabled: boolean
         }
         Insert: {
+          checkin_closes_at?: string | null
+          checkin_opens_at?: string | null
           created_at?: string | null
+          current_stage?: number | null
           draw_generation_id?: string | null
           draw_locked?: boolean | null
           elo_multiplier?: number | null
           event_type: string
           external_event?: boolean
           format: string
+          format_config?: Json | null
           games_per_match?: number | null
           group_count?: number | null
           id?: string
           match_format?: string
           max_participants?: number | null
           placement_bonus_enabled?: boolean | null
+          points_config?: Json | null
           points_per_game?: number | null
           qualifiers_per_group?: number | null
+          rated?: boolean
+          registration_closes_at?: string | null
+          registration_opens_at?: string | null
           seed_by?: string | null
           seed_skip_count?: number
           seeded_from_event_id?: string | null
@@ -2874,23 +2991,33 @@ export type Database = {
           status?: string
           tournament_id: string
           updated_at?: string | null
+          waitlist_auto_promote?: boolean
+          waitlist_enabled?: boolean
         }
         Update: {
+          checkin_closes_at?: string | null
+          checkin_opens_at?: string | null
           created_at?: string | null
+          current_stage?: number | null
           draw_generation_id?: string | null
           draw_locked?: boolean | null
           elo_multiplier?: number | null
           event_type?: string
           external_event?: boolean
           format?: string
+          format_config?: Json | null
           games_per_match?: number | null
           group_count?: number | null
           id?: string
           match_format?: string
           max_participants?: number | null
           placement_bonus_enabled?: boolean | null
+          points_config?: Json | null
           points_per_game?: number | null
           qualifiers_per_group?: number | null
+          rated?: boolean
+          registration_closes_at?: string | null
+          registration_opens_at?: string | null
           seed_by?: string | null
           seed_skip_count?: number
           seeded_from_event_id?: string | null
@@ -2898,6 +3025,8 @@ export type Database = {
           status?: string
           tournament_id?: string
           updated_at?: string | null
+          waitlist_auto_promote?: boolean
+          waitlist_enabled?: boolean
         }
         Relationships: [
           {
@@ -3000,11 +3129,15 @@ export type Database = {
         Row: {
           bracket_position: number
           court: string | null
+          court_id: string | null
           created_at: string | null
           draw_generation_id: string | null
           elo_snapshot: Json | null
           event_id: string
           games_per_match: number | null
+          group_number: number | null
+          handicap_a: number
+          handicap_b: number
           id: string
           is_bye: boolean | null
           is_third_place: boolean
@@ -3013,6 +3146,7 @@ export type Database = {
           loser_to_match_id: string | null
           loser_to_position: string | null
           match_format: string | null
+          match_label: string | null
           match_number: number | null
           pair_a_id: string | null
           pair_b_id: string | null
@@ -3020,6 +3154,7 @@ export type Database = {
           participant_b_id: string | null
           phase: string | null
           points_per_game: number | null
+          pool_number: number | null
           ready_player_ids: string[]
           result_entered_at: string | null
           result_entered_by: string | null
@@ -3027,6 +3162,8 @@ export type Database = {
           round_number: number
           scheduled_time: string | null
           scores: Json | null
+          slot: number | null
+          stage: number | null
           status: string
           time_exceeded: boolean
           updated_at: string | null
@@ -3040,11 +3177,15 @@ export type Database = {
         Insert: {
           bracket_position: number
           court?: string | null
+          court_id?: string | null
           created_at?: string | null
           draw_generation_id?: string | null
           elo_snapshot?: Json | null
           event_id: string
           games_per_match?: number | null
+          group_number?: number | null
+          handicap_a?: number
+          handicap_b?: number
           id?: string
           is_bye?: boolean | null
           is_third_place?: boolean
@@ -3053,6 +3194,7 @@ export type Database = {
           loser_to_match_id?: string | null
           loser_to_position?: string | null
           match_format?: string | null
+          match_label?: string | null
           match_number?: number | null
           pair_a_id?: string | null
           pair_b_id?: string | null
@@ -3060,6 +3202,7 @@ export type Database = {
           participant_b_id?: string | null
           phase?: string | null
           points_per_game?: number | null
+          pool_number?: number | null
           ready_player_ids?: string[]
           result_entered_at?: string | null
           result_entered_by?: string | null
@@ -3067,6 +3210,8 @@ export type Database = {
           round_number: number
           scheduled_time?: string | null
           scores?: Json | null
+          slot?: number | null
+          stage?: number | null
           status?: string
           time_exceeded?: boolean
           updated_at?: string | null
@@ -3080,11 +3225,15 @@ export type Database = {
         Update: {
           bracket_position?: number
           court?: string | null
+          court_id?: string | null
           created_at?: string | null
           draw_generation_id?: string | null
           elo_snapshot?: Json | null
           event_id?: string
           games_per_match?: number | null
+          group_number?: number | null
+          handicap_a?: number
+          handicap_b?: number
           id?: string
           is_bye?: boolean | null
           is_third_place?: boolean
@@ -3093,6 +3242,7 @@ export type Database = {
           loser_to_match_id?: string | null
           loser_to_position?: string | null
           match_format?: string | null
+          match_label?: string | null
           match_number?: number | null
           pair_a_id?: string | null
           pair_b_id?: string | null
@@ -3100,6 +3250,7 @@ export type Database = {
           participant_b_id?: string | null
           phase?: string | null
           points_per_game?: number | null
+          pool_number?: number | null
           ready_player_ids?: string[]
           result_entered_at?: string | null
           result_entered_by?: string | null
@@ -3107,6 +3258,8 @@ export type Database = {
           round_number?: number
           scheduled_time?: string | null
           scores?: Json | null
+          slot?: number | null
+          stage?: number | null
           status?: string
           time_exceeded?: boolean
           updated_at?: string | null
@@ -3118,6 +3271,13 @@ export type Database = {
           winner_to_position?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "tournament_matches_court_id_fkey"
+            columns: ["court_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_courts"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "tournament_matches_event_id_fkey"
             columns: ["event_id"]
@@ -3262,6 +3422,7 @@ export type Database = {
           points: number | null
           seed_number: number | null
           status: string
+          team_category: string | null
         }
         Insert: {
           added_by?: string | null
@@ -3281,6 +3442,7 @@ export type Database = {
           points?: number | null
           seed_number?: number | null
           status?: string
+          team_category?: string | null
         }
         Update: {
           added_by?: string | null
@@ -3300,6 +3462,7 @@ export type Database = {
           points?: number | null
           seed_number?: number | null
           status?: string
+          team_category?: string | null
         }
         Relationships: [
           {
@@ -3464,6 +3627,8 @@ export type Database = {
       tournaments: {
         Row: {
           allowed_memberships: Database["public"]["Enums"]["membership_type"][]
+          checkin_closes_at: string | null
+          checkin_opens_at: string | null
           created_at: string
           created_by: string | null
           end_date: string | null
@@ -3471,7 +3636,10 @@ export type Database = {
           id: string
           max_events_per_player: number | null
           name: string
+          placement_bonus_amounts: Json | null
           placement_bonus_enabled: boolean
+          registration_closes_at: string | null
+          registration_opens_at: string | null
           season_id: string | null
           start_date: string
           status: Database["public"]["Enums"]["tournament_status"]
@@ -3482,6 +3650,8 @@ export type Database = {
         }
         Insert: {
           allowed_memberships?: Database["public"]["Enums"]["membership_type"][]
+          checkin_closes_at?: string | null
+          checkin_opens_at?: string | null
           created_at?: string
           created_by?: string | null
           end_date?: string | null
@@ -3489,7 +3659,10 @@ export type Database = {
           id?: string
           max_events_per_player?: number | null
           name: string
+          placement_bonus_amounts?: Json | null
           placement_bonus_enabled?: boolean
+          registration_closes_at?: string | null
+          registration_opens_at?: string | null
           season_id?: string | null
           start_date: string
           status?: Database["public"]["Enums"]["tournament_status"]
@@ -3500,6 +3673,8 @@ export type Database = {
         }
         Update: {
           allowed_memberships?: Database["public"]["Enums"]["membership_type"][]
+          checkin_closes_at?: string | null
+          checkin_opens_at?: string | null
           created_at?: string
           created_by?: string | null
           end_date?: string | null
@@ -3507,7 +3682,10 @@ export type Database = {
           id?: string
           max_events_per_player?: number | null
           name?: string
+          placement_bonus_amounts?: Json | null
           placement_bonus_enabled?: boolean
+          registration_closes_at?: string | null
+          registration_opens_at?: string | null
           season_id?: string | null
           start_date?: string
           status?: Database["public"]["Enums"]["tournament_status"]
@@ -3908,6 +4086,17 @@ export type Database = {
         }
         Returns: string
       }
+      add_external_tournament_pair_v2: {
+        Args: {
+          p_added_by: string
+          p_category?: string
+          p_event_id: string
+          p_external1_name: string
+          p_external2_name: string
+          p_team_name?: string
+        }
+        Returns: string
+      }
       add_participants_under_field_lock: {
         Args: { p_admin_id: string; p_entries: Json; p_event_id: string }
         Returns: Json
@@ -4104,6 +4293,10 @@ export type Database = {
         Args: { p_event_id: string; p_phase: string }
         Returns: Json
       }
+      delete_stage_matches: {
+        Args: { p_event_id: string; p_stage: number }
+        Returns: Json
+      }
       derive_member_code: { Args: { p_player_id: string }; Returns: string }
       derived_format_weight: {
         Args: { p_best_of: number; p_target: number }
@@ -4147,11 +4340,19 @@ export type Database = {
         }
         Returns: Json
       }
+      entry_window_state: {
+        Args: { p_closes: string; p_now: string; p_opens: string }
+        Returns: string
+      }
       event_has_legacy_bonus_payment: {
         Args: { p_event_id: string }
         Returns: boolean
       }
       event_results_fingerprint: { Args: { p_event_id: string }; Returns: Json }
+      fill_event_from_waitlist: {
+        Args: { p_actor: string; p_event_id: string; p_waitlist_id?: string }
+        Returns: Json
+      }
       format_best_of: {
         Args: { p_format: Database["public"]["Enums"]["match_format"] }
         Returns: number
@@ -4253,6 +4454,20 @@ export type Database = {
         }
         Returns: undefined
       }
+      join_event_waitlist: {
+        Args: {
+          p_doubles: boolean
+          p_event_id: string
+          p_player_id: string
+          p_user_agent?: string
+          p_waiver_hash?: string
+        }
+        Returns: Json
+      }
+      leave_event_waitlist: {
+        Args: { p_event_id: string; p_player_id: string }
+        Returns: Json
+      }
       mark_field_entries_no_show: {
         Args: { p_entry_ids: string[]; p_is_pair: boolean }
         Returns: Json
@@ -4344,6 +4559,18 @@ export type Database = {
         }
         Returns: Json
       }
+      publish_stage_draw: {
+        Args: {
+          p_digests: Json
+          p_doubles: boolean
+          p_entrants: string[]
+          p_event_id: string
+          p_generation: string
+          p_source_fingerprint: Json
+          p_stage: number
+        }
+        Returns: Json
+      }
       rating_bounds: {
         Args: Record<PropertyKey, never>
         Returns: { hi: number; lo: number }
@@ -4371,6 +4598,10 @@ export type Database = {
       }
       remove_field_entry: {
         Args: { p_entry_id: string; p_is_pair: boolean }
+        Returns: Json
+      }
+      remove_from_event_waitlist: {
+        Args: { p_actor: string; p_waitlist_id: string }
         Returns: Json
       }
       report_walkover_atomic: {
@@ -4428,6 +4659,15 @@ export type Database = {
       }
       session_cap_for: { Args: { p_match_type: string }; Returns: number }
       session_checkin_open: { Args: { p_session_id: string }; Returns: boolean }
+      set_event_waitlist: {
+        Args: {
+          p_actor: string
+          p_auto: boolean
+          p_enabled: boolean
+          p_event_id: string
+        }
+        Returns: Json
+      }
       set_field_entry_group: {
         Args: { p_entry_id: string; p_group: number; p_is_pair: boolean }
         Returns: Json
@@ -4464,6 +4704,10 @@ export type Database = {
           media_consent: boolean
           media_consent_changed_at: string
         }[]
+      }
+      staged_source_fingerprint: {
+        Args: { p_event_id: string; p_stage: number }
+        Returns: Json
       }
       strip_identity_keys: { Args: { v: Json }; Returns: Json }
       submit_match_result: {

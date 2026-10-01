@@ -73,6 +73,10 @@ export type ActiveEntry = {
   status: string;
   /** null when the viewer is not in this event at all. */
   mine: null | { checkedIn: boolean };
+  /** Where now falls in the event's check-in window (00276). Absent reads as open. */
+  checkinWindow?: FeedEvent['checkin_window'];
+  /** The sentence for a shut check-in window, shown instead of "Not checked in". */
+  checkinNotice?: string | null;
 };
 
 export type ActiveTournamentCardProps = {
@@ -94,7 +98,9 @@ export function ActiveTournamentCard({
   entered,
 }: ActiveTournamentCardProps) {
   const mine = events.filter((e) => e.mine !== null);
-  const eyebrow = underWayEyebrow(events.map((e) => ({ id: e.eventId, event_type: e.eventType, status: e.status })));
+  const eyebrow = underWayEyebrow(
+    events.map((e) => ({ id: e.eventId, event_type: e.eventType, status: e.status, checkin_window: e.checkinWindow })),
+  );
 
   return (
     // NO NEW CSS AND NO TAILWIND UTILITIES. Built from the classes this page
@@ -215,7 +221,9 @@ export function ActiveTournamentCard({
                   color: e.mine!.checkedIn ? 'var(--win)' : 'var(--mute)',
                 }}
               >
-                {e.mine!.checkedIn ? 'Checked in' : 'Not checked in'}
+                {e.mine!.checkedIn
+                  ? 'Checked in'
+                  : e.status === 'checkin' && e.checkinNotice ? e.checkinNotice : 'Not checked in'}
               </span>
             </Link>
           ))}

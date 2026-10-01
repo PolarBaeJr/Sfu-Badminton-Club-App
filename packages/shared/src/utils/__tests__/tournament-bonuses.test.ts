@@ -4,6 +4,10 @@ import {
   placementBonusFor,
   settingNumber,
   FALLBACK_TOURNAMENT_BONUS_SETTINGS,
+  applyTournamentBonusOverride,
+  normalizeTournamentBonusAmounts,
+  sameTournamentBonusAmounts,
+  tournamentBonusAmount,
 } from '../tournament-bonuses';
 import { PLACEMENT_BONUSES } from '../constants';
 
@@ -140,5 +144,60 @@ describe('placementBonusFor', () => {
     expect(placementBonusFor(null, amounts)).toBe(0);
     expect(placementBonusFor(undefined, amounts)).toBe(0);
     expect(placementBonusFor(0, amounts)).toBe(0);
+  });
+});
+
+describe('a tournament\'s own amounts', () => {
+  const club = parseTournamentBonusSettings({
+    enabled: true,
+    singles_champion: 32, singles_finalist: 20, singles_thirdplace: 16, singles_semifinalist: 12, singles_quarterfinalist: 6,
+    doubles_champion: 28, doubles_finalist: 18, doubles_thirdplace: 14, doubles_semifinalist: 10, doubles_quarterfinalist: 4,
+  });
+
+  it('is the club\'s amounts when there is no override', () => {
+    expect(applyTournamentBonusOverride(club, null)).toEqual(club);
+    expect(applyTournamentBonusOverride(club, undefined)).toEqual(club);
+    expect(applyTournamentBonusOverride(club, [40])).toEqual(club);
+  });
+
+  it('replaces only the keys it sets, and honours an explicit 0', () => {
+    const out = applyTournamentBonusOverride(club, { singles_champion: 50, doubles_quarterfinalist: 0 });
+    expect(out.singles).toEqual({ ...club.singles, champion: 50 });
+    expect(out.doubles).toEqual({ ...club.doubles, quarterfinalist: 0 });
+  });
+
+  it('falls back to the club for blank or garbage, never to 0', () => {
+    const out = applyTournamentBonusOverride(club, {
+      singles_finalist: '', singles_thirdplace: 'lots', singles_semifinalist: -3, doubles_champion: null, doubles_finalist: '22',
+    });
+    expect(out.singles).toEqual(club.singles);
+    expect(out.doubles).toEqual({ ...club.doubles, finalist: 22 });
+  });
+
+  it('never moves the club\'s master switch', () => {
+    const off = { ...club, enabled: false };
+    expect(applyTournamentBonusOverride(off, { enabled: true, singles_champion: 1 }).enabled).toBe(false);
+  });
+
+  it('does not edit the settings it was given', () => {
+    applyTournamentBonusOverride(club, { singles_champion: 99 });
+    expect(club.singles.champion).toBe(32);
+  });
+
+  it('reads one flat key off the club', () => {
+    expect(tournamentBonusAmount(club, 'doubles_thirdplace')).toBe(14);
+    expect(tournamentBonusAmount(club, 'singles_quarterfinalist')).toBe(6);
+  });
+
+  it('normalises what is stored: known keys, real numbers, null when empty', () => {
+    expect(normalizeTournamentBonusAmounts({ singles_champion: '40', other: 3, doubles_finalist: '' })).toEqual({ singles_champion: 40 });
+    expect(normalizeTournamentBonusAmounts({ singles_champion: '' })).toBeNull();
+    expect(normalizeTournamentBonusAmounts(null)).toBeNull();
+  });
+
+  it('compares by value, whatever order the keys come back in', () => {
+    expect(sameTournamentBonusAmounts({ singles_champion: 40, doubles_champion: 30 }, { doubles_champion: 30, singles_champion: 40 })).toBe(true);
+    expect(sameTournamentBonusAmounts(null, {})).toBe(true);
+    expect(sameTournamentBonusAmounts(null, { singles_champion: 0 })).toBe(false);
   });
 });

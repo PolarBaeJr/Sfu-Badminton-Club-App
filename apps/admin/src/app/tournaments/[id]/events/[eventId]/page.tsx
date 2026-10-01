@@ -3,9 +3,11 @@ import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { notFound } from 'next/navigation';
 import {
   TOURNAMENT_EVENT_TYPE_LABELS,
+  busyCourtIds,
   isDoublesEvent,
   resolveEventWaiverText,
   eventWaiverStatus,
+  applyTournamentBonusOverride,
   type AcceptedEventWaiver,
   type EventWaiverStatus,
 } from '@badminton/shared';
@@ -18,9 +20,10 @@ import { LiveTournament } from '../../../live-tournament';
 import { readTournamentBonusSettingsForDisplay } from '@/lib/platform-settings';
 import { TOURNAMENT_MATCH_NOTES, fetchPrivateNotes } from '@/lib/private-notes';
 import { hasResultsTab } from '@/lib/event-tabs';
+import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import type { DrawCapabilities } from '@/lib/participant-controls';
 import type { Capability } from '@/lib/permissions';
-import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary } from '@/lib/tournament-types';
+import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary, WaitlistEntry } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../event-format-fields';
 
 export default async function EventPage({
@@ -147,6 +150,9 @@ export default async function EventPage({
     bonusSettings,
     { data: allPlayers },
     { data: waiverAcceptances },
+    courts,
+    liveCourtUse,
+    waitlist,
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -165,7 +171,7 @@ export default async function EventPage({
     doubles
       ? supabase
           .from('tournament_pairs')
-          .select('*, player1:players!tournament_pairs_player1_id_fkey(id, full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(id, full_name, avatar_url)')
+          .select('*, player1:players!tournament_pairs_player1_id_fkey(id, full_name, avatar_url, competition_category), player2:players!tournament_pairs_player2_id_fkey(id, full_name, avatar_url, competition_category)')
           .eq('event_id', eventId)
           .order('seed_number', { ascending: true, nullsFirst: false })
       : Promise.resolve({ data: [] as PairWithPlayers[] }),
@@ -206,8 +212,14 @@ export default async function EventPage({
     // outright for that, and a page that only RENDERS the figures has no
     // business taking itself down over it. Absent means absent either way,
     // and the tab it feeds is not rendered.
+    //
+    // The tournament's own amounts (00275) are laid over the club's here as the
+    // finaliser lays them, off the tournament row already read above.
     hasResultsTab(event.status)
-      ? readTournamentBonusSettingsForDisplay(supabase)
+      ? readTournamentBonusSettingsForDisplay(supabase).then((s) => s && applyTournamentBonusOverride(
+          s,
+          (tournament as { placement_bonus_amounts?: unknown }).placement_bonus_amounts,
+        ))
       : Promise.resolve(null),
     // Everyone the participant picker may offer (includes admins). Skipped
     // outright, not hidden, for a viewer who cannot add an entry: this is the
@@ -236,7 +248,31 @@ export default async function EventPage({
           .select('player_id, waiver_hash, accepted_at')
           .eq('tournament_id', tournamentId)
       : Promise.resolve({ data: null as AcceptedEventWaiver[] | null }),
+    // The tournament's courts and which are in use across ALL its events
+    // (00273), for the desk's court picker. Null before 00273 or on a failed
+    // read, and the desk falls back to the text box.
+    readTournamentCourts(supabase, tournamentId).catch(() => null),
+    readLiveCourtUse(supabase, tournamentId).catch(() => null),
+    // Who is queueing for a place (00278), first in line first. Null before
+    // that migration, which hides the section rather than showing it empty.
+    event.external_event === true
+      ? Promise.resolve(null)
+      : supabase
+          .from('tournament_event_waitlist')
+          .select('id, player_id, joined_at, player:players!tournament_event_waitlist_player_id_fkey(id, full_name, avatar_url)')
+          .eq('event_id', eventId)
+          .eq('status', 'waiting')
+          .order('joined_at', { ascending: true })
+          .order('id', { ascending: true })
+          .then(({ data, error }) => {
+            if (error) {
+              if (['42P01', 'PGRST205'].includes(error.code ?? '')) return null;
+              throw new Error(`Could not read the waitlist: ${error.message}`);
+            }
+            return (data ?? []) as unknown as WaitlistEntry[];
+          }),
   ]);
+  const busyCourts = courts && liveCourtUse ? [...busyCourtIds(courts, liveCourtUse)] : [];
 
   const pairs: PairWithPlayers[] = (pairRows ?? []) as PairWithPlayers[];
   const participants: ParticipantWithPlayer[] = (participantRows ?? []) as ParticipantWithPlayer[];
@@ -347,6 +383,9 @@ export default async function EventPage({
         bonusSettings={bonusSettings}
         drawCapabilities={drawCapabilities}
         waiverStates={waiverStates}
+        courts={courts}
+        busyCourtIds={busyCourts}
+        waitlist={waitlist}
       />
     </div>
   );

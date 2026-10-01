@@ -4,7 +4,15 @@ import { useState, useMemo } from 'react';
 import { Badge } from '@badminton/ui';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { RoundShapeControl } from './RoundShapeControl';
-import { eventIsPlaying } from '@badminton/shared';
+import {
+  eventIsPlaying,
+  groupLabel,
+  isOutOfEvent,
+  tallyRoundRobin,
+  rankRoundRobin,
+  poolQualifierCount,
+  type SeedBy,
+} from '@badminton/shared';
 import { Trophy } from 'lucide-react';
 import { getName } from './entry-name';
 import type {
@@ -13,7 +21,6 @@ import type {
   ParticipantWithPlayer,
   PairWithPlayers,
   GameScore,
-  RoundRobinStanding,
 } from '@/lib/tournament-types';
 
 interface Props {
@@ -28,14 +35,6 @@ interface Props {
    * the per-round shape control addresses its rounds within.
    */
   phase?: 'pool' | null;
-}
-
-/** Group 1 is "A". Numbers on a scoresheet read as seeds; letters read as groups. */
-export function groupLabel(groupNumber: number): string {
-  // Past Z, fall back to the number rather than emitting punctuation — 32 is
-  // the schema's ceiling, so this is only reachable from a bad hand-written
-  // group_number, but "Group [" would be worse than "Group 27".
-  return groupNumber >= 1 && groupNumber <= 26 ? String.fromCharCode(64 + groupNumber) : String(groupNumber);
 }
 
 export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, phase = null }: Props) {
@@ -90,42 +89,48 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, 
     [entries, nameMap],
   );
 
-  // Compute standings
-  const standings = useMemo(() => {
-    const stats: Record<string, RoundRobinStanding> = {};
-    for (const e of entries) {
-      stats[e.id] = { id: e.id, name: nameMap[e.id] ?? 'Unknown', wins: 0, losses: 0, pf: 0, pa: 0 };
-    }
-    for (const m of allMatches) {
-      if (m.status !== 'completed' && m.status !== 'walkover') continue;
-      const aId = isDoubles ? m.pair_a_id : m.participant_a_id;
-      const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
-      const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
-      if (!aId || !bId || !stats[aId] || !stats[bId]) continue;
-      if (winnerId === aId) { stats[aId]!.wins++; stats[bId]!.losses++; }
-      else if (winnerId === bId) { stats[bId]!.wins++; stats[aId]!.losses++; }
-      for (const g of (m.scores as GameScore[] | null) ?? []) {
-        stats[aId]!.pf += g.a; stats[aId]!.pa += g.b;
-        stats[bId]!.pf += g.b; stats[bId]!.pa += g.a;
-      }
-    }
-    return Object.values(stats).sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      return (b.pf - b.pa) - (a.pf - a.pa);
-    });
-  }, [allMatches, entries, isDoubles, nameMap]);
-
-  // ONE TABLE PER GROUP, and the split happens here rather than server-side
-  // because the tally already happens here — the standings above are computed
-  // from the matches this tab was handed, so partitioning them costs a filter
-  // and no round trip. A flat round robin is the single-table case and takes
-  // the same path with one section and no heading.
+  // THE SERVER'S TALLY AND THE SERVER'S ORDER. tallyRoundRobin and
+  // rankRoundRobin are what computeRoundRobinStandings runs, so this table puts
+  // people in the order that decides who qualifies and who finishes where: head
+  // to head, then game and point difference, and the external-event rule. The
+  // first key matches the server too: a round robin's own table is read by
+  // wins (finalize.ts), the pool of a pool_to_bracket event by its seed_by.
   //
-  // The ORDER inside a group is the tab's own (wins, then point difference)
-  // rather than the server's fuller chain. That is unchanged behaviour and
-  // deliberate: this table is a live scoreboard read during play, and the
-  // server's head-to-head chain is what decides who actually qualifies, at
-  // generation time, off the database.
+  // A withdrawn or disqualified entry is not ranked, as on the server. Their
+  // played matches still count in everyone else's row.
+  const seedBy: SeedBy = phase === 'pool' ? ((event.seed_by as SeedBy | null) ?? 'wins') : 'wins';
+  const external = event.external_event === true;
+  const standings = useMemo(() => {
+    const tallied = tallyRoundRobin(
+      entries.map((e) => ({
+        id: e.id,
+        name: nameMap[e.id] ?? 'Unknown',
+        group: groupOf[e.id] ?? null,
+        out: isOutOfEvent(e.status),
+      })),
+      allMatches.map((m) => ({
+        status: m.status,
+        sideA: isDoubles ? m.pair_a_id : m.participant_a_id,
+        sideB: isDoubles ? m.pair_b_id : m.participant_b_id,
+        winner: isDoubles ? m.winner_pair_id : m.winner_participant_id,
+        scores: (m.scores as GameScore[] | null) ?? null,
+      })),
+    );
+    return rankRoundRobin(tallied, { seedBy, grouped: isGroupStage, external });
+  }, [allMatches, entries, isDoubles, nameMap, groupOf, seedBy, isGroupStage, external]);
+
+  // WHO QUALIFIES, read the way buildFieldFromOwnPool reads it: the first
+  // poolQualifierCount entries of the order above. Drawn as a cut line under
+  // the last qualifier of each group.
+  const qualifiers = useMemo(
+    () => new Set(standings.slice(0, poolQualifierCount(groupCount, event.qualifiers_per_group)).map((s) => s.id)),
+    [standings, groupCount, event.qualifiers_per_group],
+  );
+
+  // ONE TABLE PER GROUP. A flat round robin is the single-table case and takes
+  // the same path with one section and no heading. Filtering the order above by
+  // group keeps each group's own order, because that order is depth-major and
+  // a group's rows appear in it by groupRank.
   const groupSections = useMemo(() => {
     if (!isGroupStage) return [{ group: null as number | null, rows: standings }];
     const numbers = new Set<number>();
@@ -207,7 +212,8 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, 
                     // with the W/L columns, which are what the table is read for
                     // during play; a rule reads as a boundary at a glance and
                     // says nothing else.
-                    const isCut = section.group != null && i + 1 === qualifiersPerGroup && i + 1 < section.rows.length;
+                    const isCut = section.group != null && qualifiers.has(s.id)
+                      && i + 1 < section.rows.length && !qualifiers.has(section.rows[i + 1]!.id);
                     return (
                       <tr
                         key={s.id}
@@ -217,10 +223,10 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, 
                         <td className="px-4 py-2 text-sm font-medium text-[var(--text-primary)]">{s.name}</td>
                         <td className="px-3 py-2 text-sm text-center font-mono text-[var(--color-success)]">{s.wins}</td>
                         <td className="px-3 py-2 text-sm text-center font-mono text-[var(--color-danger)]">{s.losses}</td>
-                        <td className="px-3 py-2 text-sm text-center font-mono text-[var(--text-muted)]">{s.pf}</td>
-                        <td className="px-3 py-2 text-sm text-center font-mono text-[var(--text-muted)]">{s.pa}</td>
-                        <td className={`px-3 py-2 text-sm text-center font-mono ${s.pf - s.pa > 0 ? 'text-[var(--color-success)]' : s.pf - s.pa < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
-                          {s.pf - s.pa > 0 ? '+' : ''}{s.pf - s.pa}
+                        <td className="px-3 py-2 text-sm text-center font-mono text-[var(--text-muted)]">{s.pointsFor}</td>
+                        <td className="px-3 py-2 text-sm text-center font-mono text-[var(--text-muted)]">{s.pointsAgainst}</td>
+                        <td className={`px-3 py-2 text-sm text-center font-mono ${s.pointsFor - s.pointsAgainst > 0 ? 'text-[var(--color-success)]' : s.pointsFor - s.pointsAgainst < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
+                          {s.pointsFor - s.pointsAgainst > 0 ? '+' : ''}{s.pointsFor - s.pointsAgainst}
                         </td>
                       </tr>
                     );

@@ -3,12 +3,26 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea, DatePicker, useConfirm } from '@badminton/ui';
-import { MEMBERSHIP_TYPES, ALL_MEMBERSHIP_TYPES, resolveEventWaiverTemplate } from '@badminton/shared';
+import {
+  MEMBERSHIP_TYPES,
+  ALL_MEMBERSHIP_TYPES,
+  ELO_MULTIPLIER_BOUNDS,
+  resolveEventWaiverTemplate,
+  TOURNAMENT_BONUS_AMOUNT_KEYS,
+  tournamentBonusAmount,
+  type TournamentBonusAmountKey,
+  type TournamentBonusSettings,
+  type WindowColumns,
+  effectiveWindows,
+  validateEffectiveWindows,
+  windowColumnsFromWallClock,
+} from '@badminton/shared';
 import { createTournament, updateTournament, eventWaiverEditImpact, archiveTournament, completeTournamentWithEvents, deleteTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
+import { EntryWindowFields, entryWindowText, type EntryWindowText } from '@/components/entry-window-fields';
 import { MoreVertical } from 'lucide-react';
 
-export interface TournamentData {
+export interface TournamentData extends WindowColumns {
   id: string;
   name: string;
   start_date: string;
@@ -22,7 +36,106 @@ export interface TournamentData {
   // Which season's waiver template this tournament's editor offers. Present on
   // the page's `select('*')`; declared here so the template lookup is typed.
   season_id?: string | null;
+  // This tournament's own bonus amounts (00275). Present on the page's
+  // `select('*')` once the migration has run.
+  placement_bonus_amounts?: Record<string, unknown> | null;
   status: string;
+}
+
+const BONUS_PLACES: Array<{ place: string; label: string }> = [
+  { place: 'champion', label: 'Champion' },
+  { place: 'finalist', label: 'Finalist' },
+  { place: 'thirdplace', label: 'Third place' },
+  { place: 'semifinalist', label: 'Semifinalist' },
+  { place: 'quarterfinalist', label: 'Quarterfinalist' },
+];
+
+type BonusAmountsText = Record<TournamentBonusAmountKey, string>;
+
+function bonusAmountsText(stored: Record<string, unknown> | null | undefined): BonusAmountsText {
+  const out = {} as BonusAmountsText;
+  for (const key of TOURNAMENT_BONUS_AMOUNT_KEYS) {
+    const v = stored?.[key];
+    out[key] = typeof v === 'number' || (typeof v === 'string' && v.trim() !== '') ? String(v) : '';
+  }
+  return out;
+}
+
+/**
+ * This tournament's own placement bonus amounts. A blank box pays the club's
+ * amount, shown as its placeholder; when the club's amounts could not be read
+ * the placeholder is left empty rather than guessed.
+ */
+function BonusAmountsFields({
+  value,
+  onChange,
+  club,
+}: {
+  value: BonusAmountsText;
+  onChange: (next: BonusAmountsText) => void;
+  club: TournamentBonusSettings | null;
+}) {
+  const anySet = TOURNAMENT_BONUS_AMOUNT_KEYS.some((k) => value[k].trim() !== '');
+  return (
+    <fieldset className="space-y-2 rounded-lg border border-[var(--border)] p-3">
+      <legend className="px-1 text-[13px] font-medium text-[var(--text-secondary)]">Bonus amounts for this tournament</legend>
+      <div className="grid grid-cols-[auto_1fr_1fr] items-center gap-2">
+        <span />
+        <span className="text-xs font-medium text-[var(--text-muted)]">Singles</span>
+        <span className="text-xs font-medium text-[var(--text-muted)]">Doubles</span>
+        {BONUS_PLACES.map(({ place, label }) => (
+          <BonusRow key={place} place={place} label={label} value={value} onChange={onChange} club={club} />
+        ))}
+      </div>
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-xs text-[var(--text-muted)]">
+          Leave a box blank to pay the club amount. Fixed once any event here has paid a bonus.
+        </p>
+        <Button
+          type="button"
+          variant="ghost"
+          className="text-xs flex-shrink-0"
+          disabled={!anySet}
+          onClick={() => onChange(bonusAmountsText(null))}
+        >
+          Reset to club amounts
+        </Button>
+      </div>
+    </fieldset>
+  );
+}
+
+function BonusRow({
+  place,
+  label,
+  value,
+  onChange,
+  club,
+}: {
+  place: string;
+  label: string;
+  value: BonusAmountsText;
+  onChange: (next: BonusAmountsText) => void;
+  club: TournamentBonusSettings | null;
+}) {
+  const keys = (['singles', 'doubles'] as const).map((d) => `${d}_${place}` as TournamentBonusAmountKey);
+  return (
+    <>
+      <span className="text-sm text-[var(--text-secondary)]">{label}</span>
+      {keys.map((key) => (
+        <Input
+          key={key}
+          aria-label={`${key.startsWith('singles') ? 'Singles' : 'Doubles'} ${label.toLowerCase()} bonus`}
+          type="number"
+          min={0}
+          step={1}
+          value={value[key]}
+          placeholder={club ? String(tournamentBonusAmount(club, key)) : ''}
+          onChange={(e) => onChange({ ...value, [key]: e.target.value })}
+        />
+      ))}
+    </>
+  );
 }
 
 // The per-season event-waiver templates from Legal (00074), passed down from
@@ -37,11 +150,14 @@ function TournamentFormDialog({
   onClose,
   tournament,
   waiverTemplates,
+  clubBonusSettings = null,
 }: {
   open: boolean;
   onClose: () => void;
   tournament?: TournamentData;
   waiverTemplates: WaiverTemplateContext;
+  /** The club's bonus amounts, shown behind a blank override box. null when unread. */
+  clubBonusSettings?: TournamentBonusSettings | null;
 }) {
   const isEdit = !!tournament;
   const [loading, setLoading] = useState(false);
@@ -50,7 +166,12 @@ function TournamentFormDialog({
   const [endDate, setEndDate] = useState(tournament?.end_date ?? '');
   const [eventMultiplier, setEventMultiplier] = useState(tournament?.event_multiplier ?? 1.15);
   const [placementBonus, setPlacementBonus] = useState(tournament?.placement_bonus_enabled ?? true);
+  const [bonusAmounts, setBonusAmounts] = useState<BonusAmountsText>(() => bonusAmountsText(tournament?.placement_bonus_amounts));
   const [waiverText, setWaiverText] = useState(tournament?.waiver_text ?? '');
+  const [windows, setWindows] = useState<EntryWindowText>(() => entryWindowText(tournament));
+  // The page's select('*') names every column, so an edit on a database
+  // without 00276 has no window fields to offer.
+  const windowsAvailable = !tournament || 'registration_opens_at' in tournament;
   // Held as a STRING, not a number, because "" is a meaningful value here: it
   // is how the exec says "no limit". A numeric state would have to pick some
   // sentinel to stand for empty, and 0 is exactly the value the column refuses.
@@ -77,6 +198,14 @@ function TournamentFormDialog({
     e.preventDefault();
     setLoading(true);
     try {
+      // Checked here as well as on the server so the exec hears about it before
+      // the round trip.
+      if (windowsAvailable) {
+        const refusal = validateEffectiveWindows(
+          effectiveWindows({ event: null, tournament: windowColumnsFromWallClock(windows) }),
+        );
+        if (refusal) { toast(refusal, 'error'); setLoading(false); return; }
+      }
       const data = {
         name,
         start_date: startDate,
@@ -88,6 +217,7 @@ function TournamentFormDialog({
         // Blank box -> null -> uncapped. Passed explicitly rather than omitted
         // so that clearing the box on an existing tournament REMOVES the cap.
         max_events_per_player: maxEventsPerPlayer.trim() ? Number(maxEventsPerPlayer) : null,
+        ...(windowsAvailable ? windows : {}),
       };
       if (isEdit) {
         // EDITING THE WAIVER TEXT SILENTLY UN-SIGNS EVERYONE WHO ACCEPTED THE
@@ -114,10 +244,19 @@ function TournamentFormDialog({
           });
           if (!ok) { setLoading(false); return; }
         }
-        await updateTournament(tournament.id, data);
+        const amounts: Record<string, number> = {};
+        for (const key of TOURNAMENT_BONUS_AMOUNT_KEYS) {
+          if (bonusAmounts[key].trim() !== '') amounts[key] = Number(bonusAmounts[key]);
+        }
+        const res = await updateTournament(tournament.id, {
+          ...data,
+          placement_bonus_amounts: Object.keys(amounts).length > 0 ? amounts : null,
+        });
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Tournament updated', 'success');
       } else {
-        await createTournament(data);
+        const res = await createTournament(data);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Tournament created', 'success');
       }
       onClose();
@@ -125,6 +264,7 @@ function TournamentFormDialog({
         setName(''); setStartDate(''); setEndDate('');
         setEventMultiplier(1.15); setPlacementBonus(true);
         setWaiverText('');
+        setWindows(entryWindowText(null));
       }
       router.refresh();
     } catch (err) {
@@ -176,6 +316,9 @@ function TournamentFormDialog({
           label="Elo Multiplier"
           type="number"
           value={String(eventMultiplier)}
+          min={ELO_MULTIPLIER_BOUNDS.min}
+          max={ELO_MULTIPLIER_BOUNDS.max}
+          step={ELO_MULTIPLIER_BOUNDS.step}
           onChange={(e) => setEventMultiplier(Number(e.target.value))}
         />
         <div>
@@ -196,6 +339,23 @@ function TournamentFormDialog({
           <Switch checked={placementBonus} onChange={setPlacementBonus} />
           <span className="text-sm text-[var(--text-secondary)]">Enable placement bonuses</span>
         </div>
+        <p className="-mt-2 text-xs text-[var(--text-muted)]">
+          The starting setting for each new event. Events already created keep their own.
+        </p>
+        {windowsAvailable && (
+          <fieldset className="space-y-2 rounded-lg border border-[var(--border)] p-3">
+            <legend className="px-1 text-[13px] font-medium text-[var(--text-secondary)]">Registration and check-in windows</legend>
+            <EntryWindowFields value={windows} onChange={setWindows} />
+            <p className="text-xs text-[var(--text-muted)]">
+              Club time. Leave blank for no limit. Each event uses these unless it sets its own. Members
+              can only enter or check themselves in inside them; execs can still add entrants and check
+              people in outside these times, and still open each stage by hand.
+            </p>
+          </fieldset>
+        )}
+        {isEdit && (
+          <BonusAmountsFields value={bonusAmounts} onChange={setBonusAmounts} club={clubBonusSettings} />
+        )}
         <div>
           <Textarea
             label="Event waiver (optional)"
@@ -268,12 +428,14 @@ export function CreateTournamentForm({ waiverTemplates }: { waiverTemplates: Wai
 export function TournamentRowActions({
   tournament,
   waiverTemplates,
+  clubBonusSettings = null,
   canEdit,
   canArchive,
   canDelete,
 }: {
   tournament: TournamentData;
   waiverTemplates: WaiverTemplateContext;
+  clubBonusSettings?: TournamentBonusSettings | null;
   canEdit: boolean;
   canArchive: boolean;
   canDelete: boolean;
@@ -393,6 +555,7 @@ export function TournamentRowActions({
         onClose={() => setEditOpen(false)}
         tournament={tournament}
         waiverTemplates={waiverTemplates}
+        clubBonusSettings={clubBonusSettings}
       />
 
       <Dialog open={confirmArchiveEvents} onClose={() => setConfirmArchiveEvents(false)} title={`Finalise events & archive ${tournament.name}`}>

@@ -381,6 +381,12 @@ export interface Tournament {
    * NULL is uncapped, and is the default — see utils/tournament-entry-cap.
    */
   max_events_per_player: number | null;
+  /**
+   * Placement bonus amounts this tournament pays instead of the club's (00275),
+   * in the flat platform_settings keys. NULL means the club's throughout.
+   * Optional because a database without 00275 has no such column.
+   */
+  placement_bonus_amounts?: Record<string, unknown> | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -684,8 +690,11 @@ export type TournamentEventType =
  * are re-seeded into a knockout without ever leaving the event. It is a third
  * option beside the two-event pool→bracket link (`seeded_from_event_id`), which
  * is untouched and still works.
+ *
+ * `staged` (00272) is an event the organiser writes as a list of stages in
+ * format_config; its matches carry a stage and no phase.
  */
-export type TournamentEventFormat = 'single_elimination' | 'round_robin' | 'pool_to_bracket';
+export type TournamentEventFormat = 'single_elimination' | 'round_robin' | 'pool_to_bracket' | 'staged';
 
 /**
  * Which half of a `pool_to_bracket` event a match belongs to (00107).
@@ -752,6 +761,9 @@ export interface TournamentEvent {
   draw_locked: boolean;
   // External teams entered by name, unrated (00269). Set at creation only.
   external_event: boolean;
+  // A legacy event's ladder points table (00275); NULL pays the format's
+  // default. Optional because a database without 00275 has no such column.
+  points_config?: unknown | null;
   status: TournamentEventStatus;
   created_at: string;
   updated_at: string;
@@ -833,6 +845,8 @@ export interface TournamentMatch {
   // to split the joint 3rd that both semi-final losers would otherwise get.
   is_third_place: boolean;
   court: string | null;
+  // The tournament court (00273), console only. Absent before that migration.
+  court_id?: string | null;
   scheduled_time: string | null;
   status: TournamentMatchStatus;
   walkover_winner: 'a' | 'b' | null;

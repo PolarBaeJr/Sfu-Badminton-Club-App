@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_API_SCOPES } from '../utils/data-api-key';
 
-// 00264 TO 00267, AND 00270, READ OFF DISK. The data API's read surface is a set
+// 00264 TO 00267, 00270 AND 00277, READ OFF DISK. The data API's read surface is a set
 // of SECURITY DEFINER functions, which run as their owner and so bypass every
 // grant and policy the reader role would otherwise meet. What they return is
 // therefore the whole privacy boundary, and these properties pin it: a later
@@ -23,7 +23,8 @@ const history = migration('00265_');
 const schedule = migration('00266_');
 const header = migration('00267_');
 const external = migration('00270_');
-const both = `${history}\n${schedule}\n${header}\n${external}`;
+const staged = migration('00277_');
+const both = `${history}\n${schedule}\n${header}\n${external}\n${staged}`;
 
 /**
  * The body of one CREATE FUNCTION, from its header to the closing tag. The
@@ -60,6 +61,9 @@ const PUBLIC_FUNCTIONS: Record<string, string> = {
   data_api_tournament_events: 'uuid, uuid',
   data_api_tournament_entrants: 'uuid, uuid',
   data_api_tournament_draw: 'uuid, uuid',
+  data_api_tournament_events_v2: 'uuid, uuid',
+  data_api_tournament_entrants_v2: 'uuid, uuid',
+  data_api_tournament_draw_v2: 'uuid, uuid',
   data_api_sessions: 'uuid, timestamptz, timestamptz',
   data_api_club_events: 'uuid, timestamptz, timestamptz',
 };
@@ -90,7 +94,7 @@ describe('00264: the scope vocabulary', () => {
   });
 });
 
-describe('00265 to 00270: every data API read function', () => {
+describe('00265 to 00277: every data API read function', () => {
   const all = { ...PUBLIC_FUNCTIONS, ...INTERNAL_FUNCTIONS };
 
   for (const [name, args] of Object.entries(all)) {
@@ -161,11 +165,13 @@ describe('the one gate', () => {
     expect(body.match(/data_api_visible_season\(/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('the draw withholds a slot the gate would drop', () => {
-    const body = code(functionBody('data_api_tournament_draw'));
-    expect(body).toContain('data_api_tournament_match_publishable');
-    expect(body).toMatch(/withheld/);
-  });
+  for (const name of ['data_api_tournament_draw', 'data_api_tournament_draw_v2']) {
+    it(`${name} withholds a slot the gate would drop`, () => {
+      const body = code(functionBody(name));
+      expect(body).toContain('data_api_tournament_match_publishable');
+      expect(body).toMatch(/withheld/);
+    });
+  }
 
   it('the history test is the two privacy controls and the approval check', () => {
     const body = code(functionBody('data_api_published_player'));
@@ -203,15 +209,44 @@ describe('00270: external teams', () => {
     expect(body).toContain('sha256(');
   });
 
-  it('the draw still withholds by the match gate outside an external event', () => {
-    const body = code(functionBody('data_api_tournament_draw'));
-    expect(body).toMatch(/NOT te\.external_event AND NOT data_api_tournament_match_publishable\(tm\.id\)/);
-    expect(body).toContain("tm.status = 'disputed'");
-  });
+  for (const name of ['data_api_tournament_draw', 'data_api_tournament_draw_v2']) {
+    it(`${name} still withholds by the match gate outside an external event`, () => {
+      const body = code(functionBody(name));
+      expect(body).toMatch(/NOT te\.external_event AND NOT data_api_tournament_match_publishable\(tm\.id\)/);
+      expect(body).toContain("tm.status = 'disputed'");
+    });
+  }
 
   it('the match gate is not touched, so external matches stay out of history', () => {
     expect(code(external)).not.toContain('FUNCTION public.data_api_match_rows(');
     expect(code(external)).not.toContain('FUNCTION public.data_api_tournament_match_publishable(');
+  });
+});
+
+describe('00277: staged draws', () => {
+  it('never reads format_config whole, only a path into it', () => {
+    const uses = [...code(staged).matchAll(/format_config/g)];
+    expect(uses.length).toBeGreaterThan(0);
+    expect(code(staged)).not.toMatch(/format_config(?!\s*(->|#>))/);
+  });
+
+  it('never names a stage\'s courts or a court id', () => {
+    expect(code(staged)).not.toContain("'courts'");
+    expect(code(staged)).not.toMatch(/court_id/i);
+  });
+
+  it('withholds the head starts of a withheld slot', () => {
+    const body = code(functionBody('data_api_tournament_draw_v2'));
+    expect(body).toContain('CASE WHEN x.withheld THEN NULL ELSE tm.handicap_a::int END');
+    expect(body).toContain('CASE WHEN x.withheld THEN NULL ELSE tm.handicap_b::int END');
+  });
+
+  it('changes nothing in the match gate but the bracket keys', () => {
+    const before = code(history.slice(history.indexOf('CREATE OR REPLACE FUNCTION public.data_api_match_rows(')))
+      .split('$function$;')[0];
+    const after = code(functionBody('data_api_match_rows'));
+    const added = "'is_third_place', tm.is_third_place,\n      'stage', tm.stage,\n      'match_label', tm.match_label,\n      'handicap_a', tm.handicap_a,\n      'handicap_b', tm.handicap_b\n";
+    expect(after).toBe(before!.replace("'is_third_place', tm.is_third_place\n", added));
   });
 });
 

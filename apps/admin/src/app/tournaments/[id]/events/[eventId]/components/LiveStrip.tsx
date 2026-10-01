@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { ArrowRight, MapPin } from 'lucide-react';
-import { courtLabel } from '@badminton/shared';
+import { courtLabel, type TournamentCourt } from '@badminton/shared';
 import type {
   TournamentMatchRow,
   TournamentEventRow,
@@ -10,7 +10,7 @@ import type {
   PairWithPlayers,
 } from '@/lib/tournament-types';
 import {
-  deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, hasCourtsTab,
+  deskRows, nextCallable, deskCounts, buildEntryMaps, deskEventPlaying, hasCourtsTab, deskCourtSuggestion,
 } from '@/lib/live-desk';
 import { getName } from './entry-name';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
@@ -41,6 +41,9 @@ interface Props {
   isDoubles: boolean;
   /** tournaments.results.enter.write. Without it the chips are read-only text. */
   canEnterResult: boolean;
+  /** The tournament's courts (00273) and the ones in use, for the free-court hint. */
+  courts: TournamentCourt[] | null;
+  busyCourtIds: string[];
   onOpenCourts: () => void;
 }
 
@@ -51,6 +54,8 @@ export function LiveStrip({
   pairs,
   isDoubles,
   canEnterResult,
+  courts,
+  busyCourtIds,
   onOpenCourts,
 }: Props) {
   const { nameMap, seedMap, placeableEntries } = useMemo(() => {
@@ -73,10 +78,11 @@ export function LiveStrip({
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
   const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
 
-  const canScore = canEnterResult && deskEventPlaying(event.status);
+  const canScore = canEnterResult && deskEventPlaying(event.status, event.format as string);
   const onCourt = rows.filter((r) => r.state === 'live');
   const next = nextCallable(rows);
   const counts = deskCounts(rows);
+  const suggested = next ? deskCourtSuggestion(next, courts, new Set(busyCourtIds)) : null;
 
   // The same condition that adds the courts tab, so the button below can never
   // point at a tab that is not there.
@@ -134,7 +140,10 @@ export function LiveStrip({
                 <span className="break-words">
                   {next.a.label} <span className="text-[var(--text-muted)]">vs</span> {next.b.label}
                 </span>
-                <span className="text-[var(--text-muted)]"> · {courtLabel(next.match.court) ?? 'no court yet'}</span>
+                <span className="text-[var(--text-muted)]">
+                  {' · '}{courtLabel(next.match.court) ?? 'no court yet'}
+                  {suggested && ` · ${courtLabel(suggested.label)} is free`}
+                </span>
               </p>
             ) : (
               <p className="min-w-0 text-[var(--text-muted)]">

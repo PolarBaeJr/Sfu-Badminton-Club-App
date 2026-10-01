@@ -39,6 +39,10 @@ const REFUSALS = [
   'Event must be completed first',
   'Event must be live to finalize',
   'Placement bonuses not enabled for this event',
+  // 00278: the waitlist switch.
+  'An external event has no waitlist: its teams are entered by name.',
+  'The waitlist can only be changed while the event is taking entries or checking in.',
+  'People are still waiting. Promote or remove them before switching the waitlist off.',
 ];
 
 // Genuine faults. A failed read, a failed revalidate, or a row that should be
@@ -50,6 +54,7 @@ const FAULTS = [
   'Saved, but the page could not be refreshed. Reload to see the change.',
   'Event not found',
   'Participant not found',
+  'Could not read this waitlist entry. Nothing was changed, try again.',
 ];
 
 // 'Pair not found' is deliberately in NEITHER list. participants.ts throws it
@@ -60,6 +65,16 @@ const FAULTS = [
 // 'Event not found', whose RLS-invisibility argument applies to it too.
 
 describe('tournament-actions refusal classification', () => {
+  it('marks the 00278 waitlist refusals, which are named by constant or mapped', () => {
+    expect(ALL).toContain("const WAITLIST_MIGRATION_MISSING = 'Run migration 00278 first';");
+    expect(ALL).toContain("const NOT_WAITING = 'That member is no longer on the waitlist. Reload the page.';");
+    for (const name of ['WAITLIST_MIGRATION_MISSING', 'NOT_WAITING', 'waitlistRefusal(result)']) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(ALL, name).toMatch(new RegExp(`throw new ExpectedError\\(${escaped}\\)`));
+      expect(ALL, name).not.toMatch(new RegExp(`throw new Error\\(${escaped}\\)`));
+    }
+  });
+
   it.each(REFUSALS)('is thrown as an ExpectedError: %s', (message) => {
     const escaped = message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     expect(ALL).toMatch(new RegExp(`throw new ExpectedError\\('${escaped}'\\)`));
