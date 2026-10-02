@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const DIR = fileURLToPath(new URL('../tournament-actions/', import.meta.url));
 const read = (f: string) => readFileSync(`${DIR}${f}`, 'utf8');
 
-const SOURCES = ['participants.ts', 'brackets.ts', 'events.ts', 'finalize.ts', 'seeding.ts'];
+const SOURCES = ['participants.ts', 'brackets.ts', 'events.ts', 'finalize.ts', 'seeding.ts', 'team-category.ts'];
 const ALL = SOURCES.map(read).join('\n');
 
 // State guards a stale tab or a mistimed click can meet. Each message tells the
@@ -43,6 +43,13 @@ const REFUSALS = [
   'An external event has no waitlist: its teams are entered by name.',
   'The waitlist can only be changed while the event is taking entries or checking in.',
   'People are still waiting. Promote or remove them before switching the waitlist off.',
+  // 00279: a category change after play is a request.
+  'A category change for this team is waiting for approval. Cancel or decide it first.',
+  'Give a reason for the change.',
+  'Keep the reason under 500 characters.',
+  'This team has not played with head starts yet, so change its category directly.',
+  'This team already has a category change waiting for approval.',
+  'Only the person who asked can cancel this request.',
 ];
 
 // Genuine faults. A failed read, a failed revalidate, or a row that should be
@@ -65,6 +72,18 @@ const FAULTS = [
 // 'Event not found', whose RLS-invisibility argument applies to it too.
 
 describe('tournament-actions refusal classification', () => {
+  it('marks the 00279 category request refusals, which are named by constant or mapped', () => {
+    expect(ALL).toContain("const CATEGORY_MIGRATION_MISSING = 'Run migration 00279 first';");
+    expect(ALL).toContain("const ALREADY_DECIDED = 'This request has already been decided. Reload the page.';");
+    expect(ALL).toContain("return 'The team\\'s category changed after this was asked for. Decline it and ask again.';");
+    expect(ALL).toContain("return 'That category is no longer one of this event\\'s.';");
+    for (const name of ['CATEGORY_MIGRATION_MISSING', 'ALREADY_DECIDED', 'categoryRequestRefusal(result?.reason)']) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(ALL, name).toMatch(new RegExp(`throw new ExpectedError\\(${escaped}\\)`));
+      expect(ALL, name).not.toMatch(new RegExp(`throw new Error\\(${escaped}\\)`));
+    }
+  });
+
   it('marks the 00278 waitlist refusals, which are named by constant or mapped', () => {
     expect(ALL).toContain("const WAITLIST_MIGRATION_MISSING = 'Run migration 00278 first';");
     expect(ALL).toContain("const NOT_WAITING = 'That member is no longer on the waitlist. Reload the page.';");

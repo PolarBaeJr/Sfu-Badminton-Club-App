@@ -139,6 +139,11 @@ const makeClient = vi.hoisted(() => () => {
     // harness is not testing.
     let countExact = false;
     let head = false;
+    // `.update(x).select(cols)`: PostgREST hands back the rows the write hit,
+    // and a guarded update with zero rows is how a caller learns it matched
+    // nothing. Without it a `.select()` after a write resolved `data: null`
+    // here, and "already decided" could never be reached.
+    let returning = false;
 
     // PostgREST spells a list literal `("a","b")`.
     const parseList = (raw: unknown): unknown[] =>
@@ -197,7 +202,7 @@ const makeClient = vi.hoisted(() => () => {
         // only way a caller can tell a guarded write fired from one that did
         // not. Always returned; supabase-js only populates it when asked, and a
         // caller that does not ask simply ignores it.
-        return { data: null, error: null, count: hit.length };
+        return { data: returning ? hit.map(embed) : null, error: null, count: hit.length };
       }
       if (op === 'insert') {
         const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
@@ -270,6 +275,7 @@ const makeClient = vi.hoisted(() => () => {
 
     const api = {
       select(c?: string, opts?: { count?: string; head?: boolean }) {
+        if (op === 'update') returning = true;
         // A bare `.select()` is PostgREST's `*`.
         cols = c ?? '*';
         countExact = opts?.count === 'exact';
@@ -998,6 +1004,32 @@ const makeClient = vi.hoisted(() => () => {
       return Promise.resolve({ data: id, error: null });
     }
 
+    // Mirrors approve_pair_category_request (00279): the same refusals in the
+    // same order, each writing nothing, then the category and the request.
+    if (name === 'approve_pair_category_request') {
+      const answer = (data: Row) => Promise.resolve({ data, error: null });
+      const req = (store.db.tournament_category_requests ?? []).find((r) => r.id === args.p_request_id);
+      if (!req) return answer({ ok: false, reason: 'not_found' });
+      if (req.status !== 'pending') return answer({ ok: false, reason: 'not_pending', status: req.status });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === req.event_id);
+      if (ev?.status === 'completed') return answer({ ok: false, reason: 'event_completed' });
+      if (ev?.format !== 'staged') return answer({ ok: false, reason: 'not_staged' });
+      if (req.to_category != null) {
+        const cats = (ev.format_config as { categories?: unknown } | null)?.categories;
+        const keys = Array.isArray(cats) ? cats.map((c) => (c as { key: string }).key) : ['mens', 'womens', 'mixed'];
+        if (!keys.includes(req.to_category as string)) return answer({ ok: false, reason: 'unknown_category' });
+      }
+      const p = (store.db.tournament_pairs ?? []).find((r) => r.id === req.pair_id);
+      if (!p || p.event_id !== req.event_id) return answer({ ok: false, reason: 'pair_gone' });
+      if ((p.team_category ?? null) !== (req.from_category ?? null)) return answer({ ok: false, reason: 'stale_category' });
+      p.team_category = req.to_category ?? null;
+      Object.assign(req, { status: 'approved', resolved_by: args.p_actor, resolved_at: new Date().toISOString() });
+      return answer({
+        ok: true, pair_id: req.pair_id, event_id: req.event_id, tournament_id: ev.tournament_id,
+        from: req.from_category ?? null, to: req.to_category ?? null, requested_by: req.requested_by ?? null,
+      });
+    }
+
     // Mirrors pair_tournament_entrants (00102): the pair row, and both halves
     // leave the unpaired pool.
     if (name === 'pair_tournament_entrants') {
@@ -1468,9 +1500,12 @@ vi.mock('@badminton/shared', async (importOriginal) => {
 });
 // SWITCHABLE, because one of the things under test is what happens when the
 // gate REFUSES. Hoisted so the vi.mock factory below can close over it.
-const capabilityGate = vi.hoisted(() => ({ refuse: null as string | null }));
+// `asked` records which capability each action asked for, so a test can say
+// the key rather than only that some key was asked.
+const capabilityGate = vi.hoisted(() => ({ refuse: null as string | null, asked: [] as string[] }));
 vi.mock('../actions/_shared', () => ({
-  requireCapability: async () => {
+  requireCapability: async (capability: string) => {
+    capabilityGate.asked.push(capability);
     if (capabilityGate.refuse) throw new Error(capabilityGate.refuse);
     return { id: 'admin-1' };
   },
@@ -1497,7 +1532,10 @@ import {
   addParticipantToEvent, withdrawParticipant, addExternalPairToEvent, removePairFromEvent, addPairToEvent,
   removeParticipantFromEvent, promoteFromWaitlist, removeFromWaitlist,
 } from '../tournament-actions/participants';
-import { setPairCategory } from '../tournament-actions/team-category';
+import {
+  setPairCategory, requestPairCategoryChange, approvePairCategoryRequest,
+  declinePairCategoryRequest, cancelPairCategoryRequest,
+} from '../tournament-actions/team-category';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
   computeRoundRobinStandings,
@@ -1545,6 +1583,7 @@ const LIVE_RATING_DEFAULTS = {
 beforeEach(() => {
   store.faults = [];
   capabilityGate.refuse = null;
+  capabilityGate.asked = [];
   store.beforeDeletePhase = null;
   store.beforeMatchInsert = null;
   store.beforeCompleteEvent = null;
@@ -7237,7 +7276,9 @@ describe('a team category in a staged event', () => {
       expect(pair('g-a').team_category).toBeNull();
     });
 
-    it('refuses once the team has a completed match with head starts, walkovers included', async () => {
+    // 00279: the change is no longer refused outright. It becomes a request,
+    // and the direct path writes nothing.
+    it('answers that a request is required once the team has a completed match with head starts', async () => {
       stagedExternalEvent();
       event().status = 'live';
       store.db.tournament_matches = [
@@ -7246,9 +7287,46 @@ describe('a team category in a staged event', () => {
 
       const res = await setPairCategory('g-a', 'womens');
 
-      expect(res.ok === false && res.error).toBe('Team Kestrel has already played with head starts, so its category is fixed.');
+      expect(res).toEqual({ ok: true, data: { changed: false, rehandicapped: 0, requestRequired: true } });
       expect(pair('g-a').team_category).toBeNull();
       expect(categoryAudit()).toEqual([]);
+    });
+
+    // isPlayedMatch || isInProgressMatch: a walkover, a disputed result and a
+    // match on court all count. Before 00279 only 'completed' and 'live' did,
+    // so a walked-over team's category could be changed under its result.
+    it.each(['walkover', 'disputed', 'live'])('counts a %s match with head starts as played', async (status) => {
+      stagedExternalEvent();
+      event().status = 'live';
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, status, 'g-a', 'g-b')];
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res).toEqual({ ok: true, data: { changed: false, rehandicapped: 0, requestRequired: true } });
+      expect(pair('g-a').team_category).toBeNull();
+    });
+
+    it('refuses a direct change while a request for the team is waiting', async () => {
+      stagedExternalEvent();
+      store.db.tournament_category_requests = [{
+        id: 'cr-1', event_id: 'e1', pair_id: 'g-a', from_category: null, to_category: 'mens',
+        reason: 'Entered under the wrong category', status: 'pending', requested_by: 'admin-2',
+      }];
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res.ok === false && res.error).toBe('A category change for this team is waiting for approval. Cancel or decide it first.');
+      expect(pair('g-a').team_category).toBeNull();
+    });
+
+    it('treats a database without 00279 as having no request waiting', async () => {
+      stagedExternalEvent();
+      store.faults.push({ table: 'tournament_category_requests', op: 'select', message: 'relation does not exist', code: '42P01' });
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res).toEqual({ ok: true, data: { changed: true, rehandicapped: 0 } });
+      expect(pair('g-a').team_category).toBe('womens');
     });
 
     it('allows a change when the only completed match is a bye or in a stage without head starts', async () => {
@@ -7306,6 +7384,366 @@ describe('a team category in a staged event', () => {
 
       expect(res).toEqual({ ok: true, data: { changed: false, rehandicapped: 0 } });
       expect(categoryAudit()).toEqual([]);
+    });
+  });
+
+  // 00279: after play a change is a request with a reason, settled by a holder
+  // of results.edit.write. Approval moves the category and refreshes the open
+  // matches only; played ones keep the starts they were scored from.
+  describe('a category change request', () => {
+    const requests = () => store.db.tournament_category_requests ?? [];
+    const audit = (action: string) => store.db.tournament_audit_log!.filter((r) => r.action === action);
+    function pendingRequest(extra: Row = {}) {
+      return {
+        id: 'cr-1', event_id: 'e1', pair_id: 'g-a', from_category: null, to_category: 'womens',
+        reason: 'Entered under the wrong category', status: 'pending', requested_by: 'admin-1',
+        requested_at: '2026-10-01T10:00:00Z', resolved_by: null, resolved_at: null, ...extra,
+      };
+    }
+    function playedEvent() {
+      const cfg = stagedExternalEvent();
+      event().status = 'live';
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b')];
+      return cfg;
+    }
+
+    describe('requestPairCategoryChange', () => {
+      it('records the request with a trimmed reason and writes it to the trail, leaving the team alone', async () => {
+        playedEvent();
+
+        const res = await requestPairCategoryChange('g-a', 'womens', '  One of them is a woman  ');
+
+        expect(res).toEqual({ ok: true, data: { requested: true } });
+        expect(capabilityGate.asked).toEqual(['tournaments.draw.seed.set.write']);
+        expect(requests()).toHaveLength(1);
+        expect(requests()[0]).toMatchObject({
+          event_id: 'e1', pair_id: 'g-a', from_category: null, to_category: 'womens',
+          reason: 'One of them is a woman', requested_by: 'admin-1',
+        });
+        expect(pair('g-a').team_category).toBeNull();
+        expect(audit('pair_category_change_requested').map((r) => r.details)).toEqual([{
+          request_id: requests()[0]!.id, pair_id: 'g-a', from: null, to: 'womens', reason: 'One of them is a woman',
+        }]);
+      });
+
+      it('refuses a team that has not played with head starts, which is changed directly', async () => {
+        stagedExternalEvent();
+        store.db.tournament_matches = [stagedMatch('sm-1', 1, 'ready', 'g-a', 'g-b')];
+
+        const res = await requestPairCategoryChange('g-a', 'womens', 'One of them is a woman');
+
+        expect(res.ok === false && res.error).toBe('This team has not played with head starts yet, so change its category directly.');
+        expect(requests()).toEqual([]);
+      });
+
+      it('refuses an empty reason and one over 500 characters', async () => {
+        playedEvent();
+
+        const empty = await requestPairCategoryChange('g-a', 'womens', '   ');
+        const long = await requestPairCategoryChange('g-a', 'womens', 'x'.repeat(501));
+
+        expect(empty.ok === false && empty.error).toBe('Give a reason for the change.');
+        expect(long.ok === false && long.error).toBe('Keep the reason under 500 characters.');
+        expect(requests()).toEqual([]);
+      });
+
+      it('answers nothing to do when the category is unchanged', async () => {
+        playedEvent();
+
+        const res = await requestPairCategoryChange('g-b', 'mens', 'Already right');
+
+        expect(res).toEqual({ ok: true, data: { requested: false } });
+        expect(requests()).toEqual([]);
+      });
+
+      it('says a request is already waiting when the one-pending index refuses the insert', async () => {
+        playedEvent();
+        store.faults.push({ table: 'tournament_category_requests', op: 'insert', message: 'duplicate key', code: '23505' });
+
+        const res = await requestPairCategoryChange('g-a', 'womens', 'One of them is a woman');
+
+        expect(res.ok === false && res.error).toBe('This team already has a category change waiting for approval.');
+        expect(audit('pair_category_change_requested')).toEqual([]);
+      });
+
+      it('names the migration when the table is missing', async () => {
+        playedEvent();
+        store.faults.push({ table: 'tournament_category_requests', op: 'insert', message: 'relation does not exist', code: '42P01' });
+
+        const res = await requestPairCategoryChange('g-a', 'womens', 'One of them is a woman');
+
+        expect(res.ok === false && res.error).toBe('Run migration 00279 first');
+      });
+    });
+
+    describe('approvePairCategoryRequest', () => {
+      function approvalScene() {
+        const cfg = stagedExternalEvent();
+        event().status = 'live';
+        store.db.tournament_matches = [
+          stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b', { scores: [{ a: 15, b: 10 }], winner_pair_id: 'g-a' }),
+          stagedMatch('sm-2', 1, 'ready', 'g-c', 'g-a'),
+          stagedMatch('sm-3', 1, 'pending', 'g-a', 'g-c'),
+          stagedMatch('sm-4', 1, 'live', 'g-b', 'g-a'),
+        ];
+        store.db.tournament_category_requests = [pendingRequest()];
+        const start = cfg.headStarts.womens?.mens ?? 0;
+        expect(start).toBeGreaterThan(0);
+        return start;
+      }
+
+      it('changes the category, refreshes only the open matches and audits who decided', async () => {
+        const start = approvalScene();
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res).toEqual({ ok: true, data: { rehandicapped: 2 } });
+        expect(capabilityGate.asked).toEqual(['tournaments.results.edit.write']);
+        expect(pair('g-a').team_category).toBe('womens');
+        expect(match('sm-2')).toMatchObject({ handicap_a: 0, handicap_b: start });
+        expect(match('sm-3')).toMatchObject({ handicap_a: start, handicap_b: 0 });
+        // Played and on court: the starts they were scored from stay.
+        expect(match('sm-1')).toMatchObject({ handicap_a: 0, handicap_b: 0, scores: [{ a: 15, b: 10 }] });
+        expect(match('sm-4')).toMatchObject({ handicap_a: 0, handicap_b: 0 });
+        expect(requests()[0]).toMatchObject({ status: 'approved', resolved_by: 'admin-1' });
+        expect(audit('pair_category_change_approved').map((r) => r.details)).toEqual([{
+          request_id: 'cr-1', pair_id: 'g-a', from: null, to: 'womens', rehandicapped: 2,
+          requested_by: 'admin-1', self_approved: true,
+        }]);
+      });
+
+      it('marks an approval of somebody else\'s request as not self-approved', async () => {
+        approvalScene();
+        requests()[0]!.requested_by = 'admin-2';
+
+        await approvePairCategoryRequest('cr-1');
+
+        expect((audit('pair_category_change_approved')[0]!.details as Row).self_approved).toBe(false);
+      });
+
+      it('refuses a second approval of the same request', async () => {
+        approvalScene();
+        await approvePairCategoryRequest('cr-1');
+
+        const again = await approvePairCategoryRequest('cr-1');
+
+        expect(again.ok === false && again.error).toBe('This request has already been decided. Reload the page.');
+        expect(audit('pair_category_change_approved')).toHaveLength(1);
+      });
+
+      it('refuses a request whose starting category is stale, writing nothing', async () => {
+        approvalScene();
+        pair('g-a').team_category = 'mixed';
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('The team\'s category changed after this was asked for. Decline it and ask again.');
+        expect(pair('g-a').team_category).toBe('mixed');
+        expect(requests()[0]!.status).toBe('pending');
+        expect(match('sm-2')).toMatchObject({ handicap_a: 0, handicap_b: 0 });
+        expect(audit('pair_category_change_approved')).toEqual([]);
+      });
+
+      it('refuses a category the event no longer lists', async () => {
+        approvalScene();
+        requests()[0]!.to_category = 'open';
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('That category is no longer one of this event\'s.');
+        expect(pair('g-a').team_category).toBeNull();
+      });
+
+      it('names the migration when the function is missing', async () => {
+        approvalScene();
+        store.waitlistRpc = (name) => (name === 'approve_pair_category_request'
+          ? { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } }
+          : undefined);
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('Run migration 00279 first');
+        expect(pair('g-a').team_category).toBeNull();
+      });
+
+      it('refuses without the capability before any RPC', async () => {
+        approvalScene();
+        capabilityGate.refuse = 'Forbidden';
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok).toBe(false);
+        expect(store.rpcCalls).toEqual([]);
+        expect(pair('g-a').team_category).toBeNull();
+      });
+
+      it('says the approval landed when refreshing the open matches fails afterwards', async () => {
+        approvalScene();
+        store.faults.push({ table: 'tournament_matches', op: 'update', message: 'boom' });
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toMatch(/WAS approved and saved/);
+        expect(pair('g-a').team_category).toBe('womens');
+        expect(requests()[0]!.status).toBe('approved');
+        expect((audit('pair_category_change_approved')[0]!.details as Row).refresh_failed).toBe(true);
+      });
+    });
+
+    describe('declinePairCategoryRequest', () => {
+      it('declines a waiting request once, and refuses the second', async () => {
+        playedEvent();
+        store.db.tournament_category_requests = [pendingRequest({ requested_by: 'admin-2' })];
+
+        const res = await declinePairCategoryRequest('cr-1');
+        const again = await declinePairCategoryRequest('cr-1');
+
+        expect(res).toEqual({ ok: true, data: undefined });
+        expect(capabilityGate.asked[0]).toBe('tournaments.results.edit.write');
+        expect(requests()[0]).toMatchObject({ status: 'declined', resolved_by: 'admin-1' });
+        expect(pair('g-a').team_category).toBeNull();
+        expect(audit('pair_category_change_declined').map((r) => r.details)).toEqual([{
+          request_id: 'cr-1', pair_id: 'g-a', from: null, to: 'womens', requested_by: 'admin-2',
+        }]);
+        expect(again.ok === false && again.error).toBe('This request has already been decided. Reload the page.');
+      });
+    });
+
+    describe('cancelPairCategoryRequest', () => {
+      it('lets the requester cancel', async () => {
+        playedEvent();
+        store.db.tournament_category_requests = [pendingRequest()];
+
+        const res = await cancelPairCategoryRequest('cr-1');
+
+        expect(res).toEqual({ ok: true, data: undefined });
+        expect(capabilityGate.asked).toEqual(['tournaments.draw.seed.set.write']);
+        expect(requests()[0]).toMatchObject({ status: 'cancelled', resolved_by: 'admin-1' });
+        expect(audit('pair_category_change_cancelled')).toHaveLength(1);
+      });
+
+      it('refuses somebody who did not ask, and leaves the request waiting', async () => {
+        playedEvent();
+        store.db.tournament_category_requests = [pendingRequest({ requested_by: 'admin-2' })];
+
+        const res = await cancelPairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('Only the person who asked can cancel this request.');
+        expect(requests()[0]!.status).toBe('pending');
+        expect(audit('pair_category_change_cancelled')).toEqual([]);
+      });
+
+      it('says a decided request is already decided', async () => {
+        playedEvent();
+        store.db.tournament_category_requests = [pendingRequest({ status: 'approved', resolved_at: '2026-10-01T11:00:00Z' })];
+
+        const res = await cancelPairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('This request has already been decided. Reload the page.');
+      });
+    });
+  });
+
+  // 00279: "Apply the current head start" on Edit result, for one completed
+  // match whose team's category has been changed since it was played.
+  describe('editMatchResult with the current head start', () => {
+    // Team Kestrel was entered as women's (a 5-point start against men's) and
+    // played sm-1 from it; it is men's now, so the current start is 0-0.
+    function correctionScene(extra: Row = {}) {
+      const cfg = stagedExternalEvent();
+      event().status = 'live';
+      pair('g-a').team_category = 'mens';
+      const old = cfg.headStarts.womens?.mens ?? 0;
+      expect(old).toBeGreaterThan(3);
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b', {
+        handicap_a: old, handicap_b: 0, scores: [{ a: old + 10, b: 15 }], time_exceeded: false,
+        winner_pair_id: 'g-b', loser_pair_id: 'g-a', ...extra,
+      })];
+      return old;
+    }
+    const reverseCalls = () => store.rpcCalls.filter((c) => c.name === 'reverse_tournament_match_rating');
+    const eloCalls = () => store.rpcCalls.filter((c) => c.name === 'reverse_tournament_match_rating' || c.name === 'apply_tournament_match_rating');
+    const edited = () => store.db.tournament_audit_log!.filter((r) => r.action === 'result_edited');
+
+    it('accepts a score legal only under the new start and writes the new starts', async () => {
+      const old = correctionScene();
+
+      const res = await editMatchResult('sm-1', [{ a: 3, b: 15 }], 'b', 'Head start was wrong', { applyCurrentHeadStart: true });
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(match('sm-1')).toMatchObject({ handicap_a: 0, handicap_b: 0, scores: [{ a: 3, b: 15 }] });
+      expect(edited()[0]!.details).toMatchObject({
+        head_start_applied: true,
+        old_handicap: { a: old, b: 0 },
+        new_handicap: { a: 0, b: 0 },
+      });
+    });
+
+    it('refuses the same score without the switch, judged by the recorded start', async () => {
+      const old = correctionScene();
+
+      const res = await editMatchResult('sm-1', [{ a: 3, b: 15 }], 'b', 'Head start was wrong');
+
+      expect(res.ok).toBe(false);
+      expect(match('sm-1')).toMatchObject({ handicap_a: old, scores: [{ a: old + 10, b: 15 }] });
+    });
+
+    it('ignores anything but true', async () => {
+      const old = correctionScene();
+
+      const res = await editMatchResult('sm-1', [{ a: old + 2, b: 15 }], 'b', 'Typo',
+        { applyCurrentHeadStart: 'yes' as unknown as boolean });
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(match('sm-1')).toMatchObject({ handicap_a: old, handicap_b: 0 });
+      expect(edited()[0]!.details).toMatchObject({ head_start_applied: false });
+      expect((edited()[0]!.details as Row).new_handicap).toBeUndefined();
+    });
+
+    it('refuses on a stage without head starts before any rating is reversed', async () => {
+      const cfg = structuredClone(poolsThenPlacement());
+      cfg.stages[0]!.scoring.handicap = false;
+      stagedExternalEvent(cfg);
+      event().status = 'live';
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b', {
+        scores: [{ a: 15, b: 10 }], winner_pair_id: 'g-a', loser_pair_id: 'g-b', elo_snapshot: { entries: [] },
+      })];
+
+      const res = await editMatchResult('sm-1', [{ a: 10, b: 15 }], 'b', 'Wrong', { applyCurrentHeadStart: true });
+
+      expect(res.ok === false && res.error).toBe('This match\'s stage is played without head starts.');
+      expect(reverseCalls()).toEqual([]);
+      expect(match('sm-1')).toMatchObject({ scores: [{ a: 15, b: 10 }] });
+    });
+
+    it('refuses a walkover before any rating is reversed', async () => {
+      correctionScene({ elo_snapshot: { entries: [] } });
+
+      const res = await editMatchResult('sm-1', [], 'a', 'Wrong', { applyCurrentHeadStart: true });
+
+      expect(res.ok === false && res.error).toBe('A walkover has no score for a head start to apply to.');
+      expect(reverseCalls()).toEqual([]);
+    });
+
+    it('refuses a match outside a staged event before any rating is reversed', async () => {
+      await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+      expect(match(QF).elo_snapshot).toBeTruthy();
+      store.rpcCalls = [];
+
+      const res = await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Wrong', { applyCurrentHeadStart: true });
+
+      expect(res.ok === false && res.error).toBe('Only a match in a staged event has a head start to apply.');
+      expect(reverseCalls()).toEqual([]);
+    });
+
+    it('moves no rating on an unrated stage of a member event', async () => {
+      correctionScene();
+      event().external_event = false;
+
+      const res = await editMatchResult('sm-1', [{ a: 3, b: 15 }], 'b', 'Head start was wrong', { applyCurrentHeadStart: true });
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(eloCalls()).toEqual([]);
     });
   });
 

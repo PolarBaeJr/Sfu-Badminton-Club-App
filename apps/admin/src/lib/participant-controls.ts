@@ -133,6 +133,13 @@ export interface DrawCapabilities {
    * one.
    */
   enterResult: boolean;
+  /**
+   * tournaments.results.edit.write: approving or declining a category change
+   * for a team that has already played with head starts (00279). The key
+   * correcting a recorded result asks, because the two decide the same thing:
+   * what head start a played match is judged by.
+   */
+  approveCategory: boolean;
 }
 
 export interface ParticipantControls {
@@ -181,10 +188,17 @@ export interface ParticipantControls {
   swapMember: boolean;
   /**
    * A team's category in a staged event (setPairCategory, seed.set.write).
-   * Open until the event is finalised: the action itself refuses a team that
-   * has already played with head starts.
+   * Open until the event is finalised. Before the team has played with head
+   * starts the change is made directly; after, the action answers that a
+   * request is required and the cell asks for a reason (00279).
    */
   editCategory: boolean;
+  /**
+   * Approve or decline a waiting category change (results.edit.write). Open
+   * until the event is finalised, draw lock or not: the request was made about
+   * matches already played, and the lock freezes the entry list, not results.
+   */
+  decideCategory: boolean;
 }
 
 /**
@@ -269,6 +283,7 @@ export function participantControls(
     withdrawMember: pairingOpen && can.exit,
     swapMember: pairingOpen && can.add && can.remove,
     editCategory: event.staged === true && !event.drawLocked && event.status !== 'completed' && can.seedSet,
+    decideCategory: event.staged === true && event.status !== 'completed' && can.approveCategory,
   };
 }
 

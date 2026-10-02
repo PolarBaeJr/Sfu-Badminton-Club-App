@@ -9,9 +9,9 @@ import {
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
-  editMatchResult, getMatchOutcomeSummary,
+  editMatchResult, getMatchOutcomeSummary, getCurrentHeadStarts,
 } from '@/lib/tournament-actions';
-import type { MatchOutcomeSummary, EntryEventSummary } from '@/lib/tournament-actions';
+import type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
@@ -64,7 +64,18 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   // stagedMatchRules call enterMatchResultImpl makes. Null on a staged row means
   // the stored config no longer reads, and the server refuses that match too.
   const isStaged = match.stage != null;
-  const stagedRules = isStaged ? stagedMatchRules(parseFormatConfig(event.format_config), match) : null;
+  // "Apply the current head start" (00279), on the correction view only: the
+  // starts the two teams' categories give today, used in place of the ones
+  // recorded on the row once the exec has switched it on and the server has
+  // said they differ.
+  const [headStarts, setHeadStarts] = useState<CurrentHeadStarts | null>(null);
+  const [applyHeadStart, setApplyHeadStart] = useState(false);
+  const [headStartNote, setHeadStartNote] = useState<string | null>(null);
+  const [headStartLoading, setHeadStartLoading] = useState(false);
+  const recordedRules = isStaged ? stagedMatchRules(parseFormatConfig(event.format_config), match) : null;
+  const stagedRules = recordedRules && applyHeadStart && headStarts?.current
+    ? { ...recordedRules, startA: headStarts.current.a, startB: headStarts.current.b }
+    : recordedRules;
   const maxGames = stagedRules?.bestOf ?? getEventRules(shape).bestOf;
   // Scores are entered as totals including the head start, so an empty game
   // starts on each side's start rather than blank.
@@ -289,7 +300,10 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
       const scores = games
         .filter(g => (g.a || g.b) && !isUnplayed(g))
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
-      const res = await editMatchResult(match.id, scores, winner, walkoverReason);
+      const res = await editMatchResult(
+        match.id, scores, winner, walkoverReason,
+        applyHeadStart ? { applyCurrentHeadStart: true } : undefined,
+      );
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       if (scores.length > 0) {
         await showSummary(rated ? 'Result changed, ratings re-applied' : 'Result changed');
@@ -300,6 +314,33 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setLoading(false);
+  }
+
+  // The switch asks the server first, and stays off with the reason shown when
+  // there is nothing to apply: a stage without head starts, a side that cannot
+  // be read, or starts that already match the teams' categories.
+  async function toggleHeadStart(on: boolean) {
+    setHeadStartNote(null);
+    if (!on) { setApplyHeadStart(false); return; }
+    setHeadStartLoading(true);
+    const res = await getCurrentHeadStarts(match.id);
+    setHeadStartLoading(false);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    const info = res.data;
+    if (!info.current) {
+      setHeadStartNote('This match has no current head start to apply: its stage is played without head starts, or one of its sides cannot be read.');
+      return;
+    }
+    if (!info.applicable) {
+      setHeadStartNote('Only a played match with a recorded score can take the current head start.');
+      return;
+    }
+    if (info.current.a === info.recorded.a && info.current.b === info.recorded.b) {
+      setHeadStartNote(`The current head start is the one already recorded (${nameA} ${info.recorded.a}, ${nameB} ${info.recorded.b}), so there is nothing to apply.`);
+      return;
+    }
+    setHeadStarts(info);
+    setApplyHeadStart(true);
   }
 
   async function handleWalkover(winner: 'a' | 'b') {
@@ -578,6 +619,28 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
                 the final placings and points are recalculated automatically. Placement bonuses are not —
                 if this changes who finished where and bonuses were already paid, you will be told so.
               </p>
+            )}
+
+            {isDoubles && isStaged && match.status === 'completed' && recorded.length > 0 && (
+              <div className="rounded-lg bg-[var(--bg-elevated)] px-3">
+                <Switch
+                  checked={applyHeadStart}
+                  onChange={toggleHeadStart}
+                  disabled={headStartLoading}
+                  label="Apply the current head start"
+                  description="Recompute this match's head start from the teams' current categories and check the corrected score against it."
+                />
+                {headStartNote && (
+                  <p className="pb-3 text-xs text-[var(--text-muted)]" role="status">{headStartNote}</p>
+                )}
+                {applyHeadStart && headStarts?.current && (
+                  <p className="pb-3 text-xs text-[var(--text-primary)]" role="status">
+                    Recorded: {nameA} {headStarts.recorded.a}, {nameB} {headStarts.recorded.b}.
+                    {' '}Current: {nameA} {headStarts.current.a}, {nameB} {headStarts.current.b}.
+                    {' '}Every corrected game total must include the new head start.
+                  </p>
+                )}
+              </div>
             )}
 
             {(startA > 0 || startB > 0) && (

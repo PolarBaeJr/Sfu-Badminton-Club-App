@@ -8,7 +8,8 @@
 //   - brackets.ts     — bracket / round robin generation, draw lock
 //   - stages.ts       : drawing one stage of a staged event (00272)
 //   - team-category.ts: a team's category in a staged event, which its head
-//                       starts read
+//                       starts read, and the request to change it after
+//                       play (00279)
 //   - results.ts      — score entry, walkovers, void / restore / edit / undo
 //                       results, manual draw-slot repair
 //   - finalize.ts     — placement bonuses + event finalization
@@ -74,7 +75,13 @@ export {
 
 export { drawStage, redrawStage } from './tournament-actions/stages';
 
-export { setPairCategory } from './tournament-actions/team-category';
+export {
+  setPairCategory,
+  requestPairCategoryChange,
+  approvePairCategoryRequest,
+  declinePairCategoryRequest,
+  cancelPairCategoryRequest,
+} from './tournament-actions/team-category';
 
 export {
   enterMatchResult,
@@ -86,8 +93,9 @@ export {
   editMatchResult,
   undoMatchResult,
   getMatchOutcomeSummary,
+  getCurrentHeadStarts,
 } from './tournament-actions/results';
-export type { MatchOutcomeSummary, EntryEventSummary } from './tournament-actions/results';
+export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from './tournament-actions/results';
 
 export {
   applyPlacementBonuses,

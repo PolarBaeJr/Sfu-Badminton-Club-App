@@ -47,6 +47,7 @@ import {
   routedEntryId,
   MATCH_ROUTES,
   refreshStagedHandicaps,
+  currentStagedHeadStarts,
   type MatchRoute,
 } from './_internal';
 
@@ -1457,6 +1458,7 @@ async function editMatchResultImpl(
   newScores: Array<{ a: number; b: number }>,
   newWinnerSide: 'a' | 'b',
   reason: string,
+  opts?: { applyCurrentHeadStart?: boolean },
 ) {
   const admin = await requireCapability('tournaments.results.edit.write');
   const adminClient = createAdminClient();
@@ -1501,6 +1503,33 @@ async function editMatchResultImpl(
     throw new ExpectedError('Give a reason — changing a result that is already recorded has to say why.');
   }
 
+  const doubles = isDoublesEvent(event.event_type as TournamentEventType);
+
+  // "APPLY THE CURRENT HEAD START" (00279). A team whose category was changed
+  // after it played keeps its recorded scores, judged by the starts the old
+  // category gave. This re-snapshots ONE completed match's starts from the two
+  // teams' categories now, and checks the corrected score against them. Only
+  // `true` turns it on: a stray truthy value from the client is not a request.
+  // Every refusal here comes before the downstream check and before anything
+  // is reversed.
+  let headStart: { handicap_a: number; handicap_b: number } | null = null;
+  if (opts?.applyCurrentHeadStart === true) {
+    if (match.stage == null) {
+      throw new ExpectedError('Only a match in a staged event has a head start to apply.');
+    }
+    const stage = parseFormatConfig(event.format_config)?.stages[(match.stage as number) - 1];
+    if (stage?.scoring.handicap !== true) {
+      throw new ExpectedError('This match\'s stage is played without head starts.');
+    }
+    if (newScores.length === 0) {
+      throw new ExpectedError('A walkover has no score for a head start to apply to.');
+    }
+    headStart = await currentStagedHeadStarts(adminClient, match, doubles);
+    if (!headStart) {
+      throw new ExpectedError('This match\'s two sides could not be read, so it has no current head start to apply.');
+    }
+  }
+
   // The integrity guard that STAYS. Rewriting a match underneath a later round
   // that has already been played would leave that later result recorded for an
   // entry which is no longer in this half of the draw — and, since 00080, would
@@ -1518,13 +1547,15 @@ async function editMatchResultImpl(
   // per stage, and a correction is checked against them like an entry is, with
   // the clock as the row recorded it. No scores is a walkover, which keeps its
   // forfeit and writes no scoreline.
+  //
+  // With the current head start applied, the score is checked against the
+  // starts it is about to be recorded with, not the ones it replaces.
   if (match.stage != null && newScores.length > 0) {
-    assertStagedScoreline(stagedRulesFor(match, event), newScores, newWinnerSide, match.time_exceeded === true);
+    const judged = headStart ? { ...match, ...headStart } : match;
+    assertStagedScoreline(stagedRulesFor(judged, event), newScores, newWinnerSide, match.time_exceeded === true);
   } else {
     assertWinnerMatchesScores(newScores, newWinnerSide);
   }
-
-  const doubles = isDoublesEvent(event.event_type as TournamentEventType);
 
   const winnerId = doubles
     ? (newWinnerSide === 'a' ? match.pair_a_id : match.pair_b_id)
@@ -1575,6 +1606,7 @@ async function editMatchResultImpl(
       ? { status: 'completed', walkover_winner: null, walkover_reason: null }
       : {}),
     ...(staysWalkover ? { walkover_winner: newWinnerSide } : {}),
+    ...(headStart ?? {}),
     result_entered_by: admin.id,
     result_entered_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -1673,6 +1705,13 @@ async function editMatchResultImpl(
       // there is no reversal for them.
       standings_recomputed: event.status === 'completed',
       event_was_finalised: event.status === 'completed',
+      head_start_applied: headStart != null,
+      ...(headStart
+        ? {
+            old_handicap: { a: match.handicap_a ?? 0, b: match.handicap_b ?? 0 },
+            new_handicap: { a: headStart.handicap_a, b: headStart.handicap_b },
+          }
+        : {}),
     },
   });
 
@@ -1860,8 +1899,9 @@ export async function editMatchResult(
   newScores: Array<{ a: number; b: number }>,
   newWinnerSide: 'a' | 'b',
   reason: string,
+  opts?: { applyCurrentHeadStart?: boolean },
 ): Promise<ActionResult<void>> {
-  return runAction(async () => { await editMatchResultImpl(matchId, newScores, newWinnerSide, reason); });
+  return runAction(async () => { await editMatchResultImpl(matchId, newScores, newWinnerSide, reason, opts); });
 }
 
 // Put a voided match back into play. Pairs with voidMatch: both reverse any Elo
@@ -2020,6 +2060,53 @@ async function getMatchOutcomeSummaryImpl(matchId: string): Promise<MatchOutcome
 
 export async function getMatchOutcomeSummary(matchId: string): Promise<ActionResult<MatchOutcomeSummary>> {
   return runAction(async () => getMatchOutcomeSummaryImpl(matchId));
+}
+
+// ============================================================
+// The head start a played match would get now: READ ONLY (00279)
+// ============================================================
+//
+// What the correction dialog's "Apply the current head start" switch shows
+// before anything is saved: the starts recorded on the row, and the ones the
+// two teams' categories give today. `applicable` is whether editMatchResult
+// would accept the switch at all, so the dialog can say why it stays off.
+// Gated on `tournaments.page`, like getMatchOutcomeSummary: both starts are
+// already on screen to anybody who can open the event.
+export interface CurrentHeadStarts {
+  recorded: { a: number; b: number };
+  current: { a: number; b: number } | null;
+  applicable: boolean;
+}
+
+async function getCurrentHeadStartsImpl(matchId: string): Promise<CurrentHeadStarts> {
+  await requireCapability('tournaments.page');
+  const adminClient = createAdminClient();
+
+  const { data: match, error } = await adminClient.from('tournament_matches')
+    .select('*, event:tournament_events(id, event_type, format_config)')
+    .eq('id', matchId)
+    .single();
+  if (error || !match) throw new ExpectedError('That match could not be read back.');
+
+  const event = match.event as Record<string, unknown>;
+  const doubles = isDoublesEvent(event.event_type as TournamentEventType);
+  const recorded = { a: (match.handicap_a as number | null) ?? 0, b: (match.handicap_b as number | null) ?? 0 };
+  const stage = match.stage != null
+    ? parseFormatConfig(event.format_config)?.stages[(match.stage as number) - 1]
+    : undefined;
+  const next = stage?.scoring.handicap === true
+    ? await currentStagedHeadStarts(adminClient, match, doubles)
+    : null;
+  const scored = Array.isArray(match.scores) && match.scores.length > 0;
+  return {
+    recorded,
+    current: next ? { a: next.handicap_a, b: next.handicap_b } : null,
+    applicable: next != null && scored && match.status === 'completed' && !match.is_bye,
+  };
+}
+
+export async function getCurrentHeadStarts(matchId: string): Promise<ActionResult<CurrentHeadStarts>> {
+  return runAction(async () => getCurrentHeadStartsImpl(matchId));
 }
 
 // Place or clear one side of an undecided match by hand. The escape hatch for a

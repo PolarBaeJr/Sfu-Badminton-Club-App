@@ -359,16 +359,23 @@ describe('CAPABILITY_GATES', () => {
   // migrations that redefine the CHECK wholesale. The repeat rules also live in
   // rating_defaults, which /ratings edits under the admin-only
   // `platform.settings.write`; this is the exec's narrower door to three keys.
-  it('names 193 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 193 BECAME 195 with category change requests (00279): the approve and the
+  // decline, two new sites and NO new capability. Both merged into
+  // `tournaments.results.edit.write`, because changing a played team's
+  // category decides what head start its recorded scores are judged by, which
+  // is what correcting a recorded result decides. Asking and cancelling stay
+  // with the category cell's own `tournaments.draw.seed.set.write`.
+  it('names 195 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(193);
-    expect(new Set(sites).size).toBe(193);
-    expect(ENFORCEMENT_POINTS).toBe(193);
+    expect(sites.length).toBe(195);
+    expect(new Set(sites).size).toBe(195);
+    expect(ENFORCEMENT_POINTS).toBe(195);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

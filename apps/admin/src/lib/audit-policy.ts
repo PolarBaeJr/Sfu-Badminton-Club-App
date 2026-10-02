@@ -201,6 +201,12 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'external_pair_removed',
   'seeds_cleared',
   'draw_unlocked',
+  // A category change approved after the team has played (00279). No risk
+  // pattern matches it, so it is classified by hand: it changes the head start
+  // a team's next matches are played from, and decides that its recorded
+  // scores were judged by a category it no longer has. This row is the only
+  // record of who decided that and on whose request.
+  'pair_category_change_approved',
 ]);
 
 /**

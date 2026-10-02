@@ -443,6 +443,14 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'tournaments.results.edit.write': {
     label: 'Edit a recorded result', area: 'tournaments', group: 'results', mode: 'write',
     gate: 'tournament-actions/results.ts editMatchResult',
+    also: [
+      'tournament-actions/team-category.ts approvePairCategoryRequestImpl',
+      'tournament-actions/team-category.ts declinePairCategoryRequestImpl',
+    ],
+    merged:
+      'Correcting a recorded result and settling a category change for a team that has played are one act: '
+      + 'both decide what head start a played match is judged by (00279). Declining the change is the same '
+      + 'decision answered no.',
   },
   'tournaments.results.entry.write': {
     label: 'Edit a match slot', area: 'tournaments', group: 'results', mode: 'write',

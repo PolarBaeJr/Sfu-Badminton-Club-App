@@ -2013,6 +2013,33 @@ async function stagedHeadStarts(
 }
 
 /**
+ * The head starts a staged row WOULD be given now, from its two sides'
+ * current categories (00279), without writing them. null when a side is empty
+ * or the row's stage is not in the config. What "Apply the current head start"
+ * compares a played match's recorded starts against.
+ */
+export async function currentStagedHeadStarts(
+  adminClient: ReturnType<typeof createAdminClient>,
+  match: {
+    event_id: string;
+    stage: number | null;
+    pair_a_id?: string | null;
+    pair_b_id?: string | null;
+    participant_a_id?: string | null;
+    participant_b_id?: string | null;
+  },
+  doubles: boolean,
+): Promise<{ handicap_a: number; handicap_b: number } | null> {
+  if (match.stage == null) return null;
+  const aId = (doubles ? match.pair_a_id : match.participant_a_id) ?? null;
+  const bId = (doubles ? match.pair_b_id : match.participant_b_id) ?? null;
+  if (!aId || !bId) return null;
+  const starts = await stagedHeadStarts(adminClient, match, doubles, aId, bId);
+  if (starts.handicap_a == null || starts.handicap_b == null) return null;
+  return { handicap_a: starts.handicap_a, handicap_b: starts.handicap_b };
+}
+
+/**
  * Re-read a staged row's sides and snapshot their head starts again (00272):
  * 0-0 while a side is empty, the stage's matrix once both are known. Called by
  * every writer that sets a side by hand or re-routes one, so the starts a

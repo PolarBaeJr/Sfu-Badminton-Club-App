@@ -28,9 +28,10 @@ import type {
   ParticipantWithPlayer,
   PairWithPlayers,
   WaitlistEntry,
+  CategoryRequest,
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
-import type { DrawCapabilities } from '@/lib/participant-controls';
+import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
 import { hasResultsTab } from '@/lib/event-tabs';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab } from './ParticipantsTab';
@@ -42,6 +43,7 @@ import { ResultsTab } from './ResultsTab';
 import { LeaderboardTab } from './LeaderboardTab';
 import { CourtManagementTab } from './CourtManagementTab';
 import { LiveStrip } from './LiveStrip';
+import { CategoryRequestsPanel } from './CategoryRequestsPanel';
 import { hasCourtsTab } from '@/lib/live-desk';
 
 // 'pool' is a tab of its own rather than a mode of 'bracket' (00107). On a
@@ -103,9 +105,14 @@ interface Props {
   busyCourtIds: string[];
   // The members waiting for a place (00278), null before that migration.
   waitlist: WaitlistEntry[] | null;
+  // Category changes waiting for approval (00279). Null before that
+  // migration, and when the event or the viewer has no use for them.
+  categoryRequests: CategoryRequest[] | null;
+  // Who is looking, so the panel offers Cancel on their own requests only.
+  viewerId: string;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates, courts, busyCourtIds, waitlist, categoryRequests, viewerId }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -227,6 +234,12 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   const redrawBlockers = summariseRedrawBlockers(phaseMatches);
   const playedMatches = redrawBlockers.played;
 
+  // Who may settle or withdraw a waiting category change (00279).
+  const categoryControls = participantControls(
+    { status, drawLocked: event.draw_locked as boolean, staged },
+    drawCapabilities,
+  );
+
   return (
     <div className="space-y-6">
       {/* Event Header */}
@@ -292,6 +305,17 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         onOpenCourts={() => setActiveTab('courts')}
       />
 
+      {categoryRequests && categoryRequests.length > 0 && (
+        <CategoryRequestsPanel
+          requests={categoryRequests}
+          event={event}
+          pairs={pairs}
+          canDecide={categoryControls.decideCategory}
+          canCancel={drawCapabilities.seedSet && status !== 'completed'}
+          viewerId={viewerId}
+        />
+      )}
+
       {/* Tab Navigation */}
       <div className="overflow-x-auto -mx-1 px-1">
         <div className="flex gap-1 p-1 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border)] min-w-fit" role="tablist" aria-label="Event sections">
@@ -327,6 +351,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             capabilities={drawCapabilities}
             waiverStates={waiverStates}
             waitlist={waitlist}
+            categoryRequests={categoryRequests}
           />
         )}
         {activeTab === 'checkin' && (

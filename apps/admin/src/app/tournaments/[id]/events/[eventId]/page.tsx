@@ -23,7 +23,7 @@ import { hasResultsTab } from '@/lib/event-tabs';
 import { readLiveCourtUse, readTournamentCourts } from '@/lib/tournament-courts';
 import type { DrawCapabilities } from '@/lib/participant-controls';
 import type { Capability } from '@/lib/permissions';
-import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary, WaitlistEntry } from '@/lib/tournament-types';
+import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary, WaitlistEntry, CategoryRequest } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../event-format-fields';
 
 export default async function EventPage({
@@ -128,6 +128,9 @@ export default async function EventPage({
     // tournaments.results.* capability has reached a component at all; the
     // bracket and round-robin tabs still gate score entry on status alone.
     enterResult: may('tournaments.results.enter.write'),
+    // Approving or declining a category change after play (00279). The key
+    // correcting a recorded result asks; see participant-controls.ts.
+    approveCategory: may('tournaments.results.edit.write'),
   };
   // `siblingEvents` feeds one picker too: the "seed from" list in
   // EventSettingsDialog, which is reached from EventHeader's settings button and
@@ -153,6 +156,7 @@ export default async function EventPage({
     courts,
     liveCourtUse,
     waitlist,
+    categoryRequests,
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -271,6 +275,25 @@ export default async function EventPage({
             }
             return (data ?? []) as unknown as WaitlistEntry[];
           }),
+    // Category changes waiting for approval (00279), oldest first. Only a
+    // staged doubles event has them, and only somebody who may ask for one or
+    // decide one is shown them. Null before that migration.
+    event.format === 'staged' && doubles
+      && (drawCapabilities.seedSet || drawCapabilities.approveCategory)
+      ? supabase
+          .from('tournament_category_requests')
+          .select('id, pair_id, from_category, to_category, reason, requested_by, requested_at, requester:players!tournament_category_requests_requested_by_fkey(full_name)')
+          .eq('event_id', eventId)
+          .eq('status', 'pending')
+          .order('requested_at', { ascending: true })
+          .then(({ data, error }) => {
+            if (error) {
+              if (['42P01', 'PGRST205'].includes(error.code ?? '')) return null;
+              throw new Error(`Could not read the category change requests: ${error.message}`);
+            }
+            return (data ?? []) as unknown as CategoryRequest[];
+          })
+      : Promise.resolve(null),
   ]);
   const busyCourts = courts && liveCourtUse ? [...busyCourtIds(courts, liveCourtUse)] : [];
 
@@ -386,6 +409,8 @@ export default async function EventPage({
         courts={courts}
         busyCourtIds={busyCourts}
         waitlist={waitlist}
+        categoryRequests={categoryRequests}
+        viewerId={viewer.id}
       />
     </div>
   );

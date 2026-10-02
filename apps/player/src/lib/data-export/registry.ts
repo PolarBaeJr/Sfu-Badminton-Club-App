@@ -613,6 +613,11 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     withheldColumns: ['key_hash'],
     why: 'Data API keys you minted or revoked, as an officer. Counted rather than listed: issuing a key is an official act on behalf of the club, and the key itself is about the organisation that received it. The stored hash of a key is never exported. If you want to know what the data API publishes ABOUT YOU, that is your ratings row above, reduced to a pseudonym.',
   },
+  tournament_category_requests: {
+    playerColumns: ['requested_by', 'resolved_by'],
+    disposition: 'counted',
+    why: 'Team category changes you asked for or decided in a staged tournament event, as an officer. Counted rather than listed: the request is about a team\'s head start, not about you.',
+  },
 
   // ---------------------------------------------------------------
   // WITHHELD -- never in the file, reason given

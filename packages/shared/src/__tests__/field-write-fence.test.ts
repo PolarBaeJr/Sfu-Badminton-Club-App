@@ -78,8 +78,10 @@ const FIELD_TABLES = ['tournament_participants', 'tournament_pairs', 'tournament
  *                   the field and is not in 00202's digest. participants.ts
  *                   writes it once, on the pair it has just created;
  *                   team-category.ts writes it on one pair and re-snapshots
- *                   that pair's unplayed matches, refusing once it has played
- *                   with head starts.
+ *                   that pair's unplayed matches, until the pair has played
+ *                   with head starts. After that a change is a request, and
+ *                   approve_pair_category_request (00279) writes it under
+ *                   the event field key, not this file.
  *
  * A write of one of these columns from ANY OTHER file fails, because the
  * reasoning above is about those two flows and does not transfer.

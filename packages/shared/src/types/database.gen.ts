@@ -14,7 +14,7 @@
 // SOURCE DATABASE: production — container "supabase-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 70 tables, 3 views and 26 enums.
+// Covers 71 tables, 3 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -2797,6 +2797,77 @@ export type Database = {
           },
         ]
       }
+      tournament_category_requests: {
+        Row: {
+          event_id: string
+          from_category: string | null
+          id: string
+          pair_id: string
+          reason: string
+          requested_at: string
+          requested_by: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          to_category: string | null
+        }
+        Insert: {
+          event_id: string
+          from_category?: string | null
+          id?: string
+          pair_id: string
+          reason: string
+          requested_at?: string
+          requested_by?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          to_category?: string | null
+        }
+        Update: {
+          event_id?: string
+          from_category?: string | null
+          id?: string
+          pair_id?: string
+          reason?: string
+          requested_at?: string
+          requested_by?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          to_category?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tournament_category_requests_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_category_requests_pair_id_fkey"
+            columns: ["pair_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_pairs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_category_requests_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournament_category_requests_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_checkin_tokens: {
         Row: {
           created_at: string
@@ -4148,6 +4219,10 @@ export type Database = {
           p_walkover_id: string
         }
         Returns: undefined
+      }
+      approve_pair_category_request: {
+        Args: { p_actor: string; p_request_id: string }
+        Returns: Json
       }
       assert_notification_patch: {
         Args: { p_email_only?: boolean; p_patch: Json }

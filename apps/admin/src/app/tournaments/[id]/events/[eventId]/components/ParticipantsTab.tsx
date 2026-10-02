@@ -22,6 +22,7 @@ import {
   withdrawPair,
   autoPairWaitingEntrants,
   setPairCategory,
+  requestPairCategoryChange,
   promoteFromWaitlist,
   removeFromWaitlist,
 } from '@/lib/tournament-actions';
@@ -36,7 +37,7 @@ import {
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle, LayoutGrid, Clock } from 'lucide-react';
-import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers, WaitlistEntry } from '@/lib/tournament-types';
+import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers, WaitlistEntry, CategoryRequest } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
 
@@ -55,6 +56,9 @@ interface Props {
   // Members queueing for a place (00278), first in line first. null before
   // that migration, and for an external event: no section at all.
   waitlist?: WaitlistEntry[] | null;
+  // Category changes waiting for approval (00279), so a team's cell can say
+  // one is pending. null before that migration.
+  categoryRequests?: CategoryRequest[] | null;
 }
 
 // Raw enum values ("checked_in") leaked straight into the table. Underscores
@@ -245,6 +249,7 @@ function CategoryCell({
   suggestion,
   canEdit,
   onSave,
+  pending,
 }: {
   pairId: string;
   category: string | null;
@@ -252,13 +257,17 @@ function CategoryCell({
   suggestion: string | null;
   canEdit: boolean;
   onSave: (id: string, category: string | null) => Promise<void>;
+  /** A change waiting for approval (00279). The cell names it and stays put until it is decided. */
+  pending?: { to: string | null };
 }) {
   const [saving, setSaving] = useState(false);
   const known = category == null || categories.some((c) => c.key === category);
   const labelOf = (key: string) => categories.find((c) => c.key === key)?.label ?? `${key} (removed)`;
-  const hint = category == null && suggestion
-    ? <span className="block text-xs text-[var(--text-muted)]">Suggested: {labelOf(suggestion)}</span>
-    : null;
+  const hint = pending
+    ? <span className="block text-xs text-[var(--text-muted)]">Change requested: {pending.to == null ? 'Unset' : labelOf(pending.to)}</span>
+    : category == null && suggestion
+      ? <span className="block text-xs text-[var(--text-muted)]">Suggested: {labelOf(suggestion)}</span>
+      : null;
 
   if (!canEdit) {
     return (
@@ -274,7 +283,7 @@ function CategoryCell({
       <Select
         variant="bare"
         value={category ?? ''}
-        disabled={saving}
+        disabled={saving || pending != null}
         aria-label="Category"
         onChange={async (e) => {
           const next = e.target.value === '' ? null : e.target.value;
@@ -295,7 +304,7 @@ function CategoryCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null }: Props) {
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates, waitlist = null, categoryRequests = null }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
   // single-select fields. Singles adds any number of individuals at once.
@@ -341,6 +350,11 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const stagedCfg = event.format === 'staged' ? parseFormatConfig(event.format_config) : null;
   const defaultExternalCategory = pickCategory(stagedCfg, categoryForEventType(event.event_type)) ?? '';
   const [externalCategory, setExternalCategory] = useState(defaultExternalCategory);
+  // A change to a team that has played with head starts is a request with a
+  // reason (00279). Set when setPairCategory answers that one is required.
+  const [categoryAsk, setCategoryAsk] = useState<{ pairId: string; name: string; to: string | null } | null>(null);
+  const [categoryReason, setCategoryReason] = useState('');
+  const [categoryAsking, setCategoryAsking] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
@@ -405,6 +419,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     { status: event.status as string, drawLocked, staged: event.format === 'staged' },
     capabilities,
   );
+  const pendingCategory = (pairId: string) => {
+    const request = categoryRequests?.find((r) => r.pair_id === pairId);
+    return request ? { to: request.to_category } : undefined;
+  };
 
   // Whether a promotion has room, by the rule enter_tournament_event uses:
   // rows for singles, pairs plus one slot per two unpaired for doubles. The
@@ -816,8 +834,27 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   async function handleCategorySave(id: string, category: string | null) {
     const res = await setPairCategory(id, category);
     if (!res.ok) { toast(res.error, 'error'); return; }
+    if (res.data.requestRequired) {
+      const pair = pairs.find((p) => p.id === id);
+      setCategoryReason('');
+      setCategoryAsk({ pairId: id, name: pair?.pair_name ?? 'This team', to: category });
+      return;
+    }
     const n = res.data.rehandicapped;
     if (n > 0) toast(`Category saved; head starts updated on ${n} match${n === 1 ? '' : 'es'}`, 'success');
+    router.refresh();
+  }
+
+  async function handleCategoryRequest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!categoryAsk) return;
+    if (!categoryReason.trim()) { toast('Give a reason for the change.', 'error'); return; }
+    setCategoryAsking(true);
+    const res = await requestPairCategoryChange(categoryAsk.pairId, categoryAsk.to, categoryReason);
+    setCategoryAsking(false);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    setCategoryAsk(null);
+    toast('Change requested. An approver will review it.', 'success');
     router.refresh();
   }
 
@@ -1129,6 +1166,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         suggestion={pairSuggestion(pair)}
                         canEdit={controls.editCategory}
                         onSave={handleCategorySave}
+                        pending={pendingCategory(pair.id)}
                       />
                     </td>
                   )}
@@ -1826,6 +1864,34 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             <Button variant="ghost" onClick={() => setAddOpen(false)} type="button">Cancel</Button>
           </div>
         </form>
+      </Dialog>
+
+      <Dialog open={categoryAsk !== null} onClose={() => setCategoryAsk(null)} title="Request a category change">
+        {categoryAsk && (
+          <form onSubmit={handleCategoryRequest} className="space-y-4">
+            <p className="text-sm text-[var(--text-muted)]">
+              {categoryAsk.name} has already played with head starts, so changing its category to{' '}
+              <span className="font-medium text-[var(--text-primary)]">
+                {categoryAsk.to == null
+                  ? 'Unset'
+                  : stagedCfg?.categories.find((c) => c.key === categoryAsk.to)?.label ?? categoryAsk.to}
+              </span>{' '}
+              needs approval from somebody who can edit a recorded result. Played matches keep their recorded scores.
+            </p>
+            <Input
+              label="Reason"
+              value={categoryReason}
+              maxLength={500}
+              required
+              onChange={(e) => setCategoryReason(e.target.value)}
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <Button type="submit" loading={categoryAsking} disabled={!categoryReason.trim()} className="flex-1">Send request</Button>
+              <Button variant="ghost" onClick={() => setCategoryAsk(null)} type="button">Cancel</Button>
+            </div>
+          </form>
+        )}
       </Dialog>
     </div>
   );
