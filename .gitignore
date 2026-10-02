@@ -153,3 +153,6 @@ supabase/.temp/
 # script defaults here deliberately: an ignored directory inside the repo is
 # harder to leak than a stray file in Downloads.
 auth-logs/
+
+# ── Rust build output (apps/data-api) ──
+target/

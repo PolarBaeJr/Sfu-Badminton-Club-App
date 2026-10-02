@@ -1,57 +1,48 @@
-# The data API image. Build context is the REPO ROOT (the lockfile and the
-# workspace manifests live there), so:
+# The data API image. Build context is the REPO ROOT, as for every other image:
 #   docker build -f apps/data-api/Dockerfile --target runner-data-api .
 # CI does exactly that; images are built only in CI, never on a host.
 #
-# Its own file rather than a stage of the root Dockerfile because nothing here
-# needs the Next.js builder: the root builder installs and builds every app,
-# and this service is one tsc run over a package with no runtime dependencies.
+# One static musl binary on `scratch`: no shell, no libc, no package manager.
+# The service makes plain HTTP calls to Kong and carries its own TLS roots
+# (webpki-roots) for an https SUPABASE_URL, so the image needs nothing beside
+# the binary.
 
-# ---- Stage 1: install the workspace's dev dependencies ----
-FROM node:24-bookworm-slim AS deps-data-api
-WORKDIR /app
+# ---- Stage 1: compile ----
+# The tag pins the same toolchain as apps/data-api/rust-toolchain.toml; change
+# both together. rust-toolchain.toml is deliberately NOT copied in: inside this
+# image it would make rustup fetch a second copy of a toolchain it already has.
+FROM rust:1.99.0-alpine AS builder-data-api
+# ring compiles a little C; the image has gcc, this is its libc headers.
+RUN apk add --no-cache musl-dev
+WORKDIR /build
 
-# npm ci validates the whole lockfile against every workspace manifest, so all
-# of them are copied even though only data-api's tree is installed. Keep this
-# list in step with the root Dockerfile's deps stage.
-COPY package.json package-lock.json .npmrc ./
-COPY apps/player/package.json apps/player/
-COPY apps/admin/package.json apps/admin/
-COPY apps/bot/package.json apps/bot/
-COPY apps/data-api/package.json apps/data-api/
-COPY packages/shared/package.json packages/shared/
-COPY packages/ui/package.json packages/ui/
-COPY packages/config/package.json packages/config/
+# Dependencies first, against an empty crate, so that a source-only change
+# reuses this layer instead of recompiling every dependency.
+COPY apps/data-api/Cargo.toml apps/data-api/Cargo.lock ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs && \
+    cargo build --release --locked && \
+    rm -rf src
 
-RUN npm ci --workspace=data-api --ignore-scripts
+# package.json is read at compile time for the version /health reports.
+COPY apps/data-api/package.json ./
+COPY apps/data-api/src ./src
+# COPY keeps the files' own mtimes, which can be older than the empty crate
+# built above; cargo would then call it up to date and ship `fn main() {}`.
+# Dropping this crate's fingerprints forces the real build.
+RUN rm -rf target/release/.fingerprint/data-api-* && \
+    touch src/main.rs src/lib.rs && \
+    cargo build --release --locked && \
+    cp target/release/data-api /data-api
 
-# ---- Stage 2: compile ----
-FROM deps-data-api AS builder-data-api
-WORKDIR /app
-COPY apps/data-api/tsconfig.json apps/data-api/
-COPY apps/data-api/src apps/data-api/src
-RUN npm run build --workspace=data-api
+# ---- Stage 2: runtime ----
+FROM scratch AS runner-data-api
+COPY --from=builder-data-api /data-api /data-api
 
-# ---- Stage 3: runtime ----
-# No node_modules is copied because the service has NO runtime dependencies:
-# node:http, node:crypto and the global fetch. If one is ever added, this stage
-# must start copying the production tree, and forgetting to is a crash on boot.
-FROM node:24-bookworm-slim AS runner-data-api
-WORKDIR /app
-
-ENV NODE_ENV=production
+# No /etc/passwd here, so a numeric user: the same uid and gid as before.
+USER 1001:1001
 ENV PORT=8080
-
-RUN addgroup --system --gid 1001 dataapi && \
-    adduser --system --uid 1001 dataapi
-
-# package.json carries "type": "module" and the version /health reports.
-COPY --from=builder-data-api --chown=dataapi:dataapi /app/apps/data-api/package.json ./package.json
-COPY --from=builder-data-api --chown=dataapi:dataapi /app/apps/data-api/dist ./dist
-
-USER dataapi
 EXPOSE 8080
-# The slim image has no curl or wget; node's global fetch does the probe.
+# No curl, wget or shell in the image: the binary probes itself.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
-CMD ["node", "dist/index.js"]
+  CMD ["/data-api", "-healthcheck"]
+ENTRYPOINT ["/data-api"]

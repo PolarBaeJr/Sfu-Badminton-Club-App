@@ -81,5 +81,27 @@ jobs:
       # `type-check` dependsOn `build` in turbo.json, so this also builds both
       # Next apps and a broken build fails the job too. That is most of the wall
       # clock, and it is the reason `build` is not listed separately.
+      # apps/data-api is Rust. rustup ships on the runner image; with no
+      # argument, `rustup toolchain install` reads that package's
+      # rust-toolchain.toml, so the pinned version and its clippy and rustfmt
+      # are what the turbo step below runs, never the runner's default.
+      - name: Install the data API's Rust toolchain
+        working-directory: apps/data-api
+        run: rustup toolchain install
+
+      # The registry and the target dir together are most of a cold cargo run.
+      # Keyed on the lockfile and the toolchain: either changing makes the old
+      # target dir worthless.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/data-api/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('apps/data-api/rust-toolchain.toml', 'apps/data-api/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
       - name: type-check, lint, test
         run: npx turbo run type-check lint test --continue

@@ -2,14 +2,28 @@
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
   "tasks": {
-    // key.test.ts imports the console's minting helper from packages/shared to
-    // prove both sides hash a key the same way. That file is outside this
-    // package, so without this line a change to it left this task's hash alone
-    // and the one test that exists to catch the change replayed a cached PASS.
-    // Replaces the root `test.inputs` for this package; none of the root's
-    // extra inputs (migrations, docs/legal, packages/ui) are read here.
+    // tests/key.rs and tests/scopes.rs read the console's minting helper from
+    // packages/shared, and tests/scopes.rs and tests/v2_signatures.rs read
+    // migrations 00264 and 00277, to prove both sides agree. Those files are
+    // outside this package, so without these lines a change to them left this
+    // task's hash alone and the tests that exist to catch the change replayed a
+    // cached PASS. Replaces the root `test.inputs` for this package.
     "test": {
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/shared/src/utils/data-api-key.ts"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/supabase/migrations/**",
+        "$TURBO_ROOT$/packages/shared/src/utils/data-api-key.ts"
+      ],
+      "passThroughEnv": ["HOME", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "CARGO_TARGET_DIR"]
+    },
+    // cargo finds its toolchain and registry cache through these. Turbo's strict
+    // env mode drops every variable not listed, and without HOME rustup cannot
+    // find the installed toolchain at all.
+    "lint": {
+      "passThroughEnv": ["HOME", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "CARGO_TARGET_DIR"]
+    },
+    "type-check": {
+      "passThroughEnv": ["HOME", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "CARGO_TARGET_DIR"]
     }
   }
 }

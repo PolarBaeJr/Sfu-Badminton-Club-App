@@ -3,21 +3,25 @@
 The service behind [`API.md`](./API.md), which is the contract. Where this code
 and that document disagree, the document is the bug report.
 
-A dependency-free Node 24 service: `node:http`, `node:crypto` and the global
-`fetch`. `package.json` has no runtime dependencies, only TypeScript, vitest and
-`@types/node` for the build and tests.
+A Rust service: one static binary on hyper and tokio, shipped in a `scratch`
+image (about 1.5 MB). It was ported from a Node 24 service with the same
+behaviour; "Differences from the Node service" below lists the few places the
+two answer differently. Every crate is pinned to an exact version in
+`Cargo.toml`, and the toolchain in `rust-toolchain.toml`. `package.json` only
+maps the turbo tasks onto cargo and carries the version `/health` reports.
 
 Consumer-facing documentation is served by the service itself at
 `GET /documentations` (for example `https://api.sfubadminton.com/documentations`):
-one self-contained HTML page, no key, from `src/docs-page.ts`. Tests fail when
-a route, scope, query parameter or error code in `src/server.ts` or
-`src/params.ts` is missing from it or from `API.md`.
+one self-contained HTML page, no key, `src/docs/documentations.html`, compiled
+into the binary by `src/docs_page.rs`. Tests fail when a route, scope, query
+parameter or error code in `src/server.rs` or `src/params.rs` is missing from
+it or from `API.md`.
 
-The routes live in one table, `ROUTES` in `src/server.ts`: template, scope,
+The routes live in one table, `ROUTES` in `src/server.rs`: template, scope,
 accepted parameters, and whether unknown parameters are refused. Parameter
-parsing is `src/params.ts`. The scope list is `src/scopes.ts`, a copy of
+parsing is `src/params.rs`. The scope list is `src/scopes.rs`, a copy of
 `DATA_API_SCOPES` in `packages/shared/src/utils/data-api-key.ts` that
-`__tests__/scopes.test.ts` holds equal to the shared list and to the SQL CHECK.
+`tests/scopes.rs` holds equal to the shared list and to the SQL CHECK.
 
 ## How it reaches the database
 
@@ -78,10 +82,41 @@ other role.
 
 ## Run it
 
+Needs `rustup`. Run `rustup toolchain install` in `apps/data-api` once first:
+it installs the toolchain `rust-toolchain.toml` pins, with clippy and rustfmt,
+which is what CI does.
+
 ```sh
-npm run build -w data-api   # tsc to dist/
-npm run start -w data-api   # node dist/index.js, listens on $PORT (default 8080)
-npm run test -w data-api    # vitest
+npm run start -w data-api        # cargo run --release, listens on $PORT (default 8080)
+npm run test -w data-api         # cargo test --locked
+npm run lint -w data-api         # cargo fmt --check, then clippy with -D warnings
+npm run type-check -w data-api   # cargo check --locked --all-targets
+```
+
+The image, from the repo root:
+
+```sh
+docker build -f apps/data-api/Dockerfile --target runner-data-api .
+```
+
+The image has no shell or curl; its health check runs `/data-api -healthcheck`,
+which requests `/health` on `$PORT` and exits 0 or 1.
+
+### Tests
+
+`tests/` runs the service in-process against a fake PostgREST (a real HTTP
+server on a random port, `tests/common/mod.rs`) with an injected clock, so the
+cache and rate-limit windows are tested without waiting. They were ported case
+by case from the Node service's vitest suites.
+
+Where the service has to reproduce a JavaScript behaviour exactly (`Date.parse`,
+`toISOString`, `JSON.stringify` number and key order, `Number(PORT)`, WHATWG URL
+parsing of the request target, `String(value)`), `tests/vectors.rs` checks it
+against JSON vectors that Node 24 produced. To regenerate them, from the repo
+root:
+
+```sh
+TZ=UTC node apps/data-api/tests/vectors/generate.mjs apps/data-api/tests/vectors
 ```
 
 ### Against the local Supabase stack
@@ -101,7 +136,7 @@ file (for example `apps/data-api/.env.local`, which `.gitignore` covers):
 
 ```sh
 set -a; . apps/data-api/.env.local; set +a
-npm run build -w data-api && PORT=8080 node apps/data-api/dist/index.js
+PORT=8080 cargo run --release --manifest-path apps/data-api/Cargo.toml
 curl -s localhost:8080/health
 curl -s -H "Authorization: Bearer $TEST_KEY" localhost:8080/v1/players
 ```
@@ -131,7 +166,7 @@ secret invalidates this token along with every other.
   (API.md: a revoked key stops working within 30 seconds), negative results 5
   seconds, at most 1000 entries. Upstream failures are never cached.
 - **Read cache.** Every read RPC is cached 15 seconds by function name and
-  exact arguments, at most 1000 entries (`src/rpc-cache.ts`). Identical calls
+  exact arguments, at most 1000 entries (`src/rpc_cache.rs`). Identical calls
   in flight share one database call, so a burst of the same request costs one
   scan of the match history rather than one each. The consumer id is always an
   argument, so one consumer never receives another's refs. Failures are
@@ -153,6 +188,34 @@ secret invalidates this token along with every other.
 - **Check order** is route, method, key, rate, scope, query parameters (400),
   path format (404), database. A malformed ref or id never reaches the
   database.
+
+- **Upstream connections are pooled without a cap** and closed after 4 idle
+  seconds. A cap of 4 idle connections per host made every request beyond the
+  fourth in flight open and close its own connection; under load the closed
+  sockets in TIME_WAIT ran the host out of ports and requests failed `503`.
+
+## Differences from the Node service
+
+The port was run side by side with the Node service against the same fake
+PostgREST (479 raw-socket cases comparing status line, headers, body, log lines
+and the upstream calls made) and against the local Supabase stack (23 cases).
+Every route answers the same. What differs is all at the HTTP parser, for
+requests no client library sends:
+
+- Header names go out title-cased, as Node sent them, with one exception:
+  `WWW-Authenticate` goes out as `Www-Authenticate`. Header names are
+  case-insensitive, so no client should notice.
+- An unknown method token such as `FOO` answers `405` where Node's parser
+  answered `400`.
+- The parser's own `400` and `431` answers carry `content-length: 0`.
+- Two spaces before the HTTP version answer `400`; Node accepted them.
+- A request target containing a backtick, `<` or `>` answers `400`; Node
+  routed it (normally to `404`). The other characters URL parsing escapes
+  (`|{}^"\[]`) answer the same on both.
+- `CONNECT` with an authority-form target answers `400`; Node closed the
+  connection without answering.
+- An HTTP/1.0 request gets an `HTTP/1.0` status line; Node answered
+  `HTTP/1.1`.
 
 ## Known gaps
 

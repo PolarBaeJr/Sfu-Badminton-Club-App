@@ -88,6 +88,13 @@ jobs:
 
       # The same checks ci.yml runs, inside the exported tree, so what a
       # cloner gets is known to install, build, type-check, lint and test.
+      # The Data API is Rust: install the toolchain its rust-toolchain.toml
+      # pins, as ci.yml does, so the exported crate is checked by that version.
+      - name: Install the data API's Rust toolchain
+        if: steps.compare.outputs.changed == 'true'
+        working-directory: ${{ runner.temp }}/export/apps/data-api
+        run: rustup toolchain install
+
       - name: Verify the export
         if: steps.compare.outputs.changed == 'true'
         run: |

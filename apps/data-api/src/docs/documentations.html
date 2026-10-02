@@ -1,16 +1,11 @@
-import { createHash } from 'node:crypto';
-
-// The public documentation page served at /documentations. A module rather
-// than a file on disk so the image needs nothing beyond dist/.
-//
-// It describes what server.ts, params.ts, auth.ts and rate-limit.ts DO. Drift
-// tests in __tests__/server.test.ts and __tests__/routes.test.ts fail when a
-// route, scope, query parameter or error code is missing from this page.
-//
-// The CSP allows exactly this one stylesheet by hash, so the page must carry
-// no other <style> block and no style="" attribute.
-
-const STYLE = `
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>SFU Badminton Data API</title>
+<style>
 :root { color-scheme: light dark; --bg: #ffffff; --fg: #1b1f24; --mute: #57606a; --line: #d0d7de; --code-bg: #f3f5f7; --accent: #b5121b; }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0e1116; --fg: #e6edf3; --mute: #9aa4af; --line: #30363d; --code-bg: #161b22; --accent: #ff6b6b; }
@@ -35,32 +30,7 @@ nav { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem 1rem; 
 nav ol { margin: 0.25rem 0 0; padding-left: 1.25rem; }
 td code { white-space: nowrap; }
 .note { border-left: 3px solid var(--accent); padding: 0.25rem 0 0.25rem 0.9rem; color: var(--mute); }
-`;
-
-export const DOCS_STYLE_HASH = `sha256-${createHash('sha256').update(STYLE).digest('base64')}`;
-
-export const DOCS_CSP = [
-  "default-src 'none'",
-  `style-src '${DOCS_STYLE_HASH}'`,
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-].join('; ');
-
-const EXAMPLE_REF = '9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544';
-const EXAMPLE_REF_2 = 'deb9f2c86c09c08fc5bc0ecaab85117d6264378ff6c6e71f3d7bb833a8cd748e';
-const EXAMPLE_MATCH = '4b1c0f7e2a9d8c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b';
-const EXAMPLE_SEASON = '7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93';
-const API = 'https://api.sfubadminton.com';
-
-export const DOCS_HTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<title>SFU Badminton Data API</title>
-<style>${STYLE}</style>
+</style>
 </head>
 <body>
 <main>
@@ -95,7 +65,7 @@ export const DOCS_HTML = `<!doctype html>
 <h2 id="base-urls">Base URLs</h2>
 <table>
 <tr><th>Environment</th><th>Base URL</th></tr>
-<tr><td>Production</td><td><code>${API}</code></td></tr>
+<tr><td>Production</td><td><code>https://api.sfubadminton.com</code></td></tr>
 </table>
 <p>All responses except this page are JSON (<code>application/json; charset=utf-8</code>) and are sent with <code>Cache-Control: no-store</code>. Every timestamp is ISO 8601 UTC to the second, for example <code>2026-10-02T18:30:12Z</code>. Dates without a time (<code>start_date</code>, a session's <code>date</code>) are <code>YYYY-MM-DD</code> in the club's local calendar.</p>
 
@@ -159,15 +129,15 @@ export const DOCS_HTML = `<!doctype html>
 
 <h3 id="health">GET /health</h3>
 <p>No key. For uptime checks. <code>version</code> is the service's release version.</p>
-<pre><code>curl -s ${API}/health</code></pre>
+<pre><code>curl -s https://api.sfubadminton.com/health</code></pre>
 <pre><code>{ "ok": true, "version": "0.1.0" }</code></pre>
 
 <h3 id="players">GET /v1/players</h3>
 <p>Requires <code>players:read</code>. Every player on the roster, one object each, with their <strong>lifetime</strong> ratings and counters.</p>
-<pre><code>curl -s -H "Authorization: Bearer $K" ${API}/v1/players</code></pre>
+<pre><code>curl -s -H "Authorization: Bearer $K" https://api.sfubadminton.com/v1/players</code></pre>
 <pre><code>{
   "season": {
-    "id": "${EXAMPLE_SEASON}",
+    "id": "7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93",
     "name": "Fall 2026",
     "term": "fall",
     "year": 2026,
@@ -178,7 +148,7 @@ export const DOCS_HTML = `<!doctype html>
   "count": 1,
   "players": [
     {
-      "player_ref": "${EXAMPLE_REF}",
+      "player_ref": "9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544",
       "singles_elo": 1150,
       "doubles_elo": 1020,
       "singles_provisional": false,
@@ -197,12 +167,12 @@ export const DOCS_HTML = `<!doctype html>
 
 <h3 id="player">GET /v1/players/:ref</h3>
 <p>Requires <code>players:read</code>. One player on the roster, the same object as an item of <code>players</code> above, with no wrapper. A ref not on the roster, or not a <code>player_ref</code> at all, gets <code>404</code>.</p>
-<pre><code>curl -s -H "Authorization: Bearer $K" ${API}/v1/players/${EXAMPLE_REF}</code></pre>
+<pre><code>curl -s -H "Authorization: Bearer $K" https://api.sfubadminton.com/v1/players/9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544</code></pre>
 
 <h3 id="matches">GET /v1/matches</h3>
 <p>Requires <code>matches:read</code>. Published club and tournament matches, newest first by <code>played_at</code> (oldest change first with <code>updated_since</code>). Parameters: <code>season</code>, <code>since</code>, <code>until</code>, <code>player</code>, <code>opponent</code>, <code>type</code>, <code>source</code>, <code>rated</code>, <code>status</code>, <code>updated_since</code>, <code>limit</code>, <code>offset</code>.</p>
-<pre><code>curl -s -H "Authorization: Bearer $K" \\
-  "${API}/v1/matches?season=${EXAMPLE_SEASON}&amp;type=singles&amp;limit=50"</code></pre>
+<pre><code>curl -s -H "Authorization: Bearer $K" \
+  "https://api.sfubadminton.com/v1/matches?season=7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93&amp;type=singles&amp;limit=50"</code></pre>
 <pre><code>{
   "generated_at": "2026-10-02T18:30:12Z",
   "count": 1,
@@ -211,13 +181,13 @@ export const DOCS_HTML = `<!doctype html>
   "next_offset": null,
   "matches": [
     {
-      "match_ref": "${EXAMPLE_MATCH}",
+      "match_ref": "4b1c0f7e2a9d8c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b",
       "source": "club",
       "status": "confirmed",
       "counts_toward_stats": true,
       "played_at": "2026-09-29T02:41:07Z",
       "updated_at": "2026-09-29T02:44:51Z",
-      "season": { "id": "${EXAMPLE_SEASON}", "name": "Fall 2026" },
+      "season": { "id": "7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93", "name": "Fall 2026" },
       "type": "singles",
       "kind": "ranked",
       "rated": true,
@@ -233,10 +203,10 @@ export const DOCS_HTML = `<!doctype html>
         { "game": 3, "a": 21, "b": 15 }
       ],
       "sides": {
-        "a": [ { "player_ref": "${EXAMPLE_REF}", "won": true,
+        "a": [ { "player_ref": "9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544", "won": true,
                  "rating": { "before": 1134, "after": 1150, "delta": 16 },
                  "points_scored": 61, "points_allowed": 53, "games_won": 2, "games_lost": 1 } ],
-        "b": [ { "player_ref": "${EXAMPLE_REF_2}", "won": false,
+        "b": [ { "player_ref": "deb9f2c86c09c08fc5bc0ecaab85117d6264378ff6c6e71f3d7bb833a8cd748e", "won": false,
                  "rating": { "before": 836, "after": 820, "delta": -16 },
                  "points_scored": 53, "points_allowed": 61, "games_won": 1, "games_lost": 2 } ]
       },
@@ -255,8 +225,8 @@ export const DOCS_HTML = `<!doctype html>
 <p>Requires <code>matches:read</code>. Head to head, derived from published matches that count toward stats. Parameters: <code>type</code>, <code>season</code>. <code>404</code> when either ref does not pass the history test, or when both refs are the same.</p>
 <pre><code>{
   "generated_at": "2026-10-02T18:30:12Z",
-  "player_ref": "${EXAMPLE_REF}",
-  "other_ref": "${EXAMPLE_REF_2}",
+  "player_ref": "9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544",
+  "other_ref": "deb9f2c86c09c08fc5bc0ecaab85117d6264378ff6c6e71f3d7bb833a8cd748e",
   "as_opponents": {
     "singles": { "matches": 3, "wins": 2, "losses": 1 },
     "doubles": { "matches": 0, "wins": 0, "losses": 0 }
@@ -270,11 +240,11 @@ export const DOCS_HTML = `<!doctype html>
 <p>Requires <code>matches:read</code>. One entry per visible season the player has a published match or a final rating in, newest first. The records are derived from published matches that count toward stats; <code>final_rating</code> is the rating the club archived when the season closed, or <code>null</code>.</p>
 <pre><code>{
   "generated_at": "2026-10-02T18:30:12Z",
-  "player_ref": "${EXAMPLE_REF}",
+  "player_ref": "9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544",
   "count": 1,
   "seasons": [
     {
-      "season": { "id": "${EXAMPLE_SEASON}", "name": "Fall 2026", "active": true, "start_date": "2026-09-01" },
+      "season": { "id": "7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93", "name": "Fall 2026", "active": true, "start_date": "2026-09-01" },
       "singles": { "matches": 4, "wins": 3, "losses": 1, "games_won": 7, "games_lost": 3,
                    "points_scored": 201, "points_allowed": 166 },
       "doubles": { "matches": 0, "wins": 0, "losses": 0, "games_won": 0, "games_lost": 0,
@@ -287,7 +257,7 @@ export const DOCS_HTML = `<!doctype html>
 <h3 id="player-ratings">GET /v1/players/:ref/ratings</h3>
 <p>Requires <code>ratings:history:read</code>. Every rating change the club recorded for this player, oldest first. Parameters: <code>type</code>, <code>season</code>, <code>since</code>, <code>until</code>, <code>limit</code>, <code>offset</code>. Paged like <code>/v1/matches</code>, with the rows under <code>history</code>.</p>
 <pre><code>{ "at": "2026-09-29T02:44:51Z", "type": "singles", "kind": "match", "source": "club",
-  "match_ref": "${EXAMPLE_MATCH}", "before": 1134, "after": 1150, "delta": 16 }</code></pre>
+  "match_ref": "4b1c0f7e2a9d8c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b", "before": 1134, "after": 1150, "delta": 16 }</code></pre>
 <p><code>kind</code> is <code>match</code> for a rated club or tournament match (only published, non-voided ones), or <code>placement_bonus</code> for a tournament placement bonus, which has <code>source</code> <code>tournament</code> and <code>match_ref</code> <code>null</code>. Rating changes the club made by hand are not in the history, so consecutive rows need not chain.</p>
 
 <h3 id="seasons">GET /v1/seasons</h3>
@@ -297,7 +267,7 @@ export const DOCS_HTML = `<!doctype html>
   "count": 1,
   "seasons": [
     {
-      "id": "${EXAMPLE_SEASON}", "name": "Fall 2026", "term": "fall", "year": 2026,
+      "id": "7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93", "name": "Fall 2026", "term": "fall", "year": 2026,
       "start_date": "2026-09-01", "end_date": "2026-12-15", "active": true,
       "totals": { "club_matches": 41, "tournament_matches": 12, "players_with_matches": 23,
                   "sessions": 9, "tournaments": 1, "events": 2 }
@@ -312,11 +282,11 @@ export const DOCS_HTML = `<!doctype html>
 <p>Requires <code>seasons:read</code>. The roster ranked for one season. For the active season the <code>source</code> is <code>live</code> and the ratings are current; for a closed season it is <code>archived</code> and the ratings are the ones the club archived when it closed. Ranks are standard competition ranks (ties share a rank). <code>record</code> is derived from published matches in that season.</p>
 <pre><code>{
   "generated_at": "2026-10-02T18:30:12Z",
-  "season": { "id": "${EXAMPLE_SEASON}", "name": "Fall 2026", "active": true },
+  "season": { "id": "7d3f2a10-5b8e-4c21-9f6a-2e4d8b1c0a93", "name": "Fall 2026", "active": true },
   "source": "live",
   "count": 1,
   "standings": [
-    { "player_ref": "${EXAMPLE_REF}", "singles_elo": 1150, "doubles_elo": 1020,
+    { "player_ref": "9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544", "singles_elo": 1150, "doubles_elo": 1020,
       "singles_rank": 1, "doubles_rank": 1, "record": { "matches": 4, "wins": 3, "losses": 1 } }
   ]
 }</code></pre>
@@ -326,7 +296,7 @@ export const DOCS_HTML = `<!doctype html>
 
 <h3 id="tournament">GET /v1/tournaments/:id</h3>
 <p>Requires <code>tournaments:read</code>. One tournament with its events, and each event's entrants:</p>
-<pre><code>{ "players": [ { "player_ref": "${EXAMPLE_REF}" }, { "player_ref": "${EXAMPLE_REF_2}" } ],
+<pre><code>{ "players": [ { "player_ref": "9ec62d3216c769dacbc45fe6a696ef143669011e13e16e7215f7239bfc576544" }, { "player_ref": "deb9f2c86c09c08fc5bc0ecaab85117d6264378ff6c6e71f3d7bb833a8cd748e" } ],
   "external": false, "external_ref": null,
   "seed": 1, "status": "active", "final_position": 1, "group": null, "points": null,
   "elo": { "before": null, "after": null, "change": null }, "combined_elo": 2170,
@@ -426,4 +396,3 @@ export const DOCS_HTML = `<!doctype html>
 </main>
 </body>
 </html>
-`;
