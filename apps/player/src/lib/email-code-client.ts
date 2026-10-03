@@ -58,7 +58,7 @@ export async function sendEmailCode(
 
 /**
  * Verify the 6-digit code. Codes (unlike links) survive corporate email
- * link-scanners (e.g. SFU/Microsoft Safe Links) that would otherwise pre-fetch
+ * link-scanners (e.g. Microsoft Safe Links) that would otherwise pre-fetch
  * and consume a one-time magic link before the member clicks.
  *
  * GoTrue issues a different token type per flow, and the client cannot be

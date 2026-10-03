@@ -44,7 +44,7 @@ const COLOR_FAILED = 0xe74c3c;
 const COLOR_NEUTRAL = 0x95a5a6;
 
 /**
- * SFU red, the app's accent — used for an UNLINK, which is the one member event
+ * The accent red, the app's accent. Used for an UNLINK, which is the one member event
  * whose colour should not come from whether it worked.
  *
  * Green on "Account unlinked" is technically accurate and reads wrong: green in

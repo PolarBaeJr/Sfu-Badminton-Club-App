@@ -18,8 +18,8 @@
 export const ETRANSFER_REFERENCE_PATTERN = /^[A-Za-z0-9-]{6,32}$/;
 
 /**
- * The shorter one 00253 allows on anything not stored as an e-transfer: an SFU
- * Rec receipt, or a dues receipt the browser could not place (NULL).
+ * The shorter one 00253 allows on anything not stored as an e-transfer: a
+ * SFU Rec receipt, or a dues receipt the browser could not place (NULL).
  */
 export const SFU_REC_REFERENCE_PATTERN = /^[A-Za-z0-9-]{4,32}$/;
 

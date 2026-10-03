@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //     a report that outlived it still has to reach the channel.
 //  5. THE BOT ONLY FETCHES FROM DISCORD'S CDN. Anything else is an SSRF with a
 //     readback channel: whoever holds the service secret could make the bot GET
-//     an address inside the Pi's network and mirror the answer into Discord.
+//     an address inside the host's network and mirror the answer into Discord.
 
 const fetchFeedbackActions = vi.fn();
 const recordFeedbackPost = vi.fn();
@@ -267,7 +267,7 @@ describe('fetchImage', () => {
     'https://cdn.discordapp.com.evil.test/a.png',
   ])('refuses to fetch %s', async (url) => {
     // THE SSRF GUARD. Without it the service secret buys a GET from inside the
-    // Pi's network with the answer mirrored into a Discord channel.
+    // host's network with the answer mirrored into a Discord channel.
     const { fetchImage } = await import('../feedback.js');
     const impl = vi.fn();
     vi.spyOn(console, 'error').mockImplementation(() => {});

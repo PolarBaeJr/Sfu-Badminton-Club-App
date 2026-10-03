@@ -333,8 +333,8 @@ function normaliseExpiry(expiresAt: string | null | undefined): string | null {
  * The consumer row for a name, created on first use.
  *
  * MATCHED ON THE EXACT TRIMMED NAME, which is what the UNIQUE index on
- * `data_api_consumers.name` enforces. A near-miss ("SFU AI Club" against "SFU
- * AI club") makes a second consumer with its own salt rather than colliding,
+ * `data_api_consumers.name` enforces. A near-miss ("Campus AI Club" against
+ * "Campus AI club") makes a second consumer with its own salt rather than colliding,
  * and that is the safe direction: two consumers see different pseudonyms, which
  * is the documented behaviour, whereas silently folding a new name into an
  * existing consumer would hand a second party the first one's join keys.

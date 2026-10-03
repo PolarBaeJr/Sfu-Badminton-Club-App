@@ -212,13 +212,13 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
 let gateway: GatewayHandle | null = null;
 
 const server = createServer(async (req, res) => {
-  // Health: a real GET, not a bare TCP accept. proxy-manager falls back to a TCP
-  // dial when no proxy.health label is set, and a dial cannot tell "process is
-  // up" from "process cannot reach the app API" — so the label is set and this
-  // endpoint exists to give it something meaningful to ask.
+  // Health: a real GET, not a bare TCP accept. A reverse proxy without a health
+  // path falls back to a TCP dial, and a dial cannot tell "process is up" from
+  // "process cannot reach the app API", so this endpoint exists to give the
+  // proxy something meaningful to ask.
   if (req.method === 'GET' && req.url === '/health') {
-    // ok is deliberately not conditioned on the gateway. proxy.health points
-    // here, so reporting a gateway blip as unhealthy would pull a perfectly
+    // ok is deliberately not conditioned on the gateway. The proxy's health
+    // check points here, so reporting a gateway blip as unhealthy would pull a perfectly
     // good interactions endpoint out of the pool -- the gateway only decides
     // whether Discord draws us green, and interactions do not travel over it.
     // Surface the state in the body so it is diagnosable without doing that.

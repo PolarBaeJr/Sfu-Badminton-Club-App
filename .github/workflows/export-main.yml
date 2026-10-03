@@ -1,0 +1,205 @@
+name: Export public main
+
+# Builds `main`, the branding-free copy of this code for other clubs, from the
+# production branch. See .github/export/README.md for what is exported and how.
+#
+# A separate workflow, with no `needs` on the image builds, so a failing or slow
+# export can never hold up a deploy. It is not part of ci.yml for the same
+# reason: ci.yml gates the image builds through `needs: verify`, and an export
+# failure there would block the release it was only describing.
+#
+# Three ways in:
+#   push to deploy/docker-prod   export, check, verify, then publish to main
+#   push to release/**           the same, as a dry run: nothing is pushed
+#   workflow_dispatch            a dry run, unless dispatched on the prod branch
+#
+# Actions logs on a public repo are public. Nothing here prints file contents
+# or the personal patterns; the export reports `path:line: [category] rule id`.
+on:
+  push:
+    branches:
+      - deploy/docker-prod
+      - 'release/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes an export still running for it, except
+# on the production branch, where a run may be publishing and is left to finish.
+concurrency:
+  group: export-main-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/deploy/docker-prod' }}
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    # About one CI checks run: type-check builds both Next apps.
+    timeout-minutes: 30
+    outputs:
+      tree: ${{ steps.build.outputs.tree }}
+      changed: ${{ steps.compare.outputs.changed }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Test the export tooling
+        run: node --test '.github/export/test/*.test.mjs'
+
+      # The secret is scoped to this step alone. The verify step below runs
+      # `npm ci`, and no install script may ever see it. On the prod branch
+      # --require-patterns makes a missing or empty secret a failure, so the
+      # personal-value check fails closed exactly where it matters.
+      - name: Build the export
+        id: build
+        env:
+          EXPORT_LEAK_PATTERNS: ${{ secrets.EXPORT_LEAK_PATTERNS }}
+          PUBLISHING: ${{ github.ref == 'refs/heads/deploy/docker-prod' }}
+        run: |
+          args=(--out "$RUNNER_TEMP/export" --tree-hash)
+          if [ "$PUBLISHING" = true ]; then args+=(--require-patterns); fi
+          node .github/export/export.mjs "${args[@]}"
+
+      # The repo is public, so reading main needs no credentials.
+      - name: Compare with the published tree
+        id: compare
+        env:
+          TREE: ${{ steps.build.outputs.tree }}
+        run: |
+          branch=$(node -p "require('./.github/export/targets.json').find((t) => t.name === 'self').branch")
+          current=none
+          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
+            git fetch -q --depth=1 origin "refs/heads/$branch"
+            current=$(git rev-parse 'FETCH_HEAD^{tree}')
+          fi
+          if [ "$current" = "$TREE" ]; then
+            echo "export is identical to $branch; skipping verify"
+            echo changed=false >> "$GITHUB_OUTPUT"
+          else
+            echo changed=true >> "$GITHUB_OUTPUT"
+          fi
+
+      # The same checks ci.yml runs, inside the exported tree, so what a
+      # cloner gets is known to install, build, type-check, lint and test.
+      - name: Verify the export
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          cd "$RUNNER_TEMP/export"
+          npm ci
+          npx turbo run type-check lint test --continue
+
+  publish:
+    needs: export
+    if: github.ref == 'refs/heads/deploy/docker-prod' && needs.export.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    # Never cancel a publish half way; queue the next one behind it.
+    concurrency:
+      group: export-main-publish
+      cancel-in-progress: false
+
+    # No `npm ci` anywhere in this job, so no third-party install script runs
+    # while it holds a write token.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # Deterministic and quick. It must produce the tree the export job
+      # verified, or what gets pushed is not what was checked.
+      - name: Rebuild the export
+        id: rebuild
+        env:
+          EXPORT_LEAK_PATTERNS: ${{ secrets.EXPORT_LEAK_PATTERNS }}
+        run: node .github/export/export.mjs --out "$RUNNER_TEMP/export" --tree-hash --require-patterns
+
+      - name: Check the rebuild matches the verified export
+        env:
+          VERIFIED: ${{ needs.export.outputs.tree }}
+          REBUILT: ${{ steps.rebuild.outputs.tree }}
+        run: |
+          if [ -z "$VERIFIED" ] || [ "$VERIFIED" != "$REBUILT" ]; then
+            echo "::error::the rebuilt export differs from the one that was verified"
+            exit 1
+          fi
+
+      # An older run must never overwrite a newer one: if the production branch
+      # has moved on, the run for the newer commit publishes instead.
+      - name: Stop if superseded
+        id: current
+        run: |
+          tip=$(git ls-remote origin refs/heads/deploy/docker-prod | cut -f1)
+          if [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "deploy/docker-prod has moved on; the newer run publishes"
+            echo superseded=true >> "$GITHUB_OUTPUT"
+          else
+            echo superseded=false >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.current.outputs.superseded == 'false'
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          path: public-main
+
+      # Creates main as an orphan the first time, and fast-forwards it after
+      # that. If main's tip is anything but an export commit, someone else has
+      # written to it and the job refuses rather than overwrite them. There is
+      # no force push here: the push below can only ever be a fast-forward.
+      - name: Commit and push
+        if: steps.current.outputs.superseded == 'false'
+        working-directory: public-main
+        env:
+          TREE: ${{ needs.export.outputs.tree }}
+        run: |
+          set -euo pipefail
+          branch=$(node -p "require('$GITHUB_WORKSPACE/.github/export/targets.json').find((t) => t.name === 'self').branch")
+          bot='github-actions[bot]'
+          git config user.name "$bot"
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
+            git fetch -q --depth=1 origin "refs/heads/$branch"
+            git checkout -q -B "$branch" FETCH_HEAD
+            subject=$(git log -1 --format=%s)
+            author=$(git log -1 --format=%an)
+            case "$subject" in
+              "Export of "*) ;;
+              *) echo "::error::$branch tip is not an export commit; refusing to touch it"; exit 1 ;;
+            esac
+            if [ "$author" != "$bot" ]; then
+              echo "::error::$branch tip was not written by the export; refusing to touch it"
+              exit 1
+            fi
+          else
+            git checkout -q --orphan "$branch"
+          fi
+          git rm -rfq --ignore-unmatch .
+          git clean -fdxq
+          cp -a "$RUNNER_TEMP/export/." .
+          git add -A -f .
+          if git diff --cached --quiet; then
+            echo "nothing to publish"
+            exit 0
+          fi
+          version=$(node -p "require('./package.json').version")
+          git commit -q -m "Export of $version (${GITHUB_SHA::8})"
+          if [ "$(git rev-parse 'HEAD^{tree}')" != "$TREE" ]; then
+            echo "::error::the commit's tree is not the verified export"
+            exit 1
+          fi
+          git push origin "HEAD:refs/heads/$branch"

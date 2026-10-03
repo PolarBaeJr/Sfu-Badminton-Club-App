@@ -132,7 +132,7 @@ const MENTION_SCAN = /<@[&!]?\d+>|@everyone|@here|@([A-Za-z0-9_-]+(?:[ ][A-Za-z0
  *
  * Whitespace is the ordinary case; the punctuation is markdown, so `**@internal**`
  * and `"@internal"` still resolve. Everything else means the `@` is inside a
- * word, which is how `wkc10@sfu.ca` survives a Code of Conduct unharmed.
+ * word, which is how `jane@example.org` survives a Code of Conduct unharmed.
  */
 const MENTION_OPENERS = new Set(['(', '[', '{', '"', "'", '*', '~', '>']);
 

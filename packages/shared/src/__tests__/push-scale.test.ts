@@ -136,7 +136,7 @@ describe('push fan-out at roster scale', () => {
     await sendPushToPlayers(mock.client, playerIds, { title: 'T', body: 'B' });
 
     // 300 simultaneous TLS handshakes plus 300 ECDSA signings is the socket
-    // storm the roster fix would otherwise uncork on the Pi.
+    // storm the roster fix would otherwise uncork on the server.
     expect(peak).toBeLessThanOrEqual(20);
     expect(peak).toBeGreaterThan(1); // still parallel, not serialised
     expect(webpush.sendNotification).toHaveBeenCalledTimes(300);

@@ -42,7 +42,7 @@ describe('tokenFromCheckinScan — codes that are ours', () => {
   it('does not care which host the code names', () => {
     // Staging, production and the domain being retired all encode real codes;
     // the token is resolved server-side, so the host proves nothing either way.
-    expect(tokenFromCheckinScan(`https://badminton.polardev.org/checkin/${OTHER}`)).toBe(OTHER);
+    expect(tokenFromCheckinScan(`https://staging.example.net/checkin/${OTHER}`)).toBe(OTHER);
   });
 });
 

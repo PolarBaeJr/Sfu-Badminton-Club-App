@@ -5,8 +5,8 @@
 -- ends in ROLLBACK, so it leaves nothing behind and is safe to point at
 -- a database that has 00268 applied:
 --
---   ssh pi "docker exec -i supabase-staging-db psql -U postgres \
---     -d postgres -v ON_ERROR_STOP=1" < supabase/tests/00268_repeat_and_boost.sql
+--   psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+--     < supabase/tests/00268_repeat_and_boost.sql
 --
 -- WHAT IT PROVES
 -- --------------

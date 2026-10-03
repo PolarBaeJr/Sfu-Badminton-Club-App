@@ -4,10 +4,10 @@
 --
 -- NOT a migration. Every statement runs inside one transaction that
 -- ends in ROLLBACK, so it leaves nothing behind and is safe to point at
--- staging:
+-- any database with the migrations applied:
 --
---   ssh pi "docker exec -i supabase-staging-db psql -U postgres \
---     -d postgres -v ON_ERROR_STOP=1" < supabase/tests/00203_conversion_arms.sql
+--   psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+--     < supabase/tests/00203_conversion_arms.sql
 --
 -- WHAT IT PROVES, AND WHY IT IS NOT A UNIT TEST
 -- ---------------------------------------------

@@ -4,9 +4,9 @@
 // The guild/role map and the audit channel live in the DATABASE, read through
 // the app, because they change while the code stands still: a role is created,
 // the audit channel moves, the club adds a second server. Behind env each of
-// those needs a compose recreate on the Pi — and the dashboard's auto-updater
-// rebuilds a container by cloning the previous one's env rather than re-reading
-// env_file, so an env edit is the one change most likely to silently not land.
+// those needs the container recreated, and a deploy that clones the previous
+// container's env rather than re-reading the env file makes an env edit the
+// one change most likely to silently not land.
 //
 // ---- THE FAILURE POLICY, WHICH IS THE WHOLE POINT OF THIS FILE ----
 //

@@ -349,7 +349,7 @@ describe('queueDiscordMessage: mentions inside an embed', () => {
   it('leaves ordinary prose alone', async () => {
     // The real payload here is a Code of Conduct, which will contain an email
     // address and a sentence about where to meet.
-    const body = 'Email wkc10@sfu.ca, or meet @ the gym at seven.';
+    const body = 'Email jane@example.org, or meet @ the gym at seven.';
     await queueDiscordMessage({ embed: { title: 'Code of Conduct', body, type: 'info' } });
 
     expect(outbox()[0]!.embed_body).toBe(body);

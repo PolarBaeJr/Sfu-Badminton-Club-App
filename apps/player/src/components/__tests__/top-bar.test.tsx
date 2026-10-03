@@ -34,7 +34,7 @@ const draw = (search: string) => {
   state.search = search;
   return renderToStaticMarkup(
     <TopBar
-      playerName="Wui Ki Cheng"
+      playerName="Jordan Avery"
       unreadCount={0}
       isAuthenticated
       isExecOrAdmin={false}

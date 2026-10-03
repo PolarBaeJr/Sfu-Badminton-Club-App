@@ -2,7 +2,7 @@
  * Email sign-in by 6-digit code, shared by the player app and the console.
  *
  * The GoTrue templates send a code rather than a magic link, because corporate
- * link scanners (SFU/Microsoft Safe Links) pre-fetch a link and consume the
+ * link scanners (Microsoft Safe Links) pre-fetch a link and consume the
  * one-time token before the recipient ever clicks it.
  */
 

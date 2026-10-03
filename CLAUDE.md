@@ -24,3 +24,17 @@
   NOT hit the Secrets Manager Agent daemon directly. MUST use
   `{{resolve:secretsmanager:secret-id:SecretString:json-key}}` with
   `asm-exec` so the secret resolves at runtime without entering context.
+
+## Public export (`main`)
+
+- `main` is generated, never edited: `.github/workflows/export-main.yml` builds
+  it from the production branch with `.github/export/export.mjs`.
+- The export is default-deny. A path ships only when
+  `.github/export/include.txt` includes it; a new file is private until it is
+  listed there.
+- Branding is replaced at export time by `.github/export/brand-map.json`.
+  Prefer rewording a comment in source over adding a map rule.
+- Deployment detail (hosts, ssh aliases, container names, staging URLs) does
+  not go in tracked files, including docs and comments.
+- Before merging docs, branding or new top-level files, dry-run the export
+  (see `.github/export/README.md`).

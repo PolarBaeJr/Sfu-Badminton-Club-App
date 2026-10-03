@@ -133,14 +133,12 @@ export const DISCORD_LINK_TOKEN_TTL_MINUTES = 30;
 // Name of the Supabase auth cookie, pinned rather than derived.
 //
 // supabase-js builds it as `sb-<first hostname label>-auth-token` from
-// NEXT_PUBLIC_SUPABASE_URL, so the session is silently tied to the domain: the
-// current badminton.polardev.org yields "sb-badminton-auth-token", while
-// sfubadminton.com would yield "sb-sfubadminton-auth-token". Changing that URL
-// would therefore make every existing cookie unreadable and sign everyone out,
-// re-triggering passkey verification with it.
+// NEXT_PUBLIC_SUPABASE_URL, so the session is silently tied to the domain.
+// Changing that URL would therefore make every existing cookie unreadable and
+// sign everyone out, re-triggering passkey verification with it.
 //
-// This value is exactly what the library derives today, so pinning it changes
-// nothing now — and means the pending move off polardev.org becomes a plain
+// This value is what the library derived for the domain the app first ran on,
+// so pinning it changed nothing then, and a later domain move became a plain
 // config edit that sessions survive. Do not "tidy" the badminton- prefix: the
 // string must keep matching cookies already in browsers.
 export const AUTH_COOKIE_NAME = 'sb-badminton-auth-token';
@@ -161,7 +159,7 @@ export const AUTH_COOKIE_NAME = 'sb-badminton-auth-token';
 // to avoid, so the two halves must read the same value.
 //
 // Consequence: this is baked at BUILD time (Dockerfile ARG -> compose/CI build
-// arg). Adding it to the Pi's runtime .env alone does nothing.
+// arg). Adding it to a runtime .env alone does nothing.
 //
 // Unset is also the correct default for local dev: a `domain` of ".localhost"
 // is rejected by some browsers, which would drop the cookie entirely.

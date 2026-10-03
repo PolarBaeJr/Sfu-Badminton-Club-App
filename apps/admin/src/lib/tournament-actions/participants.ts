@@ -518,7 +518,7 @@ export interface BatchAddFailure {
  * the event, check the tournament, read a rating, insert, write an audit row —
  * and then called revalidatePath, which makes the App Router re-render the event
  * page and ship the new RSC tree back in the response. Sixty players meant sixty
- * round trips to the Pi and sixty renders of a page that queries every
+ * round trips to the server and sixty renders of a page that queries every
  * participant, pair and match in the event. Seeding a 128-slot draw took long
  * enough to look broken.
  *

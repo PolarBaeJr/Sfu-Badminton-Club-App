@@ -62,6 +62,9 @@ scripts/*
 # packages/shared/src/types/database.gen.ts (RUNBOOK, "Apply a database
 # migration"), so the generator has to ship with the file it generates.
 !scripts/gen-db-types.mjs
+# Its profiles name real hosts, so scripts/gen-db-types.profiles.json stays
+# ignored; only the placeholder template is tracked.
+!scripts/gen-db-types.profiles.example.json
 
 # make-icons.py renders every app icon in apps/*/public from the source mark in
 # assets/brand. It replaced generate-pwa-icons.mjs, which drew the old

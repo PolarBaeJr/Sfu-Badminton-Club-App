@@ -17,7 +17,6 @@ Base URL, once live:
 | Environment | Host |
 |---|---|
 | Production | `https://api.sfubadminton.com` |
-| Staging | `https://api.polardev.org` |
 
 ---
 

@@ -88,8 +88,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   // The rewrite is why browserReachableSignedUrl exists: this client is built
   // with getServerSupabaseUrl(), which on prod is SUPABASE_INTERNAL_URL, a
-  // tailnet address no member's browser can resolve. See that module for why the
-  // branch is untestable on staging.
+  // private-network address no member's browser can resolve. See that module
+  // for why the branch is untestable on staging.
   const response = NextResponse.redirect(browserReachableSignedUrl(data.signedUrl), 302);
   // The signed URL is a bearer token in a query string. A shared cache holding
   // this redirect would hand the next viewer a receipt they may not be allowed

@@ -9,8 +9,11 @@ workflows/
   ci.yml             type-check + lint + test the whole workspace
   build-images.yml   production images  → GHCR, tag `latest`
   build-staging.yml  staging images     → GHCR, tag `staging`
+  export-main.yml    the public export: builds `main` from the production branch
 ci/
   check-shared-drift.mjs   guards the hand-copied edge-function constants
+export/
+  export.mjs         the export itself; see export/README.md
 ```
 
 ---
@@ -88,6 +91,30 @@ Two things worth knowing:
 - **Known gap:** `_shared/push.ts` and `_shared/settings.ts` are *behavioural*
   mirrors, not literal ones. Comparing those means comparing logic, which is a
   Deno test suite's job, not a regex's. They are unguarded today.
+
+## `export-main.yml`: the public export
+
+Builds `main`, a branding-free copy of the code for other clubs, from the
+production branch. It is a separate workflow with no `needs` on the image
+builds, so a failing export never blocks or slows a deploy, and it is not in
+`ci.yml` for the same reason: `ci.yml` gates the image builds.
+
+- **Push to the production branch** exports, checks and verifies, then
+  publishes to `main` as one fast-forward commit by `github-actions[bot]`.
+- **Push to `release/**`** and **manual dispatch** on any other ref are dry
+  runs: the same export, checks and verify, and no push.
+- The export job runs `node --test '.github/export/test/*.test.mjs'`, builds
+  the export, and skips the verify (`npm ci` plus the same turbo run as
+  `ci.yml`) when the exported tree is identical to `main`'s.
+- The publish job never runs `npm ci`, so no install script runs while it holds
+  a write token. It re-runs the export, insists the tree hash matches the
+  export job's, and refuses if the production branch has moved on or `main`'s
+  tip is not an export commit. There is no force push anywhere.
+- The personal-value check reads the `EXPORT_LEAK_PATTERNS` secret. Publishing
+  passes `--require-patterns`, so a missing or empty secret fails the run
+  rather than skipping the check.
+
+What is exported, and how, is in [`export/README.md`](export/README.md).
 
 ---
 

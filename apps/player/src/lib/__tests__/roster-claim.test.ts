@@ -10,7 +10,7 @@ import { normalizeEmail, CLAIM_PRIVILEGE_COLUMNS } from '../roster-claim';
 
 describe('normalizeEmail', () => {
   it('folds case and trims, matching normalize_player_email_trg (00066)', () => {
-    expect(normalizeEmail('  LSA139@SFU.ca ')).toBe('lsa139@sfu.ca');
+    expect(normalizeEmail('  JANE@EXAMPLE.org ')).toBe('jane@example.org');
   });
 
   it('leaves ilike wildcards alone, because the caller must use an equality filter', () => {
