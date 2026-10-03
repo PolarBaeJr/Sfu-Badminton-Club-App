@@ -55,7 +55,7 @@ import {
   validateValue,
 } from './settings.js';
 
-// SFU red, the app's single accent (--red: #c00). Keeps Discord output visually
+// The accent red, the app's single accent (--red: #c00). Keeps Discord output visually
 // part of the same product rather than Discord-default blurple.
 const CLUB_RED = 0xcc0000;
 

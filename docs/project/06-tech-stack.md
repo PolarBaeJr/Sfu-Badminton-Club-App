@@ -2,7 +2,7 @@
 
 *The technologies the app is built on. Useful for a technical successor (exec handover) and for anyone evaluating the project. The plain-language "why it matters" is for everyone else.*
 
-**Plain version:** it's a modern TypeScript web app (Next.js + React) with a Supabase/PostgreSQL backend, packaged with Docker and auto-deployed to the club's self-hosted server. All mainstream, well-supported, hireable technologies — nothing exotic that only one person can maintain.
+**Plain version:** it's a modern TypeScript web app (Next.js + React) with a Supabase/PostgreSQL backend, packaged with Docker. All mainstream, well-supported, hireable technologies: nothing exotic that only one person can maintain.
 
 ---
 
@@ -13,14 +13,14 @@
 | **Language** | TypeScript 5.5 |
 | **Framework** | Next.js 15.5 (App Router, standalone output) + React 19.2 |
 | **Styling** | Tailwind CSS 3.4, Radix UI primitives, lucide-react icons, Framer Motion |
-| **Backend / database** | Supabase (self-hosted) — PostgreSQL 17, Auth, REST, Storage, Realtime |
+| **Backend / database** | Supabase: PostgreSQL 17, Auth, REST, Storage, Realtime |
 | **Serverless jobs** | Supabase Edge Functions (Deno runtime) |
 | **Validation** | Zod 3 |
 | **Email / push** | Resend (email), web-push / VAPID (notifications) |
 | **Monorepo tooling** | npm workspaces + Turborepo 2 |
 | **Testing / quality** | Vitest 4, ESLint 8, TypeScript type-checking |
 | **Monitoring** | Sentry (errors), PostHog (analytics) |
-| **Packaging / hosting** | Docker (multi-stage, Node 20), GitHub Actions → GitHub Container Registry, self-hosted reverse proxy on a Raspberry Pi |
+| **Runtime / packaging** | Node 24, Docker (multi-stage) |
 
 ---
 
@@ -35,7 +35,7 @@
 - Installable **PWA** with a service worker (offline shell, push notifications).
 
 ### Backend & data
-- **Supabase**, **self-hosted** (the official stack, not the paid cloud):
+- **Supabase** (the open-source stack, which runs self-hosted or on Supabase Cloud):
   - **PostgreSQL 17** database.
   - **Auth** (email code + Google OAuth).
   - **PostgREST** auto-API + **Row-Level Security** for data protection.
@@ -61,21 +61,18 @@
 - **TypeScript** type-checking across the monorepo.
 - **Sentry** — error tracking. **PostHog** — product analytics.
 
-### Build, packaging & hosting
+### Build & packaging
 - **npm 11 workspaces** + **Turborepo 2** orchestrate the monorepo builds.
-- **Node 24 (LTS)** everywhere — pinned once in `.nvmrc` and mirrored by `engines.node`, the Dockerfile and CI.
-- **Docker** — multi-stage builds on `node:24-bookworm-slim`, producing separate player and admin images.
-- **GitHub Actions** — builds ARM64 images and pushes them to **GitHub Container Registry**, tagged both as a moving `latest` and an immutable per-commit tag (for rollback).
-- **Self-hosted reverse proxy** on a **Raspberry Pi** routes traffic and auto-deploys new images.
-- **Node 20** runtime; **HTTPS** throughout.
+- **Node 24 (LTS)** everywhere: pinned once in `.nvmrc` and mirrored by `engines.node` and the Dockerfile.
+- **Docker**: multi-stage builds on `node:24-bookworm-slim`, producing separate player, admin and bot images.
 
 ---
 
 ## Why this stack
 
 - **Mainstream and hireable** — Next.js, React, TypeScript, PostgreSQL, and Docker are among the most widely-used tools in the industry. A future exec or hired developer can pick it up.
-- **Self-hosted and portable** — built on open-source Supabase and standard containers, so the club isn't locked into any vendor and can move it anywhere.
+- **Portable**: built on open-source Supabase and standard containers, so the club isn't locked into any vendor and can move it anywhere.
 - **Type-safe end to end** — TypeScript + Zod catch errors before they reach users.
-- **Cheap to run** — see [05-tech-and-ops.md](05-tech-and-ops.md).
+- **Cheap to run**: open-source components with no per-seat licences.
 
-*See also: [04-security.md](04-security.md) and [05-tech-and-ops.md](05-tech-and-ops.md).*
+*See also: [04-security.md](04-security.md).*

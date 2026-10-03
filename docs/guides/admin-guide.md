@@ -141,4 +141,4 @@ This makes it quick to answer "who changed this, and when?"
 - **One active season** at a time — set it up at the start of each term.
 - **Communicate reset policy** before activating a new season (it moves everyone's rating).
 - Sensitive changes are **logged** — that's a feature, not surveillance; it protects the club.
-- If something looks broken, note what you clicked and tell the technical exec (see the [runbook](../ops/RUNBOOK.md)).
+- If something looks broken, note what you clicked and tell the technical exec.

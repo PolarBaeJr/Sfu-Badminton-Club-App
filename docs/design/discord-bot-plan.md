@@ -206,40 +206,10 @@ workspace (`node:http` + `node:crypto`); `/health` returns 200, a signed PING is
 answered with PONG, and a bad signature is answered 401 — the last is what Discord
 probes during endpoint setup and decides whether the endpoint is accepted at all.
 Full suite green. `/leaderboard` and `/sessions` are implemented; the `Dockerfile`
-gained a `runner-bot` stage, CI a `bot` matrix leg, and compose a `bot` service.
+gained a `runner-bot` stage.
 
 Not yet verified against a running app — the routes need `DISCORD_SERVICE_SECRET`
-in the player's environment, which does not exist on any host yet.
-
-#### Deployment notes (confirmed with the proxy-manager session)
-
-- **Hostname: `bot.sfubadminton.com`.** The zone's Let's Encrypt cert is a
-  wildcard, so a single-level subdomain needs no new cert work. A **DNS record
-  probably still has to be created** — wildcard cert coverage is not a wildcard
-  DNS record.
-- **Scaling is per-host.** `proxy.service` groups replicas discovered by one
-  proxy's local Docker daemon; replicas cannot span the Pi and the mini as one
-  pool. "Scalable" here means several replicas on whichever host it lands on.
-- **Build it into the Mac mini stack, not the Pi.** sfu-badminton is already
-  slated to live on the mini. Also: `compose pull` updates the *image*, never the
-  compose *file* — a new service block, env var, or label has to be hand-patched
-  into the live compose file on the host or it silently no-ops. That gap kept an
-  unrelated feature dead for ten days recently.
-- Secrets use the `ref:NAME` + `SECRETS_DIR` per-service mechanism, keyed by the
-  `proxy.service` label. Three are needed: `discord_public_key`,
-  `discord_bot_token`, `discord_service_secret`.
-
-#### BLOCKER — the edge auth gate
-
-The Pi's proxy logs `auth gate enabled for domain(s) polardev.org,sfubadminton.com`.
-**Discord POSTs interactions with no session and no cookie.** If that gate applies
-domain-wide, it will intercept them before they reach the handler, Discord will see
-an auth redirect instead of a signed response, and it will disable the endpoint.
-
-This has to be answered before DNS goes live: **how does a new `sfubadminton.com`
-host get excluded from the auth gate?** Not a code change — it is a proxy
-configuration question, and it is the one thing that can make a correct bot look
-completely broken.
+in the player's environment, which was not yet set anywhere.
 
 ### Phase 2 — Linking and role sync — **PARTLY BUILT**
 
@@ -274,9 +244,9 @@ Three things decided while building, all worth a second opinion:
   person who was just removed from them.
 - **A `pending_approval` member gets no membership or team role**, for the same reason
   they stay off the ladder.
-- **The sweep is driven over HTTP (`POST /sync`), never by a timer.** The compose
-  service omits `proxy.unscalable` so it can scale, and a `setInterval` would become
-  one sweep per replica, all writing the same roles.
+- **The sweep is driven over HTTP (`POST /sync`), never by a timer.** The bot is
+  meant to be able to run as several replicas, and a `setInterval` would become one
+  sweep per replica, all writing the same roles.
 
 And two gaps the schema work turned up, both the same shape — *an account stops being
 somebody's and keeps its roles*:
@@ -292,15 +262,6 @@ somebody's and keeps its roles*:
   tombstone as "no player, strip everything". The bot deletes a tombstone only once it
   has really cleared the account, so a 403 leaves it queued rather than discarded.
 
-**The gate was never a blocker — confirmed 2026-08-25.** The proxy's SSO gate is opt-in
-**per host**, via a `proxy.auth: "true"` docker label; the "auth gate enabled for
-domain(s) ..." startup line only declares which apexes have an `auth.<domain>` login
-host wired up, and does not gate their subdomains. Omitting the label *is* the
-exclusion, and the bot's compose service does not set it. (For the record, a gated host
-answers a non-HTML request with a clean 401, not a 302 — so even a misconfiguration
-would not have produced the redirect-to-a-200 failure that was feared.) Nothing is
-needed on the proxy side.
-
 **The sweep is inert until something drives it.** `POST /sync` exists and is tested,
 but there is no pg_cron job and no admin `/api/cron` leg calling it, so reconciliation
 currently never runs on its own. Linking and unlinking apply roles immediately via
@@ -311,8 +272,8 @@ built" as "roles reconcile themselves".
 
 One thing to measure on the first real sweep: it runs entirely inside one HTTP request,
 roughly three Discord calls per member, sequential. The tests use an instant mocked
-fetch, so nothing has exercised its duration. Check it fits inside the proxy's upstream
-timeout before relying on the 200.
+fetch, so nothing has exercised its duration. Check it fits inside any upstream
+timeout in front of the bot before relying on the 200.
 
 
 - `/link` → ephemeral button → app page → existing login → token exchange → link row.
@@ -343,12 +304,7 @@ Last, because it is the only CPU-bound piece and the only one with a hard render
 ### Phase 5 — Ship the container
 
 Mechanical. `Dockerfile` already has `runner-player` and `runner-admin`; add
-`runner-bot`. `build-images.yml` already matrixes `app: [player, admin]`; add a leg.
-Compose service joins `edge` with `proxy.enable/host/port/service` **and `proxy.health`**,
-and deliberately **omits `proxy.unscalable`**.
-
-Count replicas after every deploy — a compose recreate silently drops a scaled service
-back to one and the site stays `200` throughout.
+`runner-bot`, and build its image alongside the other two.
 
 ---
 
@@ -377,7 +333,7 @@ leaderboard**. The bot is **multi-guild**.
   that has not existed for 77 migrations; it now reads `permission_role`, and
   `custom` is deliberately not a VP job.
 - Run the phase-0 migration when it exists (all DB writes are yours).
-- Create the Discord application, and land its token as a service secret file.
+- Create the Discord application, and give the bot its token as a secret.
 
 ### My work, in order
 
@@ -386,7 +342,7 @@ leaderboard**. The bot is **multi-guild**.
 3. Phase 2: link flow, `/unlink`, role sync, reconciliation.
 4. Phase 3: the `requirePlayer` split, then the write commands.
 5. Phase 4: `/profile` card.
-6. Phase 5: `runner-bot` target, CI matrix leg, compose service.
+6. Phase 5: `runner-bot` target.
 
 Phase 1 is the honest first milestone: a working bot in the server, reading real club
 data, with no path to changing anything.

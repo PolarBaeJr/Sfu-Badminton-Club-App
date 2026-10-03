@@ -941,7 +941,7 @@ export const DECLARED_GAPS: readonly { gap: string; detail: string }[] = [
  * information the club has handed to somebody else to process on its behalf.
  * A member reading a file that enumerates fifty tables down to the column would
  * reasonably conclude it was complete, and it would not be: none of these rows
- * live only on the Pi.
+ * live only on the server.
  *
  * WHAT IS DELIBERATELY NOT ON THIS LIST. PostHog is wired into the code
  * (`lib/posthog.ts`, and `components/posthog-identify.tsx` would send the

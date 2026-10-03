@@ -9,7 +9,7 @@ describe('parseEloReview', () => {
     state: 'elo',
     at: '2026-08-23T11:25:20Z',
     merged_from: 'c0bced90-4a39-4e8b-b1b5-ae8a75bdb517',
-    merged_from_name: 'wui KI Cheng',
+    merged_from_name: 'jordan AVERY',
     self_play_matches: ['e1931dd0-c09a-4da9-91a1-d4cbda8564bb'],
     self_play_tournament_matches: [],
     discarded: { season_final_ratings: 2 },
@@ -19,7 +19,7 @@ describe('parseEloReview', () => {
     const r = parseEloReview(selfPlay);
     expect(r?.state).toBe('elo');
     expect(r?.selfPlayMatches).toHaveLength(1);
-    expect(r?.mergedFromName).toBe('wui KI Cheng');
+    expect(r?.mergedFromName).toBe('jordan AVERY');
     expect(r?.discarded).toEqual({ season_final_ratings: 2 });
   });
 

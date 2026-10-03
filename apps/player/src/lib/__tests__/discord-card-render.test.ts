@@ -59,8 +59,8 @@ import type { DiscordProfile, LadderFocus } from '../discord-profile';
 
 const base: DiscordProfile = {
   id: '00000000-0000-0000-0000-000000000001',
-  name: 'Matthew Cheng',
-  handle: 'matthewc',
+  name: 'Jordan Avery',
+  handle: 'jordana',
   avatarUrl: null,
   bio: null,
   status: null,
@@ -380,7 +380,7 @@ describe('the card fits the box it declares', () => {
     for (const name of [
       comp.name,
       'Bartholomew Fitzgerald-Kensington-Smythe',
-      'Matthew Cheng',
+      'Jordan Avery',
       'Wolfgang Amadeus Schmidt-Bauer',
       'MMMMMMMMMMMMMMMMMMMMMM',
     ]) {

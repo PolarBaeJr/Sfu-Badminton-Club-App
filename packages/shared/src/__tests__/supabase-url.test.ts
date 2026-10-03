@@ -29,15 +29,15 @@ describe('getServerSupabaseUrl', () => {
   });
 
   it('uses the internal origin when one is set', () => {
-    setEnv('http://100.123.79.47:54321');
-    expect(getServerSupabaseUrl()).toBe('http://100.123.79.47:54321');
+    setEnv('http://192.0.2.10:54321');
+    expect(getServerSupabaseUrl()).toBe('http://192.0.2.10:54321');
   });
 
   it('strips a trailing slash, because callers concatenate paths', () => {
     // `${origin}/rest/v1/...` against a stored slash yields a double slash,
     // which kong answers with a 404 that looks like a missing route.
-    setEnv('http://100.123.79.47:54321/');
-    expect(getServerSupabaseUrl()).toBe('http://100.123.79.47:54321');
+    setEnv('http://192.0.2.10:54321/');
+    expect(getServerSupabaseUrl()).toBe('http://192.0.2.10:54321');
   });
 
   it('accepts an https internal origin too', () => {
@@ -56,7 +56,7 @@ describe('getServerSupabaseUrl', () => {
     'not a url',
     'postgres://user@host:5432/db',
     'ftp://host/path',
-    '//100.123.79.47:54321',
+    '//192.0.2.10:54321',
   ])('falls back to the public origin for %s', (bad) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     setEnv(bad);

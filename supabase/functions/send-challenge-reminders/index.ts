@@ -20,13 +20,13 @@ const EXPIRING_TITLE = 'Challenge Expiring Soon';
  * recorded that nobody was warned.
  *
  * 24 hours is the fix rather than a six-hourly schedule, for two reasons. The
- * schedule lives on the Pi's host crontab and not in this repo, so a change
+ * schedule lives in the host's scheduler and not in this repo, so a change
  * here cannot enforce it. And running four times a day with no dedup key would
  * turn one warning into four — trading a missed reminder for exactly the repeat
  * bug the overdue branch below has just had fixed. A 24-hour window on a daily
  * run covers disjoint spans of time, so it dedups itself.
  *
- * If the crontab entry is ever changed, this constant has to change with it.
+ * If the schedule is ever changed, this constant has to change with it.
  */
 const EXPIRY_WINDOW_HOURS = 24;
 
@@ -188,8 +188,8 @@ Deno.serve(async (req) => {
     `Sent ${notifCount} challenge reminders ` +
       `(overdue ones already reminded within ${RE_ALERT_DAYS} days were skipped)`
   );
-  // Reported as a failure so the status is at least true, even though the Pi's
-  // crontab currently discards it — the expiring-soon reminders above did go
+  // Reported as a failure so the status is at least true, even though the
+  // host scheduler currently discards it. The expiring-soon reminders above did go
   // out, and the overdue ones did not.
   if (ledgerUnavailable) {
     return jsonResponse(

@@ -4,20 +4,21 @@ The member-facing half of the club app, served at the site root
 ([sfubadminton.com](https://sfubadminton.com)). Next.js 15 App Router, React 19,
 installable as a PWA.
 
-It carries the public landing page and leaderboard, and — once signed in — the
-feed, ladder challenges, session check-in, fees, tournaments, notifications and
-settings. The private exec/admin console is a **separate** app; see
-[`../admin`](../admin/README.md).
+It carries the public pages (landing page, leaderboard, exec roster, legal
+documents) and, once signed in, the feed, ladder challenges and match results,
+session check-in, fees, tournaments, personal stats, announcements,
+notifications, feedback, Discord account linking and settings. The private
+exec/admin console is a **separate** app; see [`../admin`](../admin/README.md).
 
-Monorepo-wide setup, env vars and deployment live in the [root
-README](../../README.md). This file is about this app only.
+Monorepo-wide setup and env vars are in the [root README](../../README.md).
+This file is about this app only.
 
 ---
 
 ## Run it
 
 ```sh
-npm run dev:player       # from the repo root — http://localhost:3000
+npm run dev:player       # from the repo root: http://localhost:3000
 ```
 
 Per-app scripts (run from this directory, or via `npm run <script> -w player`):
@@ -25,15 +26,14 @@ Per-app scripts (run from this directory, or via `npm run <script> -w player`):
 | Script | Does |
 |--------|------|
 | `dev` | `next dev` on port 3000 |
-| `build` | `next build` (`output: 'standalone'` — that's what the container runs) |
+| `build` | `next build` (`output: 'standalone'`) |
 | `start` | serve a production build on 3000 |
 | `lint` | `next lint` |
 | `type-check` | `tsc --noEmit` |
-| `test` | Vitest, one run |
+| `test` | Vitest, one run, with `TZ=UTC` |
 
-> `npm run type-check` is **not** part of `build` or `test`. CI runs it
-> separately, so a type error can pass everything you ran locally and still fail
-> the pipeline. Run it at the repo root before pushing.
+> `npm run type-check` is **not** part of `build` or `test`, so a type error can
+> pass both. Run it at the repo root before pushing.
 
 ## Layout
 
@@ -46,7 +46,8 @@ src/
   lib/            Plain modules: rules, queries, formatting. This is the tested
                   layer — the suites in lib/__tests__ point here.
     actions/      'use server' Server Actions, one file per domain.
-  fonts/          Barlow Condensed. .woff2 for the browser, .ttf for next/og.
+  fonts/          Barlow, Barlow Condensed and JetBrains Mono: .woff2 for the
+                  browser, .ttf for next/og (see README-ttf.md there).
   middleware.ts   Auth gate + redirects on every non-static request.
 public/           PWA manifest, icons, service worker.
 ```
@@ -104,7 +105,8 @@ server-side and reads `src/fonts/*.ttf` at request time. Nothing imports those
 files, so nothing traces them into the standalone bundle — `next.config.js`
 lists them in `outputFileTracingIncludes` by route. They're `.ttf` and not the
 `.woff2` the browser gets because satori cannot read WOFF2. Get this wrong and
-the route builds clean, then 500s on its first request inside the container.
+the route builds clean, then 500s on its first request from the standalone
+build.
 
 **Camera permission is `camera=(self)`.** QR check-in and the tournament door
 scanner both call `getUserMedia`. `camera=()` is a platform-level veto that
@@ -126,5 +128,5 @@ Sentry (`sentry.*.config.ts`, `src/instrumentation.ts`) and PostHog are wired in
 but only activate when their DSN/key env vars are set — `next.config.js` skips
 the Sentry wrapper entirely otherwise, so local dev is clean by default.
 
-Tracing and profiling sample rates are cost-tuned: at 100% they measurably ate
-throughput on the self-hosted box. Don't raise them without re-measuring.
+Tracing and profiling sample rates are cost-tuned: at 100% they measurably cut
+request throughput. Don't raise them without re-measuring.

@@ -9,10 +9,10 @@
 //
 // which is:
 //
-//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-db --database postgres --label production
+//   node scripts/gen-db-types.mjs --profile production
 //
-// SOURCE DATABASE: production — container "supabase-db" on ssh host
-// "pi", database "postgres", schemas graphql_public,public.
+// SOURCE DATABASE: production, database "postgres", schemas
+// graphql_public,public.
 //
 // Covers 71 tables, 3 views and 26 enums.
 //

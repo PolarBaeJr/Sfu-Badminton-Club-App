@@ -5,8 +5,8 @@
 //                of them on the day this ships.
 //   member_code  seven characters — K3F9TQ2 — the club assigns once and never
 //                reuses. Nobody types it; it is stamped when a person becomes a
-//                member. Deliberately NOT a university student number — no SFU
-//                data is stored anywhere near it — and deliberately not
+//                member. Deliberately NOT a university student number (no
+//                university data is stored anywhere near it), and deliberately not
 //                sequential either: a counter would publish join order, which
 //                is a fact about a person the club never decided to share.
 //
@@ -241,8 +241,8 @@ export function deriveMemberCode(input: {
  *
  * TIER 3 IS A PLAIN COUNTER AND NOT THE MEMBER CODE, which is a deliberate
  * decoupling and the most important thing on this function. It used to be the
- * member number, so the second Matthew was `matthew_6`; with a code that
- * spelling becomes `matthew_k3f9tq2`, which is not a name anybody would answer
+ * member number, so the second Jordan was `jordan_6`; with a code that
+ * spelling becomes `jordan_k3f9tq2`, which is not a name anybody would answer
  * to. But the real argument is not aesthetic. A handle is PUBLIC IDENTITY — a
  * member is `@kiera` on the leaderboard — and while the tiebreak was derived
  * from the identifier, every change to the identifier scheme dragged people's
@@ -268,7 +268,7 @@ export function deriveHandle(input: {
   const nickBase = deriveHandleBase(input.displayName);
   const nameBase = deriveHandleBase(input.fullName);
   // The member's own text is preferred for the suffixed form too: somebody who
-  // chose "Matthew" should become matthew_2 rather than matthew_cheng_2.
+  // chose "Jordan" should become jordan_2 rather than jordan_avery_2.
   const tiebreak = nickBase || nameBase;
 
   const candidates = [nickBase, nameBase];

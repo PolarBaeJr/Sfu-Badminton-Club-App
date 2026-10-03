@@ -36,7 +36,7 @@ describe('classifyTournamentScan — codes that are ours', () => {
   it('does not care which host the code names', () => {
     // Staging, production and the domain being retired all print real codes;
     // the token is resolved server-side, so the host proves nothing either way.
-    expect(classifyTournamentScan(`https://badminton.polardev.org/tournaments/checkin?token=${OTHER}`))
+    expect(classifyTournamentScan(`https://staging.example.net/tournaments/checkin?token=${OTHER}`))
       .toEqual({ kind: 'token', token: OTHER });
   });
 });

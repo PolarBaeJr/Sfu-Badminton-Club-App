@@ -354,44 +354,44 @@ describe('deriveHandle', () => {
     ).toBe('danny');
   });
 
-  // The second Matthew. Better than a suffix, which is what the nickname-only
+  // The second Jordan. Better than a suffix, which is what the nickname-only
   // ladder produced on staging.
   it('gives a taken nickname holder their full name rather than a suffix', () => {
     expect(
       deriveHandle({
-        displayName: 'Matthew',
-        fullName: 'Matthew Cheng',
+        displayName: 'Jordan',
+        fullName: 'Jordan Avery',
         memberCode: 'Y3WMYFY',
-        isTaken: (c) => c === 'matthew',
+        isTaken: (c) => c === 'jordan',
       }),
-    ).toBe('matthew_cheng');
+    ).toBe('jordan_avery');
   });
 
   // THE DECOUPLING. The suffix is a counter and NOT the member code: it used to
   // be the member number, and with a code that spelling would be
-  // `matthew_y3wmyfy`. A counter also means the handle scheme stops moving when
+  // `jordan_y3wmyfy`. A counter also means the handle scheme stops moving when
   // the identifier scheme does — which is the property that keeps a public
   // `@handle` from silently changing under somebody.
   it('appends a plain counter when both names are taken, never the member code', () => {
     const handle = deriveHandle({
-      displayName: 'Matthew',
-      fullName: 'Matthew Cheng',
+      displayName: 'Jordan',
+      fullName: 'Jordan Avery',
       memberCode: 'Y3WMYFY',
-      isTaken: (c) => c === 'matthew' || c === 'matthew_cheng',
+      isTaken: (c) => c === 'jordan' || c === 'jordan_avery',
     });
-    expect(handle).toBe('matthew_2');
+    expect(handle).toBe('jordan_2');
     expect(handle).not.toContain('y3wmyfy');
   });
 
   it('walks the counter up to the first free one', () => {
     expect(
       deriveHandle({
-        displayName: 'Matthew',
-        fullName: 'Matthew Cheng',
+        displayName: 'Jordan',
+        fullName: 'Jordan Avery',
         memberCode: 'Y3WMYFY',
-        isTaken: (c) => ['matthew', 'matthew_cheng', 'matthew_2', 'matthew_3'].includes(c),
+        isTaken: (c) => ['jordan', 'jordan_avery', 'jordan_2', 'jordan_3'].includes(c),
       }),
-    ).toBe('matthew_4');
+    ).toBe('jordan_4');
   });
 
   it('suffixes the nickname base, not the longer one, when a nickname exists', () => {

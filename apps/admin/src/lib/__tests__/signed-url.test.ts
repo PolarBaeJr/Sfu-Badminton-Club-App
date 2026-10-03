@@ -16,7 +16,7 @@ import { browserReachableSignedUrl } from '../signed-url';
  */
 
 const PUBLIC = 'https://sfubadminton.com/supabase';
-const INTERNAL = 'http://100.123.79.47:54321';
+const INTERNAL = 'http://192.0.2.10:54321';
 
 // What storage actually hands back: the object path plus a signed token. The
 // token is the part that must survive the rewrite untouched.
@@ -39,8 +39,8 @@ function setEnv(internal: string | undefined, pub: string | undefined) {
 
 describe('browserReachableSignedUrl', () => {
   // The production case, and the only one that is not already correct by
-  // accident. The signing client is built on the tailnet address, so the URL
-  // comes back pointing at a hostname no phone can resolve.
+  // accident. The signing client is built on the private-network address, so
+  // the URL comes back pointing at a hostname no phone can resolve.
   it('moves an internally-signed URL onto the public origin', () => {
     setEnv(INTERNAL, PUBLIC);
     expect(browserReachableSignedUrl(INTERNAL + SIGNED_PATH)).toBe(PUBLIC + SIGNED_PATH);

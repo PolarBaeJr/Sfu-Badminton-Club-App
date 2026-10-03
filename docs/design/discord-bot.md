@@ -2,7 +2,7 @@
 
 Status: **built and live.** This document is kept as the design record of what
 was intended; it is not a description of the current implementation. For what
-actually runs, see `apps/bot/README.md` and `docs/ops/discord-bot-bringup.md`.
+actually runs, see `apps/bot/README.md`.
 The bot is live with 9 roles, and `apps/player/src/app/api/discord/` is the
 service API it calls.
 
@@ -448,7 +448,7 @@ that, and they are unusually specific:
 
 | Token | Value | Consequence for the card |
 |---|---|---|
-| `--red` | `#c00` | The single accent. SFU red, used sparingly |
+| `--red` | `#c00` | The single accent. The accent red, used sparingly |
 | `--bg` | `#fafafa` | Near-white ground, not a saturated panel |
 | `--ink` | `#111` | Text |
 | `--line` | `rgba(0,0,0,0.08)` | Hairline rules separate the stat grid — no boxes |
@@ -560,9 +560,8 @@ The core rule — "Discord authenticates the person through the link" — is abo
 
 ## 8. Deployment: one container, scalable
 
-The bot runs as **its own compose service** — separate image, separate lifecycle,
-separate crash domain from the player and admin apps. Built by CI and pulled, like
-everything else; never built on the host.
+The bot runs as **its own service**: separate image, separate lifecycle,
+separate crash domain from the player and admin apps.
 
 ### Build it stateless so it *can* scale
 
@@ -581,30 +580,15 @@ outbound REST from the app, and nothing in this spec requires a live gateway
 connection. That makes the bot an ordinary stateless HTTP service, which is exactly the
 thing that scales here.
 
-So it *does* take the standard proxy labels and *does* join `edge`:
+So it needs a public HTTPS route like the web apps do. Note:
 
-```yaml
-networks: [edge, default]
-labels:
-  proxy.enable:  "true"
-  proxy.host:    "<host>"
-  proxy.port:    "<port>"
-  proxy.service: "discord-bot"
-  proxy.health:  "/health"
-```
-
-Note the differences from the other services:
-
-- **No `proxy.unscalable`.** Omitting it is what keeps replicas an option.
-- **Verify replica count after every deploy.** A compose recreate silently drops a
-  scaled service back to one replica, and the site stays `200` throughout — the drop is
-  invisible unless you count containers.
+- **Keep it replica-safe.** Nothing in the bot may assume it is the only instance.
 - Discord requires the interactions endpoint to **verify the Ed25519 signature** on
   every request and respond within **3 seconds**. Anything slower must acknowledge
   first and follow up, which is a hard constraint on registration calls that touch
   the waiver and session-status gates.
-- Set `proxy.health` from the start. Without it the proxy does a bare TCP dial, which
-  cannot tell "process is up" from "process cannot reach the app API".
+- Health-check it on `/health` from the start. A bare TCP check cannot tell
+  "process is up" from "process cannot reach the app API".
 
 If a gateway connection is ever genuinely needed (presence, message events, reactions),
 it belongs in a **second, singleton service** — not by adding a gateway to this one.

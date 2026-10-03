@@ -1,5 +1,5 @@
-// Runs daily via cron, the same way purge-inactive-accounts does
-// (purge-inactive-accounts:1, which says host crontab -> ~/bin/run-edge-fn.sh).
+// Runs daily, invoked the same way purge-inactive-accounts is: by a scheduler
+// on the host, not by pg_cron.
 //
 // Deletes abandoned signup stubs: somebody signed in, got a players row from
 // ensure_player_for_user, never entered a name or signed a waiver, and has not

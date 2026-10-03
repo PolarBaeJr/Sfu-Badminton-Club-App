@@ -1,25 +1,22 @@
 // Which Supabase origin SERVER-side code should call.
 //
 // There is only one Supabase URL in this app and it is NEXT_PUBLIC_SUPABASE_URL
-// -- the PUBLIC origin, https://sfubadminton.com/supabase. That is correct and
-// unavoidable for the browser, which can only reach Supabase the public way. But
-// server code inside a container was reusing the same literal, so every
-// `getUser()` in middleware left the container, went out to Cloudflare, came
-// back in through whichever host currently owns the public entrance, and only
-// then reached kong on the Pi.
+// -- the PUBLIC origin. That is correct and unavoidable for the browser, which
+// can only reach Supabase the public way. But server code inside a container
+// was reusing the same literal, so every `getUser()` in middleware left the
+// container, went out through the public edge, came back in, and only then
+// reached the Supabase gateway.
 //
-// WHY THAT STOPPED BEING SURVIVABLE. The hairpin is old; its LENGTH is not. When
-// the Pi was the entrance the loop closed on the Pi itself. Once the entrance
-// moved to the Mac mini the path became Pi -> Cloudflare -> mini -> peer hop ->
-// Pi, which put a second host on the critical path of the first host's own auth
-// check. A five-second blip at the mini therefore made the Pi's middleware
-// unable to validate a session it was holding a perfectly good cookie for, and
-// the outer catch redirected to /login. Members read that as "it logged me out";
-// the session was never touched, and the next refresh landed on the dashboard.
+// WHY THAT IS NOT SURVIVABLE. The hairpin puts the edge, and every hop behind
+// it, on the critical path of the app's own auth check. A five-second blip at
+// the edge left middleware unable to validate a session it was holding a
+// perfectly good cookie for, and the outer catch redirected to /login. Members
+// read that as "it logged me out"; the session was never touched, and the next
+// refresh landed on the dashboard.
 //
-// api/health/ready/route.ts predicted exactly this in a comment, and called it:
-// "if the edge or the proxy itself degrades, every badminton backend fails this
-// probe at once even though the app and the database are both fine".
+// api/health/ready/route.ts predicted exactly this: through the public edge,
+// every backend fails its readiness probe at once even though the app and the
+// database are both fine.
 //
 // SUPABASE_INTERNAL_URL is deliberately NOT prefixed NEXT_PUBLIC_. Next inlines
 // NEXT_PUBLIC_* at BUILD time, in server code too, so a public-prefixed value
@@ -36,8 +33,8 @@
 // cookieOptions with the name pinned to AUTH_COOKIE_NAME. See constants.ts.
 //
 // NOT for anything the browser will see. Redirect targets, storage/avatar URLs
-// and links in email must stay on the public origin -- an address on the tailnet
-// is unreachable from a member's phone.
+// and links in email must stay on the public origin -- an address on the
+// private network is unreachable from a member's phone.
 
 /**
  * The Supabase origin for server-to-server calls: SUPABASE_INTERNAL_URL when it

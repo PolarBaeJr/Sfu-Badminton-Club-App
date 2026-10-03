@@ -98,7 +98,7 @@ const ELO_REVIEW = {
   state: 'elo',
   at: '2026-08-23T04:00:00Z',
   merged_from: 'dddddddd-0000-4000-8000-000000000001',
-  merged_from_name: 'Matthew Cheng (duplicate)',
+  merged_from_name: 'Jordan Avery (duplicate)',
   self_play_matches: ['m-1', 'm-2'],
   self_play_tournament_matches: ['t-1'],
   discarded: { club_fees: 2 },
@@ -184,7 +184,7 @@ describe('resolveEloReview', () => {
     });
     expect((entry.new_value as Row).elo_review).toBe(null);
     expect(entry.reason).toContain('3 self-play');
-    expect(entry.reason).toContain('Matthew Cheng (duplicate)');
+    expect(entry.reason).toContain('Jordan Avery (duplicate)');
   });
 
   // 'player_updated' deliberately, matching resolvePrivilegeClaimReview: it is
