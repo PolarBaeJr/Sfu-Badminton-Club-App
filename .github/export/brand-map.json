@@ -40,6 +40,7 @@
     {"from": "SFU alumni", "to": "Club alumni", "note": "role label fixture"},
     {"from": "SFU Gym", "to": "Example Gym", "note": "calendar fixture"},
     {"from": "classifyReceiptText('SFU')", "to": "classifyReceiptText('Club')", "note": "the club's own name alone must not classify", "paths": ["packages/shared/src/utils/__tests__/receipt-method.test.ts"]},
+    {"from": "585f5ed2f67b8bf857a9866ee4de36c6df5f4e27efdccef43df4bf0955934a89", "to": "8749244bc84d815963722d3d380ab0f42d5f2988325d271524161515d01fb463", "note": "fixed sha256 vector of the mapped key prefix: printf 'clubld_' plus 43 A | shasum -a 256", "paths": ["apps/data-api/src/__tests__/key.test.ts"]},
     {"from": "violates SFU policies", "to": "violates university policies", "note": "seeded Code of Conduct", "paths": ["supabase/migrations/**"]},
     {"from": "escalated to SFU or", "to": "escalated to the university or", "note": "seeded Code of Conduct", "paths": ["supabase/migrations/**"]},
     {"from": "SFU/club policy", "to": "university/club policy", "note": "seeded Terms of Use", "paths": ["supabase/migrations/**"]},
