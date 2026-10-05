@@ -67,6 +67,22 @@ export const profileSchema = z.object({
   competition_category: z.enum(['mens', 'womens']).nullable().optional(),
 });
 
+// What a NEW member is asked, on the web onboarding page and in Discord
+// /signup, which is profileSchema with two answers made required. profileSchema
+// itself is unchanged: Settings writes through it, and an existing member with
+// no last name must still be able to save.
+//
+// The events question replaces competition_category here rather than sitting
+// beside it, because "not answered" and "Open events only" both arrive at the
+// column as NULL and only an explicit answer can tell them apart. 'open' is
+// stored as NULL (categoryFromSignupAnswer).
+export const onboardingProfileSchema = profileSchema.omit({ competition_category: true }).extend({
+  last_name: z.string().trim().min(1, 'Last name is required').max(40),
+  event_category: z.enum(['mens', 'womens', 'open'], {
+    errorMap: () => ({ message: 'Choose which events you play in tournaments' }),
+  }),
+});
+
 /**
  * 00130 — the club's PUBLIC blurb for one officer, shown on /exec.
  *
@@ -878,6 +894,7 @@ export const eventWaiverTemplateUpdateSchema = z.object({
 
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
+export type OnboardingProfileInput = z.infer<typeof onboardingProfileSchema>;
 export type ChallengeCreateInput = z.infer<typeof challengeCreateSchema>;
 export type MatchResultInput = z.infer<typeof matchResultSchema>;
 export type DisputeInput = z.infer<typeof disputeSchema>;

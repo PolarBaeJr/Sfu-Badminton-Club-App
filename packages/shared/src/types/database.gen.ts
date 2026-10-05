@@ -981,6 +981,93 @@ export type Database = {
         }
         Relationships: []
       }
+      discord_signup_attempts: {
+        Row: {
+          created_at: string
+          discord_user_id: string
+          email_digest: string | null
+          id: number
+          kind: string
+        }
+        Insert: {
+          created_at?: string
+          discord_user_id: string
+          email_digest?: string | null
+          id?: never
+          kind: string
+        }
+        Update: {
+          created_at?: string
+          discord_user_id?: string
+          email_digest?: string | null
+          id?: never
+          kind?: string
+        }
+        Relationships: []
+      }
+      discord_signup_drafts: {
+        Row: {
+          accepted: Json
+          age_attestation: boolean
+          code_sent_at: string | null
+          competition_category: string | null
+          completing_at: string | null
+          created_at: string
+          discord_user_id: string
+          display_name: string | null
+          email: string
+          expires_at: string
+          first_name: string
+          gender_answered: boolean
+          last_name: string
+          media_consent: boolean | null
+          phone: string | null
+          send_count: number
+          skill_tier: string | null
+          verify_attempts: number
+        }
+        Insert: {
+          accepted?: Json
+          age_attestation?: boolean
+          code_sent_at?: string | null
+          competition_category?: string | null
+          completing_at?: string | null
+          created_at?: string
+          discord_user_id: string
+          display_name?: string | null
+          email: string
+          expires_at?: string
+          first_name: string
+          gender_answered?: boolean
+          last_name: string
+          media_consent?: boolean | null
+          phone?: string | null
+          send_count?: number
+          skill_tier?: string | null
+          verify_attempts?: number
+        }
+        Update: {
+          accepted?: Json
+          age_attestation?: boolean
+          code_sent_at?: string | null
+          competition_category?: string | null
+          completing_at?: string | null
+          created_at?: string
+          discord_user_id?: string
+          display_name?: string | null
+          email?: string
+          expires_at?: string
+          first_name?: string
+          gender_answered?: boolean
+          last_name?: string
+          media_consent?: boolean | null
+          phone?: string | null
+          send_count?: number
+          skill_tier?: string | null
+          verify_attempts?: number
+        }
+        Relationships: []
+      }
       discord_tournament_events: {
         Row: {
           created_at: string
@@ -1546,6 +1633,7 @@ export type Database = {
           completed_flag: boolean
           confirmed_by: string | null
           created_at: string
+          duration_minutes: number | null
           elo_boost: number | null
           elo_weight_override: number | null
           event_multiplier: number
@@ -1577,6 +1665,7 @@ export type Database = {
           completed_flag?: boolean
           confirmed_by?: string | null
           created_at?: string
+          duration_minutes?: number | null
           elo_boost?: number | null
           elo_weight_override?: number | null
           event_multiplier?: number
@@ -1608,6 +1697,7 @@ export type Database = {
           completed_flag?: boolean
           confirmed_by?: string | null
           created_at?: string
+          duration_minutes?: number | null
           elo_boost?: number | null
           elo_weight_override?: number | null
           event_multiplier?: number
@@ -4347,6 +4437,24 @@ export type Database = {
         }
         Returns: Json
       }
+      create_challenge_for: {
+        Args: {
+          p_creator: string
+          p_format: string
+          p_games_per_match?: number
+          p_note?: string
+          p_opponent_id: string
+          p_opponent_partner_id?: string
+          p_partner_id?: string
+          p_points_per_game?: number
+          p_rated_flag: boolean
+          p_scheduled_date?: string
+          p_scheduled_time?: string
+          p_session_id?: string
+          p_type: string
+        }
+        Returns: Json
+      }
       create_player_with_rating: {
         Args: {
           p_display_name?: string
@@ -4787,6 +4895,16 @@ export type Database = {
       strip_identity_keys: { Args: { v: Json }; Returns: Json }
       submit_match_result: {
         Args: { p_challenge_id: string; p_completed?: boolean; p_games: Json }
+        Returns: string
+      }
+      submit_match_result_for: {
+        Args: {
+          p_actor: string
+          p_challenge_id: string
+          p_completed?: boolean
+          p_duration_minutes?: number
+          p_games: Json
+        }
         Returns: string
       }
       swap_tournament_pair_member: {

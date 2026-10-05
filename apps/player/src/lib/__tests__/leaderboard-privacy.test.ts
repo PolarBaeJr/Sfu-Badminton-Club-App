@@ -75,7 +75,7 @@ const ALLOWED = new Map<string, string>([
   // the app layer because its caller reads under the service role, which has no
   // database backstop behind it.
   ['lib/past-leaderboard.ts', 'drops any archived row whose member may not appear on a ladder today'],
-  ['lib/actions/profile.ts', 'a comment, no read'],
+  ['lib/onboarding-core.ts', 'a comment, no read (moved from lib/actions/profile.ts)'],
   ['lib/actions/_shared.ts', 'getPlayerProps, built from the acting member'],
   ['lib/posthog.ts', 'the analytics property type for that same self-identify'],
   ['components/posthog-identify.tsx', 'identifies the signed-in member to themselves'],

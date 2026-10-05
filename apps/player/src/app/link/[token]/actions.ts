@@ -5,6 +5,7 @@ import {
   isDiscordLinkToken,
 } from '@badminton/shared';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { syncDiscordMembers } from '@/lib/discord-link';
 
 export interface LinkResult {
   ok: boolean;
@@ -73,40 +74,4 @@ export async function consumeDiscordLink(token: string): Promise<LinkResult> {
         // roles are the sweep's problem now. Do not report this as a failure.
         'Your Discord account is connected. Your roles will appear shortly.',
   };
-}
-
-/**
- * Ask the bot to sync these accounts. Never throws — the link is already made.
- *
- * `reason` only titles the bot's audit entry. It is passed so the log reads
- * "Account linked" for the one moment that actually is a link, rather than
- * filing every connection under the generic resync the sweep also uses.
- */
-async function syncDiscordMembers(
-  discordUserIds: string[],
-  reason: 'linked' | 'resynced'
-): Promise<boolean> {
-  const base = process.env.DISCORD_BOT_URL;
-  const secret = process.env.DISCORD_SERVICE_SECRET;
-  if (!base || !secret) {
-    console.error('[discord] cannot sync: DISCORD_BOT_URL or DISCORD_SERVICE_SECRET unset');
-    return false;
-  }
-
-  try {
-    const response = await fetch(new URL('/sync-member', base), {
-      method: 'POST',
-      headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ discordUserIds, reason }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      console.error('[discord] sync-member ->', response.status);
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.error('[discord] sync-member failed:', error);
-    return false;
-  }
 }

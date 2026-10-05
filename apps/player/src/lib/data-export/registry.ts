@@ -855,6 +855,10 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   discord_feedback_posts: 'Which feedback reports the bot has already relayed.',
   discord_tournament_events: 'Which tournament events the bot has already posted.',
   discord_club_events: 'Which club events the bot has already posted to the Discord Events tab.',
+  discord_signup_drafts:
+    'Pre-account scratch, purged within 30 minutes, no player id. A Discord /signup in progress, before any account exists (00281).',
+  discord_signup_attempts:
+    'A rate-limit ledger for Discord /signup, purged after a day, no player id. The email is kept only as a digest (00281).',
   guest_waiver_signings:
     'Waiver signings by guests who are not members and have no account. There is no member column; it holds non-members\' names and emails, which a member export cannot reach.',
 };

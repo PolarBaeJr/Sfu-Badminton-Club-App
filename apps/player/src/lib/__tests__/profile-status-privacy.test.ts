@@ -103,6 +103,7 @@ const SERVICE_ROLE_READERS = new Map<string, string>([
   ['lib/reactivate.ts', 'service role, own row by verified user id'],
   ['app/api/calendar/[token]/route.ts', 'service role, row found by the feed token'],
   ['app/api/passkey/login/verify/route.ts', 'service role, pre-session lookup'],
+  ['lib/discord-signup.ts', "service role; the new member's own row, read to say approved or pending"],
 ]);
 
 describe('nothing reads players.status with the member\'s own key', () => {

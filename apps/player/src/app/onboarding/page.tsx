@@ -6,7 +6,15 @@ import { markPasskeyEnrolled } from '@/lib/actions/profile';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
 import { LegalMarkdown } from '@badminton/ui';
-import { LEGAL_DOCUMENT_LABELS, sortLegalDocuments, CHECKIN_TOKEN_REGEX, type SkillTier } from '@badminton/shared';
+import {
+  LEGAL_DOCUMENT_LABELS,
+  sortLegalDocuments,
+  CHECKIN_TOKEN_REGEX,
+  SIGNUP_EVENTS_CHOICES,
+  SIGNUP_EVENTS_QUESTION,
+  type SignupEventsAnswer,
+  type SkillTier,
+} from '@badminton/shared';
 import type { SkillTierOption } from '@/lib/rating-tiers';
 import { User, Phone, Sparkles, ChevronRight, ChevronLeft, Loader2, Rocket, KeyRound, Check, Mail } from 'lucide-react';
 import { enrollPasskey, supportsPasskeys } from '@/lib/passkey-client';
@@ -181,12 +189,63 @@ function TierChoice({
   );
 }
 
+// "Which events do you play in tournaments?" Required, three answers, one tap
+// each. Module scope for the same focus-preservation reason as Field.
+function EventsQuestion({
+  value,
+  onChange,
+}: {
+  value: SignupEventsAnswer | null;
+  onChange: (answer: SignupEventsAnswer) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div
+        id="events-question"
+        className="mono muted"
+        style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase' }}
+      >
+        {SIGNUP_EVENTS_QUESTION} <span style={{ color: 'var(--red)' }}>*</span>
+      </div>
+      <div role="radiogroup" aria-labelledby="events-question" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {SIGNUP_EVENTS_CHOICES.map((choice) => (
+          <label
+            key={choice.value}
+            htmlFor={`events-${choice.value}`}
+            className="card-base"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: 14,
+              cursor: 'pointer',
+              borderColor: value === choice.value ? 'var(--red)' : 'var(--line)',
+              transition: 'border-color .15s',
+            }}
+          >
+            <input
+              id={`events-${choice.value}`}
+              type="radio"
+              name="events"
+              checked={value === choice.value}
+              onChange={() => onChange(choice.value)}
+              style={{ accentColor: 'var(--red)', flexShrink: 0 }}
+            />
+            <span style={{ fontWeight: 600, fontSize: 14 }}>{choice.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function OnboardingPage() {
   // Tracked by id, not by position: the level step drops out when the tiers
   // fail to load, and a position would then silently point one step further on.
   const [stepId, setStepId] = useState<OnboardingStepId>('about');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [eventCategory, setEventCategory] = useState<SignupEventsAnswer | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
@@ -349,8 +408,10 @@ export default function OnboardingPage() {
   }
 
   const allAccepted = waiverAccepted && cocAccepted && termsAccepted && ageAttested;
-  // Only the first name is required (profileSchema); mononyms are real names.
-  const nameEntered = firstName.trim().length > 0;
+  // First and last name and the events question are all required of a new
+  // member (onboardingProfileSchema), the same as Discord /signup asks.
+  const nameEntered = firstName.trim().length > 0 && lastName.trim().length > 0;
+  const aboutComplete = nameEntered && eventCategory !== null;
   // Note the leading `tiers !== null && tiers.length > 0`: while the fetch is
   // in flight, and forever if it failed, there is nothing to answer and step 1
   // is gated on the name alone. The same shape as passkeyAnswered above, for
@@ -359,7 +420,7 @@ export default function OnboardingPage() {
   // The level step itself waits for the tiers to load: Continue there would
   // otherwise walk past a question that is about to appear.
   const levelComplete = tiers !== null && skillTierAnswered;
-  const canEnter = nameEntered && skillTierAnswered && allAccepted && passkeyAnswered;
+  const canEnter = aboutComplete && skillTierAnswered && allAccepted && passkeyAnswered;
 
   const steps = onboardingSteps({ tiersAvailable: tiers === null ? null : tiers.length > 0 });
   const activeId = activeOnboardingStep(stepId, steps);
@@ -386,11 +447,15 @@ export default function OnboardingPage() {
   }, [activeId]);
 
   async function handleComplete() {
+    // Unreachable through the button, which canEnter disables; the server
+    // refuses a missing answer as well.
+    if (!eventCategory) return;
     setLoading(true);
     try {
       const res = await completeOnboarding({
         first_name: firstName,
-        last_name: lastName || undefined,
+        last_name: lastName,
+        event_category: eventCategory,
         display_name: displayName || undefined,
         phone: phone || undefined,
         waiver_accepted: waiverAccepted,
@@ -509,29 +574,32 @@ export default function OnboardingPage() {
         {activeId === 'about' ? (
           <>
             <Field id="firstName"   label="First name"    icon={User}     value={firstName}   onChange={setFirstName}   placeholder="Your first name" />
-            <Field id="lastName"    label="Last name"     optional icon={User}     value={lastName}    onChange={setLastName}    placeholder="Your last name" />
+            <Field id="lastName"    label="Last name"     icon={User}     value={lastName}    onChange={setLastName}    placeholder="Your last name" />
             <Field id="displayName" label="Display name"  optional icon={Sparkles} value={displayName} onChange={setDisplayName} placeholder="Nickname or gamertag" />
             <Field id="phone"       label="Phone"         optional icon={Phone}    value={phone}       onChange={(v) => setPhone(v.replace(/[^\d\s+\-()]/g, ''))} placeholder="For session reminders" inputMode="tel" />
+            <EventsQuestion value={eventCategory} onChange={setEventCategory} />
 
             <button
               type="button"
-              onClick={() => { if (nameEntered) goNext(); }}
-              disabled={!nameEntered}
+              onClick={() => { if (aboutComplete) goNext(); }}
+              disabled={!aboutComplete}
               className="btn btn-primary btn-lg"
               style={{
                 width: '100%',
                 justifyContent: 'center',
                 height: 48,
-                opacity: nameEntered ? 1 : 0.4,
+                opacity: aboutComplete ? 1 : 0.4,
               }}
             >
               Continue <ChevronRight size={14} />
             </button>
             {/* Say WHY it is disabled. A dimmed control with no explanation is
                 how somebody concludes the app is broken. */}
-            {!nameEntered && (
+            {!aboutComplete && (
               <div className="muted" style={{ fontSize: 12, marginTop: -12, textAlign: 'center' }}>
-                Enter your first name to continue.
+                {nameEntered
+                  ? 'Choose which events you play to continue.'
+                  : 'Enter your first and last name to continue.'}
               </div>
             )}
           </>

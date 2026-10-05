@@ -71,7 +71,10 @@ export class RateLimitedError extends Error {}
 // silently, which Discord surfaces as "the application did not respond".
 const TIMEOUT_MS = 2500;
 
-async function get<T>(path: string, callerId?: string | null): Promise<T> {
+// A caller that runs after a deferred acknowledgement has fifteen minutes, not
+// three seconds, and passes a longer timeout; an autocomplete passes a shorter
+// one so it answers inside its own budget.
+async function get<T>(path: string, callerId?: string | null, timeoutMs = TIMEOUT_MS): Promise<T> {
   const base = process.env.APP_API_URL;
   const secret = process.env.DISCORD_SERVICE_SECRET;
   if (!base) throw new AppApiError('APP_API_URL is not set');
@@ -85,7 +88,7 @@ async function get<T>(path: string, callerId?: string | null): Promise<T> {
       // header rather than the string "null" or "undefined".
       ...(callerId ? { 'x-discord-user-id': callerId } : {}),
     },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
@@ -101,7 +104,8 @@ async function get<T>(path: string, callerId?: string | null): Promise<T> {
 async function send<T>(
   method: 'POST' | 'DELETE',
   path: string,
-  body?: unknown
+  body?: unknown,
+  timeoutMs = TIMEOUT_MS
 ): Promise<T> {
   const base = process.env.APP_API_URL;
   const secret = process.env.DISCORD_SERVICE_SECRET;
@@ -115,7 +119,7 @@ async function send<T>(
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
@@ -1268,6 +1272,142 @@ export function submitAnnouncement(input: {
   | { ok: false; refusal: AnnounceRefusal }
 > {
   return send('POST', '/api/discord/announce', input);
+}
+
+// ---- CHALLENGES ------------------------------------------------------------
+
+/**
+ * Why the app declined a /challenge. Closed set; see the challenges routes.
+ * 'rule' and the two 'invalid' codes are the only ones that carry a message,
+ * and it is the app's own sentence about the club's rules.
+ */
+export type ChallengeRefusal =
+  | 'not_linked'
+  | 'lapsed'
+  | 'standing'
+  | 'feature_off'
+  | 'waiver'
+  | 'opponent_not_linked'
+  | 'partner_not_linked'
+  | 'opponent_partner_not_linked'
+  | 'not_participant'
+  | 'not_accepted'
+  | 'invalid'
+  | 'invalid_score'
+  | 'invalid_duration'
+  | 'rule';
+
+export type ChallengeReply<T> = (T & { ok: true }) | { ok: false; refusal: ChallengeRefusal; message?: string };
+
+/** Both run after a deferred acknowledgement, so they can wait. */
+const CHALLENGE_TIMEOUT_MS = 10_000;
+
+/** Inside the autocomplete branch's one-second race, with room to answer. */
+const CHALLENGE_PICKER_TIMEOUT_MS = 900;
+
+/**
+ * Send a challenge as the caller. Every person is a Discord id; the app
+ * resolves each through the link table and never takes a club player id.
+ */
+export function createChallenge(input: {
+  discordUserId: string;
+  opponentDiscordId: string;
+  type: 'singles' | 'doubles';
+  rated: boolean;
+  bestOf: number;
+  points: number;
+  partnerDiscordId: string | null;
+  opponentPartnerDiscordId: string | null;
+  note: string | null;
+}): Promise<ChallengeReply<{ challengeId: string }>> {
+  return send('POST', '/api/discord/challenges', input, CHALLENGE_TIMEOUT_MS);
+}
+
+/** The caller's accepted challenges with no result yet, labelled for a picker. */
+export async function fetchOpenChallenges(
+  discordUserId: string
+): Promise<{ id: string; label: string }[]> {
+  const result = await get<{ challenges?: { id: string; label: string }[] }>(
+    '/api/discord/challenges',
+    discordUserId,
+    CHALLENGE_PICKER_TIMEOUT_MS
+  );
+  return result.challenges ?? [];
+}
+
+/** Report a result as the caller: their side's points first in every game. */
+export function reportChallenge(input: {
+  discordUserId: string;
+  challengeId: string;
+  games: { mine: number; theirs: number }[];
+  durationMinutes: number;
+}): Promise<ChallengeReply<{ matchId: string; opponents: string }>> {
+  return send('POST', '/api/discord/challenges/report', input, CHALLENGE_TIMEOUT_MS);
+}
+
+// ---- SIGN-UP ---------------------------------------------------------------
+
+/** What the app asks the bot to draw next. The app decides; the bot renders. */
+export type SignupScreen =
+  | {
+      kind: 'choice';
+      step: 'events' | 'tier' | 'age' | 'consent';
+      prompt: string;
+      choices: { value: string; label: string }[];
+      notice?: string;
+    }
+  | {
+      kind: 'document';
+      document: string;
+      title: string;
+      version: string;
+      versionTag: string;
+      page: number;
+      pageCount: number;
+      text: string;
+      notice?: string;
+    }
+  | { kind: 'code_sent' }
+  | { kind: 'done'; approved: boolean; linked: boolean }
+  | { kind: 'cancelled'; codeSent: boolean };
+
+export type SignupRefusal =
+  | 'already_linked'
+  | 'timed_out'
+  | 'incomplete'
+  | 'invalid'
+  | 'rate_limited'
+  | 'send_failed'
+  | 'wrong_code'
+  | 'too_many_attempts'
+  | 'in_progress'
+  | 'existing_account';
+
+export type SignupReply =
+  | { ok: true; screen: SignupScreen }
+  | { ok: false; refusal: SignupRefusal; message?: string };
+
+// Every step runs after a deferred acknowledgement, so the interaction token
+// has fifteen minutes. The code send reaches GoTrue; verify reaches it twice,
+// runs the whole onboarding body and waits on the role sync (itself up to ten
+// seconds), so it gets the most room: an abort there leaves a made account the
+// member is told nothing certain about.
+const SIGNUP_TIMEOUT_MS = 10_000;
+const SIGNUP_VERIFY_TIMEOUT_MS = 30_000;
+
+/**
+ * One /signup step as the caller: an answer, a page turn, a cancel, or the
+ * code. The first step carries the email and names; never log the body.
+ */
+export function signupStep(
+  input: { discordUserId: string; action: string } & Record<string, unknown>
+): Promise<SignupReply> {
+  return send(
+    'POST',
+    '/api/discord/signup',
+    input,
+    input.action === 'verify' ? SIGNUP_VERIFY_TIMEOUT_MS : SIGNUP_TIMEOUT_MS
+  );
 }
 
 // ---- FEEDBACK RELAY --------------------------------------------------------
