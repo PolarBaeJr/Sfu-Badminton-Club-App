@@ -108,9 +108,9 @@ describe('challengeCreateSchema', () => {
     expect(challengeCreateSchema.safeParse({ ...base, points_per_game: 21 }).success).toBe(true);
     expect(challengeCreateSchema.safeParse({ ...base, games_per_match: 7 }).success).toBe(true);
   });
-  it('rejects a game played to more than 21', () => {
-    expect(challengeCreateSchema.safeParse({ ...base, points_per_game: 22 }).success).toBe(false);
-    expect(challengeCreateSchema.safeParse({ ...base, points_per_game: 30 }).success).toBe(false);
+  it('accepts a game played to 30 and rejects one played to 31', () => {
+    expect(challengeCreateSchema.safeParse({ ...base, points_per_game: 30 }).success).toBe(true);
+    expect(challengeCreateSchema.safeParse({ ...base, points_per_game: 31 }).success).toBe(false);
   });
   it('defaults event_type to rated_challenge', () => {
     const result = challengeCreateSchema.safeParse(base);
@@ -182,11 +182,20 @@ describe('matchResultSchema', () => {
       }).success,
     ).toBe(false);
   });
-  it('rejects a score above 30', () => {
+  it('accepts 39-38, the cap of a game to 30', () => {
     expect(
       matchResultSchema.safeParse({
         winner_side: 'a',
-        games: [{ game_number: 1, side_a_score: 31, side_b_score: 15 }],
+        games: [{ game_number: 1, side_a_score: 39, side_b_score: 38 }],
+        completed: true,
+      }).success,
+    ).toBe(true);
+  });
+  it('rejects a score above 39', () => {
+    expect(
+      matchResultSchema.safeParse({
+        winner_side: 'a',
+        games: [{ game_number: 1, side_a_score: 40, side_b_score: 15 }],
         completed: true,
       }).success,
     ).toBe(false);
@@ -368,6 +377,12 @@ describe('tournamentCreateSchema', () => {
       expect(result.data.event_multiplier).toBeCloseTo(1.15);
       expect(result.data.placement_bonus_enabled).toBe(true);
     }
+  });
+  it('bounds event_multiplier by ELO_MULTIPLIER_BOUNDS', () => {
+    expect(tournamentCreateSchema.safeParse({ ...base, event_multiplier: 0.25 }).success).toBe(true);
+    expect(tournamentCreateSchema.safeParse({ ...base, event_multiplier: 5 }).success).toBe(true);
+    expect(tournamentCreateSchema.safeParse({ ...base, event_multiplier: 0.24 }).success).toBe(false);
+    expect(tournamentCreateSchema.safeParse({ ...base, event_multiplier: 5.01 }).success).toBe(false);
   });
   // The scope/type rejection tests went with 00108: those columns decided
   // nothing and were dropped, so asserting that a bad value for them is

@@ -214,8 +214,17 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     gate: 'route /matches',
   },
   'matches.void.write': {
-    label: 'Void a match', area: 'matches', group: null, mode: 'write',
+    label: 'Void or boost a match, and set repeat challenge rules', area: 'matches', group: null, mode: 'write',
     gate: 'actions/matches.ts voidMatch',
+    also: [
+      'actions/matches.ts boostMatchRating',
+      'actions/matches.ts updateRepeatChallengeSettings',
+    ],
+    merged:
+      'One authority over how much a confirmed challenge moves two ratings. Voiding takes the change back, '
+      + 'boosting scales it, and the repeat rules scale it before it lands; all three correct the same applied '
+      + 'delta, and a void still unwinds the other two. It sits here rather than behind a new capability because '
+      + 'the rule is meant to be an exec call and platform settings are admin-only.',
   },
   'matches.convert.write': {
     label: 'Convert a match to casual', area: 'matches', group: null, mode: 'write',
@@ -434,6 +443,14 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'tournaments.results.edit.write': {
     label: 'Edit a recorded result', area: 'tournaments', group: 'results', mode: 'write',
     gate: 'tournament-actions/results.ts editMatchResult',
+    also: [
+      'tournament-actions/team-category.ts approvePairCategoryRequestImpl',
+      'tournament-actions/team-category.ts declinePairCategoryRequestImpl',
+    ],
+    merged:
+      'Correcting a recorded result and settling a category change for a team that has played are one act: '
+      + 'both decide what head start a played match is judged by (00279). Declining the change is the same '
+      + 'decision answered no.',
   },
   'tournaments.results.entry.write': {
     label: 'Edit a match slot', area: 'tournaments', group: 'results', mode: 'write',

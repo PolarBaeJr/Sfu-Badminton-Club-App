@@ -26,12 +26,17 @@ const store = vi.hoisted(() => ({
   duesError: null as { message: string } | null,
   activeSeason: { id: 's-active' } as Record<string, unknown> | null,
   player: {} as Record<string, unknown>,
+  // An RPC that PostgREST does not know: the 00278 functions before the migration.
+  rpcError: null as { code: string; message: string } | null,
 }));
 
 vi.mock('../supabase-server', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createServiceRoleClient: () => ({
-    rpc: () => { store.rpcCalls += 1; return Promise.resolve({ data: store.rpcResult, error: null }); },
+    rpc: () => {
+      store.rpcCalls += 1;
+      return Promise.resolve(store.rpcError ? { data: null, error: store.rpcError } : { data: store.rpcResult, error: null });
+    },
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
       const self = () => chain;
@@ -65,10 +70,11 @@ vi.mock('../actions/_shared', async (importOriginal) => ({
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('next/headers', () => ({ headers: () => Promise.resolve(new Map()) }));
 
-const { registerForEvent } = await import('../tournament-actions');
+const { registerForEvent, joinEventWaitlist, leaveEventWaitlist } = await import('../tournament-actions');
 
 beforeEach(() => {
   store.rpcCalls = 0;
+  store.rpcError = null;
   store.duesError = null;
   store.activeSeason = { id: 's-active' };
   store.player = {
@@ -269,5 +275,96 @@ describe('the club-fee membership screen', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/try again shortly/);
     expect(store.rpcCalls).toBe(0);
+  });
+});
+
+// ===========================================================================
+// THE WAITLIST (00278)
+// ===========================================================================
+
+describe('the waitlist', () => {
+  it('an entry refused because others are waiting points at the waitlist', async () => {
+    store.rpcResult = { ok: false, reason: 'waitlist_queue' };
+    const r = await registerForEvent('e1');
+    expect(r.ok === false && r.error).toBe('Others are waiting for this event, join the waitlist');
+  });
+
+  it('a full event with a waitlist points at it, and one without says only that it is full', async () => {
+    store.rpcResult = { ok: false, reason: 'event_full', waitlist: true };
+    const withWaitlist = await registerForEvent('e1');
+    expect(withWaitlist.ok === false && withWaitlist.error).toBe('Event is full, join the waitlist');
+
+    store.rpcResult = { ok: false, reason: 'event_full', waitlist: false };
+    const without = await registerForEvent('e1');
+    expect(without.ok === false && without.error).toBe('Event is full');
+  });
+
+  it('joining returns the place in the queue', async () => {
+    store.rpcResult = { ok: true, waitlist_id: 'w1', position: 3, promoted: [], tournament_id: 't1' };
+    const r = await joinEventWaitlist('e1');
+    expect(r).toEqual({ ok: true, data: { position: 3, entered: false } });
+  });
+
+  it('joining that went straight in says so', async () => {
+    store.rpcResult = {
+      ok: true, waitlist_id: 'w1', position: null, tournament_id: 't1',
+      promoted: [{ player_id: 'p1', participant_id: 'tp1', waitlist_id: 'w1' }],
+    };
+    const r = await joinEventWaitlist('e1');
+    expect(r).toEqual({ ok: true, data: { position: null, entered: true } });
+  });
+
+  const CASES: Array<[string, Record<string, unknown>, RegExp]> = [
+    ['waitlist_disabled', {}, /does not have a waitlist/],
+    ['already_waiting', {}, /already on the waitlist/],
+    ['event_has_room', {}, /has room, so you can enter it now/],
+    ['entry_cap', { cap: 2 }, /already entered in 2 events at this tournament/],
+    ['already_registered', { entry_status: 'withdrawn' }, /already left this event/],
+    ['already_registered', { entry_status: 'registered' }, /^Already registered$/],
+    ['tournament_suspended', { suspension_reason: 'gym flooded' }, /suspended: gym flooded/],
+    ['already_in_pair', {}, /already in a pair/],
+  ];
+  for (const [reason, extra, sentence] of CASES) {
+    it(`a join refused with ${reason} is its own sentence`, async () => {
+      store.rpcResult = { ok: false, reason, ...extra };
+      const r = await joinEventWaitlist('e1');
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.error).toMatch(sentence);
+        expect(r.error).not.toMatch(/try again shortly/);
+      }
+    });
+  }
+
+  it('an unknown join refusal falls through to the retry message', async () => {
+    store.rpcResult = { ok: false, reason: 'something_invented_later' };
+    const r = await joinEventWaitlist('e1');
+    expect(r.ok === false && r.error).toMatch(/try again shortly/);
+  });
+
+  it('says the waitlist is not available yet before the migration', async () => {
+    store.rpcError = { code: '42883', message: 'function public.join_event_waitlist does not exist' };
+    const joined = await joinEventWaitlist('e1');
+    expect(joined.ok === false && joined.error).toBe('The waitlist is not available yet');
+
+    store.rpcError = { code: 'PGRST202', message: 'Could not find the function public.leave_event_waitlist' };
+    const left = await leaveEventWaitlist('e1');
+    expect(left.ok === false && left.error).toBe('The waitlist is not available yet');
+  });
+
+  it('refuses a doubles join without the solo acknowledgement, before the RPC', async () => {
+    store.event = { ...store.event, event_type: 'open_doubles' };
+    const r = await joinEventWaitlist('e1');
+    expect(r.ok === false && r.error).toMatch(/pair you with another member/);
+    expect(store.rpcCalls).toBe(0);
+  });
+
+  it('leaving maps not_waiting, and succeeds otherwise', async () => {
+    store.rpcResult = { ok: false, reason: 'not_waiting' };
+    const stale = await leaveEventWaitlist('e1');
+    expect(stale.ok === false && stale.error).toBe('You are not on the waitlist for this event.');
+
+    store.rpcResult = { ok: true, tournament_id: 't1' };
+    expect((await leaveEventWaitlist('e1')).ok).toBe(true);
   });
 });

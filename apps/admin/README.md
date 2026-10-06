@@ -5,25 +5,27 @@ The private console the club's executives run the club from, mounted at
 React 19. Same stack as the member app, different audience and a much harder
 authorization story.
 
-It covers members and accounts, seasons and fees, sessions and attendance,
-ladder ratings and disputes, the tournament desk, announcements, platform
-settings, permissions and the audit log.
+It covers members and accounts, seasons and fees, club finances (other income,
+expenses and their receipts), sessions and attendance, matches, challenges,
+disputes and walkovers, ladder ratings, the tournament desk, announcements, the
+legal documents members accept, platform settings, permissions and the audit
+log.
 
-Monorepo-wide setup, env vars and deployment live in the [root
-README](../../README.md). This file is about this app only.
+Monorepo-wide setup and env vars are in the [root README](../../README.md). This
+file is about this app only.
 
 ---
 
 ## Run it
 
 ```sh
-npm run dev:admin        # from the repo root — http://localhost:3001
+npm run dev:admin        # from the repo root: http://localhost:3001
 ```
 
-Locally the console is **root-mounted** (`http://localhost:3001/dashboard`). In
-every deployed build it sits under `/admin`. See the base-path note below —
-that difference is the source of a whole class of bug that only appears in
-production.
+Locally the console is **root-mounted** (`http://localhost:3001/dashboard`), as
+long as `NEXT_PUBLIC_BASE_PATH` is empty in `.env.local`. Production builds set
+it to `/admin`. See the base-path note below: that difference is the source of a
+whole class of bug that only appears in production.
 
 | Script | Does |
 |--------|------|
@@ -32,10 +34,10 @@ production.
 | `start` | serve a production build on 3001 |
 | `lint` | `next lint` |
 | `type-check` | `tsc --noEmit` |
-| `test` | Vitest, one run (89 suites in `src/lib/__tests__`, 93 across the app) |
+| `test` | Vitest, one run (96 test files in `src/lib/__tests__`, 102 across the app) |
 
-> `type-check` runs separately in CI and is not implied by `build` or `test`.
-> Run it at the repo root before pushing.
+> `type-check` is not implied by `build` or `test`. Run it at the repo root
+> before pushing.
 
 ## Layout
 
@@ -55,11 +57,13 @@ src/
 - **`/api/health/live`, `/api/health/ready`** — container probes; keep them
   dependency-free.
 - **`/api/passkey/{login,auth,register}/{options,verify}`** — WebAuthn.
-- **`/api/cron/{session-reminders,inactivity-notices,weekly-digest}`** — the
-  scheduled jobs. **They are not run by a platform scheduler.** `pg_cron` inside
-  Postgres calls these routes over HTTP, authenticating with
-  `Authorization: Bearer $CRON_SECRET`. The Supabase edge functions in
-  `supabase/functions/` are *not* what runs on the self-hosted stack.
+- **`/api/cron/{session-reminders,inactivity-notices,weekly-digest}`**: three
+  of the scheduled jobs. **They are not run by a platform scheduler.** `pg_cron`
+  inside Postgres calls these routes over HTTP, authenticating with
+  `Authorization: Bearer $CRON_SECRET`. The other scheduled jobs (expiry sweeps,
+  inactivity marking, account purges) are the Supabase edge functions in
+  `supabase/functions/`, which are invoked separately; see
+  [`supabase/`](../../supabase/README.md).
 - **`/api/webhooks/{resend,ses}`** — delivery/bounce callbacks from the email
   provider.
 

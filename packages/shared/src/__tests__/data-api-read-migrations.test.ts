@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_API_SCOPES } from '../utils/data-api-key';
 
-// 00264 TO 00267, READ OFF DISK. The data API's read surface is a set
+// 00264 TO 00267, 00270 AND 00277, READ OFF DISK. The data API's read surface is a set
 // of SECURITY DEFINER functions, which run as their owner and so bypass every
 // grant and policy the reader role would otherwise meet. What they return is
 // therefore the whole privacy boundary, and these properties pin it: a later
@@ -22,11 +22,16 @@ const scopes = migration('00264_');
 const history = migration('00265_');
 const schedule = migration('00266_');
 const header = migration('00267_');
-const both = `${history}\n${schedule}\n${header}`;
+const external = migration('00270_');
+const staged = migration('00277_');
+const both = `${history}\n${schedule}\n${header}\n${external}\n${staged}`;
 
-/** The body of one CREATE FUNCTION, from its header to the closing tag. */
+/**
+ * The body of one CREATE FUNCTION, from its header to the closing tag. The
+ * LAST definition, since that is the one a database ends up with.
+ */
 function functionBody(name: string): string {
-  const start = both.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
+  const start = both.lastIndexOf(`CREATE OR REPLACE FUNCTION public.${name}(`);
   expect(start, `${name} is not defined`).toBeGreaterThan(-1);
   const end = both.indexOf('$function$;', start);
   return both.slice(start, end);
@@ -56,6 +61,9 @@ const PUBLIC_FUNCTIONS: Record<string, string> = {
   data_api_tournament_events: 'uuid, uuid',
   data_api_tournament_entrants: 'uuid, uuid',
   data_api_tournament_draw: 'uuid, uuid',
+  data_api_tournament_events_v2: 'uuid, uuid',
+  data_api_tournament_entrants_v2: 'uuid, uuid',
+  data_api_tournament_draw_v2: 'uuid, uuid',
   data_api_sessions: 'uuid, timestamptz, timestamptz',
   data_api_club_events: 'uuid, timestamptz, timestamptz',
 };
@@ -69,6 +77,8 @@ const INTERNAL_FUNCTIONS: Record<string, string> = {
   data_api_tournament_match_publishable: 'uuid',
   data_api_match_rows: '',
   data_api_sides: 'uuid, jsonb, boolean',
+  data_api_external_ref: 'uuid, uuid',
+  data_api_draw_side: 'uuid, uuid, text',
 };
 
 describe('00264: the scope vocabulary', () => {
@@ -84,7 +94,7 @@ describe('00264: the scope vocabulary', () => {
   });
 });
 
-describe('00265 to 00267: every data API read function', () => {
+describe('00265 to 00277: every data API read function', () => {
   const all = { ...PUBLIC_FUNCTIONS, ...INTERNAL_FUNCTIONS };
 
   for (const [name, args] of Object.entries(all)) {
@@ -101,8 +111,11 @@ describe('00265 to 00267: every data API read function', () => {
 
   for (const [name, args] of Object.entries(PUBLIC_FUNCTIONS)) {
     it(`${name} is granted to data_api_reader and nobody else`, () => {
+      // 00270 recreates three of them and grants again, so a function may be
+      // granted more than once, but always the same thing to the same role.
       const grants = [...both.matchAll(new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${name}\\(([^)]*)\\) TO (\\w+);`, 'g'))];
-      expect(grants.map((g) => [g[1], g[2]])).toEqual([[args, 'data_api_reader']]);
+      expect(grants.length).toBeGreaterThan(0);
+      expect([...new Set(grants.map((g) => `${g[1]} TO ${g[2]}`))]).toEqual([`${args} TO data_api_reader`]);
     });
 
     it(`${name} takes the consumer id first`, () => {
@@ -152,11 +165,13 @@ describe('the one gate', () => {
     expect(body.match(/data_api_visible_season\(/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('the draw withholds a slot the gate would drop', () => {
-    const body = code(functionBody('data_api_tournament_draw'));
-    expect(body).toContain('data_api_tournament_match_publishable');
-    expect(body).toMatch(/withheld/);
-  });
+  for (const name of ['data_api_tournament_draw', 'data_api_tournament_draw_v2']) {
+    it(`${name} withholds a slot the gate would drop`, () => {
+      const body = code(functionBody(name));
+      expect(body).toContain('data_api_tournament_match_publishable');
+      expect(body).toMatch(/withheld/);
+    });
+  }
 
   it('the history test is the two privacy controls and the approval check', () => {
     const body = code(functionBody('data_api_published_player'));
@@ -175,6 +190,63 @@ describe('the one gate', () => {
     ]) {
       expect(body).toContain(clause);
     }
+  });
+});
+
+describe('00270: external teams', () => {
+  it('every function 00270 drops is recreated and revoked in the same file', () => {
+    const dropped = [...external.matchAll(/DROP FUNCTION IF EXISTS public\.(\w+)\(([^)]*)\);/g)];
+    expect(dropped.length).toBeGreaterThan(0);
+    for (const [, name, args] of dropped) {
+      expect(external).toContain(`CREATE OR REPLACE FUNCTION public.${name}(`);
+      expect(external).toContain(`REVOKE ALL ON FUNCTION public.${name}(${args}) FROM PUBLIC, anon, authenticated;`);
+    }
+  });
+
+  it('an external ref is tagged apart from player and match refs', () => {
+    const body = code(functionBody('data_api_external_ref'));
+    expect(body).toContain("':x:'");
+    expect(body).toContain('sha256(');
+  });
+
+  for (const name of ['data_api_tournament_draw', 'data_api_tournament_draw_v2']) {
+    it(`${name} still withholds by the match gate outside an external event`, () => {
+      const body = code(functionBody(name));
+      expect(body).toMatch(/NOT te\.external_event AND NOT data_api_tournament_match_publishable\(tm\.id\)/);
+      expect(body).toContain("tm.status = 'disputed'");
+    });
+  }
+
+  it('the match gate is not touched, so external matches stay out of history', () => {
+    expect(code(external)).not.toContain('FUNCTION public.data_api_match_rows(');
+    expect(code(external)).not.toContain('FUNCTION public.data_api_tournament_match_publishable(');
+  });
+});
+
+describe('00277: staged draws', () => {
+  it('never reads format_config whole, only a path into it', () => {
+    const uses = [...code(staged).matchAll(/format_config/g)];
+    expect(uses.length).toBeGreaterThan(0);
+    expect(code(staged)).not.toMatch(/format_config(?!\s*(->|#>))/);
+  });
+
+  it('never names a stage\'s courts or a court id', () => {
+    expect(code(staged)).not.toContain("'courts'");
+    expect(code(staged)).not.toMatch(/court_id/i);
+  });
+
+  it('withholds the head starts of a withheld slot', () => {
+    const body = code(functionBody('data_api_tournament_draw_v2'));
+    expect(body).toContain('CASE WHEN x.withheld THEN NULL ELSE tm.handicap_a::int END');
+    expect(body).toContain('CASE WHEN x.withheld THEN NULL ELSE tm.handicap_b::int END');
+  });
+
+  it('changes nothing in the match gate but the bracket keys', () => {
+    const before = code(history.slice(history.indexOf('CREATE OR REPLACE FUNCTION public.data_api_match_rows(')))
+      .split('$function$;')[0];
+    const after = code(functionBody('data_api_match_rows'));
+    const added = "'is_third_place', tm.is_third_place,\n      'stage', tm.stage,\n      'match_label', tm.match_label,\n      'handicap_a', tm.handicap_a,\n      'handicap_b', tm.handicap_b\n";
+    expect(after).toBe(before!.replace("'is_third_place', tm.is_third_place\n", added));
   });
 });
 
@@ -202,6 +274,8 @@ describe('no identity, no free text', () => {
     'court',
     'description',
     'waiver_text',
+    'external1_name',
+    'external2_name',
   ];
 
   for (const column of FORBIDDEN) {

@@ -1,0 +1,58 @@
+# What the public export contains. Default-deny: a path ships only when the
+# LAST pattern here that matches it is a positive one. `!` excludes. Globs are
+# anchored to the repo root: `**` spans directories, `*` stays in one segment.
+#
+# A pattern that matches nothing fails the run, so this list cannot go stale
+# without someone noticing. The denylist in leak-rules.json overrides all of
+# it, and .github/ is never exported, so this configuration excludes itself.
+
+# Root
+package.json
+package-lock.json
+tsconfig.base.json
+turbo.json
+vitest.config.ts
+.npmrc
+.nvmrc
+.gitignore
+.dockerignore
+.env.example
+Dockerfile
+README.md
+
+# Apps
+apps/admin/**
+apps/player/**
+apps/bot/**
+apps/data-api/**
+!apps/data-api/docker-compose.example.yml
+
+# Packages
+packages/**
+
+# Guards the club's own consent records against docs/legal, which is not
+# exported, so the test has nothing to read in a clone.
+!apps/admin/src/lib/__tests__/legal-doc-version-contract.test.ts
+
+# Database
+supabase/README.md
+supabase/migrations/**
+supabase/functions/**
+!supabase/functions/DEPLOY.md
+supabase/tests/**
+supabase/One Time Scripts/README.md
+supabase/One Time Scripts/00094-fee-ledger-data-migration.sql
+supabase/One Time Scripts/cleanup-orphan-challenges.sql
+
+# Tooling
+scripts/README.md
+scripts/gen-db-types.mjs
+scripts/gen-db-types.profiles.example.json
+
+# Documentation
+docs/README.md
+docs/guides/**
+docs/design/**
+docs/project/README.md
+docs/project/0[1-4]-*.md
+docs/project/06-tech-stack.md

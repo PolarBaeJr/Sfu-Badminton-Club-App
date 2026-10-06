@@ -95,6 +95,10 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'reliability_adjusted',
   'match_voided',
   'match_converted_casual',
+  // Written by boost_match_rating (00268) inside its own transaction, so it
+  // never reaches the helpers here; classified because it moves two ratings by
+  // an officer's hand, which is the same class as a void.
+  'match_rating_boosted',
 
   // Disputes.
   'dispute_resolved',
@@ -192,8 +196,17 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'result_edited',
   'result_undone',
   'participant_removed',
+  // An external team (00269) has no fee row or member record behind it, so this
+  // row is the only trace it was ever entered.
+  'external_pair_removed',
   'seeds_cleared',
   'draw_unlocked',
+  // A category change approved after the team has played (00279). No risk
+  // pattern matches it, so it is classified by hand: it changes the head start
+  // a team's next matches are played from, and decides that its recorded
+  // scores were judged by a category it no longer has. This row is the only
+  // record of who decided that and on whose request.
+  'pair_category_change_approved',
 ]);
 
 /**
@@ -214,7 +227,7 @@ export const RISK_CLASS_PATTERNS: readonly RegExp[] = [
   /^legal_|waiver/,
   /^passkey_(removed|counter_anomaly)$/,
   /token_rotated$/,
-  /^match_(voided|converted_casual)$/,
+  /^match_(voided|converted_casual|rating_boosted)$/,
   /^reliability_adjusted$/,
   /^season_(ended|fees_updated)$/,
   /^tournament_(status_changed|suspended|event_force_completed)$/,

@@ -29,6 +29,8 @@ const NOBODY: DrawCapabilities = {
   // control and no redraw button may start reading it by accident.
   manageCourts: false,
   enterResult: false,
+  // Settling a category change after play (00279), results.edit.write.
+  approveCategory: false,
 };
 
 const EVERYTHING: DrawCapabilities = {
@@ -43,6 +45,7 @@ const EVERYTHING: DrawCapabilities = {
   generate: true,
   manageCourts: true,
   enterResult: true,
+  approveCategory: true,
 };
 
 const only = (key: keyof DrawCapabilities): DrawCapabilities => ({ ...NOBODY, [key]: true });
@@ -52,6 +55,44 @@ const shown = (c: ParticipantControls) =>
 
 const registration = { status: 'registration', drawLocked: false };
 const drawn = { status: 'bracket_generated', drawLocked: true };
+
+describe('participantControls: a team category in a staged event', () => {
+  it('is offered on a staged event to a holder of seed.set.write, through play', () => {
+    for (const status of ['registration', 'checkin', 'bracket_generated', 'live']) {
+      expect(participantControls({ status, drawLocked: false, staged: true }, only('seedSet')).editCategory).toBe(true);
+    }
+  });
+
+  it('is not offered without the capability, on a locked or finalised event, or off a staged one', () => {
+    expect(participantControls({ status: 'live', drawLocked: false, staged: true }, NOBODY).editCategory).toBe(false);
+    expect(participantControls({ status: 'live', drawLocked: true, staged: true }, EVERYTHING).editCategory).toBe(false);
+    expect(participantControls({ status: 'completed', drawLocked: false, staged: true }, EVERYTHING).editCategory).toBe(false);
+    expect(participantControls({ status: 'live', drawLocked: false }, EVERYTHING).editCategory).toBe(false);
+    expect(participantControls({ status: 'live', drawLocked: false, staged: false }, EVERYTHING).editCategory).toBe(false);
+  });
+
+  // Approving or declining a change after play (00279): its own key, open until
+  // the event is finalised, and the draw lock does not close it, because the
+  // lock freezes the entry list and this decides what played matches mean.
+  it.each([
+    // status,             drawLocked, staged, capability,         decide
+    ['registration',       false,      true,   'approveCategory',  true],
+    ['checkin',            false,      true,   'approveCategory',  true],
+    ['bracket_generated',  false,      true,   'approveCategory',  true],
+    ['live',               false,      true,   'approveCategory',  true],
+    ['live',               true,       true,   'approveCategory',  true],
+    ['completed',          false,      true,   'approveCategory',  false],
+    ['live',               false,      false,  'approveCategory',  false],
+    ['live',               false,      true,   'seedSet',          false],
+    ['live',               false,      true,   'enterResult',      false],
+  ] as const)('decideCategory at %s, locked %s, staged %s, holding %s: %s', (status, drawLocked, staged, key, decide) => {
+    expect(participantControls({ status, drawLocked, staged }, only(key)).decideCategory).toBe(decide);
+  });
+
+  it('does not offer the category cell to an approver who cannot set seeds', () => {
+    expect(participantControls({ status: 'live', drawLocked: false, staged: true }, only('approveCategory')).editCategory).toBe(false);
+  });
+});
 
 describe('participantControls — capability, not just status', () => {
   it('offers nothing at all to a viewer holding none of the six', () => {

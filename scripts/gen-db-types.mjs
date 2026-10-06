@@ -4,9 +4,9 @@
 // WHY THIS EXISTS. The Supabase CLI's `supabase gen types typescript` wants a
 // connection string, and the connection string carries the postgres password.
 // Nobody working on this repo holds that password, and nothing should have to:
-// every other piece of database access in this project goes through the Pi over
-// ssh, where the credential never leaves the host. So this script reads the
-// catalogs itself through exactly that path:
+// every other piece of database access in this project goes through the
+// database host over ssh, where the credential never leaves the host. So this
+// script reads the catalogs itself through exactly that path:
 //
 //   ssh <host> "docker exec -i <container> psql -U postgres -d postgres ..."
 //
@@ -20,15 +20,19 @@
 // database produces a byte-identical file and any diff is a real schema change.
 //
 // Usage:
-//   node scripts/gen-db-types.mjs                       # write the file
-//   node scripts/gen-db-types.mjs --stdout               # print, write nothing
-//   node scripts/gen-db-types.mjs --container supabase-db --label production
+//   node scripts/gen-db-types.mjs --profile production            # write the file
+//   node scripts/gen-db-types.mjs --profile production --stdout   # print only
+//   node scripts/gen-db-types.mjs --ssh-host <host> --container <name> --label <text>
+//
+// A profile names a database without putting its host in the repository: the
+// profiles live in scripts/gen-db-types.profiles.json, which is not tracked.
+// Copy scripts/gen-db-types.profiles.example.json to start one.
 //
 // This script only ever READS. It issues SELECTs against pg_catalog and nothing
 // else; there is no code path here that writes to the database.
 
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,17 +42,21 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Options
 // ---------------------------------------------------------------------------
 
+const PROFILES = 'scripts/gen-db-types.profiles.json';
+
 function parseArgs(argv) {
   const opts = {
-    sshHost: 'pi',
-    container: 'supabase-staging-db',
+    profile: null,
+    sshHost: null,
+    container: null,
     database: 'postgres',
     user: 'postgres',
     schemas: 'graphql_public,public',
-    label: 'staging',
+    label: null,
     out: 'packages/shared/src/types/database.gen.ts',
     stdout: false,
   };
+  const explicit = new Set();
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const take = () => {
@@ -56,7 +64,9 @@ function parseArgs(argv) {
       if (v === undefined) throw new Error(`${arg} needs a value`);
       return v;
     };
+    if (arg !== '--profile' && arg !== '--stdout') explicit.add(arg);
     switch (arg) {
+      case '--profile': opts.profile = take(); break;
       case '--ssh-host': opts.sshHost = take(); break;
       case '--container': opts.container = take(); break;
       case '--database': opts.database = take(); break;
@@ -74,18 +84,51 @@ function parseArgs(argv) {
         throw new Error(`unknown option: ${arg}`);
     }
   }
+  if (opts.profile) applyProfile(opts, explicit);
+  if (!opts.sshHost || !opts.container) {
+    throw new Error(
+      'no database selected: pass --profile <name> (profiles live in ' + PROFILES +
+        ', see the .example.json beside it) or both --ssh-host and --container',
+    );
+  }
+  if (!opts.label) opts.label = opts.profile ?? 'unlabelled';
   return opts;
+}
+
+// Fills every option the command line did not set from the named profile, so
+// an explicit flag always wins over the profile.
+function applyProfile(opts, explicit) {
+  let profiles;
+  try {
+    profiles = JSON.parse(readFileSync(resolve(REPO_ROOT, PROFILES), 'utf8'));
+  } catch (err) {
+    throw new Error(`cannot read ${PROFILES} (${err.code ?? err.message}); copy the .example.json beside it`);
+  }
+  const profile = profiles[opts.profile];
+  if (!profile) throw new Error(`no profile "${opts.profile}" in ${PROFILES}`);
+  const fields = [
+    ['--ssh-host', 'sshHost'],
+    ['--container', 'container'],
+    ['--database', 'database'],
+    ['--user', 'user'],
+    ['--schemas', 'schemas'],
+    ['--label', 'label'],
+  ];
+  for (const [flag, key] of fields) {
+    if (!explicit.has(flag) && profile[key] !== undefined) opts[key] = profile[key];
+  }
 }
 
 const HELP = `
 Usage: node scripts/gen-db-types.mjs [options]
 
-  --ssh-host   <host>   ssh destination running the database container (default: pi)
-  --container  <name>   docker container name (default: supabase-staging-db)
+  --profile    <name>   read the options below from ${PROFILES}
+  --ssh-host   <host>   ssh destination running the database container
+  --container  <name>   docker container name
   --database   <name>   database name (default: postgres)
   --user       <name>   postgres role (default: postgres)
   --schemas    <a,b>    schemas to emit (default: graphql_public,public)
-  --label      <text>   how the header names this database (default: staging)
+  --label      <text>   how the header names this database (default: the profile name)
   --out        <path>   output path, relative to the repo root
   --stdout              print to stdout instead of writing the file
 `;
@@ -827,13 +870,11 @@ function header(opts, built) {
   const tables = relations.filter((r) => r.relkind === 'r' || r.relkind === 'p' || r.relkind === 'f');
   const views = relations.filter((r) => r.relkind === 'v' || r.relkind === 'm');
 
-  const cmd = [
-    'node scripts/gen-db-types.mjs',
-    `--ssh-host ${opts.sshHost}`,
-    `--container ${opts.container}`,
-    `--database ${opts.database}`,
-    `--label ${opts.label}`,
-  ].join(' ');
+  // Never the host or the container: this header is committed, and the
+  // profile is how those stay out of the repository.
+  const cmd = opts.profile
+    ? `node scripts/gen-db-types.mjs --profile ${opts.profile}`
+    : `node scripts/gen-db-types.mjs --ssh-host <host> --container <name> --label ${opts.label}`;
 
   const lines = [
     '// ############################################################################',
@@ -849,8 +890,8 @@ function header(opts, built) {
     '//',
     `//   ${cmd}`,
     '//',
-    `// SOURCE DATABASE: ${opts.label} — container "${opts.container}" on ssh host`,
-    `// "${opts.sshHost}", database "${opts.database}", schemas ${opts.schemas}.`,
+    `// SOURCE DATABASE: ${opts.label}, database "${opts.database}", schemas`,
+    `// ${opts.schemas}.`,
     '//',
     `// Covers ${tables.length} tables, ${views.length} views and ${enums.length} enums.`,
     '//',

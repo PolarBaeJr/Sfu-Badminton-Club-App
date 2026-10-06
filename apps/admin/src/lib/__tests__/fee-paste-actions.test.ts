@@ -276,14 +276,14 @@ describe('bulkAddManualFees', () => {
 
   it('records each entry as its own named payment, with its own audit row', async () => {
     const res = await bulkAddManualFees(SEASON, [
-      entry('Robin Park', { email: 'Robin@Gmail.com' }),
+      entry('Robin Park', { email: 'Robin@Example.net' }),
       entry('Chris Wu', { method: 'e-transfer', reference: 'ABC123' }),
     ]);
 
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data).toEqual({ attempted: 2, succeeded: 2, failures: [] });
     expect(manualRows().map((r) => [r.manual_name, r.manual_email])).toEqual([
-      ['Robin Park', 'robin@gmail.com'],
+      ['Robin Park', 'robin@example.net'],
       ['Chris Wu', null],
     ]);
     expect(auditsOf('manual_fee_added')).toHaveLength(2);

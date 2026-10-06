@@ -29,6 +29,10 @@ const store = vi.hoisted(() => ({
   rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcResult: {} as Record<string, unknown>,
   tableWrites: [] as string[],
+  // Per-function answers, for the 00278 fill that follows a withdrawal.
+  rpcByFn: {} as Record<string, { data: unknown; error: unknown }>,
+  // What the waitlist probe reads off tournament_events.
+  eventRow: null as Record<string, unknown> | null,
 }));
 
 vi.mock('../supabase-server', async (importOriginal) => ({
@@ -36,7 +40,7 @@ vi.mock('../supabase-server', async (importOriginal) => ({
   createServiceRoleClient: () => ({
     rpc: (fn: string, args: Record<string, unknown>) => {
       store.rpc.push({ fn, args });
-      return Promise.resolve({ data: store.rpcResult, error: null });
+      return Promise.resolve(store.rpcByFn[fn] ?? { data: store.rpcResult, error: null });
     },
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
@@ -45,7 +49,7 @@ vi.mock('../supabase-server', async (importOriginal) => ({
       chain.upsert = () => { store.tableWrites.push(table); return Promise.resolve({ error: null }); };
       chain.insert = () => { store.tableWrites.push(table); return Promise.resolve({ error: null }); };
       chain.update = () => { store.tableWrites.push(table); return chain; };
-      chain.maybeSingle = () => Promise.resolve({ data: null, error: null });
+      chain.maybeSingle = () => Promise.resolve({ data: table === 'tournament_events' ? store.eventRow : null, error: null });
       chain.single = () => Promise.resolve({ data: null, error: null });
       return chain;
     },
@@ -61,7 +65,7 @@ vi.mock('next/headers', () => ({ headers: () => Promise.resolve(new Map()) }));
 
 const { withdrawFromEvent } = await import('../tournament-actions');
 
-beforeEach(() => { store.rpc = []; store.tableWrites = []; });
+beforeEach(() => { store.rpc = []; store.tableWrites = []; store.rpcByFn = {}; store.eventRow = null; });
 
 describe('withdrawal goes through the serialized function', () => {
   it('calls withdraw_from_tournament_event, not a bare participant UPDATE', async () => {
@@ -93,4 +97,39 @@ describe('withdrawal goes through the serialized function', () => {
       }
     });
   }
+});
+
+describe('a withdrawal offers the place to the waitlist (00278)', () => {
+  const fills = () => store.rpc.filter((c) => c.fn === 'fill_event_from_waitlist');
+
+  beforeEach(() => {
+    store.rpcResult = { ok: true, tournament_id: 't1' };
+    store.eventRow = { waitlist_enabled: true, waitlist_auto_promote: true };
+  });
+
+  it('fills from the waitlist after the withdrawal, with nobody as the actor', async () => {
+    store.rpcByFn.fill_event_from_waitlist = { data: { ok: true, promoted: [], tournament_id: 't1' }, error: null };
+    const r = await withdrawFromEvent('e1');
+    expect(r.ok).toBe(true);
+    expect(store.rpc.map((c) => c.fn)).toEqual(['withdraw_from_tournament_event', 'fill_event_from_waitlist']);
+    expect(fills()[0]?.args).toEqual({ p_event_id: 'e1', p_actor: null, p_waitlist_id: null });
+  });
+
+  it('does not fill when the desk promotes by hand, or there is no waitlist', async () => {
+    store.eventRow = { waitlist_enabled: true, waitlist_auto_promote: false };
+    expect((await withdrawFromEvent('e1')).ok).toBe(true);
+    store.eventRow = { waitlist_enabled: false, waitlist_auto_promote: true };
+    expect((await withdrawFromEvent('e1')).ok).toBe(true);
+    expect(fills()).toEqual([]);
+  });
+
+  it('still withdraws when the fill function is missing', async () => {
+    store.rpcByFn.fill_event_from_waitlist = {
+      data: null,
+      error: { code: '42883', message: 'function public.fill_event_from_waitlist does not exist' },
+    };
+    const r = await withdrawFromEvent('e1');
+    expect(r.ok).toBe(true);
+    expect(fills()).toHaveLength(1);
+  });
 });

@@ -10,12 +10,17 @@ import {
   isPoolToBracket,
   playsRoundRobin,
   ELO_MULTIPLIER_BOUNDS,
+  poolsThenPlacement,
+  withEveryStageUnrated,
 } from '@badminton/shared';
 import { createTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';
-import type { TournamentEventType, TournamentEventFormat, TournamentSeedingMethod } from '@badminton/shared';
+import type { TournamentEventType, TournamentEventFormat, TournamentSeedingMethod, FormatConfig, FormatPoints } from '@badminton/shared';
+import { stagedEditorErrors } from '@/lib/staged-editor';
+import { StagedFormatEditor } from './staged-format-editor';
+import { PointsTableEditor } from './points-table-editor';
 import {
   EventFormatFields,
   EMPTY_FORMAT_VALUES,
@@ -35,10 +40,16 @@ export function CreateEventButton({
   // Seeding from it here is what makes the display honest; the event's own
   // value still decides, so an exec can still differ one event deliberately.
   defaultEloMultiplier,
+  // The tournament's placement bonus switch, as each new event's starting
+  // value. It was read by nothing that pays: the finaliser reads only the
+  // event's own column, which every event took as true. The event's column
+  // still decides; events created before this keep what they have.
+  defaultPlacementBonus = true,
 }: {
   tournamentId: string;
   siblings?: SiblingEvent[];
   defaultEloMultiplier?: number | null;
+  defaultPlacementBonus?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -48,6 +59,14 @@ export function CreateEventButton({
   const [maxParticipants, setMaxParticipants] = useState('');
   const [seedingMethod, setSeedingMethod] = useState<TournamentSeedingMethod>('elo');
   const [eloMultiplier, setEloMultiplier] = useState(String(defaultEloMultiplier ?? 1.25));
+  // External teams (00269): entered by name, unrated, always a doubles round robin.
+  const [externalEvent, setExternalEvent] = useState(false);
+  // A staged event's stages (00272), opened on the organiser's own preset.
+  const [stagedConfig, setStagedConfig] = useState<FormatConfig>(() => poolsThenPlacement());
+  // A legacy event's points table (00275); null is the format's default.
+  const [pointsConfig, setPointsConfig] = useState<FormatPoints | null>(null);
+  const staged = format === 'staged';
+  const stagedErrors = staged ? stagedEditorErrors(stagedConfig, null, new Set()) : [];
   const { toast } = useToast();
   const router = useRouter();
 
@@ -58,6 +77,8 @@ export function CreateEventButton({
   function openDialog() {
     const inherited = inheritableFrom(siblings);
     setFormatValues(inherited ? { ...EMPTY_FORMAT_VALUES, ...inherited } : EMPTY_FORMAT_VALUES);
+    setStagedConfig(externalEvent ? withEveryStageUnrated(poolsThenPlacement()) : poolsThenPlacement());
+    setPointsConfig(null);
     setOpen(true);
   }
 
@@ -80,8 +101,9 @@ export function CreateEventButton({
   // inside this one event, so an external link would be a second, contradictory
   // field for the same bracket — the server refuses it outright, and offering
   // the picker would be an invitation to be refused.
+  // A staged event draws its first stage from its own field, never a pool.
   const seedableSiblings =
-    playsRoundRobin(format)
+    playsRoundRobin(format) || staged
       ? []
       : siblings.filter(
           (s) =>
@@ -97,12 +119,15 @@ export function CreateEventButton({
         event_type: eventType,
         format,
         ...toFormatPayload(
-          playsRoundRobin(format) ? { ...formatValues, seededFrom: '' } : formatValues,
+          playsRoundRobin(format) || staged ? { ...formatValues, seededFrom: '' } : formatValues,
           format,
         ),
+        ...(staged ? { format_config: stagedConfig } : { points_config: pointsConfig }),
         max_participants: maxParticipants ? Number(maxParticipants) : undefined,
         seeding_method: seedingMethod,
         elo_multiplier: Number(eloMultiplier) || 1.25,
+        placement_bonus_enabled: defaultPlacementBonus,
+        external_event: externalEvent,
       });
       // Format and pool-link validation come back as a refusal message, not an
       // exception — show the exec which field they need to fix.
@@ -125,11 +150,42 @@ export function CreateEventButton({
       </Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Tournament Event">
         <form onSubmit={handleCreate} className="space-y-4">
+          <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={externalEvent}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setExternalEvent(on);
+                if (on) {
+                  // An external event is a doubles round robin, or a staged
+                  // event with every stage unrated.
+                  if (format !== 'staged') { setFormat('round_robin'); setPointsConfig(null); }
+                  setStagedConfig(withEveryStageUnrated(stagedConfig));
+                  if (!isDoublesEvent(eventType)) setEventType('open_doubles');
+                  setFormatValues({ ...formatValues, seededFrom: '' });
+                }
+              }}
+              className="mt-0.5 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+            />
+            <span>
+              <span className="text-sm font-medium text-[var(--text-primary)] block">
+                External event (teams entered by name, unrated)
+              </span>
+              <span className="text-xs text-[var(--text-muted)]">
+                For teams without member accounts. You add each team by typing two names; members cannot sign up.
+                Always doubles, played as a Round Robin or in Stages, and no result moves anybody&rsquo;s rating.
+                Cannot be changed later.
+              </span>
+            </span>
+          </label>
           <Select
             label="Event Type"
             value={eventType}
             onChange={(e) => setEventType(e.target.value as TournamentEventType)}
-            options={eventTypeOptions}
+            options={externalEvent
+              ? eventTypeOptions.filter((o) => isDoublesEvent(o.value as TournamentEventType))
+              : eventTypeOptions}
           />
           <Select
             label="Format"
@@ -137,6 +193,9 @@ export function CreateEventButton({
             onChange={(e) => {
               const next = e.target.value as TournamentEventFormat;
               setFormat(next);
+              // Each format has its own default table; one set for another
+              // format would pay by the wrong rule.
+              setPointsConfig(null);
               // The qualifier count means different things on the two pool
               // shapes, so the default follows the format rather than being
               // left at whatever the last one wanted: 2 out of each of several
@@ -146,7 +205,9 @@ export function CreateEventButton({
                 setFormatValues({ ...formatValues, qualifiersPerGroup: '4' });
               }
             }}
-            options={Object.entries(TOURNAMENT_EVENT_FORMAT_LABELS).map(([value, label]) => ({ value, label }))}
+            options={Object.entries(TOURNAMENT_EVENT_FORMAT_LABELS)
+              .filter(([value]) => !externalEvent || value === 'round_robin' || value === 'staged')
+              .map(([value, label]) => ({ value, label }))}
           />
           <p className="text-xs text-[var(--text-muted)] -mt-2">
             {TOURNAMENT_EVENT_FORMAT_HINTS[format]}
@@ -155,13 +216,24 @@ export function CreateEventButton({
               default, so the ladder's weights move as the exec types in the Elo
               Multiplier box further down — which is the only way to see what
               changing it does before the event exists. */}
-          <EventFormatFields
-            value={formatValues}
-            onChange={setFormatValues}
-            siblings={seedableSiblings}
-            format={format}
-            eloMultiplier={eloMultiplier}
-          />
+          {staged ? (
+            <StagedFormatEditor
+              value={stagedConfig}
+              onChange={setStagedConfig}
+              drawn={new Set()}
+              stored={null}
+              external={externalEvent}
+            />
+          ) : (
+            <EventFormatFields
+              value={formatValues}
+              onChange={setFormatValues}
+              siblings={seedableSiblings}
+              format={format}
+              eloMultiplier={eloMultiplier}
+            />
+          )}
+          {!staged && <PointsTableEditor format={format} value={pointsConfig} onChange={setPointsConfig} />}
           <Input
             label="Max Participants (optional)"
             type="number"
@@ -169,7 +241,7 @@ export function CreateEventButton({
             onChange={(e) => setMaxParticipants(e.target.value)}
             placeholder="Leave empty for unlimited"
           />
-          <Select
+          {!staged && <Select
             label="Seeding Method"
             value={seedingMethod}
             onChange={(e) => setSeedingMethod(e.target.value as TournamentSeedingMethod)}
@@ -184,12 +256,13 @@ export function CreateEventButton({
               { value: 'manual', label: 'Manual — draw follows the seeds exactly' },
               { value: 'random', label: 'Random' },
             ]}
-          />
+          />}
           {/* The same bounds the edit form and the server use. This box was
               unbounded, which mattered more than it looks: the column has no
               CHECK, eventEloMultiplier() is `Number(raw) || 1.25`, and so a
               negative inverted the event, a 0 silently became 1.25, and 125 for
               1.25 multiplied every rating change in the draw by a hundred. */}
+          {!externalEvent && (<>
           <Input
             label="Elo Multiplier"
             type="number"
@@ -205,9 +278,10 @@ export function CreateEventButton({
             <span className="font-mono text-[var(--text-secondary)]">1.25</span>. It can still be changed from Event
             Settings, up until the draw is generated.
           </p>
+          </>)}
           <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
-            <Button type="submit" loading={loading}>Create Event</Button>
+            <Button type="submit" loading={loading} disabled={stagedErrors.length > 0}>Create Event</Button>
           </div>
         </form>
       </Dialog>

@@ -28,6 +28,7 @@ import {
   type WaiverTemplateContext,
 } from './actions';
 import { RowLink } from '@/components/row-link';
+import { readTournamentBonusSettingsForDisplay } from '@/lib/platform-settings';
 import { EntriesByEvent } from './entries-by-event';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
@@ -66,8 +67,9 @@ type ParticipantRow = {
 type PairRow = {
   id: string;
   event_id: string;
-  player1_id: string;
-  player2_id: string;
+  // NULL on an external team (00269), which has no member to charge or name.
+  player1_id: string | null;
+  player2_id: string | null;
   pair_name: string | null;
   seed_number: number | null;
   combined_elo: number | null;
@@ -268,8 +270,8 @@ export default async function TournamentsPage({
     const entrantIds = new Set<string>();
     for (const p of participants) entrantIds.add(p.player_id);
     for (const p of pairs) {
-      entrantIds.add(p.player1_id);
-      entrantIds.add(p.player2_id);
+      if (p.player1_id) entrantIds.add(p.player1_id);
+      if (p.player2_id) entrantIds.add(p.player2_id);
     }
     // Fee-row holders are asked about too, not only live entrants — otherwise
     // a withdrawn member would never appear in `liable` and the loop below
@@ -322,8 +324,8 @@ export default async function TournamentsPage({
     };
     for (const p of participants) addPayer(p.event_id, p.player_id);
     for (const p of pairs) {
-      addPayer(p.event_id, p.player1_id);
-      addPayer(p.event_id, p.player2_id);
+      if (p.player1_id) addPayer(p.event_id, p.player1_id);
+      if (p.player2_id) addPayer(p.event_id, p.player2_id);
     }
 
     // AND EVERYONE WITH A FEE ROW, entered or not. participants/pairs above
@@ -379,8 +381,8 @@ export default async function TournamentsPage({
     const nameIds = new Set<string>();
     for (const p of featuredParticipants) nameIds.add(p.player_id);
     for (const p of featuredPairs) {
-      nameIds.add(p.player1_id);
-      nameIds.add(p.player2_id);
+      if (p.player1_id) nameIds.add(p.player1_id);
+      if (p.player2_id) nameIds.add(p.player2_id);
     }
     // Chunked — a full 128-entrant draw plus doubles pairs is already past a
     // third of the request-line budget on its own.
@@ -409,8 +411,8 @@ export default async function TournamentsPage({
         key: p.id,
         name:
           p.pair_name ??
-          `${players.get(p.player1_id)?.full_name ?? '?'} / ${players.get(p.player2_id)?.full_name ?? '?'}`,
-        avatarId: p.player1_id,
+          `${players.get(p.player1_id ?? '')?.full_name ?? '?'} / ${players.get(p.player2_id ?? '')?.full_name ?? '?'}`,
+        avatarId: p.player1_id ?? p.id,
         seed: p.seed_number,
         rating: p.combined_elo,
       })),
@@ -446,6 +448,11 @@ export default async function TournamentsPage({
       activeSeasonId: seasonList.find((s) => s.active_flag)?.id ?? null,
     };
   }
+
+  // The club's bonus amounts, shown behind each blank box of the edit dialog's
+  // per-tournament amounts (00275). Only for somebody who can open it; null on
+  // a failed read, and the boxes then show no placeholder.
+  const clubBonusSettings = canEdit ? await readTournamentBonusSettingsForDisplay(supabase) : null;
 
   // ---- The four stat cells -------------------------------------------------
   const openCount = openTournaments.length;
@@ -570,6 +577,7 @@ export default async function TournamentsPage({
                         <TournamentRowActions
                           tournament={t as unknown as TournamentData}
                           waiverTemplates={waiverTemplateContext}
+                          clubBonusSettings={clubBonusSettings}
                           canEdit={canEdit}
                           canArchive={canArchive}
                           canDelete={canDelete}
@@ -634,6 +642,7 @@ export default async function TournamentsPage({
                             <TournamentRowActions
                               tournament={t as unknown as TournamentData}
                               waiverTemplates={waiverTemplateContext}
+                              clubBonusSettings={clubBonusSettings}
                               canEdit={canEdit}
                               canArchive={canArchive}
                               canDelete={canDelete}

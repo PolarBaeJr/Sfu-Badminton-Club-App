@@ -9,7 +9,7 @@ at `src/index.ts`, and the apps list it in `transpilePackages`. There is no buil
 step and no `dist/`.
 
 ```sh
-npm run test -w @badminton/shared        # vitest — 76 test files
+npm run test -w @badminton/shared        # vitest, 79 test files, TZ=UTC
 npm run type-check -w @badminton/shared
 ```
 
@@ -25,14 +25,14 @@ src/
   validators/     Zod schemas + parse helpers.
   email/          Templates, sender, unsubscribe tokens.
   push/           Web Push send + VAPID. NOT in the barrel — see below.
-  utils/          ~50 single-purpose rule modules: seasons, fees, standings,
+  utils/          56 single-purpose rule modules: seasons, fees, standings,
                   tournament windows and entry caps, capability gates,
                   member identity, match results, QR/link tokens, …
 ```
 
 `utils/` is where most of the club's actual rules live, one concern per file,
-all pure. That is why the package carries 76 test files and the apps' route
-handlers carry almost none.
+almost all of them pure. That is why the package carries 79 test files and the
+apps' route handlers carry almost none.
 
 ## The barrel has rules
 
@@ -81,16 +81,17 @@ full scale means the stronger player wins ~91% of the time. Any intuition
 imported from a standard ELO implementation will be wrong by a factor of two
 here.
 
-Configured bounds come from the database and override the defaults;
-`elo_multiplier` is `DECIMAL(4,2)` with **no CHECK constraint**, so a nonsense
-value entered in the console is stored happily and shows up as absurd rating
-deltas.
+Configured bounds come from the database and override the defaults.
+`tournament_events.elo_multiplier` is `DECIMAL(4,2)` with **no CHECK
+constraint**. The console refuses values outside `ELO_MULTIPLIER_BOUNDS` (0.25
+to 5, in `utils/constants.ts`), but anything that writes the column another way
+is not stopped, and a nonsense value shows up as absurd rating deltas.
 
 ## Database types
 
-`types/database.gen.ts` is **generated** from the live schema —
-`scripts/gen-db-types.mjs`. Regenerate it after every schema migration and *read
-the diff*.
+`types/database.gen.ts` is **generated** from a live schema by
+`scripts/gen-db-types.mjs` (`npm run gen:types` at the root). Regenerate it after
+every schema migration and *read the diff*.
 
 It has drifted before: at one point it was six tables and fourteen functions
 behind, which hid a column that had been dropped forty migrations earlier and

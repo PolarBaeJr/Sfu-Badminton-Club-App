@@ -9,8 +9,8 @@
 // THE FORMATS ARE UNVERIFIED, as in ./etransfer-reference.ts: every bank lays
 // its confirmation out differently, and none of the fixtures in the tests is a
 // real screenshot. So only words that belong to one side count as strong.
-// "SFU" alone does not: it is in the club's own name, which is on an
-// e-transfer confirmation as the recipient. Nor does "badminton".
+// The university's name alone does not: it is in the club's own name, which is
+// on an e-transfer confirmation as the recipient. Nor does "badminton".
 //
 // Dependency-free, so the client form and the server action share it.
 

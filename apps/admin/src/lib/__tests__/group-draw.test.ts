@@ -18,6 +18,7 @@ import {
   makeDrawRng,
   type GroupCandidate,
 } from '../tournament-actions/_internal';
+import { groupLabel } from '@badminton/shared';
 
 /** A qualifier: which group it came out of, and where it finished there. */
 type Q = { id: string; group: number; groupRank: number };
@@ -30,7 +31,7 @@ function qualifiers(groups: number, perGroup: number): Q[] {
   const out: Q[] = [];
   for (let rank = 1; rank <= perGroup; rank++) {
     for (let g = 1; g <= groups; g++) {
-      out.push({ id: `${String.fromCharCode(64 + g)}${rank}`, group: g, groupRank: rank });
+      out.push({ id: `${groupLabel(g)}${rank}`, group: g, groupRank: rank });
     }
   }
   return out;
@@ -347,6 +348,21 @@ describe('planGroupAssignment', () => {
     expect(plan.get('p2')).toBe(1);
     // p5 is the only unplaced one and group 2 is empty, so it goes there.
     expect(plan.get('p5')).toBe(2);
+  });
+
+  it('deals a shuffled field on random seeding, ignoring seeds and the read order', () => {
+    const entries = field(12);
+    const plan = planGroupAssignment(entries, 3, { rng: makeDrawRng(99) });
+    const again = planGroupAssignment([...entries].reverse(), 3, { rng: makeDrawRng(99) });
+    expect(again).toEqual(plan);
+    // The serpentine still balances the sizes.
+    const sizes = [1, 2, 3].map((g) => [...plan.values()].filter((v) => v === g).length);
+    expect(sizes).toEqual([4, 4, 4]);
+    // Some seed makes the deal differ from the seeded one.
+    const seeded = [...planGroupAssignment(entries, 3).values()];
+    const differs = Array.from({ length: 20 }, (_, i) => i).some((seed) =>
+      entries.some((e) => planGroupAssignment(entries, 3, { rng: makeDrawRng(seed) }).get(e.id) !== seeded[entries.indexOf(e)]));
+    expect(differs).toBe(true);
   });
 
   it('re-deals everything when asked to', () => {

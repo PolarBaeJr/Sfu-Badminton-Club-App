@@ -1,11 +1,11 @@
-// Ordering rules for a round-robin table.
+// Tallying and ordering rules for a round-robin table.
 //
-// The tallying itself lives server-side (computeRoundRobinStandings) because it
-// needs the matches out of the database; only the ORDER lives here, because it
-// is pure, it decides who goes into a bracket, and it is the part worth testing
-// without a database. Both the leaderboard and pool-to-bracket seeding call
-// through this one comparator so a pool table can never disagree with the draw
-// it produced.
+// The reads live server-side (computeRoundRobinStandings) because they need the
+// database; the TALLY and the ORDER live here, because they are pure, they
+// decide who goes into a bracket, and they are the part worth testing without a
+// database. The server's standings, pool-to-bracket seeding and the admin
+// round-robin table all call through tallyRoundRobin and rankRoundRobin, so a
+// pool table can never disagree with the draw it produced.
 
 /** How to rank a pool. NULL in the database behaves as 'wins'. */
 export type SeedBy = 'wins' | 'points';
@@ -206,4 +206,133 @@ export function snakeGroupAssignment(count: number, groupCount: number): number[
     out.push((pass % 2 === 0 ? within : groupCount - 1 - within) + 1);
   }
   return out;
+}
+
+// ============================================================
+// The tally, shared by the server and the admin table
+// ============================================================
+
+/** One entry of the event, as the tally needs it. */
+export interface TallyEntry {
+  id: string;
+  name: string;
+  /** 1-based group, or null outside a group stage. */
+  group: number | null;
+  /** Withdrawn or disqualified: still counted in others' records, never ranked. */
+  out: boolean;
+}
+
+/** One match, reduced to its two sides whatever the discipline. */
+export interface TallyMatch {
+  status: string;
+  sideA: string | null;
+  sideB: string | null;
+  winner: string | null;
+  scores: ReadonlyArray<{ a: number; b: number }> | null;
+}
+
+/** A tallied row, ready for rankRoundRobin. */
+export interface RoundRobinTally extends GroupedStandingEntry {
+  name: string;
+}
+
+/** Only these count towards a table: a voided or unplayed match is not a result. */
+const TALLIED_MATCH_STATUSES = new Set(['completed', 'walkover']);
+
+/**
+ * Tally a round robin. Returns a row for every entry still in the event.
+ *
+ * EVERY entry is counted, including the ones that left: a withdrawn entry's
+ * PLAYED matches still count towards their opponents' records, which is what
+ * keeps the table agreeing with the ratings. The departed entry itself is left
+ * out of the returned rows, so it never takes a placing.
+ *
+ * A match counts only when it is completed or a walkover and both of its sides
+ * are entries of this event. Points and games come from the recorded scores.
+ */
+export function tallyRoundRobin(
+  entries: readonly TallyEntry[],
+  matches: readonly TallyMatch[],
+): RoundRobinTally[] {
+  const stats = new Map<string, RoundRobinTally>();
+  for (const e of entries) {
+    stats.set(e.id, {
+      id: e.id, name: e.name, group: e.group,
+      wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, gamesFor: 0, gamesAgainst: 0, h2h: {},
+    });
+  }
+
+  for (const m of matches) {
+    if (!TALLIED_MATCH_STATUSES.has(m.status)) continue;
+    const a = m.sideA ? stats.get(m.sideA) : undefined;
+    const b = m.sideB ? stats.get(m.sideB) : undefined;
+    if (!a || !b) continue;
+
+    if (m.winner === a.id) {
+      a.wins++;
+      b.losses++;
+      a.h2h[b.id] = (a.h2h[b.id] ?? 0) + 1;
+    } else if (m.winner === b.id) {
+      b.wins++;
+      a.losses++;
+      b.h2h[a.id] = (b.h2h[a.id] ?? 0) + 1;
+    }
+
+    for (const g of m.scores ?? []) {
+      a.pointsFor += g.a;
+      a.pointsAgainst += g.b;
+      b.pointsFor += g.b;
+      b.pointsAgainst += g.a;
+      if (g.a > g.b) {
+        a.gamesFor++;
+        b.gamesAgainst++;
+      } else if (g.b > g.a) {
+        b.gamesFor++;
+        a.gamesAgainst++;
+      }
+    }
+  }
+
+  const rankable = new Set(entries.filter((e) => !e.out).map((e) => e.id));
+  return [...stats.values()].filter((row) => rankable.has(row.id));
+}
+
+/**
+ * Order a tallied round robin, highest finisher first, with each row's place in
+ * its own group.
+ *
+ *   * grouped (group_count >= 2): qualificationOrder, winners then runners-up.
+ *   * flat: sortStandings, and groupRank is just the finishing place.
+ *
+ * AN EXTERNAL EVENT (00269) ranks by wins, then point difference, then points
+ * for: the organisers' rule, with no head-to-head and no game difference. The
+ * sort is handed copies with those two keys blanked, and the rows returned
+ * carry their real figures back.
+ */
+export function rankRoundRobin<T extends GroupedStandingEntry>(
+  rows: T[],
+  opts: { seedBy?: SeedBy | null; grouped: boolean; external: boolean },
+): Array<QualificationEntry<T>> {
+  const { seedBy = 'wins', grouped, external } = opts;
+  if (external) {
+    const real = new Map(rows.map((e) => [e.id, e]));
+    const keyed = rows.map((e) => ({ ...e, h2h: {} as Record<string, number>, gamesFor: 0, gamesAgainst: 0 }));
+    const restore = <S extends { id: string; groupRank: number }>(s: S): QualificationEntry<T> =>
+      ({ ...real.get(s.id)!, groupRank: s.groupRank });
+    if (grouped) return qualificationOrder(keyed, seedBy).map(restore);
+    return sortStandings(keyed, seedBy).map((s, i) => restore({ ...s, groupRank: i + 1 }));
+  }
+  if (grouped) return qualificationOrder(rows, seedBy);
+  return sortStandings(rows, seedBy).map((s, i) => ({ ...s, groupRank: i + 1 }));
+}
+
+/**
+ * How many entries a pool_to_bracket event's own pool sends to its knockout:
+ * the first this-many of rankRoundRobin's order. qualifiers_per_group defaults
+ * to 2 per group on a group stage and to 4 on a flat pool.
+ */
+export function poolQualifierCount(groupCount: number | null | undefined, qualifiersPerGroup: number | null | undefined): number {
+  const groups = groupCount ?? 1;
+  const perGroup = qualifiersPerGroup ?? (groups >= 2 ? 2 : 4);
+  return groups >= 2 ? groups * perGroup : perGroup;
 }

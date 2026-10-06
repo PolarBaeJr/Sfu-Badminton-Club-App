@@ -178,7 +178,7 @@ export function clampRectToViewport(
 // NAVIGATION. A step can name a page; the component opens it through the host's
 // router and waits for it. Every decision about that wait is here.
 
-/** How long a page may take to open before its step is skipped. Long, because the Pi renders on one thread. */
+/** How long a page may take to open before its step is skipped. Long, because the server renders on one thread. */
 export const TOUR_NAV_TIMEOUT_MS = 10000;
 /** How long a step waits for its target to appear once its page is open. */
 export const TOUR_TARGET_TIMEOUT_MS = 3000;

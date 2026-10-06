@@ -37,7 +37,7 @@ import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-ty
 // is not. A best-of-3 to 15 has no preset to pick and no reason to be refused —
 // tournament_matches carries the pair, derivedFormatWeight() takes arbitrary
 // values, and setRoundMatchShape already validates against CUSTOM_FORMAT_BOUNDS
-// (odd 1-7 games, 5-21 points), inside the 5-30 the CHECK in 00108 allows.
+// (odd 1-7 games, 5-30 points), the 5-30 the CHECK in 00108 allows.
 // So this is a UI gap being closed, not a capability being added: the custom
 // route follows the idiom the EVENT-level control already uses (a `__custom__`
 // sentinel that reveals two bounded number fields), rather than inventing a
@@ -223,7 +223,9 @@ export function RoundShapeControl({
     ? 'What the third-place playoff is played to'
     : `What round ${roundNumber} is played to`;
 
-  const weightLine = (
+  // An external event rates nothing (00269), so a rating weight here would be a
+  // figure that never applies.
+  const weightLine = event.external_event === true ? null : (
     <span
       className="block font-mono text-[10px] leading-tight text-[var(--text-muted)]"
       title={elo.spoken}

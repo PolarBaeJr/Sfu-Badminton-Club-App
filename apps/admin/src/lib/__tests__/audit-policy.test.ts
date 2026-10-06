@@ -223,6 +223,17 @@ describe('audit policy drift', () => {
     const stale = [...REQUIRED_AUDIT_ACTIONS].filter((a) => !used.has(a)).sort();
     expect(stale).toEqual([]);
   });
+
+  // 00279. Classified by hand: no risk pattern matches the name, and the row
+  // is the only record of who changed a played team's head start. Asking,
+  // declining and cancelling move nothing, so they stay best-effort.
+  it('requires the approval of a category change after play, and only that one', () => {
+    expect(used.has('pair_category_change_approved')).toBe(true);
+    expect(isRequiredAudit('pair_category_change_approved')).toBe(true);
+    expect(isRequiredAudit('pair_category_change_requested')).toBe(false);
+    expect(isRequiredAudit('pair_category_change_declined')).toBe(false);
+    expect(isRequiredAudit('pair_category_change_cancelled')).toBe(false);
+  });
 });
 
 /* -------------------------------------------------------------------------- */

@@ -137,3 +137,70 @@ export function placementBonusFor(
   if (position <= 8) return amounts.quarterfinalist;
   return 0;
 }
+
+/** The flat keys a tournament's own amounts are stored under (00275), in display order. */
+export const TOURNAMENT_BONUS_AMOUNT_KEYS = [
+  'singles_champion', 'singles_finalist', 'singles_thirdplace', 'singles_semifinalist', 'singles_quarterfinalist',
+  'doubles_champion', 'doubles_finalist', 'doubles_thirdplace', 'doubles_semifinalist', 'doubles_quarterfinalist',
+] as const;
+
+export type TournamentBonusAmountKey = (typeof TOURNAMENT_BONUS_AMOUNT_KEYS)[number];
+
+const AMOUNT_FIELDS: Record<string, keyof PlacementBonusAmounts> = {
+  champion: 'champion',
+  finalist: 'finalist',
+  thirdplace: 'thirdPlace',
+  semifinalist: 'semifinalist',
+  quarterfinalist: 'quarterfinalist',
+};
+
+/** The club's amount behind one flat key. */
+export function tournamentBonusAmount(settings: TournamentBonusSettings, key: TournamentBonusAmountKey): number {
+  const [discipline, place] = key.split('_') as ['singles' | 'doubles', string];
+  return settings[discipline][AMOUNT_FIELDS[place]!];
+}
+
+/**
+ * The club's settings with one tournament's own amounts laid over them
+ * (tournaments.placement_bonus_amounts, 00275). A key the tournament leaves
+ * out, or stores as anything settingNumber will not read, keeps the club's
+ * amount; an explicit 0 is honoured. Only amounts move: `enabled` is the
+ * club's master switch and stays the club's.
+ */
+export function applyTournamentBonusOverride(settings: TournamentBonusSettings, raw: unknown): TournamentBonusSettings {
+  const row = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const out: TournamentBonusSettings = {
+    enabled: settings.enabled,
+    singles: { ...settings.singles },
+    doubles: { ...settings.doubles },
+  };
+  for (const key of TOURNAMENT_BONUS_AMOUNT_KEYS) {
+    const [discipline, place] = key.split('_') as ['singles' | 'doubles', string];
+    const field = AMOUNT_FIELDS[place]!;
+    out[discipline][field] = settingNumber(row[key], settings[discipline][field]);
+  }
+  return out;
+}
+
+/**
+ * A tournament's own amounts as they should be stored: only the ten known keys,
+ * only values settingNumber reads (blank means "the club's"), as numbers, and
+ * null when nothing is left.
+ */
+export function normalizeTournamentBonusAmounts(raw: unknown): Partial<Record<TournamentBonusAmountKey, number>> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const row = raw as Record<string, unknown>;
+  const out: Partial<Record<TournamentBonusAmountKey, number>> = {};
+  for (const key of TOURNAMENT_BONUS_AMOUNT_KEYS) {
+    const n = settingNumber(row[key], Number.NaN);
+    if (!Number.isNaN(n)) out[key] = n;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** Do two stored override values pay the same amounts. Compared key by key, never as JSON text. */
+export function sameTournamentBonusAmounts(a: unknown, b: unknown): boolean {
+  const x = normalizeTournamentBonusAmounts(a);
+  const y = normalizeTournamentBonusAmounts(b);
+  return TOURNAMENT_BONUS_AMOUNT_KEYS.every((k) => x?.[k] === y?.[k]);
+}

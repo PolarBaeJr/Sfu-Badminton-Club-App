@@ -414,6 +414,15 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     // ready, so it is filtered down to the requester's own id.
     why: 'The draw matches you appear in. The "ready" list is filtered down to you alone, because the rest of it is other entrants. Who entered the result is reduced to "you" or a club officer.',
   },
+  tournament_event_waitlist: {
+    playerColumns: ['player_id', 'resolved_by'],
+    disposition: 'export',
+    // resolved_by is the OFFICER who promoted or removed the member (00278),
+    // not the member. Projected to a role descriptor under `resolved_by_role`,
+    // for the same reason as session_attendance.marked_by.
+    withheldColumns: ['resolved_by'],
+    why: 'Every tournament event waitlist you joined, when, and whether you were entered from it, left it, were skipped or were removed.',
+  },
   legacy_tournament_participants: {
     playerColumns: ['player_id', 'partner_id'],
     disposition: 'project',
@@ -603,6 +612,11 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     disposition: 'counted',
     withheldColumns: ['key_hash'],
     why: 'Data API keys you minted or revoked, as an officer. Counted rather than listed: issuing a key is an official act on behalf of the club, and the key itself is about the organisation that received it. The stored hash of a key is never exported. If you want to know what the data API publishes ABOUT YOU, that is your ratings row above, reduced to a pseudonym.',
+  },
+  tournament_category_requests: {
+    playerColumns: ['requested_by', 'resolved_by'],
+    disposition: 'counted',
+    why: 'Team category changes you asked for or decided in a staged tournament event, as an officer. Counted rather than listed: the request is about a team\'s head start, not about you.',
   },
 
   // ---------------------------------------------------------------
@@ -821,6 +835,7 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   schema_migrations: 'Which migrations have been applied.',
   seasons: 'The club\'s seasons. A club-wide object.',
   tournament_fee_tiers: 'Tournament price tiers. A club-wide object.',
+  tournament_courts: 'The courts of a tournament (00273). A venue object, with no player reference.',
   match_games:
     'Game scores hanging off a match id, with no player reference. Exported as the context for the member\'s own matches.',
   tournament_events:
@@ -840,6 +855,10 @@ export const NOT_ABOUT_PLAYERS: Record<string, string> = {
   discord_feedback_posts: 'Which feedback reports the bot has already relayed.',
   discord_tournament_events: 'Which tournament events the bot has already posted.',
   discord_club_events: 'Which club events the bot has already posted to the Discord Events tab.',
+  discord_signup_drafts:
+    'Pre-account scratch, purged within 30 minutes, no player id. A Discord /signup in progress, before any account exists (00281).',
+  discord_signup_attempts:
+    'A rate-limit ledger for Discord /signup, purged after a day, no player id. The email is kept only as a digest (00281).',
   guest_waiver_signings:
     'Waiver signings by guests who are not members and have no account. There is no member column; it holds non-members\' names and emails, which a member export cannot reach.',
 };
@@ -926,7 +945,7 @@ export const DECLARED_GAPS: readonly { gap: string; detail: string }[] = [
  * information the club has handed to somebody else to process on its behalf.
  * A member reading a file that enumerates fifty tables down to the column would
  * reasonably conclude it was complete, and it would not be: none of these rows
- * live only on the Pi.
+ * live only on the server.
  *
  * WHAT IS DELIBERATELY NOT ON THIS LIST. PostHog is wired into the code
  * (`lib/posthog.ts`, and `components/posthog-identify.tsx` would send the

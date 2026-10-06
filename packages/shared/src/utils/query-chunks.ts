@@ -6,13 +6,13 @@
 // body to move it into. Kong 3.9.1 sits in front of PostgREST and refuses a
 // request line over 8,192 bytes with `414 Request-URI Too Large`.
 //
-// MEASURED on the production request path (Cloudflare → proxy-manager → Kong →
+// MEASURED on the production request path (CDN edge → reverse proxy → Kong →
 // PostgREST), from inside the running admin container, against the same select
 // list the push path uses:
 //
 //     215 ids → 8,047 B → reached PostgREST
 //     220 ids → 8,232 B → 414
-//     500 ids → 18,592 B → 520 (Cloudflare gives up before Kong answers)
+//     500 ids → 18,592 B → 520 (the CDN edge gives up before Kong answers)
 //
 // So the club's push stops working entirely somewhere between 215 and 220
 // members — on roster size alone, with no user-visible error, because the

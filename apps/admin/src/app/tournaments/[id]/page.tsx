@@ -2,14 +2,16 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
-import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, loadTournamentEntryCounts, selectInChunks } from '@badminton/shared';
+import { formatDate, eventStatusLabel, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, describeStagedFormat, parseFormatConfig, loadTournamentEntryCounts, selectInChunks } from '@badminton/shared';
 import type { TournamentEventFormat } from '@badminton/shared';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign, MapPin } from 'lucide-react';
 import Link from 'next/link';
 import { CreateEventButton } from './create-event';
 import { TournamentStatusControls } from './tournament-status-controls';
 import { LiveTournament } from '../live-tournament';
+import { CourtsEditor } from './courts-editor';
+import { COURTS_MIGRATION_MISSING, readTournamentCourts, readUsedCourtLabels } from '@/lib/tournament-courts';
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -24,6 +26,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // the entry-count read below is skipped entirely when this is false, so the
   // gate withholds the query rather than only hiding its output.
   const canSeeEntryCounts = permits(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer), 'tournaments.draw.entrycounts.read');
+  // The courts editor's writes all ask this key; without it the list is read-only.
+  const canEditCourts = permits(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer), 'tournaments.manage.update.write');
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();
@@ -34,6 +38,13 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     .select('*')
     .eq('tournament_id', id)
     .order('created_at');
+
+  // The tournament's courts (00273), null before that migration, and the courts
+  // already typed on its matches for the editor's one-tap import.
+  const [courts, usedCourtLabels] = await Promise.all([
+    readTournamentCourts(supabase, id),
+    readUsedCourtLabels(supabase, id).catch(() => [] as string[]),
+  ]);
 
   // Get participant counts per event (batch queries instead of N+1)
   const eventCounts: Record<string, number> = {};
@@ -184,6 +195,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             <CreateEventButton
               tournamentId={id}
               defaultEloMultiplier={tournament.event_multiplier}
+              defaultPlacementBonus={tournament.placement_bonus_enabled !== false}
               siblings={(events ?? []).map((ev) => ({
                 id: ev.id,
                 event_type: ev.event_type,
@@ -213,7 +225,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                       role="status"
                       style={{ color: statusColor, backgroundColor: `${statusColor}15` }}
                     >
-                      <span className="sr-only">Event status: </span>{TOURNAMENT_EVENT_STATUS_LABELS[ev.status as keyof typeof TOURNAMENT_EVENT_STATUS_LABELS] ?? ev.status}
+                      <span className="sr-only">Event status: </span>{eventStatusLabel(ev.format as string, ev.status as keyof typeof TOURNAMENT_EVENT_STATUS_LABELS) ?? ev.status}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-[var(--text-muted)]">
@@ -229,7 +241,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                       {eventCounts[ev.id] ?? 0}{ev.max_participants ? `/${ev.max_participants}` : ''}
                     </span>
                     <span>&middot;</span>
-                    <span>{describeMatchShape(ev)}</span>
+                    <span>{ev.format === 'staged' ? describeStagedFormat(parseFormatConfig(ev.format_config)) : describeMatchShape(ev)}</span>
+                    {ev.external_event && (<><span>&middot;</span><span>External, unrated</span></>)}
                   </div>
                 </div>
               </Link>
@@ -245,6 +258,23 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             </p>
           </div>
         )}
+      </div>
+
+      {/* Courts (00273): what the desk picks from, and what a stage's court names must be. */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-[var(--text-muted)]" />
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+            Courts {courts && courts.length > 0 && <span className="text-[var(--text-muted)] font-normal">({courts.length})</span>}
+          </h2>
+        </div>
+        <CourtsEditor
+          tournamentId={id}
+          courts={courts}
+          usedLabels={usedCourtLabels}
+          canEdit={canEditCourts}
+          migrationMissing={COURTS_MIGRATION_MISSING}
+        />
       </div>
 
       {/* Entries per member — the cap, and who has reached it. Rendered only

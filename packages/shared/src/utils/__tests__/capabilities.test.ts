@@ -350,16 +350,32 @@ describe('CAPABILITY_GATES', () => {
   // 188 BECAME 190 with the members' signatures page: legal.page gains the
   // page and players.read its roster fetch. 190 BECAME 191 with
   // updateDataApiKeyScopes, a second site for accounts.apikey.mint.write.
-  it('names 191 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 191 BECAME 193 with repeat challenges (00268): boostMatchRating and
+  // updateRepeatChallengeSettings, two new sites and NO new capability. Both
+  // merged into `matches.void.write`, because voiding, boosting and the repeat
+  // rules all decide how much one confirmed challenge moves two ratings, and
+  // because a new capability would have collided with the 1.1.0 vocabulary
+  // migrations that redefine the CHECK wholesale. The repeat rules also live in
+  // rating_defaults, which /ratings edits under the admin-only
+  // `platform.settings.write`; this is the exec's narrower door to three keys.
+  //
+  // 193 BECAME 195 with category change requests (00279): the approve and the
+  // decline, two new sites and NO new capability. Both merged into
+  // `tournaments.results.edit.write`, because changing a played team's
+  // category decides what head start its recorded scores are judged by, which
+  // is what correcting a recorded result decides. Asking and cancelling stay
+  // with the category cell's own `tournaments.draw.seed.set.write`.
+  it('names 195 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(191);
-    expect(new Set(sites).size).toBe(191);
-    expect(ENFORCEMENT_POINTS).toBe(191);
+    expect(sites.length).toBe(195);
+    expect(new Set(sites).size).toBe(195);
+    expect(ENFORCEMENT_POINTS).toBe(195);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

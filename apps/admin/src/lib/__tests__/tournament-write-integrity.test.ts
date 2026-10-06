@@ -98,6 +98,13 @@ const store = vi.hoisted(() => ({
    * line.
    */
   oldSchema: false,
+  /** "This database predates 00274": add_external_tournament_pair_v2 is unknown to PostgREST. */
+  v2Missing: false,
+  /**
+   * Answers the 00278 waitlist RPCs. Unset, they fall through to "unknown
+   * rpc", which is what a database without the migration says.
+   */
+  waitlistRpc: null as null | ((name: string, args: Record<string, unknown>) => { data: unknown; error: unknown } | undefined),
   // Stands in for `gen_random_uuid()`. Bracket generation inserts a match shell
   // and immediately uses the id it gets back to wire up the next round, so an
   // insert that returns no id cannot be exercised at all.
@@ -132,6 +139,11 @@ const makeClient = vi.hoisted(() => () => {
     // harness is not testing.
     let countExact = false;
     let head = false;
+    // `.update(x).select(cols)`: PostgREST hands back the rows the write hit,
+    // and a guarded update with zero rows is how a caller learns it matched
+    // nothing. Without it a `.select()` after a write resolved `data: null`
+    // here, and "already decided" could never be reached.
+    let returning = false;
 
     // PostgREST spells a list literal `("a","b")`.
     const parseList = (raw: unknown): unknown[] =>
@@ -182,7 +194,7 @@ const makeClient = vi.hoisted(() => () => {
     const run = () => {
       const f = fault();
       // The whole point: a Postgres error is a RESOLVED value, not a rejection.
-      if (f) return { data: null, error: { message: f.message } };
+      if (f) return { data: null, error: { message: f.message, code: f.code } };
       if (op === 'update') {
         const hit = matching();
         for (const r of hit) Object.assign(r, payload);
@@ -190,7 +202,7 @@ const makeClient = vi.hoisted(() => () => {
         // only way a caller can tell a guarded write fired from one that did
         // not. Always returned; supabase-js only populates it when asked, and a
         // caller that does not ask simply ignores it.
-        return { data: null, error: null, count: hit.length };
+        return { data: returning ? hit.map(embed) : null, error: null, count: hit.length };
       }
       if (op === 'insert') {
         const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
@@ -262,8 +274,10 @@ const makeClient = vi.hoisted(() => () => {
     };
 
     const api = {
-      select(c: string, opts?: { count?: string; head?: boolean }) {
-        cols = c;
+      select(c?: string, opts?: { count?: string; head?: boolean }) {
+        if (op === 'update') returning = true;
+        // A bare `.select()` is PostgREST's `*`.
+        cols = c ?? '*';
         countExact = opts?.count === 'exact';
         head = opts?.head === true;
         return api;
@@ -678,6 +692,8 @@ const makeClient = vi.hoisted(() => () => {
 
   function rpc(name: string, args: Record<string, unknown>) {
     store.rpcCalls.push({ name, args });
+    const waitlistAnswer = store.waitlistRpc?.(name, args);
+    if (waitlistAnswer) return Promise.resolve(waitlistAnswer);
     if (name === 'apply_tournament_match_rating') return applyRpc(args);
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
     if (name === 'delete_phase_matches') return deletePhaseRpc(args);
@@ -964,6 +980,68 @@ const makeClient = vi.hoisted(() => () => {
         },
         error: null,
       });
+    }
+
+    // Mirrors add_external_tournament_pair (00269): the row it writes, nothing else.
+    // v2 (00274) is the same write plus team_category.
+    if (name === 'add_external_tournament_pair' || name === 'add_external_tournament_pair_v2') {
+      if (name === 'add_external_tournament_pair_v2' && store.v2Missing) {
+        return Promise.resolve({ data: null, error: { message: 'Could not find the function public.add_external_tournament_pair_v2', code: 'PGRST202' } });
+      }
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === args.p_event_id);
+      if (!ev) return Promise.resolve({ data: null, error: { message: 'Event not found.', code: 'P0002' } });
+      if (!ev.external_event) {
+        return Promise.resolve({ data: null, error: { message: 'External teams can only be entered in an external event.', code: '23514' } });
+      }
+      const id = `external-pair-${(store.db.tournament_pairs ?? []).length + 1}`;
+      (store.db.tournament_pairs ??= []).push({
+        id, event_id: ev.id, player1_id: null, player2_id: null,
+        external1_name: args.p_external1_name, external2_name: args.p_external2_name,
+        pair_name: (args.p_team_name as string | undefined) ?? `${args.p_external1_name} / ${args.p_external2_name}`,
+        status: 'registered',
+        team_category: (args.p_category as string | null | undefined) ?? null,
+      });
+      return Promise.resolve({ data: id, error: null });
+    }
+
+    // Mirrors approve_pair_category_request (00279): the same refusals in the
+    // same order, each writing nothing, then the category and the request.
+    if (name === 'approve_pair_category_request') {
+      const answer = (data: Row) => Promise.resolve({ data, error: null });
+      const req = (store.db.tournament_category_requests ?? []).find((r) => r.id === args.p_request_id);
+      if (!req) return answer({ ok: false, reason: 'not_found' });
+      if (req.status !== 'pending') return answer({ ok: false, reason: 'not_pending', status: req.status });
+      const ev = (store.db.tournament_events ?? []).find((e) => e.id === req.event_id);
+      if (ev?.status === 'completed') return answer({ ok: false, reason: 'event_completed' });
+      if (ev?.format !== 'staged') return answer({ ok: false, reason: 'not_staged' });
+      if (req.to_category != null) {
+        const cats = (ev.format_config as { categories?: unknown } | null)?.categories;
+        const keys = Array.isArray(cats) ? cats.map((c) => (c as { key: string }).key) : ['mens', 'womens', 'mixed'];
+        if (!keys.includes(req.to_category as string)) return answer({ ok: false, reason: 'unknown_category' });
+      }
+      const p = (store.db.tournament_pairs ?? []).find((r) => r.id === req.pair_id);
+      if (!p || p.event_id !== req.event_id) return answer({ ok: false, reason: 'pair_gone' });
+      if ((p.team_category ?? null) !== (req.from_category ?? null)) return answer({ ok: false, reason: 'stale_category' });
+      p.team_category = req.to_category ?? null;
+      Object.assign(req, { status: 'approved', resolved_by: args.p_actor, resolved_at: new Date().toISOString() });
+      return answer({
+        ok: true, pair_id: req.pair_id, event_id: req.event_id, tournament_id: ev.tournament_id,
+        from: req.from_category ?? null, to: req.to_category ?? null, requested_by: req.requested_by ?? null,
+      });
+    }
+
+    // Mirrors pair_tournament_entrants (00102): the pair row, and both halves
+    // leave the unpaired pool.
+    if (name === 'pair_tournament_entrants') {
+      const halves = [args.p_player1_id, args.p_player2_id];
+      store.db.tournament_participants = (store.db.tournament_participants ?? [])
+        .filter((r) => !(r.event_id === args.p_event_id && halves.includes(r.player_id)));
+      const id = `member-pair-${(store.db.tournament_pairs ?? []).length + 1}`;
+      (store.db.tournament_pairs ??= []).push({
+        id, event_id: args.p_event_id, player1_id: args.p_player1_id, player2_id: args.p_player2_id,
+        pair_name: args.p_pair_name, combined_elo: args.p_combined_elo, status: 'registered', team_category: null,
+      });
+      return Promise.resolve({ data: id, error: null });
     }
 
     if (name === 'remove_field_entry') {
@@ -1402,12 +1480,32 @@ const makeClient = vi.hoisted(() => () => {
 
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
+// A build-time guard with no runtime implementation, reached through
+// actions/tournaments (updateTournament) and its notify import.
+vi.mock('server-only', () => ({}));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
+// The real ensureEntryFees, recorded on the way through, so a waitlist
+// promotion can be shown to settle the fee without changing what any other
+// case sees.
+const entryFeeCalls = vi.hoisted(() => [] as Array<{ tournamentId: string; playerIds: string[] }>);
+vi.mock('@badminton/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@badminton/shared')>();
+  return {
+    ...actual,
+    ensureEntryFees: (...args: Parameters<typeof actual.ensureEntryFees>) => {
+      entryFeeCalls.push({ tournamentId: args[1], playerIds: [...args[2]] });
+      return actual.ensureEntryFees(...args);
+    },
+  };
+});
 // SWITCHABLE, because one of the things under test is what happens when the
 // gate REFUSES. Hoisted so the vi.mock factory below can close over it.
-const capabilityGate = vi.hoisted(() => ({ refuse: null as string | null }));
+// `asked` records which capability each action asked for, so a test can say
+// the key rather than only that some key was asked.
+const capabilityGate = vi.hoisted(() => ({ refuse: null as string | null, asked: [] as string[] }));
 vi.mock('../actions/_shared', () => ({
-  requireCapability: async () => {
+  requireCapability: async (capability: string) => {
+    capabilityGate.asked.push(capability);
     if (capabilityGate.refuse) throw new Error(capabilityGate.refuse);
     return { id: 'admin-1' };
   },
@@ -1418,7 +1516,8 @@ import {
 } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses, recomputeEventStandings } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
-import { updateTournamentEvent } from '../tournament-actions/events';
+import { updateTournamentEvent, createTournamentEvent, setEventWindows, setEventWaitlist } from '../tournament-actions/events';
+import { updateTournament } from '../actions/tournaments';
 // THE FORM'S OWN PAYLOAD BUILDER, not a hand-made patch. Whether an exec's
 // choice of seed_by survives a save depends on toFormatPayload and
 // updateTournamentEvent agreeing about when the column means something, and a
@@ -1427,13 +1526,21 @@ import { updateTournamentEvent } from '../tournament-actions/events';
 import { toFormatPayload, EMPTY_FORMAT_VALUES } from '@/app/tournaments/[id]/event-format-fields';
 // 00124's ceiling, imported rather than restated: the form, the generator's
 // refusal and these tests must all be reading the same arithmetic.
-import { maxFirstRoundByes, nextPowerOf2 } from '@badminton/shared';
+import { maxFirstRoundByes, nextPowerOf2, shuffleWithRng, tallyRoundRobin, rankRoundRobin, poolsThenPlacement, legacyFormatDefinition } from '@badminton/shared';
 import { autoSeedEventByElo } from '../tournament-actions/seeding';
-import { addParticipantToEvent, withdrawParticipant } from '../tournament-actions/participants';
+import {
+  addParticipantToEvent, withdrawParticipant, addExternalPairToEvent, removePairFromEvent, addPairToEvent,
+  removeParticipantFromEvent, promoteFromWaitlist, removeFromWaitlist,
+} from '../tournament-actions/participants';
+import {
+  setPairCategory, requestPairCategoryChange, approvePairCategoryRequest,
+  declinePairCategoryRequest, cancelPairCategoryRequest,
+} from '../tournament-actions/team-category';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
   computeRoundRobinStandings,
   FORFEIT_REASON, PUBLIC_WALKOVER_REASONS,
+  makeDrawRng, inIdOrder, refreshStagedHandicaps,
 } from '../tournament-actions/_internal';
 import { createAdminClient } from '../supabase-server';
 
@@ -1476,6 +1583,7 @@ const LIVE_RATING_DEFAULTS = {
 beforeEach(() => {
   store.faults = [];
   capabilityGate.refuse = null;
+  capabilityGate.asked = [];
   store.beforeDeletePhase = null;
   store.beforeMatchInsert = null;
   store.beforeCompleteEvent = null;
@@ -1484,6 +1592,9 @@ beforeEach(() => {
   store.beforePromote = null;
   store.beforeAdd = null;
   store.oldSchema = false;
+  store.v2Missing = false;
+  store.waitlistRpc = null;
+  entryFeeCalls.length = 0;
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
     tournament_events: [{
@@ -3400,6 +3511,25 @@ describe('generating a draw with a third-place playoff', () => {
     expect(thirdPlaceMatches()).toHaveLength(0);
     expect(roundOf(1).every((m) => m.loser_to_match_id === null || m.loser_to_match_id === undefined)).toBe(true);
     expect(store.db.tournament_matches).toHaveLength(3);
+  });
+
+  it('shuffles the whole field on random seeding, hand seeds discarded, from the seed it records', async () => {
+    seedField(8);
+    Object.assign(event(), { seeding_method: 'random' });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const audit = store.db.tournament_audit_log!.find((r) => r.action === 'bracket_generated')!;
+    const drawSeed = (audit.details as Row).draw_seed as number;
+    expect(typeof drawSeed).toBe('number');
+    // Reproducible from the audit row: the id-ordered field shuffled by that seed.
+    const expected = shuffleWithRng(inIdOrder(store.db.tournament_participants!.map((p) => ({ id: p.id as string }))), makeDrawRng(drawSeed))
+      .map((p) => p.id);
+    const bySeed = [...store.db.tournament_participants!]
+      .sort((a, b) => (a.seed_number as number) - (b.seed_number as number))
+      .map((p) => p.id);
+    expect(bySeed).toEqual(expected);
+    expect(new Set(store.db.tournament_participants!.map((p) => p.seed_number))).toEqual(new Set([1, 2, 3, 4, 5, 6, 7, 8]));
   });
 
   it('skips the playoff on a 2-entry draw rather than failing the generation', async () => {
@@ -6739,6 +6869,56 @@ describe('computeRoundRobinStandings reads fail closed', () => {
   });
 });
 
+// The admin round-robin table runs tallyRoundRobin + rankRoundRobin over the
+// matches it was handed; the server runs the same two over what it reads. This
+// drives the server's read-and-map layer over a fixture where head-to-head
+// decides, and checks it against the helper call the table makes.
+describe('computeRoundRobinStandings agrees with the admin table', () => {
+  it('puts head-to-head above point difference, as the table now does', async () => {
+    const ids = ['kestrel', 'heron', 'osprey', 'plover'];
+    Object.assign(event(), { format: 'round_robin', group_count: null, external_event: false });
+    store.db.tournament_participants = ids.map((id) => ({
+      id, event_id: 'e1', player_id: `pl-${id}`, elo_before: 1200, elo_after: null, elo_change: null,
+      seed_number: null, group_number: null, final_position: null, points: null, status: 'checked_in',
+    }));
+    const fixtures: Array<[string, string, number, number, string]> = [
+      ['kestrel', 'heron', 21, 19, 'completed'],
+      ['heron', 'osprey', 21, 5, 'completed'],
+      ['osprey', 'kestrel', 21, 19, 'completed'],
+      ['kestrel', 'plover', 21, 19, 'completed'],
+      ['heron', 'plover', 21, 5, 'completed'],
+      ['plover', 'osprey', 21, 18, 'completed'],
+      ['osprey', 'heron', 21, 0, 'voided'],
+    ];
+    store.db.tournament_matches = fixtures.map(([a, b, sa, sb, status], i) => ({
+      id: `rr-${i}`, event_id: 'e1', status, is_bye: false, is_third_place: false, phase: null,
+      round_number: 1, bracket_position: i,
+      participant_a_id: a, participant_b_id: b,
+      winner_participant_id: sa > sb ? a : b, loser_participant_id: sa > sb ? b : a,
+      winner_to_match_id: null, winner_to_position: null,
+      scores: [{ a: sa, b: sb }], elo_snapshot: null, notes: null,
+    }));
+
+    const server = (await computeRoundRobinStandings('e1')).map((r) => r!.id);
+    const table = rankRoundRobin(
+      tallyRoundRobin(
+        ids.map((id) => ({ id, name: id, group: null, out: false })),
+        store.db.tournament_matches.map((m) => ({
+          status: m.status as string,
+          sideA: m.participant_a_id as string,
+          sideB: m.participant_b_id as string,
+          winner: m.winner_participant_id as string,
+          scores: m.scores as Array<{ a: number; b: number }>,
+        })),
+      ),
+      { seedBy: 'wins', grouped: false, external: false },
+    ).map((r) => r.id);
+
+    expect(server).toEqual(['kestrel', 'heron', 'plover', 'osprey']);
+    expect(table).toEqual(server);
+  });
+});
+
 // ============================================================
 // The ledger reads the grants, not the audit log
 // ============================================================
@@ -6842,5 +7022,1297 @@ describe('a non-grant kind is never a paid subject', () => {
 
     expect(ratingOf('pl-alice')).toBe(1032);
     expect(ratingOf('pl-bob')).toBe(1020);
+  });
+});
+
+// ============================================================
+// External teams (00269)
+// ============================================================
+//
+// Teams entered by name in an unrated round robin. The database refuses a
+// rating on an external match; these prove the application never asks for one, and
+// never tries to notify, charge or rank an external team as if it were members.
+describe('an external event', () => {
+  function externalEvent() {
+    Object.assign(event(), {
+      event_type: 'mixed_doubles', format: 'round_robin', external_event: true,
+      placement_bonus_enabled: false, status: 'live', draw_locked: false,
+      games_per_match: 1, points_per_game: 15,
+    });
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = [
+      { id: 'g-a', event_id: 'e1', player1_id: null, player2_id: null, external1_name: 'Alder Finch', external2_name: 'Birch Wren', pair_name: 'Alder Finch / Birch Wren', status: 'registered', group_number: null },
+      { id: 'g-b', event_id: 'e1', player1_id: null, player2_id: null, external1_name: 'Cedar Lark', external2_name: 'Dogwood Teal', pair_name: 'Cedar Lark / Dogwood Teal', status: 'registered', group_number: null },
+      { id: 'g-c', event_id: 'e1', player1_id: null, player2_id: null, external1_name: 'Elm Heron', external2_name: 'Fir Robin', pair_name: 'Elm Heron / Fir Robin', status: 'registered', group_number: null },
+    ];
+    store.db.tournament_matches = [{
+      id: 'gm-1', event_id: 'e1', status: 'ready', is_bye: false, round_number: 1, bracket_position: 1,
+      pair_a_id: 'g-a', pair_b_id: 'g-b', winner_pair_id: null, loser_pair_id: null,
+      participant_a_id: null, participant_b_id: null,
+      winner_to_match_id: null, winner_to_position: null, scores: null, elo_snapshot: null, notes: null,
+    }];
+  }
+
+  it('records a result without rating it or notifying anybody', async () => {
+    externalEvent();
+    const before = JSON.stringify(store.db.ratings);
+
+    const res = await enterMatchResult('gm-1', [{ a: 15, b: 12 }], 'a');
+
+    expect(res.ok).toBe(true);
+    expect(match('gm-1').status).toBe('completed');
+    expect(match('gm-1').winner_pair_id).toBe('g-a');
+    expect(match('gm-1').elo_snapshot).toBeNull();
+    expect(store.rpcCalls.map((c) => c.name)).not.toContain('apply_tournament_match_rating');
+    expect(JSON.stringify(store.db.ratings)).toBe(before);
+    expect(store.db.notifications).toEqual([]);
+  });
+
+  it('ranks a tie on wins by point difference, not head-to-head', async () => {
+    externalEvent();
+    // A beats B narrowly, B beats C, C beats A heavily: one win each, so
+    // head-to-head is circular and point difference decides it.
+    store.db.tournament_matches = [
+      ['gm-1', 'g-a', 'g-b', 'g-a', 15, 14],
+      ['gm-2', 'g-b', 'g-c', 'g-b', 15, 13],
+      ['gm-3', 'g-c', 'g-a', 'g-c', 15, 3],
+    ].map(([id, a, b, w, sa, sb], i) => ({
+      id, event_id: 'e1', status: 'completed', is_bye: false, round_number: 1, bracket_position: i + 1,
+      pair_a_id: a, pair_b_id: b, winner_pair_id: w, loser_pair_id: w === a ? b : a,
+      scores: [{ a: sa, b: sb }], elo_snapshot: null,
+    }));
+
+    const standings = await computeRoundRobinStandings('e1');
+
+    // C: +12 -1 = +11. B: -1 +2 = +1. A: +1 -12 = -11.
+    expect(standings.map((s) => s.id)).toEqual(['g-c', 'g-b', 'g-a']);
+    expect(standings.map((s) => s.groupRank)).toEqual([1, 2, 3]);
+  });
+
+  it('enters a team by name through the RPC, tidied, and writes the trail', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    const res = await addExternalPairToEvent('e1', '  Gum   Swift ', 'Hazel Owl');
+
+    expect(res.ok).toBe(true);
+    const call = store.rpcCalls.find((c) => c.name === 'add_external_tournament_pair_v2');
+    expect(call?.args).toEqual({ p_event_id: 'e1', p_external1_name: 'Gum Swift', p_external2_name: 'Hazel Owl', p_added_by: 'admin-1', p_category: null });
+    expect(store.db.tournament_audit_log!.some((r) => r.action === 'external_pair_added')).toBe(true);
+  });
+
+  it('passes a tidied team name and omits a blank one', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl', '  Night   Owls ');
+    await addExternalPairToEvent('e1', 'Ivy Jay', 'Kelp Loon', '   ');
+
+    const calls = store.rpcCalls.filter((c) => c.name === 'add_external_tournament_pair_v2');
+    expect(calls[0]?.args).toMatchObject({ p_team_name: 'Night Owls' });
+    expect(calls[1]?.args).not.toHaveProperty('p_team_name');
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'external_pair_added');
+    expect(audit.map((r) => (r.details as { team_name: string | null }).team_name)).toEqual(['Night Owls', null]);
+  });
+
+  it('refuses a team name over 60 characters before any round trip', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl', 'x'.repeat(61));
+
+    expect(res.ok === false && res.error).toMatch(/at most 60/);
+    expect(store.rpcCalls).toEqual([]);
+  });
+
+  it('refuses an external team in a member event without calling the RPC', async () => {
+    Object.assign(event(), { event_type: 'mixed_doubles', status: 'registration', external_event: false });
+
+    const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl');
+
+    expect(res.ok).toBe(false);
+    expect(store.rpcCalls.map((c) => c.name)).not.toContain('add_external_tournament_pair');
+    expect(store.rpcCalls.map((c) => c.name)).not.toContain('add_external_tournament_pair_v2');
+  });
+
+  it('refuses two names that are the same person before any round trip', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    const res = await addExternalPairToEvent('e1', 'Gum Swift', ' gum swift');
+
+    expect(res.ok === false && res.error).toMatch(/different names/);
+    expect(store.rpcCalls).toEqual([]);
+  });
+
+  it('writes the trail when an external team is removed', async () => {
+    externalEvent();
+    event().status = 'registration';
+
+    await removePairFromEvent('g-c');
+
+    expect(store.db.tournament_pairs!.map((p) => p.id)).not.toContain('g-c');
+    expect(store.db.tournament_audit_log!.some((r) => r.action === 'external_pair_removed')).toBe(true);
+  });
+});
+
+// ============================================================
+// TEAM CATEGORY (00274)
+// ============================================================
+//
+// A staged event's head starts read each team's category. An external team is
+// entered with one through add_external_tournament_pair_v2; any team's can be
+// changed by setPairCategory until it has played with head starts.
+describe('a team category in a staged event', () => {
+  function stagedExternalEvent(cfg = poolsThenPlacement()) {
+    Object.assign(event(), {
+      event_type: 'mixed_doubles', format: 'staged', format_config: cfg, external_event: true,
+      placement_bonus_enabled: false, status: 'registration', draw_locked: false,
+    });
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = [
+      { id: 'g-a', event_id: 'e1', player1_id: null, player2_id: null, pair_name: 'Team Kestrel', status: 'registered', team_category: null },
+      { id: 'g-b', event_id: 'e1', player1_id: null, player2_id: null, pair_name: 'Team Osprey', status: 'registered', team_category: 'mens' },
+      { id: 'g-c', event_id: 'e1', player1_id: null, player2_id: null, pair_name: 'Team Harrier', status: 'registered', team_category: 'mens' },
+    ];
+    store.db.tournament_matches = [];
+    return cfg;
+  }
+  function stagedMatch(id: string, stage: number, status: string, a: string, b: string, extra: Row = {}) {
+    return {
+      id, event_id: 'e1', stage, status, is_bye: false, round_number: 1, bracket_position: 1,
+      pair_a_id: a, pair_b_id: b, participant_a_id: null, participant_b_id: null,
+      handicap_a: 0, handicap_b: 0, scores: null, elo_snapshot: null, ...extra,
+    };
+  }
+  const pair = (id: string) => store.db.tournament_pairs!.find((p) => p.id === id)!;
+  const categoryAudit = () => store.db.tournament_audit_log!.filter((r) => r.action === 'pair_category_changed');
+
+  describe('entering an external team', () => {
+    it('passes the category to v2 and writes it to the trail', async () => {
+      stagedExternalEvent();
+
+      const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl', null, 'womens');
+
+      expect(res.ok).toBe(true);
+      const call = store.rpcCalls.find((c) => c.name === 'add_external_tournament_pair_v2');
+      expect(call?.args).toMatchObject({ p_category: 'womens' });
+      const audit = store.db.tournament_audit_log!.find((r) => r.action === 'external_pair_added');
+      expect((audit?.details as { team_category: string | null }).team_category).toBe('womens');
+    });
+
+    it('falls back to the 00269 function when v2 is missing and no category was asked for', async () => {
+      stagedExternalEvent();
+      store.v2Missing = true;
+
+      const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl');
+
+      expect(res.ok).toBe(true);
+      const old = store.rpcCalls.find((c) => c.name === 'add_external_tournament_pair');
+      expect(old?.args).toEqual({ p_event_id: 'e1', p_external1_name: 'Gum Swift', p_external2_name: 'Hazel Owl', p_added_by: 'admin-1' });
+    });
+
+    it('refuses when v2 is missing and a category was asked for, without calling the old function', async () => {
+      stagedExternalEvent();
+      store.v2Missing = true;
+      const before = store.db.tournament_pairs!.length;
+
+      const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl', null, 'mixed');
+
+      expect(res.ok === false && res.error).toBe('Run migration 00274 first');
+      expect(store.rpcCalls.map((c) => c.name)).not.toContain('add_external_tournament_pair');
+      expect(store.db.tournament_pairs!.length).toBe(before);
+    });
+
+    it('refuses a category on an event that is not staged before any RPC', async () => {
+      Object.assign(event(), {
+        event_type: 'mixed_doubles', format: 'round_robin', external_event: true,
+        placement_bonus_enabled: false, status: 'registration', draw_locked: false,
+      });
+
+      const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl', null, 'mens');
+
+      expect(res.ok === false && res.error).toMatch(/staged events only/);
+      expect(store.rpcCalls).toEqual([]);
+    });
+
+    it('refuses a key the event does not list before any RPC', async () => {
+      stagedExternalEvent();
+
+      const res = await addExternalPairToEvent('e1', 'Gum Swift', 'Hazel Owl', null, 'open');
+
+      expect(res.ok === false && res.error).toMatch(/not a category of this event/);
+      expect(store.rpcCalls).toEqual([]);
+    });
+  });
+
+  describe('setPairCategory', () => {
+    it('refuses an event that is not staged', async () => {
+      stagedExternalEvent();
+      Object.assign(event(), { format: 'round_robin', format_config: null });
+
+      const res = await setPairCategory('g-a', 'mens');
+
+      expect(res.ok === false && res.error).toMatch(/staged doubles event only/);
+      expect(pair('g-a').team_category).toBeNull();
+    });
+
+    it('refuses a locked draw', async () => {
+      stagedExternalEvent();
+      event().draw_locked = true;
+
+      const res = await setPairCategory('g-a', 'mens');
+
+      expect(res.ok === false && res.error).toMatch(/Draw is locked/);
+      expect(pair('g-a').team_category).toBeNull();
+    });
+
+    it('refuses a key the event does not list', async () => {
+      stagedExternalEvent();
+
+      const res = await setPairCategory('g-a', 'open');
+
+      expect(res.ok === false && res.error).toMatch(/not a category of this event/);
+      expect(pair('g-a').team_category).toBeNull();
+    });
+
+    // 00279: the change is no longer refused outright. It becomes a request,
+    // and the direct path writes nothing.
+    it('answers that a request is required once the team has a completed match with head starts', async () => {
+      stagedExternalEvent();
+      event().status = 'live';
+      store.db.tournament_matches = [
+        stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b', { walkover_reason: 'withdrawn' }),
+      ];
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res).toEqual({ ok: true, data: { changed: false, rehandicapped: 0, requestRequired: true } });
+      expect(pair('g-a').team_category).toBeNull();
+      expect(categoryAudit()).toEqual([]);
+    });
+
+    // isPlayedMatch || isInProgressMatch: a walkover, a disputed result and a
+    // match on court all count. Before 00279 only 'completed' and 'live' did,
+    // so a walked-over team's category could be changed under its result.
+    it.each(['walkover', 'disputed', 'live'])('counts a %s match with head starts as played', async (status) => {
+      stagedExternalEvent();
+      event().status = 'live';
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, status, 'g-a', 'g-b')];
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res).toEqual({ ok: true, data: { changed: false, rehandicapped: 0, requestRequired: true } });
+      expect(pair('g-a').team_category).toBeNull();
+    });
+
+    it('refuses a direct change while a request for the team is waiting', async () => {
+      stagedExternalEvent();
+      store.db.tournament_category_requests = [{
+        id: 'cr-1', event_id: 'e1', pair_id: 'g-a', from_category: null, to_category: 'mens',
+        reason: 'Entered under the wrong category', status: 'pending', requested_by: 'admin-2',
+      }];
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res.ok === false && res.error).toBe('A category change for this team is waiting for approval. Cancel or decide it first.');
+      expect(pair('g-a').team_category).toBeNull();
+    });
+
+    it('treats a database without 00279 as having no request waiting', async () => {
+      stagedExternalEvent();
+      store.faults.push({ table: 'tournament_category_requests', op: 'select', message: 'relation does not exist', code: '42P01' });
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res).toEqual({ ok: true, data: { changed: true, rehandicapped: 0 } });
+      expect(pair('g-a').team_category).toBe('womens');
+    });
+
+    it('allows a change when the only completed match is a bye or in a stage without head starts', async () => {
+      const cfg = structuredClone(poolsThenPlacement());
+      cfg.stages[0]!.scoring.handicap = false;
+      stagedExternalEvent(cfg);
+      event().status = 'live';
+      store.db.tournament_matches = [
+        stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b'),
+        stagedMatch('sm-2', 2, 'completed', 'g-a', 'g-c', { is_bye: true }),
+      ];
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res).toEqual({ ok: true, data: { changed: true, rehandicapped: 0 } });
+      expect(pair('g-a').team_category).toBe('womens');
+    });
+
+    it('re-snapshots pending and ready matches and leaves a live one alone', async () => {
+      const cfg = stagedExternalEvent();
+      event().status = 'live';
+      store.db.tournament_matches = [
+        stagedMatch('sm-1', 1, 'ready', 'g-a', 'g-b'),
+        stagedMatch('sm-2', 1, 'pending', 'g-c', 'g-a'),
+        stagedMatch('sm-3', 1, 'live', 'g-b', 'g-c'),
+      ];
+      const start = cfg.headStarts.womens?.mens ?? 0;
+      expect(start).toBeGreaterThan(0);
+
+      const res = await setPairCategory('g-a', 'womens');
+
+      expect(res).toEqual({ ok: true, data: { changed: true, rehandicapped: 2 } });
+      expect(match('sm-1')).toMatchObject({ handicap_a: start, handicap_b: 0 });
+      expect(match('sm-2')).toMatchObject({ handicap_a: 0, handicap_b: start });
+      expect(match('sm-3')).toMatchObject({ handicap_a: 0, handicap_b: 0 });
+      expect(categoryAudit().map((r) => r.details)).toEqual([
+        { pair_id: 'g-a', from: null, to: 'womens', rehandicapped: 2 },
+      ]);
+    });
+
+    it('a re-snapshot limited to open matches skips a match that went on court meanwhile', async () => {
+      stagedExternalEvent();
+      pair('g-a').team_category = 'womens';
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, 'live', 'g-a', 'g-b')];
+
+      await refreshStagedHandicaps(createAdminClient(), 'sm-1', true, { onlyOpen: true });
+
+      expect(match('sm-1')).toMatchObject({ handicap_a: 0, handicap_b: 0 });
+    });
+
+    it('does nothing when the category is unchanged', async () => {
+      stagedExternalEvent();
+
+      const res = await setPairCategory('g-b', 'mens');
+
+      expect(res).toEqual({ ok: true, data: { changed: false, rehandicapped: 0 } });
+      expect(categoryAudit()).toEqual([]);
+    });
+  });
+
+  // 00279: after play a change is a request with a reason, settled by a holder
+  // of results.edit.write. Approval moves the category and refreshes the open
+  // matches only; played ones keep the starts they were scored from.
+  describe('a category change request', () => {
+    const requests = () => store.db.tournament_category_requests ?? [];
+    const audit = (action: string) => store.db.tournament_audit_log!.filter((r) => r.action === action);
+    function pendingRequest(extra: Row = {}) {
+      return {
+        id: 'cr-1', event_id: 'e1', pair_id: 'g-a', from_category: null, to_category: 'womens',
+        reason: 'Entered under the wrong category', status: 'pending', requested_by: 'admin-1',
+        requested_at: '2026-10-01T10:00:00Z', resolved_by: null, resolved_at: null, ...extra,
+      };
+    }
+    function playedEvent() {
+      const cfg = stagedExternalEvent();
+      event().status = 'live';
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b')];
+      return cfg;
+    }
+
+    describe('requestPairCategoryChange', () => {
+      it('records the request with a trimmed reason and writes it to the trail, leaving the team alone', async () => {
+        playedEvent();
+
+        const res = await requestPairCategoryChange('g-a', 'womens', '  One of them is a woman  ');
+
+        expect(res).toEqual({ ok: true, data: { requested: true } });
+        expect(capabilityGate.asked).toEqual(['tournaments.draw.seed.set.write']);
+        expect(requests()).toHaveLength(1);
+        expect(requests()[0]).toMatchObject({
+          event_id: 'e1', pair_id: 'g-a', from_category: null, to_category: 'womens',
+          reason: 'One of them is a woman', requested_by: 'admin-1',
+        });
+        expect(pair('g-a').team_category).toBeNull();
+        expect(audit('pair_category_change_requested').map((r) => r.details)).toEqual([{
+          request_id: requests()[0]!.id, pair_id: 'g-a', from: null, to: 'womens', reason: 'One of them is a woman',
+        }]);
+      });
+
+      it('refuses a team that has not played with head starts, which is changed directly', async () => {
+        stagedExternalEvent();
+        store.db.tournament_matches = [stagedMatch('sm-1', 1, 'ready', 'g-a', 'g-b')];
+
+        const res = await requestPairCategoryChange('g-a', 'womens', 'One of them is a woman');
+
+        expect(res.ok === false && res.error).toBe('This team has not played with head starts yet, so change its category directly.');
+        expect(requests()).toEqual([]);
+      });
+
+      it('refuses an empty reason and one over 500 characters', async () => {
+        playedEvent();
+
+        const empty = await requestPairCategoryChange('g-a', 'womens', '   ');
+        const long = await requestPairCategoryChange('g-a', 'womens', 'x'.repeat(501));
+
+        expect(empty.ok === false && empty.error).toBe('Give a reason for the change.');
+        expect(long.ok === false && long.error).toBe('Keep the reason under 500 characters.');
+        expect(requests()).toEqual([]);
+      });
+
+      it('answers nothing to do when the category is unchanged', async () => {
+        playedEvent();
+
+        const res = await requestPairCategoryChange('g-b', 'mens', 'Already right');
+
+        expect(res).toEqual({ ok: true, data: { requested: false } });
+        expect(requests()).toEqual([]);
+      });
+
+      it('says a request is already waiting when the one-pending index refuses the insert', async () => {
+        playedEvent();
+        store.faults.push({ table: 'tournament_category_requests', op: 'insert', message: 'duplicate key', code: '23505' });
+
+        const res = await requestPairCategoryChange('g-a', 'womens', 'One of them is a woman');
+
+        expect(res.ok === false && res.error).toBe('This team already has a category change waiting for approval.');
+        expect(audit('pair_category_change_requested')).toEqual([]);
+      });
+
+      it('names the migration when the table is missing', async () => {
+        playedEvent();
+        store.faults.push({ table: 'tournament_category_requests', op: 'insert', message: 'relation does not exist', code: '42P01' });
+
+        const res = await requestPairCategoryChange('g-a', 'womens', 'One of them is a woman');
+
+        expect(res.ok === false && res.error).toBe('Run migration 00279 first');
+      });
+    });
+
+    describe('approvePairCategoryRequest', () => {
+      function approvalScene() {
+        const cfg = stagedExternalEvent();
+        event().status = 'live';
+        store.db.tournament_matches = [
+          stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b', { scores: [{ a: 15, b: 10 }], winner_pair_id: 'g-a' }),
+          stagedMatch('sm-2', 1, 'ready', 'g-c', 'g-a'),
+          stagedMatch('sm-3', 1, 'pending', 'g-a', 'g-c'),
+          stagedMatch('sm-4', 1, 'live', 'g-b', 'g-a'),
+        ];
+        store.db.tournament_category_requests = [pendingRequest()];
+        const start = cfg.headStarts.womens?.mens ?? 0;
+        expect(start).toBeGreaterThan(0);
+        return start;
+      }
+
+      it('changes the category, refreshes only the open matches and audits who decided', async () => {
+        const start = approvalScene();
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res).toEqual({ ok: true, data: { rehandicapped: 2 } });
+        expect(capabilityGate.asked).toEqual(['tournaments.results.edit.write']);
+        expect(pair('g-a').team_category).toBe('womens');
+        expect(match('sm-2')).toMatchObject({ handicap_a: 0, handicap_b: start });
+        expect(match('sm-3')).toMatchObject({ handicap_a: start, handicap_b: 0 });
+        // Played and on court: the starts they were scored from stay.
+        expect(match('sm-1')).toMatchObject({ handicap_a: 0, handicap_b: 0, scores: [{ a: 15, b: 10 }] });
+        expect(match('sm-4')).toMatchObject({ handicap_a: 0, handicap_b: 0 });
+        expect(requests()[0]).toMatchObject({ status: 'approved', resolved_by: 'admin-1' });
+        expect(audit('pair_category_change_approved').map((r) => r.details)).toEqual([{
+          request_id: 'cr-1', pair_id: 'g-a', from: null, to: 'womens', rehandicapped: 2,
+          requested_by: 'admin-1', self_approved: true,
+        }]);
+      });
+
+      it('marks an approval of somebody else\'s request as not self-approved', async () => {
+        approvalScene();
+        requests()[0]!.requested_by = 'admin-2';
+
+        await approvePairCategoryRequest('cr-1');
+
+        expect((audit('pair_category_change_approved')[0]!.details as Row).self_approved).toBe(false);
+      });
+
+      it('refuses a second approval of the same request', async () => {
+        approvalScene();
+        await approvePairCategoryRequest('cr-1');
+
+        const again = await approvePairCategoryRequest('cr-1');
+
+        expect(again.ok === false && again.error).toBe('This request has already been decided. Reload the page.');
+        expect(audit('pair_category_change_approved')).toHaveLength(1);
+      });
+
+      it('refuses a request whose starting category is stale, writing nothing', async () => {
+        approvalScene();
+        pair('g-a').team_category = 'mixed';
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('The team\'s category changed after this was asked for. Decline it and ask again.');
+        expect(pair('g-a').team_category).toBe('mixed');
+        expect(requests()[0]!.status).toBe('pending');
+        expect(match('sm-2')).toMatchObject({ handicap_a: 0, handicap_b: 0 });
+        expect(audit('pair_category_change_approved')).toEqual([]);
+      });
+
+      it('refuses a category the event no longer lists', async () => {
+        approvalScene();
+        requests()[0]!.to_category = 'open';
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('That category is no longer one of this event\'s.');
+        expect(pair('g-a').team_category).toBeNull();
+      });
+
+      it('names the migration when the function is missing', async () => {
+        approvalScene();
+        store.waitlistRpc = (name) => (name === 'approve_pair_category_request'
+          ? { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } }
+          : undefined);
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('Run migration 00279 first');
+        expect(pair('g-a').team_category).toBeNull();
+      });
+
+      it('refuses without the capability before any RPC', async () => {
+        approvalScene();
+        capabilityGate.refuse = 'Forbidden';
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok).toBe(false);
+        expect(store.rpcCalls).toEqual([]);
+        expect(pair('g-a').team_category).toBeNull();
+      });
+
+      it('says the approval landed when refreshing the open matches fails afterwards', async () => {
+        approvalScene();
+        store.faults.push({ table: 'tournament_matches', op: 'update', message: 'boom' });
+
+        const res = await approvePairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toMatch(/WAS approved and saved/);
+        expect(pair('g-a').team_category).toBe('womens');
+        expect(requests()[0]!.status).toBe('approved');
+        expect((audit('pair_category_change_approved')[0]!.details as Row).refresh_failed).toBe(true);
+      });
+    });
+
+    describe('declinePairCategoryRequest', () => {
+      it('declines a waiting request once, and refuses the second', async () => {
+        playedEvent();
+        store.db.tournament_category_requests = [pendingRequest({ requested_by: 'admin-2' })];
+
+        const res = await declinePairCategoryRequest('cr-1');
+        const again = await declinePairCategoryRequest('cr-1');
+
+        expect(res).toEqual({ ok: true, data: undefined });
+        expect(capabilityGate.asked[0]).toBe('tournaments.results.edit.write');
+        expect(requests()[0]).toMatchObject({ status: 'declined', resolved_by: 'admin-1' });
+        expect(pair('g-a').team_category).toBeNull();
+        expect(audit('pair_category_change_declined').map((r) => r.details)).toEqual([{
+          request_id: 'cr-1', pair_id: 'g-a', from: null, to: 'womens', requested_by: 'admin-2',
+        }]);
+        expect(again.ok === false && again.error).toBe('This request has already been decided. Reload the page.');
+      });
+    });
+
+    describe('cancelPairCategoryRequest', () => {
+      it('lets the requester cancel', async () => {
+        playedEvent();
+        store.db.tournament_category_requests = [pendingRequest()];
+
+        const res = await cancelPairCategoryRequest('cr-1');
+
+        expect(res).toEqual({ ok: true, data: undefined });
+        expect(capabilityGate.asked).toEqual(['tournaments.draw.seed.set.write']);
+        expect(requests()[0]).toMatchObject({ status: 'cancelled', resolved_by: 'admin-1' });
+        expect(audit('pair_category_change_cancelled')).toHaveLength(1);
+      });
+
+      it('refuses somebody who did not ask, and leaves the request waiting', async () => {
+        playedEvent();
+        store.db.tournament_category_requests = [pendingRequest({ requested_by: 'admin-2' })];
+
+        const res = await cancelPairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('Only the person who asked can cancel this request.');
+        expect(requests()[0]!.status).toBe('pending');
+        expect(audit('pair_category_change_cancelled')).toEqual([]);
+      });
+
+      it('says a decided request is already decided', async () => {
+        playedEvent();
+        store.db.tournament_category_requests = [pendingRequest({ status: 'approved', resolved_at: '2026-10-01T11:00:00Z' })];
+
+        const res = await cancelPairCategoryRequest('cr-1');
+
+        expect(res.ok === false && res.error).toBe('This request has already been decided. Reload the page.');
+      });
+    });
+  });
+
+  // 00279: "Apply the current head start" on Edit result, for one completed
+  // match whose team's category has been changed since it was played.
+  describe('editMatchResult with the current head start', () => {
+    // Team Kestrel was entered as women's (a 5-point start against men's) and
+    // played sm-1 from it; it is men's now, so the current start is 0-0.
+    function correctionScene(extra: Row = {}) {
+      const cfg = stagedExternalEvent();
+      event().status = 'live';
+      pair('g-a').team_category = 'mens';
+      const old = cfg.headStarts.womens?.mens ?? 0;
+      expect(old).toBeGreaterThan(3);
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b', {
+        handicap_a: old, handicap_b: 0, scores: [{ a: old + 10, b: 15 }], time_exceeded: false,
+        winner_pair_id: 'g-b', loser_pair_id: 'g-a', ...extra,
+      })];
+      return old;
+    }
+    const reverseCalls = () => store.rpcCalls.filter((c) => c.name === 'reverse_tournament_match_rating');
+    const eloCalls = () => store.rpcCalls.filter((c) => c.name === 'reverse_tournament_match_rating' || c.name === 'apply_tournament_match_rating');
+    const edited = () => store.db.tournament_audit_log!.filter((r) => r.action === 'result_edited');
+
+    it('accepts a score legal only under the new start and writes the new starts', async () => {
+      const old = correctionScene();
+
+      const res = await editMatchResult('sm-1', [{ a: 3, b: 15 }], 'b', 'Head start was wrong', { applyCurrentHeadStart: true });
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(match('sm-1')).toMatchObject({ handicap_a: 0, handicap_b: 0, scores: [{ a: 3, b: 15 }] });
+      expect(edited()[0]!.details).toMatchObject({
+        head_start_applied: true,
+        old_handicap: { a: old, b: 0 },
+        new_handicap: { a: 0, b: 0 },
+      });
+    });
+
+    it('refuses the same score without the switch, judged by the recorded start', async () => {
+      const old = correctionScene();
+
+      const res = await editMatchResult('sm-1', [{ a: 3, b: 15 }], 'b', 'Head start was wrong');
+
+      expect(res.ok).toBe(false);
+      expect(match('sm-1')).toMatchObject({ handicap_a: old, scores: [{ a: old + 10, b: 15 }] });
+    });
+
+    it('ignores anything but true', async () => {
+      const old = correctionScene();
+
+      const res = await editMatchResult('sm-1', [{ a: old + 2, b: 15 }], 'b', 'Typo',
+        { applyCurrentHeadStart: 'yes' as unknown as boolean });
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(match('sm-1')).toMatchObject({ handicap_a: old, handicap_b: 0 });
+      expect(edited()[0]!.details).toMatchObject({ head_start_applied: false });
+      expect((edited()[0]!.details as Row).new_handicap).toBeUndefined();
+    });
+
+    it('refuses on a stage without head starts before any rating is reversed', async () => {
+      const cfg = structuredClone(poolsThenPlacement());
+      cfg.stages[0]!.scoring.handicap = false;
+      stagedExternalEvent(cfg);
+      event().status = 'live';
+      store.db.tournament_matches = [stagedMatch('sm-1', 1, 'completed', 'g-a', 'g-b', {
+        scores: [{ a: 15, b: 10 }], winner_pair_id: 'g-a', loser_pair_id: 'g-b', elo_snapshot: { entries: [] },
+      })];
+
+      const res = await editMatchResult('sm-1', [{ a: 10, b: 15 }], 'b', 'Wrong', { applyCurrentHeadStart: true });
+
+      expect(res.ok === false && res.error).toBe('This match\'s stage is played without head starts.');
+      expect(reverseCalls()).toEqual([]);
+      expect(match('sm-1')).toMatchObject({ scores: [{ a: 15, b: 10 }] });
+    });
+
+    it('refuses a walkover before any rating is reversed', async () => {
+      correctionScene({ elo_snapshot: { entries: [] } });
+
+      const res = await editMatchResult('sm-1', [], 'a', 'Wrong', { applyCurrentHeadStart: true });
+
+      expect(res.ok === false && res.error).toBe('A walkover has no score for a head start to apply to.');
+      expect(reverseCalls()).toEqual([]);
+    });
+
+    it('refuses a match outside a staged event before any rating is reversed', async () => {
+      await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+      expect(match(QF).elo_snapshot).toBeTruthy();
+      store.rpcCalls = [];
+
+      const res = await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Wrong', { applyCurrentHeadStart: true });
+
+      expect(res.ok === false && res.error).toBe('Only a match in a staged event has a head start to apply.');
+      expect(reverseCalls()).toEqual([]);
+    });
+
+    it('moves no rating on an unrated stage of a member event', async () => {
+      correctionScene();
+      event().external_event = false;
+
+      const res = await editMatchResult('sm-1', [{ a: 3, b: 15 }], 'b', 'Head start was wrong', { applyCurrentHeadStart: true });
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(eloCalls()).toEqual([]);
+    });
+  });
+
+  describe('a member pair', () => {
+    function memberEvent(format: 'staged' | 'round_robin') {
+      Object.assign(event(), {
+        event_type: 'mixed_doubles', format, format_config: format === 'staged' ? poolsThenPlacement() : null,
+        external_event: false, status: 'registration', draw_locked: false, max_participants: null,
+      });
+      store.db.tournament_participants = [];
+      store.db.tournament_pairs = [];
+      store.db.players = [
+        { id: 'pl-alice', full_name: 'Alder Finch', competition_category: 'womens' },
+        { id: 'pl-bob', full_name: 'Birch Wren', competition_category: 'mens' },
+      ];
+    }
+
+    it('gets a suggested category on a staged event', async () => {
+      memberEvent('staged');
+
+      const res = await addPairToEvent('e1', 'pl-alice', 'pl-bob');
+
+      expect(res.ok).toBe(true);
+      expect(store.db.tournament_pairs![0]!.team_category).toBe('mixed');
+      expect(res.ok && (res.data as Row).team_category).toBe('mixed');
+    });
+
+    it('stays without one on an event that is not staged', async () => {
+      memberEvent('round_robin');
+
+      const res = await addPairToEvent('e1', 'pl-alice', 'pl-bob');
+
+      expect(res.ok).toBe(true);
+      expect(store.db.tournament_pairs![0]!.team_category).toBeNull();
+    });
+
+    it('is still added when writing the category fails', async () => {
+      memberEvent('staged');
+      store.faults.push({
+        table: 'tournament_pairs', op: 'update', message: 'permission denied',
+        when: ({ payload }) => 'team_category' in payload,
+      });
+
+      const res = await addPairToEvent('e1', 'pl-alice', 'pl-bob');
+
+      expect(res.ok).toBe(true);
+      expect(store.db.tournament_pairs!.length).toBe(1);
+      expect(store.db.tournament_pairs![0]!.team_category).toBeNull();
+    });
+  });
+});
+
+// Per-event points tables and per-tournament bonus amounts (00275).
+describe('an event\'s own points table', () => {
+  // The finalizeEvent fixture: one completed match, p-alice beat p-bob.
+  beforeEach(async () => {
+    store.db.tournament_matches = [match(QF)];
+    match(QF).winner_to_match_id = null;
+    match(QF).winner_to_position = null;
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+  });
+  const points = (id: string) => participant(id).points;
+
+  describe('finalising', () => {
+    it('pays the knockout default when the event has no table', async () => {
+      event().points_config = null;
+      await finalizeEvent('e1');
+      expect([points('p-alice'), points('p-bob')]).toEqual([100, 75]);
+    });
+
+    it('pays a custom knockout table', async () => {
+      event().points_config = { byPlace: [10, 6], rest: 1, participation: 2, perWin: 0 };
+      await finalizeEvent('e1');
+      expect([points('p-alice'), points('p-bob')]).toEqual([12, 8]);
+    });
+
+    it('pays the round-robin default, 1 to take part and 3 a win', async () => {
+      Object.assign(event(), { format: 'round_robin', points_config: null });
+      await finalizeEvent('e1');
+      expect([points('p-alice'), points('p-bob')]).toEqual([4, 1]);
+    });
+
+    it('pays a custom round-robin table: place, taking part and wins', async () => {
+      Object.assign(event(), { format: 'round_robin', points_config: { byPlace: [5], rest: 0, participation: 1, perWin: 2 } });
+      await finalizeEvent('e1');
+      expect([points('p-alice'), points('p-bob')]).toEqual([8, 1]);
+    });
+
+    it('pays the default rather than refusing when the stored table is unreadable', async () => {
+      event().points_config = { byPlace: 'lots' };
+      await finalizeEvent('e1');
+      expect([points('p-alice'), points('p-bob')]).toEqual([100, 75]);
+    });
+
+    it('pays a staged event\'s table from its stages', async () => {
+      const cfg = legacyFormatDefinition({ format: 'round_robin', match_format: 'best_of_3_to_21' });
+      Object.assign(event(), { format: 'staged', format_config: { ...cfg, points: { byPlace: [30, 20], participation: 0, perWin: 5 } } });
+      Object.assign(match(QF), { stage: 1, pool_number: 1, group_number: 1, match_label: null, is_third_place: false });
+
+      await finalizeEvent('e1');
+
+      expect(event().status).toBe('completed');
+      expect([points('p-alice'), points('p-bob')]).toEqual([35, 20]);
+    });
+
+    it('recomputes from the table stored on the event', async () => {
+      event().points_config = null;
+      await finalizeEvent('e1');
+      event().points_config = { byPlace: [7, 3], rest: 0, participation: 0, perWin: 0 };
+
+      await recomputeEventStandings('e1');
+
+      expect([points('p-alice'), points('p-bob')]).toEqual([7, 3]);
+    });
+  });
+
+  describe('changing it', () => {
+    const table = { byPlace: [60, 40, 20], rest: 5, participation: 0, perWin: 0 };
+
+    it('is allowed on its own after the draw, while the event is live', async () => {
+      event().points_config = null;
+
+      const res = await updateTournamentEvent('e1', { points_config: table });
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      expect(event().points_config).toEqual(table);
+    });
+
+    it('stores nothing for the default, and clears the per-win figure on a knockout', async () => {
+      event().points_config = table;
+      expect((await updateTournamentEvent('e1', { points_config: { byPlace: [100, 75, 50, 40, 25, 25, 25, 25], rest: 10, participation: 0, perWin: 4 } })).ok).toBe(true);
+      expect(event().points_config).toBeNull();
+    });
+
+    it('is still refused bundled with a format change after the draw', async () => {
+      event().points_config = null;
+      const res = await updateTournamentEvent('e1', { points_config: table, match_format: 'one_game_21' });
+      expect(res.ok === false && res.error).toMatch(/already has a draw/);
+      expect(event().points_config).toBeNull();
+    });
+
+    it('is refused once the event is finalised', async () => {
+      Object.assign(event(), { points_config: null, status: 'completed' });
+      const res = await updateTournamentEvent('e1', { points_config: table });
+      expect(res.ok === false && res.error).toMatch(/finalised, so its points/);
+      expect(event().points_config).toBeNull();
+    });
+
+    it('is refused on a staged event, whose table lives in its stages', async () => {
+      Object.assign(event(), { format: 'staged', format_config: poolsThenPlacement(), points_config: null });
+      const res = await updateTournamentEvent('e1', { points_config: table });
+      expect(res.ok === false && res.error).toBe('Set points in the stages editor.');
+    });
+
+    it('refuses garbage in words', async () => {
+      event().points_config = null;
+      const res = await updateTournamentEvent('e1', { points_config: { byPlace: [-4], participation: 0, perWin: 0 } });
+      expect(res.ok === false && res.error).toMatch(/^The points table is not set out correctly/);
+    });
+
+    it('asks for the migration on a database without the column, before writing', async () => {
+      // The seeded row has no points_config key: select('*') on a database
+      // without 00275.
+      const res = await updateTournamentEvent('e1', { points_config: table });
+      expect(res.ok === false && res.error).toBe('Run migration 00275 first');
+      expect('points_config' in event()).toBe(false);
+    });
+
+    it('lets a full save through on that database when the table is the default', async () => {
+      Object.assign(event(), { status: 'registration' });
+      store.db.tournament_matches = [];
+      const res = await updateTournamentEvent('e1', { points_config: null, max_participants: 16 });
+      expect(res.ok).toBe(true);
+      expect(event().max_participants).toBe(16);
+      expect('points_config' in event()).toBe(false);
+    });
+
+    it('asks for the migration when the write names a column the database lacks', async () => {
+      event().points_config = null;
+      store.faults.push({ table: 'tournament_events', op: 'update', message: 'column points_config not found', code: 'PGRST204' });
+      const res = await updateTournamentEvent('e1', { points_config: table });
+      expect(res.ok === false && res.error).toBe('Run migration 00275 first');
+    });
+  });
+
+  describe('creating an event with one', () => {
+    it('stores a custom table, and none for the default', async () => {
+      const custom = await createTournamentEvent('t1', {
+        event_type: 'mens_singles', format: 'round_robin', points_config: { byPlace: [9], participation: 1, perWin: 3 },
+      });
+      const plain = await createTournamentEvent('t1', {
+        event_type: 'mens_singles', format: 'single_elimination', points_config: { byPlace: [100, 75, 50, 40, 25, 25, 25, 25], rest: 10, participation: 0, perWin: 0 },
+      });
+      const row = (id: string) => store.db.tournament_events!.find((e) => e.id === id)!;
+      expect(custom.ok && row(custom.data.id).points_config).toEqual({ byPlace: [9], rest: 0, participation: 1, perWin: 3 });
+      expect(plain.ok && 'points_config' in row(plain.data.id)).toBe(false);
+    });
+
+    it('refuses one on a staged event', async () => {
+      const res = await createTournamentEvent('t1', {
+        event_type: 'mens_singles', format: 'staged', format_config: poolsThenPlacement(), points_config: { byPlace: [], participation: 1, perWin: 3 },
+      });
+      expect(res.ok === false && res.error).toBe('Set points in the stages editor.');
+    });
+
+    it('asks for the migration when the database lacks the column', async () => {
+      store.faults.push({ table: 'tournament_events', op: 'insert', message: 'column points_config does not exist', code: '42703' });
+      const res = await createTournamentEvent('t1', {
+        event_type: 'mens_singles', format: 'round_robin', points_config: { byPlace: [9], participation: 1, perWin: 3 },
+      });
+      expect(res.ok === false && res.error).toBe('Run migration 00275 first');
+    });
+  });
+});
+
+describe('a tournament\'s own bonus amounts', () => {
+  const tournament = () => store.db.tournaments![0]!;
+
+  describe('paying', () => {
+    beforeEach(() => {
+      event().status = 'completed';
+      event().placement_bonus_enabled = true;
+      participant('p-alice').final_position = 1;
+      participant('p-bob').final_position = 2;
+    });
+
+    it('pays the tournament\'s amount where it sets one, the club\'s elsewhere', async () => {
+      tournament().placement_bonus_amounts = { singles_champion: 50 };
+
+      await applyPlacementBonuses('e1');
+
+      expect(ratingOf('pl-alice')).toBe(1050);
+      expect(ratingOf('pl-bob')).toBe(1020);
+    });
+
+    it('pays the club\'s amounts on a database without the column', async () => {
+      await applyPlacementBonuses('e1');
+      expect(ratingOf('pl-alice')).toBe(1032);
+    });
+
+    it('pays nothing when the tournament cannot be read', async () => {
+      store.faults.push({ table: 'tournaments', op: 'select', message: 'permission denied for table tournaments', when: ({ cols }) => cols === '*' });
+
+      await expect(applyPlacementBonuses('e1')).rejects.toThrow(/bonus amounts could not be read/);
+      expect(ratingOf('pl-alice')).toBe(1000);
+    });
+  });
+
+  describe('editing', () => {
+    const base = {
+      name: 'Test Cup', start_date: '2026-10-01', event_multiplier: 1.15, placement_bonus_enabled: true,
+    };
+
+    it('writes changed amounts, only the known keys, as numbers', async () => {
+      tournament().placement_bonus_amounts = null;
+
+      const res = await updateTournament('t1', { ...base, placement_bonus_amounts: { singles_champion: '40', doubles_finalist: '', bogus: 9 } });
+
+      expect(res.ok).toBe(true);
+      expect(tournament().placement_bonus_amounts).toEqual({ singles_champion: 40 });
+    });
+
+    it('refuses a change once any event here has paid a bonus', async () => {
+      tournament().placement_bonus_amounts = null;
+      (store.db.tournament_bonus_grants ??= []).push({ event_id: 'e1', kind: 'rating', subject_id: 'pl-alice' });
+
+      const res = await updateTournament('t1', { ...base, name: 'Renamed Cup', placement_bonus_amounts: { singles_champion: 40 } });
+
+      expect(res.ok === false && res.error).toMatch(/already paid placement bonuses/);
+      expect(tournament().placement_bonus_amounts).toBeNull();
+      expect(tournament().name).toBe('Test Cup');
+    });
+
+    it('still saves everything else when the amounts did not change, keys in any order', async () => {
+      tournament().placement_bonus_amounts = { doubles_champion: 30, singles_champion: 40 };
+      (store.db.tournament_bonus_grants ??= []).push({ event_id: 'e1', kind: 'rating', subject_id: 'pl-alice' });
+
+      const res = await updateTournament('t1', { ...base, name: 'Renamed Cup', placement_bonus_amounts: { singles_champion: 40, doubles_champion: 30 } });
+
+      expect(res.ok).toBe(true);
+      expect(tournament().name).toBe('Renamed Cup');
+    });
+
+    it('refuses when the paid check cannot be read', async () => {
+      tournament().placement_bonus_amounts = null;
+      store.faults.push({ table: 'tournament_bonus_grants', op: 'select', message: 'permission denied' });
+
+      const res = await updateTournament('t1', { ...base, placement_bonus_amounts: { singles_champion: 40 } });
+
+      expect(res.ok === false && res.error).toMatch(/Could not check whether this tournament has paid/);
+      expect(tournament().placement_bonus_amounts).toBeNull();
+    });
+
+    it('refuses a negative amount in words', async () => {
+      tournament().placement_bonus_amounts = null;
+      const res = await updateTournament('t1', { ...base, placement_bonus_amounts: { singles_champion: -5 } });
+      expect(res.ok === false && res.error).toMatch(/0 or more/);
+    });
+
+    it('asks for the migration on a database without the column, and saves the rest without it', async () => {
+      const refused = await updateTournament('t1', { ...base, placement_bonus_amounts: { singles_champion: 40 } });
+      expect(refused.ok === false && refused.error).toBe('Run migration 00275 first');
+
+      const saved = await updateTournament('t1', { ...base, name: 'Renamed Cup', placement_bonus_amounts: null });
+      expect(saved.ok).toBe(true);
+      expect(tournament().name).toBe('Renamed Cup');
+      expect('placement_bonus_amounts' in tournament()).toBe(false);
+    });
+  });
+});
+
+describe('registration and check-in windows (00276)', () => {
+  const tournament = () => store.db.tournaments![0]!;
+  const NO_WINDOWS = {
+    registration_opens_at: null, registration_closes_at: null, checkin_opens_at: null, checkin_closes_at: null,
+  };
+  const base = { name: 'Test Cup', start_date: '2026-10-01', event_multiplier: 1.15, placement_bonus_enabled: true };
+
+  describe('an event\'s own windows', () => {
+    beforeEach(() => {
+      Object.assign(tournament(), NO_WINDOWS);
+      Object.assign(event(), NO_WINDOWS, { status: 'registration' });
+    });
+
+    it('stores club wall clock as instants, and blank clears a bound', async () => {
+      event().checkin_closes_at = '2026-10-10T20:00:00.000Z';
+
+      const res = await setEventWindows('e1', { registration_opens_at: '2026-10-01T09:00', checkin_closes_at: '' });
+
+      expect(res).toEqual({ ok: true, data: undefined });
+      // Past the 2026-11-01 cutover is fixed UTC-7; on 2026-10-01 BC is on PDT, also UTC-7.
+      expect(event().registration_opens_at).toBe('2026-10-01T16:00:00.000Z');
+      expect(event().checkin_closes_at).toBeNull();
+      expect(store.db.tournament_audit_log!.some((r) => r.action === 'event_windows_updated')).toBe(true);
+    });
+
+    it('refuses a window that closes before it opens', async () => {
+      const res = await setEventWindows('e1', { checkin_opens_at: '2026-10-10T10:00', checkin_closes_at: '2026-10-10T09:00' });
+      expect(res.ok === false && res.error).toBe('Check-in must close after it opens.');
+      expect(event().checkin_opens_at).toBeNull();
+    });
+
+    it('refuses an EFFECTIVE window inverted against the tournament\'s bound', async () => {
+      tournament().registration_opens_at = '2026-10-05T16:00:00.000Z';
+      const res = await setEventWindows('e1', { registration_closes_at: '2026-10-04T09:00' });
+      expect(res.ok === false && res.error).toBe('Registration must close after it opens.');
+      expect(event().registration_closes_at).toBeNull();
+    });
+
+    it('refuses a time that is not real', async () => {
+      const res = await setEventWindows('e1', { registration_opens_at: '2026-02-31T09:00' });
+      expect(res.ok === false && res.error).toMatch(/Not a real date and time/);
+    });
+
+    it('refuses on a finished event', async () => {
+      event().status = 'completed';
+      const res = await setEventWindows('e1', { registration_opens_at: '2026-10-01T09:00' });
+      expect(res.ok === false && res.error).toMatch(/finished/);
+      expect(event().registration_opens_at).toBeNull();
+    });
+
+    it('asks for the migration on a database without the columns', async () => {
+      for (const key of Object.keys(NO_WINDOWS)) delete event()[key];
+      const res = await setEventWindows('e1', { registration_opens_at: '2026-10-01T09:00' });
+      expect(res.ok === false && res.error).toBe('Run migration 00276 first');
+      expect('registration_opens_at' in event()).toBe(false);
+    });
+  });
+
+  describe('the tournament\'s windows', () => {
+    beforeEach(() => {
+      Object.assign(tournament(), NO_WINDOWS);
+      Object.assign(event(), NO_WINDOWS);
+    });
+
+    it('writes them, and leaves an omitted bound alone', async () => {
+      tournament().checkin_closes_at = '2026-10-10T20:00:00.000Z';
+
+      const res = await updateTournament('t1', { ...base, checkin_opens_at: '2026-10-10T09:00', registration_closes_at: '' });
+
+      expect(res.ok).toBe(true);
+      expect(tournament().checkin_opens_at).toBe('2026-10-10T16:00:00.000Z');
+      expect(tournament().registration_closes_at).toBeNull();
+      expect(tournament().checkin_closes_at).toBe('2026-10-10T20:00:00.000Z');
+    });
+
+    it('refuses an edit that would invert a child event\'s effective window', async () => {
+      // The event closes check-in at 09:00 club time and inherits the opening.
+      event().checkin_closes_at = '2026-10-10T16:00:00.000Z';
+
+      const res = await updateTournament('t1', { ...base, name: 'Renamed Cup', checkin_opens_at: '2026-10-10T10:00' });
+
+      expect(res.ok === false && res.error).toMatch(/Check-in must close after it opens\. Change that event's own windows first\./);
+      expect(tournament().checkin_opens_at).toBeNull();
+      expect(tournament().name).toBe('Test Cup');
+    });
+
+    it('refuses when the child events cannot be read', async () => {
+      store.faults.push({ table: 'tournament_events', op: 'select', message: 'permission denied' });
+      const res = await updateTournament('t1', { ...base, checkin_opens_at: '2026-10-10T10:00' });
+      expect(res.ok === false && res.error).toMatch(/Could not check this tournament's events/);
+      expect(tournament().checkin_opens_at).toBeNull();
+    });
+
+    it('on a database without the columns, refuses a window and saves the rest', async () => {
+      for (const key of Object.keys(NO_WINDOWS)) delete tournament()[key];
+
+      const refused = await updateTournament('t1', { ...base, registration_opens_at: '2026-10-01T09:00' });
+      expect(refused.ok === false && refused.error).toBe('Run migration 00276 first');
+
+      const saved = await updateTournament('t1', { ...base, name: 'Renamed Cup', registration_opens_at: '' });
+      expect(saved.ok).toBe(true);
+      expect(tournament().name).toBe('Renamed Cup');
+      expect('registration_opens_at' in tournament()).toBe(false);
+    });
+  });
+});
+
+// ============================================================
+// THE WAITLIST (00278)
+// ============================================================
+//
+// The fill runs AFTER the action that freed a place, as its own step, and it
+// must never make that action fail. A named promotion and a removal are the
+// desk's own actions and map every refusal to a sentence.
+
+describe('the waitlist (00278)', () => {
+  const PROMOTED = {
+    ok: true,
+    promoted: [{ player_id: 'pl-carol', participant_id: 'p-carol', waitlist_id: 'wl-1' }],
+    skipped: [],
+    tournament_id: 't1',
+    event_id: 'e1',
+  };
+  const fillCalls = () => store.rpcCalls.filter((c) => c.name === 'fill_event_from_waitlist');
+  const audit = (action: string) => store.db.tournament_audit_log!.filter((r) => r.action === action);
+
+  beforeEach(() => {
+    Object.assign(event(), { status: 'registration', draw_locked: false, waitlist_enabled: true, waitlist_auto_promote: true });
+    store.db.tournament_event_waitlist = [
+      { id: 'wl-1', event_id: 'e1', player_id: 'pl-carol', status: 'waiting', joined_at: '2026-09-20T18:00:00Z' },
+    ];
+    store.waitlistRpc = (name) => (name === 'fill_event_from_waitlist' ? { data: PROMOTED, error: null } : undefined);
+  });
+
+  it('a removal hands the place to the waitlist, settles the fee and writes the trail', async () => {
+    await removeParticipantFromEvent('p-bob');
+
+    expect(store.db.tournament_participants!.map((p) => p.id)).not.toContain('p-bob');
+    expect(fillCalls().map((c) => c.args)).toEqual([{ p_event_id: 'e1', p_actor: 'admin-1', p_waitlist_id: null }]);
+    expect(entryFeeCalls).toEqual([{ tournamentId: 't1', playerIds: ['pl-carol'] }]);
+    expect(audit('waitlist_promote').map((r) => r.details)).toEqual([{ player_ids: ['pl-carol'], automatic: true }]);
+  });
+
+  it('does not fill when the desk promotes by hand', async () => {
+    event().waitlist_auto_promote = false;
+    await removeParticipantFromEvent('p-bob');
+    expect(fillCalls()).toEqual([]);
+    expect(entryFeeCalls).toEqual([]);
+  });
+
+  it('does not fill on a database without the columns', async () => {
+    delete event().waitlist_enabled;
+    delete event().waitlist_auto_promote;
+    await removeParticipantFromEvent('p-bob');
+    expect(fillCalls()).toEqual([]);
+  });
+
+  it('a removal still succeeds when the fill function is missing', async () => {
+    store.waitlistRpc = (name) => (name === 'fill_event_from_waitlist'
+      ? { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.fill_event_from_waitlist' } }
+      : undefined);
+
+    await expect(removeParticipantFromEvent('p-bob')).resolves.toBeUndefined();
+
+    expect(store.db.tournament_participants!.map((p) => p.id)).not.toContain('p-bob');
+    expect(audit('participant_removed')).toHaveLength(1);
+    expect(audit('waitlist_promote')).toEqual([]);
+  });
+
+  it('a removal still succeeds when the fill fails outright', async () => {
+    store.waitlistRpc = (name) => (name === 'fill_event_from_waitlist'
+      ? { data: null, error: { message: 'deadlock detected' } }
+      : undefined);
+    await expect(removeParticipantFromEvent('p-bob')).resolves.toBeUndefined();
+    expect(audit('waitlist_promote')).toEqual([]);
+  });
+
+  it('a raised limit offers the place to the waitlist', async () => {
+    store.db.tournament_matches = [];
+    const res = await updateTournamentEvent('e1', { max_participants: 3 });
+    expect(res).toEqual({ ok: true, data: undefined });
+    expect(fillCalls()).toHaveLength(1);
+  });
+
+  it('promotes one named member, as the desk', async () => {
+    const res = await promoteFromWaitlist('wl-1');
+
+    expect(res).toEqual({ ok: true, data: { promoted: 1 } });
+    expect(fillCalls().map((c) => c.args)).toEqual([{ p_event_id: 'e1', p_actor: 'admin-1', p_waitlist_id: 'wl-1' }]);
+    expect(entryFeeCalls).toEqual([{ tournamentId: 't1', playerIds: ['pl-carol'] }]);
+    expect(audit('waitlist_promote').map((r) => r.details)).toEqual([{ player_ids: ['pl-carol'], automatic: false }]);
+  });
+
+  it.each([
+    [{ ok: false, reason: 'event_full' }, 'The event is full. Free a place, or raise the event limit, before promoting anybody.'],
+    [{ ok: false, reason: 'not_waiting' }, 'That member is no longer on the waitlist. Reload the page.'],
+    [{ ok: false, reason: 'entry_cap', cap: 2 }, 'This member is already entered in 2 events at this tournament, which is the limit.'],
+    [{ ok: false, reason: 'already_in_pair' }, 'This member is already in a pair in this event. Remove them from the waitlist instead.'],
+  ])('says why a promotion was refused: %o', async (answer, message) => {
+    store.waitlistRpc = (name) => (name === 'fill_event_from_waitlist' ? { data: answer, error: null } : undefined);
+    const res = await promoteFromWaitlist('wl-1');
+    expect(res.ok === false && res.error).toBe(message);
+    expect(entryFeeCalls).toEqual([]);
+    expect(audit('waitlist_promote')).toEqual([]);
+  });
+
+  it('refuses to promote a member who is no longer waiting, before the RPC', async () => {
+    store.db.tournament_event_waitlist![0]!.status = 'left';
+    const res = await promoteFromWaitlist('wl-1');
+    expect(res.ok === false && res.error).toBe('That member is no longer on the waitlist. Reload the page.');
+    expect(fillCalls()).toEqual([]);
+  });
+
+  it('asks for the migration when the table is missing', async () => {
+    store.faults.push({ table: 'tournament_event_waitlist', op: 'select', message: 'relation does not exist', code: '42P01' });
+    const res = await promoteFromWaitlist('wl-1');
+    expect(res.ok === false && res.error).toBe('Run migration 00278 first');
+  });
+
+  it('removes a member from the waitlist and writes the trail', async () => {
+    store.waitlistRpc = (name) => (name === 'remove_from_event_waitlist'
+      ? { data: { ok: true, event_id: 'e1', tournament_id: 't1', player_id: 'pl-carol' }, error: null }
+      : undefined);
+    const res = await removeFromWaitlist('wl-1');
+    expect(res.ok).toBe(true);
+    expect(store.rpcCalls.find((c) => c.name === 'remove_from_event_waitlist')?.args).toEqual({ p_waitlist_id: 'wl-1', p_actor: 'admin-1' });
+    expect(audit('waitlist_remove').map((r) => r.details)).toEqual([{ waitlist_id: 'wl-1', player_id: 'pl-carol' }]);
+  });
+
+  it('says so when the member to remove is no longer waiting, or the function is missing', async () => {
+    store.waitlistRpc = (name) => (name === 'remove_from_event_waitlist' ? { data: { ok: false, reason: 'not_waiting' }, error: null } : undefined);
+    const stale = await removeFromWaitlist('wl-1');
+    expect(stale.ok === false && stale.error).toBe('That member is no longer on the waitlist. Reload the page.');
+
+    store.waitlistRpc = (name) => (name === 'remove_from_event_waitlist' ? { data: null, error: { code: 'PGRST202', message: 'missing' } } : undefined);
+    const missing = await removeFromWaitlist('wl-1');
+    expect(missing.ok === false && missing.error).toBe('Run migration 00278 first');
+    expect(audit('waitlist_remove')).toEqual([]);
+  });
+
+  it('the switch asks for the migration on a database without the columns', async () => {
+    delete event().waitlist_enabled;
+    delete event().waitlist_auto_promote;
+    const res = await setEventWaitlist('e1', { enabled: true, autoPromote: true });
+    expect(res.ok === false && res.error).toBe('Run migration 00278 first');
+    expect(store.rpcCalls.map((c) => c.name)).not.toContain('set_event_waitlist');
+  });
+
+  it('the switch will not turn off with people still waiting', async () => {
+    store.waitlistRpc = (name) => (name === 'set_event_waitlist' ? { data: { ok: false, reason: 'waitlist_not_empty' }, error: null } : undefined);
+    const res = await setEventWaitlist('e1', { enabled: false, autoPromote: true });
+    expect(res.ok === false && res.error).toBe('People are still waiting. Promote or remove them before switching the waitlist off.');
+  });
+
+  it('the switch refuses an external event before the RPC', async () => {
+    event().external_event = true;
+    const res = await setEventWaitlist('e1', { enabled: true, autoPromote: true });
+    expect(res.ok === false && res.error).toBe('An external event has no waitlist: its teams are entered by name.');
+    expect(store.rpcCalls.map((c) => c.name)).not.toContain('set_event_waitlist');
   });
 });

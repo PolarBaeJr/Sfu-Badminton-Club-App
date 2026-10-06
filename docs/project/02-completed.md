@@ -126,7 +126,7 @@ The app has been through several deliberate phases:
 
 1. **Initial build** — the original club app (ladder, basic management).
 2. **Security & cleanup overhaul** — a large pass fixing security issues and adding win/loss stats, push notifications, the installable-app features, and fee tracking.
-3. **Self-hosting migration** — moved onto the club's own infrastructure with proper, private security keys (this closed a serious hole — see the security doc), plus automatic backups.
+3. **Security keys migration**: moved to a database with proper, private security keys (this closed a serious hole; see the security doc), plus automatic backups.
 4. **Seasons / fees / roles rework** — the big structural upgrade: the seasons system, fees-follow-seasons, executive access levels, the rating rescale and reset policy, the public pages, and finance tracking.
 5. **Polish & design** — the professional redesign, dark mode, login redesign, and the mobile/visual fixes above.
 6. **Executive beta** — private testing with the exec team, July 2026.

@@ -14,9 +14,10 @@
 // ---------------------------------------------------------------------------
 
 import * as Sentry from '@sentry/nextjs';
-import { ExpectedError } from '@badminton/shared';
+import { ExpectedError, courtLabel, resolveCourtLabels } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+import { readTournamentCourts } from '../tournament-courts';
 import { runAction, type ActionResult } from '../action-result';
 import {
   requireCapability,
@@ -71,8 +72,9 @@ function staleRowRefusal(what: string): ExpectedError {
  * both apps already hold open on tournament_matches (00113), so this action's
  * whole job is the write and the audit trail.
  *
- * FREE TEXT, deliberately — see 00135 for the argument against modelling venues
- * and courts that nobody has asked for. Empty string clears it back to NULL,
+ * FREE TEXT where the tournament has no courts of its own (00135). Where it has
+ * them (00273) the text must name one, and the match is linked to it by court_id
+ * so the database can refuse two live matches on one court. Empty string clears it back to NULL,
  * which the player app renders as "Court TBC" rather than as a blank, because
  * "not assigned yet" is a real state at a live event and has to look like one.
  */
@@ -106,11 +108,36 @@ async function setMatchCourtImpl(matchId: string, court: string) {
   // tournament gets repaired.
   await assertTournamentNotSuspended(adminClient, tournamentId);
 
+  // A TOURNAMENT WITH ITS OWN COURTS (00273) takes only those, and the match is
+  // linked by court_id as well as labelled. Without courts (or before 00273)
+  // this is the free text it always was.
+  const courts = await readTournamentCourts(adminClient, tournamentId);
+  const managed = !!courts && courts.length > 0;
+
   const previous = (match.court as string | null) ?? null;
-  const next = trimmed === '' ? null : trimmed;
+  let next = trimmed === '' ? null : trimmed;
+  let nextCourtId: string | null = null;
+  let previousCourtId: string | null = null;
+  if (managed) {
+    if (next !== null) {
+      const court = resolveCourtLabels(courts, [next]).byLabel.get(next);
+      if (!court) {
+        throw new ExpectedError(`${courtLabel(next)} is not one of this tournament's courts. Add it on the tournament page.`);
+      }
+      next = court.label;
+      nextCourtId = court.id;
+    }
+    const { data: linked, error: linkedError } = await adminClient
+      .from('tournament_matches')
+      .select('court_id')
+      .eq('id', matchId)
+      .maybeSingle();
+    if (linkedError) throw new Error(linkedError.message);
+    previousCourtId = (linked?.court_id as string | null | undefined) ?? null;
+  }
   // Nothing to say, and nothing to wake twenty phones for: a no-op write would
   // still hit the WAL and nudge every subscriber of this event.
-  if (previous === next) return;
+  if (previous === next && previousCourtId === nextCourtId) return;
 
   // ONLY WHILE THE COURT IS STILL THE ONE WE READ. Without this the second exec
   // to type into the same row overwrites the first, and the audit entry below
@@ -123,12 +150,22 @@ async function setMatchCourtImpl(matchId: string, court: string) {
   // this actually means.
   const write = adminClient
     .from('tournament_matches')
-    .update({ court: next, updated_at: new Date().toISOString() })
+    .update({
+      court: next,
+      // Only where the column exists: a database before 00273 has no court_id.
+      ...(managed ? { court_id: nextCourtId } : {}),
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', matchId);
   const guarded = previous === null ? write.is('court', null) : write.eq('court', previous);
   // Matching no row is not an error in PostgREST, so the returned rows are the
   // only thing that can detect the lost race.
   const { data: updated, error } = await guarded.select('id').maybeSingle();
+  // A live match moved onto a court another live match is on: the
+  // one-live-per-court index (00273) refuses it.
+  if (error?.code === '23505' && next !== null) {
+    throw new ExpectedError(`${courtLabel(next)} already has a match on it. Finish or take that match off court first.`);
+  }
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
@@ -144,7 +181,11 @@ async function setMatchCourtImpl(matchId: string, court: string) {
     match_id: matchId,
     action: next === null ? 'match_court_cleared' : 'match_court_set',
     performed_by: admin.id,
-    details: { previous_court: previous, court: next },
+    details: {
+      previous_court: previous,
+      court: next,
+      ...(managed ? { previous_court_id: previousCourtId, court_id: nextCourtId } : {}),
+    },
   });
 
   revalidateEventPaths(tournamentId, match.event_id as string);
@@ -259,7 +300,7 @@ async function setMatchLiveImpl(matchId: string, live: boolean) {
 
   const { data: match } = await adminClient
     .from('tournament_matches')
-    .select('id, status, is_bye, event_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id, event:tournament_events(tournament_id)')
+    .select('id, status, is_bye, court, event_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id, event:tournament_events(tournament_id)')
     .eq('id', matchId)
     .maybeSingle();
   if (!match) throw new ExpectedError('Match not found');
@@ -317,6 +358,12 @@ async function setMatchLiveImpl(matchId: string, live: boolean) {
     // only way to tell a lost race from a successful write.
     .select('id')
     .maybeSingle();
+  // Another match is already live on this court: the one-live-per-court index
+  // (00273) refuses the second. Said with the court named, before the raw throw.
+  if (error?.code === '23505') {
+    const court = courtLabel(match.court as string | null) ?? 'This court';
+    throw new ExpectedError(`${court} already has a match on it. Finish or take that match off court first.`);
+  }
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);

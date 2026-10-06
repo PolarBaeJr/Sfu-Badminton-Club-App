@@ -1,12 +1,24 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input } from '@badminton/ui';
-import { updateTournamentEvent } from '@/lib/tournament-actions';
+import { Button, Dialog, Input, Switch } from '@badminton/ui';
+import { setEventWaitlist, updateTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { playsRoundRobin, isPoolToBracket, ELO_MULTIPLIER_BOUNDS, eventEloMultiplier } from '@badminton/shared';
-import type { SeedBy, TournamentMatchFormat } from '@badminton/shared';
+import {
+  playsRoundRobin,
+  isPoolToBracket,
+  ELO_MULTIPLIER_BOUNDS,
+  eventEloMultiplier,
+  parseFormatConfig,
+  parsePointsTable,
+  poolsThenPlacement,
+  withEveryStageUnrated,
+} from '@badminton/shared';
+import type { FormatConfig, FormatPoints, SeedBy, TournamentMatchFormat } from '@badminton/shared';
+import { stagedEditorErrors } from '@/lib/staged-editor';
+import { StagedFormatEditor } from '../../../staged-format-editor';
+import { PointsTableEditor } from '../../../points-table-editor';
 import {
   EventFormatFields,
   toFormatPayload,
@@ -15,13 +27,16 @@ import {
 } from '../../../event-format-fields';
 import type { TournamentEventRow } from '@/lib/tournament-types';
 
-// Editing the format after the event is created. The server refuses once a
-// draw exists; this dialog is simply not offered then, so the exec never sees
-// a form that cannot be saved.
+// Editing the format after the event is created. The server refuses a format
+// change once a draw exists, so from then on this dialog offers only what can
+// still change: a staged event's undrawn stages, a legacy event's points table
+// (pointsOnly). The exec never sees a form that cannot be saved.
 export function EventSettingsDialog({
   event,
   siblings,
   totalEntries,
+  stagesDrawn = [],
+  pointsOnly: pointsOnlyAsked = false,
   onClose,
 }: {
   event: TournamentEventRow;
@@ -32,8 +47,27 @@ export function EventSettingsDialog({
    * type-checks and simply gets no live line.
    */
   totalEntries?: number;
+  /** A staged event: the stage numbers that have matches. */
+  stagesDrawn?: number[];
+  /** A legacy event past its draw: only the points table can change (00275). */
+  pointsOnly?: boolean;
   onClose: () => void;
 }) {
+  // A STAGED EVENT (00272). Its stages are edited here until it is finalised;
+  // once one is drawn, only the stages are sent, and the server refuses any
+  // change to a drawn one.
+  const staged = event.format === 'staged';
+  const external = event.external_event === true;
+  const [storedConfig] = useState<FormatConfig | null>(() => (staged ? parseFormatConfig(event.format_config) : null));
+  const [stagedConfig, setStagedConfig] = useState<FormatConfig>(() => {
+    const cfg = storedConfig ?? poolsThenPlacement();
+    return external ? withEveryStageUnrated(cfg) : cfg;
+  });
+  const drawn = new Set(stagesDrawn);
+  const stagesOnly = staged && drawn.size > 0;
+  const stagedErrors = staged ? stagedEditorErrors(stagedConfig, storedConfig, drawn) : [];
+  const pointsOnly = !staged && pointsOnlyAsked;
+  const [pointsConfig, setPointsConfig] = useState<FormatPoints | null>(() => parsePointsTable(event.points_config));
   const [values, setValues] = useState<EventFormatValues>({
     matchFormat: event.match_format as TournamentMatchFormat,
     gamesPerMatch: event.games_per_match?.toString() ?? '',
@@ -83,6 +117,33 @@ export function EventSettingsDialog({
   const { toast } = useToast();
   const router = useRouter();
 
+  // THE WAITLIST (00278), saved on its own the moment a switch moves rather
+  // than with the form: it takes the field lock, and switching it off is
+  // refused while anybody is still waiting. The columns are missing until the
+  // migration runs, so their absence from `select('*')` is the probe.
+  const waitlistReady = 'waitlist_enabled' in event;
+  const waitlistRow = event as { waitlist_enabled?: boolean; waitlist_auto_promote?: boolean };
+  const [waitlistEnabled, setWaitlistEnabled] = useState(waitlistRow.waitlist_enabled === true);
+  const [waitlistAuto, setWaitlistAuto] = useState(waitlistRow.waitlist_auto_promote !== false);
+  const [waitlistSaving, setWaitlistSaving] = useState(false);
+  const waitlistEditable = event.status === 'registration' || event.status === 'checkin';
+
+  async function saveWaitlist(enabled: boolean, autoPromote: boolean) {
+    setWaitlistSaving(true);
+    const res = await setEventWaitlist(event.id, { enabled, autoPromote });
+    setWaitlistSaving(false);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    setWaitlistEnabled(enabled);
+    setWaitlistAuto(autoPromote);
+    toast(
+      res.data.promoted > 0
+        ? `Waitlist updated, ${res.data.promoted} entered from it`
+        : 'Waitlist updated',
+      'success',
+    );
+    router.refresh();
+  }
+
   // A round robin produces standings rather than consuming them, and a
   // pool_to_bracket event produces its own and consumes them itself.
   const seedableSiblings = playsRoundRobin(event.format) ? [] : siblings;
@@ -97,6 +158,26 @@ export function EventSettingsDialog({
     // walk away believing they had cleared a number that is still set. That is
     // the same silent-no-op the seed_by null-rewrite was fixed for; say so
     // instead.
+    if (stagesOnly) {
+      setLoading(true);
+      const res = await updateTournamentEvent(event.id, { format_config: stagedConfig });
+      setLoading(false);
+      if (!res.ok) { toast(res.error, 'error'); return; }
+      toast('Stages updated', 'success');
+      onClose();
+      router.refresh();
+      return;
+    }
+    if (pointsOnly) {
+      setLoading(true);
+      const res = await updateTournamentEvent(event.id, { points_config: pointsConfig });
+      setLoading(false);
+      if (!res.ok) { toast(res.error, 'error'); return; }
+      toast('Points updated', 'success');
+      onClose();
+      router.refresh();
+      return;
+    }
     if (eloMultiplier.trim() === '') {
       toast('Enter an Elo multiplier, or set it back to 1.25 for the usual weighting.', 'error');
       return;
@@ -105,9 +186,10 @@ export function EventSettingsDialog({
     try {
       const res = await updateTournamentEvent(event.id, {
         ...toFormatPayload(
-          playsRoundRobin(event.format) ? { ...values, seededFrom: '' } : values,
+          playsRoundRobin(event.format) || staged ? { ...values, seededFrom: '' } : values,
           event.format,
         ),
+        ...(staged ? { format_config: stagedConfig } : { points_config: pointsConfig }),
         max_participants: maxParticipants === '' ? null : Number(maxParticipants),
         // Always sent — handleSave refuses a blank box above, so there is no
         // path here that could quietly omit it and report success.
@@ -126,7 +208,17 @@ export function EventSettingsDialog({
   return (
     <Dialog open onClose={onClose} title="Event Settings">
       <form onSubmit={handleSave} className="space-y-4">
-        <EventFormatFields
+        {staged && (
+          <StagedFormatEditor
+            value={stagedConfig}
+            onChange={setStagedConfig}
+            drawn={drawn}
+            stored={storedConfig}
+            external={external}
+          />
+        )}
+        {!stagesOnly && !pointsOnly && (<>
+        {!staged && <EventFormatFields
           value={values}
           onChange={setValues}
           siblings={seedableSiblings}
@@ -139,7 +231,7 @@ export function EventSettingsDialog({
           // event.elo_multiplier here would make the two dialogs disagree about
           // what a round is worth while one of them is being edited.
           eloMultiplier={eloMultiplier}
-        />
+        />}
         <Input
           label={values.seededFrom === '' ? 'Max Participants (optional)' : 'Bracket Size (how many qualify)'}
           type="number"
@@ -183,9 +275,39 @@ export function EventSettingsDialog({
           — matches already rated keep the weight they were rated at, and nothing records which was which, so it
           cannot be changed underneath a draw that has started.
         </p>
+        </>)}
+        {!staged && <PointsTableEditor format={event.format} value={pointsConfig} onChange={setPointsConfig} />}
+        {!external && (
+          <div className="space-y-1 border-t border-[var(--border)] pt-3">
+            {waitlistReady ? (
+              <>
+                <Switch
+                  label="Waitlist"
+                  description={waitlistEditable
+                    ? 'When the event is full, members can queue for a place.'
+                    : 'Can only be changed while the event is taking entries or checking in.'}
+                  checked={waitlistEnabled}
+                  disabled={!waitlistEditable || waitlistSaving}
+                  onChange={(next) => saveWaitlist(next, waitlistAuto)}
+                />
+                {waitlistEnabled && (
+                  <Switch
+                    label="Promote automatically when a place frees up"
+                    description="Off: you promote members from the Participants tab yourself."
+                    checked={waitlistAuto}
+                    disabled={!waitlistEditable || waitlistSaving}
+                    onChange={(next) => saveWaitlist(waitlistEnabled, next)}
+                  />
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-[var(--text-muted)]">Waitlist: run migration 00278 first.</p>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between pt-2">
           <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
-          <Button type="submit" loading={loading}>Save Changes</Button>
+          <Button type="submit" loading={loading} disabled={stagedErrors.length > 0}>Save Changes</Button>
         </div>
       </form>
     </Dialog>

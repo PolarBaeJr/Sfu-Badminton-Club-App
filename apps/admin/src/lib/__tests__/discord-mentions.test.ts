@@ -61,7 +61,7 @@ describe('resolveRoleMentions', () => {
 
   it('leaves an email address alone', () => {
     // The motivating document is a Code of Conduct. It has addresses in it.
-    const text = 'Email wkc10@sfu.ca or the exec team.';
+    const text = 'Email jane@example.org or the exec team.';
     expect(resolve(text).text).toBe(text);
     expect(resolve(text).matched).toEqual([]);
   });
@@ -287,7 +287,7 @@ describe('unresolveRoleMentions', () => {
   });
 
   it('does not disturb the prose the forward scan protects', () => {
-    for (const text of ['Email wkc10@sfu.ca or the exec team.', '@session courts are closed']) {
+    for (const text of ['Email jane@example.org or the exec team.', '@session courts are closed']) {
       expect(unresolveRoleMentions(resolve(text).text, ROLES)).toBe(text);
     }
   });

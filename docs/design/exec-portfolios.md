@@ -88,11 +88,9 @@ refuses non-admin writes to `role`, `is_exec`, `is_trainer`, `exec_title`).
 
 ## Constraints
 
-- Migration number **00086**. Apply to STAGING only; production migrations are
-  the owner's to run.
+- Migration number **00086**. Production migrations are the owner's to run.
 - `players.portfolio` must be added to the privileged-column guard trigger.
 - Gate must be green: `npm run build`, `npm run lint`, `npm run test`.
-- Push to `deploy/docker-staging`. Do NOT push to `deploy/docker-prod`.
 - The app is LIVE. Nothing may reduce an existing user's access on deploy.
 
 ## Open questions for the reviewer

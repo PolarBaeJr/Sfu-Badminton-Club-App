@@ -34,6 +34,10 @@ const store = vi.hoisted(() => ({
   seq: 0,
   /** Runs just before an UPDATE is applied — models the other desk winning. */
   beforeUpdate: null as null | ((ctx: { table: string; payload: Row }) => void),
+  /** A database older than 00273: tournament_courts answers PGRST205. */
+  courtsMissing: false,
+  /** The next UPDATE fails with this instead of landing (a constraint refusing it). */
+  updateError: null as null | { code: string; message: string },
 }));
 
 const makeClient = vi.hoisted(() => () => {
@@ -55,7 +59,15 @@ const makeClient = vi.hoisted(() => () => {
           isFilters.every(([c, v]) => (v === null ? r[c] == null : r[c] === v)),
       );
 
-    const run = (): { data: Row[] | null; error: { message: string } | null } => {
+    const run = (): { data: Row[] | null; error: { code?: string; message: string } | null } => {
+      if (table === 'tournament_courts' && store.courtsMissing) {
+        return { data: null, error: { code: 'PGRST205', message: "Could not find the table 'public.tournament_courts' in the schema cache" } };
+      }
+      if (op === 'update' && store.updateError) {
+        const error = store.updateError;
+        store.updateError = null;
+        return { data: null, error };
+      }
       if (op === 'insert') {
         const row = { id: `row-${++store.seq}`, ...payload };
         (store.db[table] ??= []).push(row);
@@ -153,7 +165,9 @@ function otherDeskCompletes() {
 beforeEach(() => {
   store.seq = 0;
   store.beforeUpdate = null;
-  store.db = { tournament_matches: [], tournament_audit_log: [] };
+  store.courtsMissing = false;
+  store.updateError = null;
+  store.db = { tournament_matches: [], tournament_audit_log: [], tournament_courts: [] };
   seedMatch();
 });
 
@@ -297,6 +311,89 @@ describe('setMatchCourt', () => {
 
     expect(res.ok).toBe(false);
     expect(match().court).toBe('11');
+    expect(auditRows()).toHaveLength(0);
+  });
+});
+
+// A TOURNAMENT'S OWN COURTS (00273). Without any, the text path above is
+// unchanged; with them, the desk may only name one, and the match is linked.
+describe('courts of the tournament', () => {
+  function seedCourts() {
+    store.db.tournament_courts = [
+      { id: 'court-3', tournament_id: TOURNAMENT, label: 'Court 3', sort_order: 1, active: true, notes: null },
+      { id: 'court-4', tournament_id: TOURNAMENT, label: '4', sort_order: 2, active: false, notes: null },
+    ];
+  }
+
+  it('keeps the free text when the database has no courts table yet', async () => {
+    store.courtsMissing = true;
+
+    const res = await setMatchCourt(MATCH, '9');
+
+    expect(res.ok).toBe(true);
+    expect(match().court).toBe('9');
+    // A database before 00273 has no court_id, so the write must not name it.
+    expect('court_id' in match()).toBe(false);
+  });
+
+  it('resolves "3" to Court 3 and links the match', async () => {
+    seedCourts();
+
+    const res = await setMatchCourt(MATCH, '3');
+
+    expect(res.ok).toBe(true);
+    expect(match().court).toBe('Court 3');
+    expect(match().court_id).toBe('court-3');
+    expect((auditRows('match_court_set')[0]!.details as Row).court_id).toBe('court-3');
+  });
+
+  it('refuses a court the tournament does not have, and one switched off', async () => {
+    seedCourts();
+
+    for (const name of ['9', '4']) {
+      const res = await setMatchCourt(MATCH, name);
+      expect(res.ok).toBe(false);
+      if (res.ok) throw new Error('unreachable');
+      expect(res.error).toBe(`Court ${name} is not one of this tournament's courts. Add it on the tournament page.`);
+    }
+    expect(match().court).toBeNull();
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it('clears both the text and the link', async () => {
+    seedCourts();
+    seedMatch({ court: 'Court 3', court_id: 'court-3' });
+
+    const res = await setMatchCourt(MATCH, '');
+
+    expect(res.ok).toBe(true);
+    expect(match().court).toBeNull();
+    expect(match().court_id).toBeNull();
+  });
+
+  it('names the court when a live match is moved onto a busy one', async () => {
+    seedCourts();
+    seedMatch({ status: 'live' });
+    store.updateError = { code: '23505', message: 'duplicate key value violates unique constraint "tournament_matches_one_live_per_court"' };
+
+    const res = await setMatchCourt(MATCH, '3');
+
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('unreachable');
+    expect(res.error).toBe('Court 3 already has a match on it. Finish or take that match off court first.');
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it('names the court when Start finds another match live on it', async () => {
+    seedMatch({ court: 'Court 3', court_id: 'court-3' });
+    store.updateError = { code: '23505', message: 'duplicate key value violates unique constraint "tournament_matches_one_live_per_court"' };
+
+    const res = await setMatchLive(MATCH, true);
+
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('unreachable');
+    expect(res.error).toBe('Court 3 already has a match on it. Finish or take that match off court first.');
+    expect(match().status).toBe('ready');
     expect(auditRows()).toHaveLength(0);
   });
 });

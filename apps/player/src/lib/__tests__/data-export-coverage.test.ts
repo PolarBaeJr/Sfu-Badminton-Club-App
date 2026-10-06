@@ -688,6 +688,19 @@ const FIXTURES: Record<string, StubRow[]> = {
       ready_player_ids: [PLAYER_ID, SENTINEL],
     },
   ],
+  tournament_event_waitlist: [
+    {
+      id: 'wl-1',
+      event_id: 'ev-1',
+      player_id: PLAYER_ID,
+      status: 'removed',
+      joined_at: '2026-09-20T18:00:00Z',
+      resolved_at: '2026-09-21T18:00:00Z',
+      resolved_by: SENTINEL,
+      reason: null,
+      promoted_participant_id: null,
+    },
+  ],
   legacy_tournament_participants: [
     { id: 'ltp1', tournament_id: 'trn-1', player_id: PLAYER_ID, partner_id: SENTINEL, placement: 3 },
   ],
@@ -997,6 +1010,16 @@ describe('no third party survives into the file', () => {
     // passing because the projection dropped everything on the floor.
     expect(serialised).toContain('member_1');
     expect(result.document.manifest.pseudonyms_allocated).toBeGreaterThan(0);
+  });
+
+  it('exports the member\'s own waitlist rows with the officer as a role', async () => {
+    const result = await assembleMemberExport(stubClient(), PLAYER_ID);
+    if (!result.ok) throw new Error(result.failures.join('; '));
+    const rows = result.document.data.tournament_event_waitlist as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).not.toHaveProperty('resolved_by');
+    expect(rows[0]).toHaveProperty('resolved_by_role');
+    expect(rows[0]!.status).toBe('removed');
   });
 
   it('never emits a jsonb payload key outside the allowlist', async () => {

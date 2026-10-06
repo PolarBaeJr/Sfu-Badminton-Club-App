@@ -5,8 +5,8 @@ import { getServerSupabaseUrl } from '@badminton/shared';
  *
  * WHY THIS IS NEEDED AT ALL. Every server-side Supabase client in this app is
  * built with getServerSupabaseUrl(), which on production is
- * SUPABASE_INTERNAL_URL: a tailnet address that resolves only inside the app's
- * own network. createSignedUrl() builds its URL by concatenating onto whatever
+ * SUPABASE_INTERNAL_URL: a private-network address that resolves only inside
+ * the app's own network. createSignedUrl() builds its URL by concatenating onto whatever
  * origin its client was constructed with, so a URL signed on prod points at a
  * hostname a member's phone cannot look up. Handed to a browser it fails as a
  * broken image, for a reason nothing in any log would explain.

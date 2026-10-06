@@ -4,7 +4,7 @@
 -- challenges that have NO participants AND no associated match.
 --
 -- Run:
---   ssh pi "docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1" < scripts/cleanup-orphan-challenges.sql
+--   psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "supabase/One Time Scripts/cleanup-orphan-challenges.sql"
 --
 -- Preview first (uncomment) to see what would be deleted:
 -- SELECT c.id, c.status, c.created_at

@@ -17,6 +17,8 @@ import {
   categoryRefusalMessage,
   toCompetitionCategory,
   ExpectedError,
+  formatWindowInstant,
+  windowState,
   type TournamentEventType,
 } from '@badminton/shared';
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
@@ -28,6 +30,13 @@ import {
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
 import { assertFeatureOn, getFeatureFlags } from './feature-gate';
 import { refuseClosedTournament } from './tournament-closed';
+import { loadEntryWindows, windowsFor } from './tournament-windows';
+import {
+  fillFromWaitlistAfterFree,
+  isWaitlistMissing,
+  settleWaitlistPromotions,
+  type WaitlistPromotion,
+} from './event-waitlist';
 
 // Revalidate every surface that surfaces tournament_participants /
 // tournament_pairs after a register/withdraw/check-in. The event detail
@@ -104,7 +113,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, existingPairRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships, season_id)')
+      .select('id, status, event_type, tournament_id, max_participants, external_event, tournament:tournaments(status, suspended_at, suspension_reason, waiver_text, allowed_memberships, season_id)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -142,6 +151,9 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
 
   const event = eventRes.data;
   if (!event) throw new Error('Event not found');
+  // An external event (00269) is entered by the organisers, by name. The DB refuses
+  // the participant row too; this says why.
+  if (event.external_event) throw new ExpectedError('This event is entered by the organisers.');
   const regTournament = pickSuspension(event.tournament);
   if (regTournament?.suspended_at) {
     throw new ExpectedError(`This tournament is currently suspended${regTournament.suspension_reason ? `: ${regTournament.suspension_reason}` : ''}`);
@@ -196,6 +208,22 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   }
 
   if (event.status !== 'registration') throw new ExpectedError('Registration is closed');
+
+  // THE REGISTRATION WINDOW (00276), on top of the status and never instead of
+  // it. enter_tournament_event asks again under the lock; this is the early,
+  // readable answer. Read on its own so a database without 00276 is no window.
+  const regWindow = windowsFor(
+    await loadEntryWindows(service, { eventIds: [eventId], tournamentIds: [event.tournament_id] }),
+    eventId,
+    event.tournament_id,
+  ).registration;
+  const regWindowState = windowState(regWindow.opens_at, regWindow.closes_at, new Date());
+  if (regWindowState === 'not_open_yet') {
+    throw new ExpectedError(`Registration opens ${formatWindowInstant(regWindow.opens_at!)}`);
+  }
+  if (regWindowState === 'closed') {
+    throw new ExpectedError(`Registration closed ${formatWindowInstant(regWindow.closes_at!)}`);
+  }
 
   // THE COMPETITION CATEGORY GATE (00111), and the reason it exists at all.
   // event_type has said 'womens_singles' since 00001 with nothing enforcing it,
@@ -322,9 +350,24 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   if (!entered.ok) {
     switch (entered.reason) {
       case 'event_full':
+        // 00278 says whether this event keeps a waitlist, so the member is
+        // pointed at it rather than told only that the door is shut.
+        if (entered.waitlist === true) throw new ExpectedError('Event is full, join the waitlist');
         throw new ExpectedError('Event is full');
+      // 00278: somebody is already waiting, so a free place is theirs.
+      case 'waitlist_queue':
+        throw new ExpectedError('Others are waiting for this event, join the waitlist');
       case 'registration_closed':
         throw new ExpectedError('Registration is closed');
+      // The window (00276) moved between the check above and the lock.
+      case 'registration_not_open':
+        throw new ExpectedError(
+          entered.opens_at ? `Registration opens ${formatWindowInstant(entered.opens_at)}` : 'Registration is closed',
+        );
+      case 'registration_window_closed':
+        throw new ExpectedError(
+          entered.closes_at ? `Registration closed ${formatWindowInstant(entered.closes_at)}` : 'Registration is closed',
+        );
       case 'entry_cap':
         throw new ExpectedError(
           `You are already entered in ${entered.cap} ${entered.cap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
@@ -532,7 +575,196 @@ async function withdrawFromEventImpl(eventId: string) {
     }
   }
 
+  // The place this freed goes to the head of the waitlist (00278), as its own
+  // step: the withdrawal has committed and nothing here can undo it.
+  await fillFromWaitlistAfterFree(service, eventId);
+
   const tournamentId = result.tournament_id as string | undefined;
+  if (tournamentId) revalidateTournamentPaths(tournamentId, eventId);
+  else revalidatePath('/tournaments');
+}
+
+// ---------------------------------------------------------------------------
+// THE WAITLIST (00278)
+// ---------------------------------------------------------------------------
+// A member who could not get into a full event can queue for it. Joining asks
+// every question entering asks, inside join_event_waitlist under the same
+// locks, so a member who could not enter cannot queue either. The sentences
+// here are the ones registerForEvent uses for the same reasons.
+
+const WAITLIST_NOT_AVAILABLE = 'The waitlist is not available yet';
+
+export interface JoinWaitlistResult {
+  /** Place in the queue, 1 first, or null when the join went straight in. */
+  position: number | null;
+  /** True when a free place was waiting and the member was entered at once. */
+  entered: boolean;
+}
+
+export async function joinEventWaitlist(eventId: string, opts?: RegisterOptions): Promise<ActionResult<JoinWaitlistResult>> {
+  return runAction(() => joinEventWaitlistImpl(eventId, opts));
+}
+
+async function joinEventWaitlistImpl(eventId: string, opts?: RegisterOptions): Promise<JoinWaitlistResult> {
+  const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
+  if (player.is_banned) {
+    throw new ExpectedError('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
+  }
+  const service = createServiceRoleClient();
+  await assertCurrentWaiver(service, player);
+
+  const { data: event, error: eventError } = await service.from('tournament_events')
+    .select('id, event_type, tournament_id, external_event, tournament:tournaments(waiver_text)')
+    .eq('id', eventId).maybeSingle();
+  if (eventError) {
+    Sentry.captureException(eventError, { tags: { action: 'joinEventWaitlist', read: 'event' } });
+    throw new ExpectedError('Cannot process your request right now, please try again shortly');
+  }
+  if (!event) throw new Error('Event not found');
+  if (event.external_event) throw new ExpectedError('This event is entered by the organisers.');
+
+  // The same two consents an entry needs, because a promotion later enters the
+  // member without asking again.
+  const doubles = isDoublesEvent(event.event_type);
+  if (doubles && !opts?.soloEntryAcknowledged) {
+    throw new ExpectedError(
+      'Entering a doubles event on your own means the exec will pair you with another member. ' +
+      'Confirm that before you join the waitlist.',
+    );
+  }
+  const eventWaiverText = pickSuspension(event.tournament)?.waiver_text?.trim();
+  if (eventWaiverText && !opts?.eventWaiverAccepted) {
+    throw new ExpectedError('You must accept the event waiver to join the waitlist');
+  }
+
+  const { data: joined, error: joinErr } = await service.rpc('join_event_waitlist', {
+    p_event_id: eventId,
+    p_player_id: player.id,
+    p_doubles: doubles,
+    p_waiver_hash: eventWaiverText ? eventWaiverHash(eventWaiverText) : null,
+    p_user_agent: eventWaiverText ? (await headers()).get('user-agent') : null,
+  });
+  if (joinErr) {
+    if (isWaitlistMissing(joinErr)) {
+      Sentry.captureException(new Error(`join_event_waitlist is missing, migration 00278 is not applied: ${joinErr.message}`));
+      throw new ExpectedError(WAITLIST_NOT_AVAILABLE);
+    }
+    throw new Error(joinErr.message);
+  }
+  if (!joined) throw new Error('Could not add you to the waitlist, please try again shortly.');
+  if (!joined.ok) {
+    switch (joined.reason) {
+      case 'waitlist_disabled':
+        throw new ExpectedError('This event does not have a waitlist.');
+      case 'already_waiting':
+        throw new ExpectedError('You are already on the waitlist for this event.');
+      case 'event_has_room':
+        throw new ExpectedError('This event has room, so you can enter it now.');
+      case 'already_registered':
+        throw new ExpectedError(
+          joined.entry_status === 'withdrawn' || joined.entry_status === 'disqualified'
+            ? 'You have already left this event. Ask a tournament admin if you want to enter it again.'
+            : 'Already registered',
+        );
+      case 'entry_cap':
+        throw new ExpectedError(
+          `You are already entered in ${joined.cap} ${joined.cap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
+          'Withdraw from one to join this waitlist, or ask a tournament admin if one of them is a doubles pair.',
+        );
+      case 'registration_closed':
+        throw new ExpectedError('Registration is closed');
+      case 'registration_not_open':
+        throw new ExpectedError(
+          joined.opens_at ? `Registration opens ${formatWindowInstant(joined.opens_at)}` : 'Registration is closed',
+        );
+      case 'registration_window_closed':
+        throw new ExpectedError(
+          joined.closes_at ? `Registration closed ${formatWindowInstant(joined.closes_at)}` : 'Registration is closed',
+        );
+      case 'waiver_required':
+        throw new ExpectedError('You must accept the event waiver to join the waitlist');
+      case 'tournament_suspended':
+        throw new ExpectedError(
+          `This tournament is currently suspended${joined.suspension_reason ? `: ${joined.suspension_reason}` : ''}`,
+        );
+      case 'tournament_closed':
+        throw new ExpectedError(
+          refuseClosedTournament(joined.status, 'enter this event')
+          ?? 'This tournament has ended.',
+        );
+      case 'membership_not_allowed':
+        throw new ExpectedError(
+          membershipRefusalMessage(Array.isArray(joined.allowed) ? joined.allowed : null),
+        );
+      case 'membership_unpaid':
+        throw new ExpectedError(
+          membershipUnpaidMessage(
+            Array.isArray(joined.allowed) ? joined.allowed : null,
+            (await getFeatureFlags()).membership,
+          ),
+        );
+      case 'player_suspended':
+        throw new ExpectedError(
+          'Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.',
+        );
+      case 'already_in_pair':
+        throw new ExpectedError('You are already in a pair in this event.');
+      case 'category_undeclared':
+        throw new ExpectedError(
+          categoryRefusalMessage(event.event_type as TournamentEventType, 'undeclared'),
+        );
+      case 'category_mismatch':
+        throw new ExpectedError(
+          categoryRefusalMessage(event.event_type as TournamentEventType, 'mismatch'),
+        );
+      case 'player_not_found':
+        throw new Error('Player not found');
+      case 'event_not_found':
+        throw new Error('Event not found');
+      default:
+        throw new Error('Could not add you to the waitlist, please try again shortly.');
+    }
+  }
+
+  // The join's self-heal can enter somebody (this member included) when a
+  // place was free while others waited; their fee is settled the same way.
+  const promoted = (Array.isArray(joined.promoted) ? joined.promoted : []) as WaitlistPromotion[];
+  await settleWaitlistPromotions(service, event.tournament_id, promoted);
+
+  revalidateTournamentPaths(event.tournament_id, eventId);
+  const position = typeof joined.position === 'number' ? joined.position : null;
+  return { position, entered: promoted.some((p) => p.player_id === player.id) };
+}
+
+export async function leaveEventWaitlist(eventId: string): Promise<ActionResult> {
+  return runAction(() => leaveEventWaitlistImpl(eventId));
+}
+
+async function leaveEventWaitlistImpl(eventId: string): Promise<void> {
+  const player = await requirePlayer();
+  await assertFeatureOn('tournaments', player);
+  const service = createServiceRoleClient();
+
+  const { data: left, error } = await service.rpc('leave_event_waitlist', {
+    p_event_id: eventId,
+    p_player_id: player.id,
+  });
+  if (error) {
+    if (isWaitlistMissing(error)) {
+      Sentry.captureException(new Error(`leave_event_waitlist is missing, migration 00278 is not applied: ${error.message}`));
+      throw new ExpectedError(WAITLIST_NOT_AVAILABLE);
+    }
+    throw new Error(error.message);
+  }
+  if (!left) throw new Error('Could not take you off the waitlist, please try again shortly.');
+  if (!left.ok) {
+    if (left.reason === 'not_waiting') throw new ExpectedError('You are not on the waitlist for this event.');
+    if (left.reason === 'event_not_found') throw new Error('Event not found');
+    throw new Error('Could not take you off the waitlist, please try again shortly.');
+  }
+
+  const tournamentId = left.tournament_id as string | undefined;
   if (tournamentId) revalidateTournamentPaths(tournamentId, eventId);
   else revalidatePath('/tournaments');
 }
@@ -577,6 +809,20 @@ async function selfCheckInImpl(eventId: string) {
   if (!participant) throw new ExpectedError('Not registered');
   if (participant.status !== 'registered') throw new ExpectedError('Cannot check in');
 
+  // THE CHECK-IN WINDOW (00276). Only the member's own check-in is gated; the
+  // desk can check anybody in at any time. set_field_entry_status asks again
+  // under the lock.
+  const checkinWindow = windowsFor(
+    await loadEntryWindows(service, { eventIds: [eventId], tournamentIds: [event.tournament_id] }),
+    eventId,
+    event.tournament_id,
+  ).checkin;
+  const checkinWindowState = windowState(checkinWindow.opens_at, checkinWindow.closes_at, new Date());
+  if (checkinWindowState === 'not_open_yet') {
+    throw new ExpectedError(`Check-in opens ${formatWindowInstant(checkinWindow.opens_at!)}`);
+  }
+  if (checkinWindowState === 'closed') throw new ExpectedError('Check-in has closed, see the desk');
+
   // THE HARD BLOCK, on the member's own route in. An exec who added them never
   // asked for the event waiver — that is the whole gap — so this is the point
   // where being on the sheet stops being enough. registerForEvent already
@@ -602,13 +848,19 @@ async function selfCheckInImpl(eventId: string) {
     p_actor: null,
   });
   if (error) throw new Error(error.message);
-  const checkedResult = checked as { ok: boolean; reason?: string; event_status?: string } | null;
+  const checkedResult = checked as { ok: boolean; reason?: string; event_status?: string; opens_at?: string } | null;
   if (!checkedResult?.ok) {
     // The member sees the same sentence the pre-read guard above would have
     // given them; only the moment it is decided has changed.
     if (checkedResult?.reason === 'event_status' || checkedResult?.reason === 'event_completed') {
       throw new ExpectedError('Check-in is not open');
     }
+    if (checkedResult?.reason === 'checkin_not_open') {
+      throw new ExpectedError(
+        checkedResult.opens_at ? `Check-in opens ${formatWindowInstant(checkedResult.opens_at)}` : 'Check-in is not open',
+      );
+    }
+    if (checkedResult?.reason === 'checkin_window_closed') throw new ExpectedError('Check-in has closed, see the desk');
     if (checkedResult?.reason === 'entry_status') throw new ExpectedError('Cannot check in');
     if (checkedResult?.reason === 'entry_not_found') throw new ExpectedError('Not registered');
     throw new Error('Could not check you in. Try again.');

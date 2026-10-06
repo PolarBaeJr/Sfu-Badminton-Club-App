@@ -1,4 +1,4 @@
-// Runs daily via cron (host crontab -> ~/bin/run-edge-fn.sh).
+// Runs daily, invoked by a scheduler on the host (it is not pg_cron).
 //
 // Anonymizes members who have been inactive longer than
 // inactivity_rules.purge_after_days (365). This is the most destructive job in

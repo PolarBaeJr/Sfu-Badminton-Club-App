@@ -24,7 +24,7 @@ const envExample = readFileSync(
 const FAIL_SOFT_SECRETS = [
   // Unsubscribe links and RFC 8058 headers vanish from all ten senders.
   'EMAIL_UNSUBSCRIBE_SECRET',
-  // Every scheduled job (pg_cron and the Pi host crontab) 401s; reminders,
+  // Every scheduled job (pg_cron and the host scheduler) 401s; reminders,
   // digests and expiry sweeps just stop, with nothing logged anywhere.
   'CRON_SECRET',
   // Passkey sign-in answers 503 and the member blames their device.

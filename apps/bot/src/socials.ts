@@ -27,7 +27,7 @@ export interface SocialsReplyInput {
   pageUrl: string | null;
 }
 
-// SFU red, as in commands.ts.
+// The accent red, as in commands.ts.
 const CLUB_RED = 0xcc0000;
 
 // Nothing in this reply should ping anybody. Every value is a URL, but the

@@ -10,6 +10,8 @@ const CONSUMER = 'aaaaaaaa-0000-0000-0000-000000000001';
 const REF_A = 'a'.repeat(64);
 const REF_B = 'b'.repeat(64);
 const MATCH_REF = 'd'.repeat(64);
+const EXT_REF_A = 'f'.repeat(64);
+const EXT_REF_B = '9'.repeat(64);
 const SEASON = '15af1db0-ac97-499d-b583-98082a921368';
 const TOURNAMENT = '22222222-0000-0000-0000-000000000001';
 const EVENT = '33333333-0000-0000-0000-000000000001';
@@ -118,9 +120,131 @@ function eventRow(): Record<string, unknown> {
     group_count: null,
     qualifiers_per_group: null,
     seeded_from_event_id: null,
+    external_event: false,
     notes: 'leak',
   };
 }
+
+// A staged event (00272) as data_api_tournament_events_v2 might send it, with
+// bait in every place the stored config carries something that is not served.
+function stagedEventRow(): Record<string, unknown> {
+  const scoring = { best_of: 1, target: 21, win_by_two: true, cap: 30, handicap: true, forfeit: null };
+  return {
+    ...eventRow(),
+    event_type: 'open_doubles',
+    format: 'staged',
+    rated: false,
+    current_stage: 2,
+    stages: [
+      {
+        index: 1,
+        key: 'groups',
+        name: 'Group stage',
+        kind: 'groups',
+        rated: false,
+        scoring: { ...scoring, forfeit: { winner: 21, loser: 0, court: 'leak' } },
+        pools: 2,
+        groups_per_pool: 2,
+        group_size: 'auto',
+        tiebreaks: ['wins', 'leak', 'point_diff', 7],
+        size: null,
+        third_place: null,
+        matches: null,
+        courts: { mode: 'shared', courts: ['leak'] },
+        entrants: 'leak',
+        assignment: 'leak',
+      },
+      {
+        index: 2,
+        key: 'finals',
+        name: 'Finals',
+        kind: 'matches',
+        rated: false,
+        scoring,
+        pools: null,
+        groups_per_pool: null,
+        group_size: null,
+        tiebreaks: null,
+        size: null,
+        third_place: null,
+        matches: [{ label: 'final', name: 'Final', winner_place: 1, loser_place: 2, court: 'leak', a: 'leak' }],
+      },
+    ],
+    categories: [
+      { key: 'mens', label: "Men's", note: 'leak' },
+      { key: 'womens', label: "Women's" },
+    ],
+    head_starts: { womens: { mens: 3, mixed: 'leak' }, mixed: 'leak' },
+    points_table: { by_place: [50, 30, 'leak'], rest: 5, participation: 1, per_win: 2, bonuses: 'leak' },
+    leak: 'leak',
+  };
+}
+
+const STAGED_EVENT = {
+  id: EVENT,
+  event_type: 'open_doubles',
+  format: 'staged',
+  match_format: 'best_of_3',
+  games_per_match: 3,
+  points_per_game: 21,
+  max_participants: 16,
+  seeding_method: 'elo',
+  elo_multiplier: 1,
+  placement_bonus_enabled: true,
+  status: 'completed',
+  group_count: null,
+  qualifiers_per_group: null,
+  seeded_from_event_id: null,
+  rated: false,
+  current_stage: 2,
+  external: false,
+  stages: [
+    {
+      index: 1,
+      key: 'groups',
+      name: 'Group stage',
+      kind: 'groups',
+      rated: false,
+      scoring: { best_of: 1, target: 21, win_by_two: true, cap: 30, handicap: true, forfeit: { winner: 21, loser: 0 } },
+      pools: 2,
+      groups_per_pool: 2,
+      group_size: 'auto',
+      tiebreaks: ['wins', 'point_diff'],
+      size: null,
+      third_place: null,
+      matches: null,
+    },
+    {
+      index: 2,
+      key: 'finals',
+      name: 'Finals',
+      kind: 'matches',
+      rated: false,
+      scoring: { best_of: 1, target: 21, win_by_two: true, cap: 30, handicap: true, forfeit: null },
+      pools: null,
+      groups_per_pool: null,
+      group_size: null,
+      tiebreaks: null,
+      size: null,
+      third_place: null,
+      matches: [{ label: 'final', name: 'Final', winner_place: 1, loser_place: 2 }],
+    },
+  ],
+  categories: [
+    { key: 'mens', label: "Men's" },
+    { key: 'womens', label: "Women's" },
+  ],
+  head_starts: { womens: { mens: 3 } },
+  points_table: { by_place: [50, 30], rest: 5, participation: 1, per_win: 2 },
+};
+
+// The stage columns data_api_tournament_draw_v2 adds to each row of the v1 draw.
+const DRAW_STAGE_COLUMNS: Record<string, unknown>[] = [
+  { stage: 1, pool_number: 1, group_number: 2, slot: 1, match_label: null, handicap_a: 3, handicap_b: 0, court_id: 'leak' },
+  // The withheld slot: its structure is served, its head starts are not.
+  { stage: 2, pool_number: null, group_number: null, slot: null, match_label: 'final', handicap_a: 5, handicap_b: 0 },
+  { stage: 1, pool_number: 2, group_number: 1, slot: 2, match_label: null, handicap_a: 0, handicap_b: 0 },
+];
 
 function all(fn: string): Record<string, unknown>[] {
   return h.calls.filter((c) => c.fn === fn).map((c) => c.body);
@@ -218,7 +342,27 @@ function answerAll(): void {
         elo_after: null,
         elo_change: null,
         combined_elo: 2216,
+        external: false,
+        external_ref: null,
         pair_name: 'leak',
+      },
+      {
+        event_id: EVENT,
+        player_refs: [],
+        seed: null,
+        status: 'registered',
+        final_position: null,
+        group_number: 1,
+        points: 2,
+        elo_before: null,
+        elo_after: null,
+        elo_change: null,
+        combined_elo: null,
+        external: true,
+        external_ref: EXT_REF_A,
+        pair_name: 'leak',
+        external1_name: 'leak',
+        external2_name: 'leak',
       },
     ],
     data_api_tournament_draw: () => [
@@ -236,7 +380,10 @@ function answerAll(): void {
         winner_to: null,
         loser_to: null,
         withheld: false,
-        sides: { a: [{ player_ref: REF_A }], b: [{ player_ref: REF_B }] },
+        sides: {
+          a: [{ player_ref: REF_A, external: false, external_ref: null }],
+          b: [{ player_ref: REF_B, external: false, external_ref: null }],
+        },
         winner_side: 'a',
         games: [{ game: 1, a: 21, b: 10 }],
         court: 'leak',
@@ -260,6 +407,27 @@ function answerAll(): void {
         sides: { a: [{ player_ref: REF_A }], b: [] },
         winner_side: 'a',
         games: [{ game: 1, a: 21, b: 19 }],
+      },
+      {
+        match_ref: 'c'.repeat(64),
+        round_number: 1,
+        round_name: null,
+        phase: 'group',
+        bracket_position: 3,
+        match_number: 3,
+        is_bye: false,
+        is_third_place: false,
+        scheduled_time: null,
+        status: 'completed',
+        winner_to: null,
+        loser_to: null,
+        withheld: false,
+        sides: {
+          a: [{ player_ref: null, external: true, external_ref: EXT_REF_A, name: 'leak' }],
+          b: [{ player_ref: null, external: true, external_ref: EXT_REF_B }],
+        },
+        winner_side: 'b',
+        games: [{ game: 1, a: 9, b: 15 }],
       },
     ],
     data_api_sessions: () => [
@@ -298,6 +466,18 @@ function answerAll(): void {
         description: 'leak',
       },
     ],
+  });
+  const v1 = h.rpcs;
+  Object.assign(h.rpcs, {
+    data_api_tournament_events_v2: (b: Record<string, unknown>) =>
+      b.p_tournament_id === TOURNAMENT ? [stagedEventRow()] : [],
+    data_api_tournament_entrants_v2: (b: Record<string, unknown>) =>
+      (v1.data_api_tournament_entrants!(b) as Record<string, unknown>[]).map((r, i) => ({
+        ...r,
+        team_category: i === 0 ? 'mens' : 'womens',
+      })),
+    data_api_tournament_draw_v2: (b: Record<string, unknown>) =>
+      (v1.data_api_tournament_draw!(b) as Record<string, unknown>[]).map((r, i) => ({ ...r, ...DRAW_STAGE_COLUMNS[i] })),
   });
 }
 
@@ -533,9 +713,14 @@ describe('/v1/matches', () => {
           event_type: 'mens_singles',
           round_number: 2,
           round_name: 'Final',
-          phase: 'bracket',
+          phase: null,
           is_third_place: false,
+          stage: 2,
+          match_label: 'final',
+          handicap_a: 3,
+          handicap_b: 0,
           court: 'leak',
+          court_id: 'leak',
         },
       },
       { ...matchRow(), walkover: { type: 'forfeit', forfeit_side: 'b', reason: 'leak' } },
@@ -548,8 +733,12 @@ describe('/v1/matches', () => {
       event_type: 'mens_singles',
       round_number: 2,
       round_name: 'Final',
-      phase: 'bracket',
+      phase: null,
       is_third_place: false,
+      stage: 2,
+      match_label: 'final',
+      handicap_a: 3,
+      handicap_b: 0,
     });
     expect(c!.walkover).toEqual({ type: 'forfeit', forfeit_side: 'b' });
     expect(JSON.stringify([t, c])).not.toContain('leak');
@@ -713,10 +902,17 @@ describe('/v1/tournaments', () => {
     const b = await body(`/v1/tournaments/${TOURNAMENT}`);
     const t = b.tournament as Record<string, unknown>;
     const events = t.events as Record<string, unknown>[];
+    expect(all('data_api_tournament_events_v2')).toEqual([{ p_consumer_id: CONSUMER, p_tournament_id: TOURNAMENT }]);
+    expect(all('data_api_tournament_entrants_v2')).toEqual([{ p_consumer_id: CONSUMER, p_tournament_id: TOURNAMENT }]);
+    expect(all('data_api_tournament_events')).toHaveLength(0);
+    expect(all('data_api_tournament_entrants')).toHaveLength(0);
     expect(events).toHaveLength(1);
+    expect(events[0]!.external).toBe(false);
     expect(events[0]!.entrants).toEqual([
       {
         players: [{ player_ref: REF_A }, { player_ref: REF_B }],
+        external: false,
+        external_ref: null,
         seed: 1,
         status: 'active',
         final_position: 1,
@@ -724,6 +920,21 @@ describe('/v1/tournaments', () => {
         points: null,
         elo: { before: null, after: null, change: null },
         combined_elo: 2216,
+        team_category: 'mens',
+      },
+      // An external team (00269): no players, an anonymous ref, and no name.
+      {
+        players: [],
+        external: true,
+        external_ref: EXT_REF_A,
+        seed: null,
+        status: 'registered',
+        final_position: null,
+        group: 1,
+        points: 2,
+        elo: { before: null, after: null, change: null },
+        combined_elo: null,
+        team_category: 'womens',
       },
     ]);
     expect(JSON.stringify(b)).not.toContain('leak');
@@ -732,9 +943,24 @@ describe('/v1/tournaments', () => {
 
   it('event draw withholds a slot entirely and never serves a court', async () => {
     const b = await body(`/v1/tournaments/${TOURNAMENT}/events/${EVENT}`);
-    expect(all('data_api_tournament_draw')).toEqual([{ p_consumer_id: CONSUMER, p_event_id: EVENT }]);
-    const [shown, withheld] = b.draw as Record<string, unknown>[];
-    expect(shown).toMatchObject({ withheld: false, sides: { a: [{ player_ref: REF_A }], b: [{ player_ref: REF_B }] } });
+    expect(all('data_api_tournament_draw_v2')).toEqual([{ p_consumer_id: CONSUMER, p_event_id: EVENT }]);
+    expect(all('data_api_tournament_draw')).toHaveLength(0);
+    const [shown, withheld, external] = b.draw as Record<string, unknown>[];
+    expect(shown).toMatchObject({
+      withheld: false,
+      sides: {
+        a: [{ player_ref: REF_A, external: false, external_ref: null }],
+        b: [{ player_ref: REF_B, external: false, external_ref: null }],
+      },
+    });
+    expect(external).toMatchObject({
+      withheld: false,
+      sides: {
+        a: [{ player_ref: null, external: true, external_ref: EXT_REF_A }],
+        b: [{ player_ref: null, external: true, external_ref: EXT_REF_B }],
+      },
+      winner_side: 'b',
+    });
     expect(withheld).toMatchObject({
       withheld: true,
       sides: null,
@@ -744,11 +970,117 @@ describe('/v1/tournaments', () => {
     });
     expect(JSON.stringify(b)).not.toContain('leak');
     expect(shown).not.toHaveProperty('court');
+    expect(shown).not.toHaveProperty('court_id');
+    for (const stage of (b.event as Record<string, unknown>).stages as Record<string, unknown>[]) {
+      expect(stage).not.toHaveProperty('courts');
+      for (const m of (stage.matches as Record<string, unknown>[] | null) ?? []) expect(m).not.toHaveProperty('court');
+    }
+  });
+
+  it('serves a staged event from an allowlist', async () => {
+    const t = (await body(`/v1/tournaments/${TOURNAMENT}`)).tournament as Record<string, unknown>;
+    const { entrants, ...event } = (t.events as Record<string, unknown>[])[0]!;
+    expect(event).toEqual(STAGED_EVENT);
+    expect(entrants).toHaveLength(2);
+    expect(JSON.stringify(t)).not.toContain('leak');
+  });
+
+  it('serves the stage columns of a draw, and no head start on a withheld slot', async () => {
+    const b = await body(`/v1/tournaments/${TOURNAMENT}/events/${EVENT}`);
+    expect(b.event).toEqual(STAGED_EVENT);
+    const [shown, withheld] = b.draw as Record<string, unknown>[];
+    expect(shown).toMatchObject({
+      stage: 1,
+      pool_number: 1,
+      group_number: 2,
+      slot: 1,
+      match_label: null,
+      handicap_a: 3,
+      handicap_b: 0,
+    });
+    expect(withheld).toMatchObject({
+      withheld: true,
+      stage: 2,
+      pool_number: null,
+      group_number: null,
+      slot: null,
+      match_label: 'final',
+      handicap_a: null,
+      handicap_b: null,
+    });
+  });
+
+  it('falls back to the v1 readers while PostgREST does not know the v2 ones', async () => {
+    const withV2 = await body(`/v1/tournaments/${TOURNAMENT}/events/${EVENT}`);
+    const eventKeys = Object.keys(withV2.event as Record<string, unknown>);
+    const drawKeys = Object.keys((withV2.draw as Record<string, unknown>[])[0]!);
+    const entrantKeys = Object.keys(
+      ((((await body(`/v1/tournaments/${TOURNAMENT}`)).tournament as Record<string, unknown>).events as Record<string, unknown>[])[0]!
+        .entrants as Record<string, unknown>[])[0]!,
+    );
+
+    await h.close();
+    h = await startHarness();
+    h.players = [playerRow(REF_A), playerRow(REF_B)];
+    answerAll();
+    grant(h, key, [...DATA_API_SCOPES]);
+    delete h.rpcs.data_api_tournament_events_v2;
+    delete h.rpcs.data_api_tournament_entrants_v2;
+    delete h.rpcs.data_api_tournament_draw_v2;
+
+    const t = (await body(`/v1/tournaments/${TOURNAMENT}`)).tournament as Record<string, unknown>;
+    const { entrants, ...event } = (t.events as Record<string, unknown>[])[0]!;
+    expect(Object.keys(event)).toEqual(eventKeys);
+    expect(event).toMatchObject({
+      format: 'single_elimination',
+      rated: null,
+      current_stage: null,
+      stages: null,
+      categories: null,
+      head_starts: null,
+      points_table: null,
+    });
+    const first = (entrants as Record<string, unknown>[])[0]!;
+    expect(Object.keys(first)).toEqual(entrantKeys);
+    expect(first.team_category).toBeNull();
+
+    const b = await body(`/v1/tournaments/${TOURNAMENT}/events/${EVENT}`);
+    const row = (b.draw as Record<string, unknown>[])[0]!;
+    expect(Object.keys(row)).toEqual(drawKeys);
+    expect(row).toMatchObject({ stage: null, match_label: null, handicap_a: null, handicap_b: null });
+    expect(JSON.stringify([t, b])).not.toContain('leak');
+
+    // Each v2 was asked once: a missing one is not asked again for a minute.
+    expect(all('data_api_tournament_events_v2')).toHaveLength(1);
+    expect(all('data_api_tournament_entrants_v2')).toHaveLength(1);
+    expect(all('data_api_tournament_draw_v2')).toHaveLength(1);
+    expect(all('data_api_tournament_events')).toHaveLength(1);
+    expect(all('data_api_tournament_entrants')).toHaveLength(1);
+    expect(all('data_api_tournament_draw')).toHaveLength(1);
+    const warns = h.logs.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.msg === 'v2_unavailable');
+    expect(warns).toEqual([
+      { level: 'warn', msg: 'v2_unavailable', fn: 'data_api_tournament_events_v2', upstream_status: 404 },
+      { level: 'warn', msg: 'v2_unavailable', fn: 'data_api_tournament_entrants_v2', upstream_status: 404 },
+      { level: 'warn', msg: 'v2_unavailable', fn: 'data_api_tournament_draw_v2', upstream_status: 404 },
+    ]);
+
+    h.clock.t += 60_001;
+    await body(`/v1/tournaments/${TOURNAMENT}/events/${EVENT}`);
+    expect(all('data_api_tournament_events_v2')).toHaveLength(2);
+  });
+
+  it('a v2 that fails is a 503, never a reason to read v1', async () => {
+    h.failFn = { fn: 'data_api_tournament_draw_v2', status: 500 };
+    const res = await get(h, `/v1/tournaments/${TOURNAMENT}/events/${EVENT}`, key);
+    expect(res.status).toBe(503);
+    expect(all('data_api_tournament_draw')).toHaveLength(0);
+    expect(h.logs.join('\n')).not.toContain('v2_unavailable');
   });
 
   it('event 404s when the event is not in that tournament', async () => {
     const res = await get(h, `/v1/tournaments/${TOURNAMENT}/events/${SEASON}`, key);
     expect(res.status).toBe(404);
+    expect(all('data_api_tournament_draw_v2')).toHaveLength(0);
     expect(all('data_api_tournament_draw')).toHaveLength(0);
   });
 });

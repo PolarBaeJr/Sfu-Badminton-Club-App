@@ -259,6 +259,7 @@ describe('a purged member keeps no artifact that was only ever theirs', () => {
     session_attendance: 'who was at a session, which is every attendee\'s record',
     session_rsvp: 'the club\'s operational record of a session',
     tournament_fees: 'a financial record of an entry the member paid for',
+    tournament_event_waitlist: 'the queue order of an event, which decided who else got a place',
     tournament_participants: 'shared competitive history, draws and results',
     // NOT SETTLED, and deliberately recorded as unsettled rather than quietly
     // kept. `varsity_notes.note` is free text an exec wrote ABOUT this member,

@@ -18,10 +18,10 @@ interface GuildConfig {
 //
 // These live in the database rather than the bot's env because they change
 // while the code stands still — somebody creates a role, moves the audit
-// channel, or the club adds a second server. Behind env each of those needs a
-// compose recreate on the Pi, and the dashboard's auto-updater rebuilds a
-// container by CLONING the previous one's env rather than re-reading env_file,
-// so an env edit is exactly the change that has silently failed to land before.
+// channel, or the club adds a second server. Behind env each of those needs the
+// container recreated, and a deploy that CLONES the previous container's env
+// rather than re-reading the env file makes an env edit exactly the change that
+// has silently failed to land before.
 //
 // Service-role and service-secret gated, same as /api/discord/members: there is
 // no member session behind a bot request, and nothing here is any member's

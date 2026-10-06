@@ -253,10 +253,10 @@ describe('matchPastedPayers', () => {
 
   it('recognises a named payment already recorded this season, by email or by name', () => {
     const dues = [
-      due({ manual_name: 'Robin Park', manual_email: 'robin@gmail.com', paid_at: '2026-09-02T00:00:00Z', amount_cents: 2500 }),
+      due({ manual_name: 'Robin Park', manual_email: 'robin@example.net', paid_at: '2026-09-02T00:00:00Z', amount_cents: 2500 }),
       due({ manual_name: 'Chris Wu', paid_at: '2026-09-02T00:00:00Z', amount_cents: 2500 }),
     ];
-    const m = match('ROBIN@gmail.com\nchris wu', ROSTER, dues);
+    const m = match('ROBIN@example.net\nchris wu', ROSTER, dues);
     expect(m.alreadyNamed.map((r) => r.manualName)).toEqual(['Robin Park', 'Chris Wu']);
     expect(m.notFound).toHaveLength(0);
   });
@@ -413,7 +413,7 @@ describe('toFeePastePreview', () => {
   });
 
   it('masks an email down to its first character and domain', () => {
-    expect(maskEmail('someone@gmail.com')).toBe('s***@gmail.com');
+    expect(maskEmail('someone@example.net')).toBe('s***@example.net');
     expect(maskEmail(null)).toBeNull();
   });
 });

@@ -8,49 +8,27 @@ export const runtime = 'nodejs';
 // not hang it: a probe that outlives its caller's timeout gets killed and
 // reported as a failure anyway, but with no log line saying why.
 //
-// The binding constraint is the PROXY, not the compose healthcheck. There are
-// two callers with very different patience:
+// The binding constraint is the reverse proxy's health probe, not the
+// container healthcheck: the proxy gives this route about 2s, the container
+// healthcheck 10s. A probe that outlived the proxy's deadline would be
+// recorded as a transport error and the backend marked down while this route
+// was still working, and because every replica shares one database they would
+// all flap together. 1500ms keeps the whole response inside the 2s budget with
+// room for Next routing, so a slow database yields a clean, logged 503 instead
+// of a silent timeout. If the proxy's probe timeout changes, re-check this.
 //
-//   compose healthcheck   timeout: 10s   (and it does not run on goproxy-*
-//                                         replicas at all - see docker-compose.yml)
-//   proxy.health probe    2s             (proxy-manager cmd/proxy/health.go,
-//                                         healthTimeout, 5s interval)
+// SIZING THIS NUMBER. With SUPABASE_INTERNAL_URL set the probe is a direct call
+// to the Supabase gateway over the private network, a few milliseconds. Unset,
+// it goes to the PUBLIC origin in NEXT_PUBLIC_SUPABASE_URL, out through the
+// edge and back in, which costs what an external client pays (tens to low
+// hundreds of ms). 1500ms covers the slow path with roughly 10x headroom.
 //
-// At 3000ms this was INVERTED against the proxy: on a database answering in
-// 2-3s the proxy's context deadline fired first, so it recorded a transport
-// error and marked the backend down while this route was still working and
-// would have returned 200. Both player replicas share one database, so they
-// would have flapped together - and zero healthy local backends is exactly the
-// condition that triggers mesh failover to the Pi. A latency blip could have
-// bounced the whole site to a failover host.
-//
-// 1500ms keeps the whole response inside the proxy's 2s budget with room for
-// Next routing, so a slow database yields a clean, logged 503 instead of a
-// silent timeout. If proxy-manager's healthTimeout ever changes, re-check it.
-//
-// SIZING THIS NUMBER: how expensive this probe is now depends on one variable.
-//
-// With SUPABASE_INTERNAL_URL set it is a direct call to kong over the tailnet,
-// measured at a 4ms median from inside a live container. With it unset the old
-// behaviour stands: NEXT_PUBLIC_SUPABASE_URL is the PUBLIC origin
-// (https://sfubadminton.com/supabase), the containers sit only on the `edge`
-// and `default` networks with no direct route to kong, so the probe leaves the
-// container, goes out through the public edge and comes back in - measured at
-// 51-160ms, the same order as an external client. 1500ms covers the slow path
-// with roughly 10x headroom, so it is safe for both.
-//
-// WHY THE INTERNAL URL MATTERS MORE HERE THAN THE LATENCY DOES. The hairpin
-// made this signal SELF-REFERENTIAL: if the edge or the proxy degraded, every
-// badminton backend failed this probe at once even though the app and the
-// database were both fine, and mesh failover could not recover it because the
-// peer's probe hairpinned through the same edge. That stopped being theoretical
-// when the public entrance moved to the Mac mini - a five-second blip there was
-// enough to fail the probe on the Pi. Calling kong directly makes this ask what
-// a readiness probe is supposed to ask, "can THIS container reach the database",
-// rather than "is the edge healthy", and takes Docker's health status (which
-// floors the proxy's own healthy() check) out of the blast radius of an edge
-// wobble. Until the variable is set, keep treating a simultaneous
-// all-backends-unhealthy event as "suspect the edge first".
+// The internal URL matters for more than latency. Through the public edge this
+// probe also fails whenever the edge does, so every backend reports unhealthy
+// at once even when the app and the database are fine. Calling the gateway
+// directly makes it ask what a readiness probe should ask, "can THIS container
+// reach the database", rather than "is the edge healthy". Without it, treat a
+// simultaneous all-backends-unhealthy event as "suspect the edge first".
 // WHAT THIS PROBE DELIBERATELY DOES NOT CHECK: whether the database is at the
 // schema this image expects (F-012).
 //
@@ -63,8 +41,8 @@ export const runtime = 'nodejs';
 //
 // It cannot be this route, and the reason is in the paragraphs above. Readiness
 // gates the proxy backend. A lagging database is the same for every replica at
-// once, so failing here would empty the local backend pool and hand the site to
-// a mesh peer talking to the same database, which fails identically. A schema
+// once, so failing here would empty the backend pool and hand the site to a
+// failover host talking to the same database, which fails identically. A schema
 // mismatch would become a total outage instead of a blocked promotion — and an
 // outage nothing could clear except applying the migration under load.
 //

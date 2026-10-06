@@ -1261,7 +1261,7 @@ export function PastePayments({
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder={
-                    "Jane Doe <jane@sfu.ca>\nsam.lee@gmail.com, $25\nDoe, John"
+                    "Jane Doe <jane@sfu.ca>\nsam.lee@example.net, $25\nDoe, John"
                   }
                   disabled={checking}
                   className="font-mono text-sm"
