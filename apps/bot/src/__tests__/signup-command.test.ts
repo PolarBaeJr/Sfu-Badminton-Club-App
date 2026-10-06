@@ -84,7 +84,7 @@ describe('the steps', () => {
     const field = (custom_id: string, value: string) => ({ type: 1, components: [{ type: 4, custom_id, value }] });
     const response = handleSignupInteraction(
       'signup:details',
-      [field('email', 'a@b.co'), field('first_name', 'Ada'), field('last_name', 'Lovelace'), field('display_name', ''), field('phone', '')],
+      [field('email', 'ada@example.test'), field('first_name', 'Ada'), field('last_name', 'Lovelace'), field('display_name', ''), field('phone', '')],
       CONTEXT
     );
     expect(response).toMatchObject({ type: 5, data: { flags: 64 } });
@@ -92,7 +92,7 @@ describe('the steps', () => {
     expect(signupStep).toHaveBeenCalledWith({
       discordUserId: CALLER,
       action: 'details',
-      email: 'a@b.co',
+      email: 'ada@example.test',
       firstName: 'Ada',
       lastName: 'Lovelace',
       displayName: '',
