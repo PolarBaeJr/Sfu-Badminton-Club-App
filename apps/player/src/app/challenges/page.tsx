@@ -1,0 +1,379 @@
+import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
+import {
+  describeMatchShape,
+  formatRelativeTime,
+  pickOne,
+  CHALLENGE_STATUS_LABEL,
+  CHALLENGE_STATUS_TAG,
+  getAccountStanding,
+} from '@badminton/shared';
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { Plus, ChevronRight, Swords, CalendarClock, Hourglass } from 'lucide-react';
+import { PageHeader, AvatarChip } from '@badminton/ui';
+import { StandingNote } from '@/components/standing-notice';
+import { LiveChallenges } from '@/components/live-matches';
+import { getChallengeRules } from '@/lib/challenge-settings';
+import {
+  expiryState,
+  challengeQuota,
+  partitionChallenges,
+  challengeSearchKeys,
+  challengeRowText,
+  ACTIVE_CHALLENGE_STATUSES,
+  type ExpiryState,
+} from '@/lib/challenge-rules';
+import { ChallengeSections } from './challenge-sections';
+
+export default async function ChallengesPage() {
+  const { player } = await getViewer();
+  if (!player) redirect('/login');
+  // The history stays — a suspended member should still be able to read what
+  // they played. Only the "issue one" entry points go, since createChallenge
+  // would refuse them.
+  const standing = getAccountStanding(player);
+
+  const supabase = await createServerSupabaseClient();
+
+  // Three independent reads, so they go together rather than one after another.
+  // Nothing here feeds anything else — the rules and the quota count are both
+  // keyed on the signed-in member alone — and awaiting them in sequence would
+  // cost three round-trips for a screen that needs one.
+  const [rules, myChallengesRes, activeIssuedRes] = await Promise.all([
+    // The club's live rules, not the constants in packages/shared: the caps are
+    // configurable (00048/00053) and the database re-reads platform_settings on
+    // every validate_challenge_creation call. See challenge-settings.ts.
+    getChallengeRules(supabase),
+
+    supabase
+      .from('challenge_participants')
+      // expires_at, scheduled_date and scheduled_time have been on challenges
+      // since 00001 and were never selected, so the list could not say when a
+      // challenge lapses or when it is being played — the two things a member
+      // opens this screen to find out. handle arrives with 00092; the rows show
+      // names only, so it is read for the search box (challengeSearchKeys).
+      // avatar_url on the participants too: the row leads with the OPPONENT's
+      // face, and on a challenge the viewer issued the creator is the viewer.
+      .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, games_per_match, points_per_game, rated_flag, status, created_at, expires_at, scheduled_date, scheduled_time, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name, handle, avatar_url)))')
+      .eq('player_id', player.id)
+      // No server-side order: challenge_participants has no timestamp of its own,
+      // and the previous `referencedTable: 'challenges'` order sorted *within* the
+      // embedded resource — which is to-one, so it did nothing. Rows therefore came
+      // back arbitrarily, and a LIMIT over an unordered set silently dropped
+      // whichever challenges the planner happened not to return. Order below, on
+      // the embedded created_at, once the rows are in hand.
+      .limit(200),
+
+    // The quota, counted at the database rather than over the 200 rows above.
+    // That list is capped and unordered, so a long-standing member's open
+    // challenge can simply not be in it — and a quota that undercounts is the
+    // exact bug this meter exists to prevent, promising a slot the server will
+    // refuse. Same predicate as validate_challenge_creation, over the same
+    // table; challenges_select is USING (TRUE) for authenticated, so no
+    // escalation is needed.
+    supabase
+      .from('challenges')
+      .select('id', { count: 'exact', head: true })
+      .eq('created_by', player.id)
+      .in('status', [...ACTIVE_CHALLENGE_STATUSES]),
+  ]);
+
+  const myChallenges = myChallengesRes.data;
+
+  type CP = NonNullable<typeof myChallenges>[number];
+  type Person = { id: string; full_name: string; handle?: string | null; avatar_url?: string | null };
+  type Challenge = {
+    id: string;
+    created_by: string;
+    type: string;
+    format: string;
+    games_per_match: number | null;
+    points_per_game: number | null;
+    rated_flag: boolean;
+    status: string;
+    created_at: string;
+    expires_at: string | null;
+    scheduled_date: string | null;
+    scheduled_time: string | null;
+    creator: Person | Person[] | null;
+    challenge_participants: { id: string; player_id: string; role: string; team_side: string; player: Person | Person[] | null }[];
+  };
+
+  function pickChallenge(cp: CP): Challenge | null {
+    const c = cp.challenge as unknown;
+    if (!c) return null;
+    return Array.isArray(c) ? (c[0] ?? null) : (c as Challenge);
+  }
+  // Newest first, once — every section below derives from this, so they all
+  // inherit a sensible order instead of the arbitrary one the query returned.
+  const all = (myChallenges ?? [])
+    .map((cp) => ({ cp, c: pickChallenge(cp) }))
+    .filter((x): x is { cp: CP; c: Challenge } => Boolean(x.c))
+    .sort((a, b) => new Date(b.c.created_at).getTime() - new Date(a.c.created_at).getTime());
+
+  // The split lives in challenge-rules.ts and is unit-tested there: it is the
+  // one piece of this screen that was silently wrong (lapsed challenges leaked
+  // into the live sections) and the one a reader cannot check by looking.
+  const { incoming, active, outgoing, archived } = partitionChallenges(
+    all.map((row) => ({ ...row, challenge: { ...row.c, confirmation_status: row.cp.confirmation_status } })),
+    player.id,
+  );
+
+  // One clock for the whole render. Calling Date.now() inside each card would
+  // let two cards a millisecond apart disagree about whether the same deadline
+  // has passed.
+  const now = Date.now();
+
+  const quota = challengeQuota(activeIssuedRes.count ?? 0, rules.maxActive);
+
+  // The quota is the club's rule, so it gates the entry points the same way
+  // standing does — validate_challenge_creation refuses a fourth challenge, and
+  // finding that out after picking an opponent and a format is the bad version
+  // of being told. `canIssue` is display only; the database still decides.
+  const canIssue = standing.ok && !quota.full;
+  const quotaFullNote = `You have ${quota.used} of ${quota.max} challenges open. Play or cancel one to issue another.`;
+
+  // Who is in reach, for the empty state. Both limits are genuinely enforced by
+  // validate_challenge_creation (00053) whatever their value, so this is not a
+  // guess about whether the rule runs — it is a judgement about whether it is
+  // worth saying. 9999 is the number 00053 chose to mean "a settings row went
+  // missing, do not start refusing challenges on a figure nobody picked", and
+  // repeating it back as "within 9999 Elo" would dress a non-limit up as a rule.
+  //
+  // Deliberately NOT on the rows or the header: the check is creator-vs-
+  // opponent, so it only means something once there is a pair. That is
+  // /challenges/new's job, and this screen has no opponent in hand.
+  const NO_LIMIT = 9999;
+  const reach = [
+    rules.ladderRange < NO_LIMIT ? `${rules.ladderRange} ladder positions` : null,
+    rules.eloRange < NO_LIMIT ? `${rules.eloRange} Elo` : null,
+  ].filter(Boolean);
+  const reachClause = reach.length ? ` within ${reach.join(' and ')}` : '';
+
+  /** The deadline chip. Absent entirely on a challenge that can no longer expire. */
+  function ExpiryChip({ state }: { state: ExpiryState }) {
+    if (!state.label) return null;
+    return (
+      <span
+        className={state.kind === 'open' ? 'tag tag-outline' : state.kind === 'urgent' ? 'tag tag-gold' : 'tag tag-red'}
+        // "3h left" does not say left until what. The colour answers that only
+        // for people who can see it, so the sentence is here as well.
+        title={state.kind === 'expired' ? 'Past its reply window' : 'Time left to answer'}
+      >
+        <Hourglass size={11} style={{ verticalAlign: '-1px', marginRight: 4 }} />
+        {state.label}
+      </span>
+    );
+  }
+
+  function ChallengeRow({ c, awaitingYou }: { c: Challenge; awaitingYou: boolean }) {
+    const expiry = expiryState(c.expires_at, c.status, now);
+    const row = challengeRowText({
+      viewerId: player.id,
+      createdBy: c.created_by,
+      creator: pickOne(c.creator),
+      participants: c.challenge_participants.map((p) => ({ team_side: p.team_side, person: pickOne(p.player) })),
+      type: c.type || '',
+      shape: describeMatchShape({ match_format: c.format, games_per_match: c.games_per_match, points_per_game: c.points_per_game }),
+      rated: c.rated_flag,
+      when: formatRelativeTime(c.created_at),
+    });
+
+    return (
+      <Link
+        href={`/challenges/${c.id}`}
+        className="chal-row"
+        // The one row that is a question addressed to the reader gets the
+        // accent edge. Everything else on this screen is something they have
+        // already answered or are waiting on somebody else for.
+        data-awaiting={awaitingYou || undefined}
+      >
+        {/* Decorative: the names are spelled out in the title beside them, and
+            initials read aloud first would be noise. */}
+        <span className="chal-faces" aria-hidden="true">
+          {row.faces.length > 0 ? (
+            row.faces.map((f) => (
+              <AvatarChip key={f.id} name={f.full_name ?? '?'} id={f.id} src={f.avatar_url} size={row.faces.length > 1 ? 'sm' : 'md'} />
+            ))
+          ) : (
+            <AvatarChip name="?" size="md" />
+          )}
+        </span>
+        <span className="chal-main">
+          <span className="chal-title">{row.title}</span>
+          <span className="chal-meta">
+            {row.meta.join(' · ')}
+            {c.scheduled_date && (
+              // Only when the challenge actually carries one. Most do not:
+              // scheduled_date is nullable and the create form leaves it
+              // empty, so a "Not scheduled" line would be noise on the
+              // majority of rows.
+              <span className="chal-when">
+                <CalendarClock size={11} aria-hidden="true" />
+                {c.scheduled_date}
+                {c.scheduled_time && ` · ${c.scheduled_time.slice(0, 5)}`}
+              </span>
+            )}
+          </span>
+        </span>
+        <span className="chal-end">
+          <ExpiryChip state={expiry} />
+          {/* The status the database holds, always. The expiry chip beside it
+              is a reading of the clock and never overrides it. Nothing in the
+              system actually moves a lapsed challenge to 'expired' (see
+              challenge-rules.ts), so a row can honestly read "Proposed" and
+              "Expired" at once. */}
+          <span className={CHALLENGE_STATUS_TAG[c.status] ?? 'tag'}>{CHALLENGE_STATUS_LABEL[c.status] ?? c.status}</span>
+        </span>
+        <ChevronRight size={16} className="chal-chevron" aria-hidden="true" />
+      </Link>
+    );
+  }
+
+  // Everyone named on a challenge, for the search key. Creator included: on one
+  // nobody has answered yet they may be the only other person on the card.
+  function namesOn(c: Challenge): string[] {
+    return challengeSearchKeys([pickOne(c.creator), ...c.challenge_participants.map((p) => pickOne(p.player))]);
+  }
+
+  const toItems = (list: { cp: CP; c: Challenge }[], awaitingYou = false) =>
+    list.map(({ cp, c }) => ({ id: cp.id, players: namesOn(c), card: <ChallengeRow c={c} awaitingYou={awaitingYou} /> }));
+
+  // The live sections, in the order a member acts on them. Archived is passed
+  // separately because it renders differently: behind a disclosure, not as a
+  // section card.
+  const sections = [
+    { title: 'Awaiting your answer', items: toItems(incoming, true), accent: true },
+    { title: 'Active', items: toItems(active) },
+    { title: 'Your challenges', items: toItems(outgoing) },
+  ];
+  // Completed and rejected/cancelled both live here; each row keeps its
+  // own status badge (Completed / Rejected / Cancelled) so they stay
+  // distinguishable within the single archived group.
+  //
+  // Sorted singles-then-doubles, newest first within each. Simply
+  // concatenating the two lists grouped by status instead, which is
+  // already on every row, and left the dates unordered.
+  const archivedItems = toItems(
+    [...archived].sort((a, b) =>
+      a.c.type !== b.c.type
+        ? a.c.type === 'singles' ? -1 : 1
+        : new Date(b.c.created_at).getTime() - new Date(a.c.created_at).getTime())
+  );
+
+  return (
+    <div data-screen-label="Challenges">
+      {/* Both halves of "somebody else acted on my challenge". A challenge
+          ISSUED to this member arrives as an INSERT of their own
+          challenge_participants row; the OTHER party accepting or rejecting
+          one moves `challenges.status` and leaves this member's participant
+          row untouched, so the listed challenges are watched by id as well.
+
+          THE LIVE ONES ONLY, and that is a budget decision rather than a
+          tidiness one. The query above reads up to 200 challenge rows, every
+          id costs a postgres_changes binding, they all share one socket, and
+          Realtime caps the bindings a connection will accept — past the cap
+          the extras are silently not delivered, which is exactly the failure
+          this whole mechanism is prone to. So: everything except `archived`,
+          because a completed, rejected, expired or cancelled challenge cannot
+          move again and is watched for nothing.
+
+          THAT IS NOT A GUARANTEE partitionChallenges MAKES. `incoming` and
+          `outgoing` are explicitly filtered on non-terminal status, but
+          `active` is only `status in (accepted, partially_confirmed)` with no
+          such guard — it holds no terminal rows today because neither of those
+          two statuses is terminal, which is a fact about that list and not
+          about the function. Adding a terminal status to it would quietly put
+          dead challenges back on this socket. Harmless if it happens (a
+          wasted binding, not a wrong render), and written down so it is not a
+          surprise.
+
+          Deduped because `active` and `outgoing` overlap: a challenge this
+          member issued and the opponent accepted is in both.
+
+          The hook depends on the JOINED string, not the array identity. */}
+      <LiveChallenges
+        playerId={player.id}
+        challengeIds={Array.from(
+          new Set([...incoming, ...active, ...outgoing].map((row) => row.c.id)),
+        )}
+      />
+      <PageHeader
+        title="Challenges"
+        className="chal-header"
+        sub={
+          <>
+            Challenge a member to a rated match. Anything waiting on you is at the top.
+            {/* The club's rules, stated before they are hit rather than quoted
+                back as a refusal. All three numbers come from platform_settings,
+                which is what validate_challenge_creation reads, so what this
+                line says and what the server does cannot drift apart.
+
+                Withheld from a gated member: their limit is not the cap, it is
+                their standing, and the StandingBanner has already said so. */}
+            {standing.ok && (
+              <span className="chal-summary">
+                <span className="chal-quota" data-level={quota.full ? 'full' : quota.ratio >= 0.66 ? 'warn' : undefined}>
+                  <span className="capacity-bar" aria-hidden="true">
+                    <span
+                      className={`fill${quota.full ? ' full' : quota.ratio >= 0.66 ? ' warn' : ''}`}
+                      style={{ display: 'block', width: `${Math.round(quota.ratio * 100)}%` }}
+                    />
+                  </span>
+                  {quota.used} of {quota.max} open
+                </span>
+                <span>{incoming.length} waiting on you</span>
+                <span>{rules.expiryHours}h to reply</span>
+              </span>
+            )}
+          </>
+        }
+        actions={
+          standing.ok ? (
+            canIssue ? (
+              <Link href="/challenges/new" className="btn btn-primary chal-new" data-tour="new-challenge">
+                <Plus size={16} /> New challenge
+              </Link>
+            ) : (
+              // Not a disabled button: a control that cannot be pressed and does
+              // not say why is the thing this screen keeps being asked to fix.
+              <p className="mono muted" style={{ fontSize: 12, maxWidth: '34ch', margin: 0 }} role="status">
+                {quotaFullNote}
+              </p>
+            )
+          ) : (
+            <StandingNote standing={standing} activity="New challenges" />
+          )
+        }
+      />
+
+      <ChallengeSections
+        sections={sections}
+        archived={archivedItems}
+        // Shown whenever nothing is live, including a member with no history at
+        // all: the page's job is to get them playing, and a screen of archived
+        // rows with no way forward is what this replaced.
+        empty={
+          <div className="chal-empty">
+            <div className="empty">
+              <span className="empty-icon"><Swords size={20} /></span>
+              <div className="empty-title">No open challenges</div>
+              <p className="empty-hint">
+                Pick an opponent{reachClause} and send one. They have {rules.expiryHours} hours to answer.
+              </p>
+              {canIssue ? (
+                <Link href="/challenges/new" className="btn btn-primary">
+                  <Plus size={14} /> New challenge
+                </Link>
+              ) : standing.ok ? (
+                <p className="mono muted" style={{ fontSize: 12, margin: 0 }} role="status">{quotaFullNote}</p>
+              ) : (
+                <StandingNote standing={standing} activity="New challenges" />
+              )}
+            </div>
+          </div>
+        }
+      />
+    </div>
+  );
+}

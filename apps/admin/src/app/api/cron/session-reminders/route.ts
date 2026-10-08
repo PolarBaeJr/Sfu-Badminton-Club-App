@@ -1,0 +1,227 @@
+import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
+import { createAdminClient } from '@/lib/supabase-server';
+import { remindSessionGoers } from '@/lib/session-reminders';
+import {
+  getReminderLeadMinutes,
+  REMINDER_LEAD_MAX_MINUTES,
+  CLUB_TIMEZONE,
+  wallClockToUtc,
+  selectInChunks,
+  chunkIds,
+  readFeatureFlags,
+} from '@badminton/shared';
+
+export const dynamic = 'force-dynamic';
+
+const CLUB_TZ = CLUB_TIMEZONE;
+
+// How long a claim may sit without a receipt before the next tick treats it as
+// a crashed attempt and retries it (00186). Three ticks of the five-minute
+// schedule: long enough that an in-flight run is never mistaken for a crash,
+// short enough that a real crash is recovered while the reminder is still worth
+// sending rather than never.
+const RETRY_STALE_CLAIM_MS = 15 * 60_000;
+
+// How many claims one RSVP gets before the job stops trying (00194, 00195).
+//
+// The retry above had no end. An RSVP whose send fails for a reason that will
+// not fix itself was re-attempted every fifteen minutes until the session
+// started, reporting the same claimed-but-not-notified split each time with
+// nothing accumulating that anyone could alert on. Five attempts spans
+// seventy-five minutes, which covers a container restart, a deploy and a
+// provider blip; past that it is not transient and the run says so once.
+const MAX_REMINDER_ATTEMPTS = 5;
+
+// sessions.date is a DATE and start_time a TIME, both meaning club-local wall
+// clock. Deciding whether a player's chosen lead time has come due needs the
+// real UTC instant of that wall clock.
+//
+// This used to carry its own single-pass Intl converter. It does not any more,
+// for a reason this job is uniquely exposed to: from 2026-11-01 British
+// Columbia stops changing its clocks (tzdata 2026b), and asking Intl on a Node
+// that predates that release — production is Node 20, tzdata 2025c — returns an
+// offset an hour off for every session past that date. Five are already
+// booked. Every reminder for them would have gone out an hour late.
+// wallClockToUtc pins that era to a literal offset instead of asking, so this
+// is correct without waiting for a Node upgrade, and there is one
+// implementation of the rule rather than two.
+function clubTimeToUtc(date: string, time: string): Date {
+  const [y, mo, d] = date.split('-').map(Number) as [number, number, number];
+  const [h, mi] = time.split(':').map(Number) as [number, number];
+  return wallClockToUtc(y, mo, d, h, mi);
+}
+
+// Reminds each player who RSVP'd "going" the interval before start that THEY
+// chose (default two hours). Called by pg_cron every 5 minutes.
+//
+// Why an HTTP endpoint: web push is signed with the VAPID private key, which
+// only this Node process holds — Postgres cannot send a notification itself.
+export async function POST(request: Request) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return NextResponse.json({ error: 'Not configured' }, { status: 503 });
+  if (request.headers.get('authorization') !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const admin = createAdminClient();
+    const now = new Date();
+
+    // Sessions switched off for members: nobody is reminded of a session they
+    // cannot open. A failed read is "on", so a blip never silences a reminder.
+    if (!(await readFeatureFlags(admin)).sessions) {
+      return NextResponse.json({ ran_at: now.toISOString(), sessions: 0, results: [], skipped: 'sessions_disabled' });
+    }
+
+    // The scan window has to reach as far ahead as the longest notice anyone
+    // can ask for, or that preference is quietly capped: a session outside the
+    // window is invisible until it drifts in, by which point the lead has
+    // already passed and the player is reminded late. Members may choose up to
+    // a week, so look a week (plus a day, for the club-vs-UTC boundary) ahead.
+    // Sessions not yet due cost one row each — the per-player check below is
+    // what actually decides when to send.
+    const clubDate = (d: Date) =>
+      new Intl.DateTimeFormat('en-CA', { timeZone: CLUB_TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+        .format(d);
+    const horizonDays = Math.ceil(REMINDER_LEAD_MAX_MINUTES / 1440) + 1;
+
+    const { data: sessions, error } = await admin
+      .from('sessions')
+      .select('id, date, start_time, session_rsvp(player_id, reminded_at, reminder_attempted_at, reminder_failed_at, intent)')
+      .gte('date', clubDate(now))
+      .lte('date', clubDate(new Date(now.getTime() + horizonDays * 86400000)))
+      .eq('status', 'open');
+    if (error) throw new Error(error.message);
+
+    // `claimed` and `notified` disagreeing is the signal that a run half
+    // failed — the reason for reporting both rather than one number.
+    const results: {
+      session_id: string; notified: number; claimed: number; gave_up: number;
+    }[] = [];
+
+    for (const s of sessions ?? []) {
+      // No start time means no window to work back from; those still get the
+      // manual button.
+      if (!s.start_time) continue;
+      const start = clubTimeToUtc(s.date as string, s.start_time as string);
+      if (start.getTime() <= now.getTime()) continue; // already under way
+
+      const rsvps = (s.session_rsvp ?? []) as {
+        player_id: string; reminded_at: string | null;
+        reminder_attempted_at: string | null; reminder_failed_at: string | null;
+        intent: string;
+      }[];
+      // Still owed a reminder: no receipt, not already given up on, and either
+      // never claimed or claimed by a tick that never came back (00186). A
+      // claim with no receipt after the retry window is a crash, not work in
+      // progress.
+      const staleBefore = now.getTime() - RETRY_STALE_CLAIM_MS;
+      const pending = rsvps.filter((r) =>
+        r.intent === 'going' && !r.reminded_at && !r.reminder_failed_at &&
+        (!r.reminder_attempted_at || Date.parse(r.reminder_attempted_at) < staleBefore));
+      if (pending.length === 0) continue;
+
+      // Chunked — one id per RSVP, and a popular session can hold the roster.
+      const { data: prefs } = await selectInChunks<{
+        id: string;
+        notification_preferences: unknown;
+      }>(pending.map((r) => r.player_id), (ids) =>
+        admin.from('players').select('id, notification_preferences').in('id', ids) as never,
+      );
+
+      const due = pending.filter((r) => {
+        const lead = getReminderLeadMinutes(
+          prefs?.find((p) => p.id === r.player_id)?.notification_preferences);
+        return now.getTime() >= start.getTime() - lead * 60_000;
+      });
+      if (due.length === 0) continue;
+
+      // Claim before sending, so two concurrent ticks cannot both notify the
+      // same player. The claim goes in reminder_attempted_at; reminded_at is
+      // the RECEIPT and is written below, after the send (F-018). Claiming the
+      // receipt up front is what made a throw between here and the send a
+      // silent, permanent drop — the row said reminded, nobody was, and there
+      // was nothing to find it by. apps/bot/src/session-pings.ts has always
+      // done it the other way round and says why.
+      //
+      // ONE STATEMENT, in the database (00195). It re-checks every condition
+      // under the UPDATE rather than trusting the read above — another tick may
+      // have claimed between the two — and in the same statement increments the
+      // attempt counter and decides whether this attempt is the one that
+      // exhausts the cap. Neither of those is expressible through PostgREST:
+      // `attempts = attempts + 1` has to be a value the app already read, which
+      // would turn the compare-and-swap back into a read-then-write. It also
+      // retires the id chunking, because an RPC argument travels in the body
+      // rather than the query string.
+      const { data: claimRows, error: claimErr } = await admin.rpc('claim_session_reminders', {
+        p_session_id: s.id as string,
+        p_player_ids: due.map((r) => r.player_id),
+        p_stale_before: new Date(staleBefore).toISOString(),
+        p_max_attempts: MAX_REMINDER_ATTEMPTS,
+      });
+      if (claimErr) throw new Error(claimErr.message);
+
+      const claims = (claimRows ?? []) as { player_id: string; gave_up: boolean }[];
+      // Retired, not claimed: the cap was already reached, so this call marked
+      // the RSVP permanently failed instead of taking it. Reported ONCE, at the
+      // moment it becomes terminal — which is the whole point of bounding the
+      // retry. Left unbounded these rows produced the same
+      // claimed-but-never-notified split on every tick and no event at all.
+      const gaveUp = claims.filter((c) => c.gave_up).map((c) => c.player_id);
+      if (gaveUp.length > 0) {
+        Sentry.captureException(
+          new Error(`Session reminders permanently failed for ${gaveUp.length} player(s) on session ${s.id} after ${MAX_REMINDER_ATTEMPTS} attempts — they will not be reminded`),
+          { extra: { job: 'session-reminders', session_id: s.id, players: gaveUp } },
+        );
+      }
+      const ids = claims.filter((c) => !c.gave_up).map((c) => c.player_id);
+      if (ids.length === 0) {
+        // Still reported when something was retired here. A session whose every
+        // remaining RSVP hit the cap on this tick has nothing to send and had
+        // to be skipped — but "0 sessions" in the response would say the run
+        // found nothing to do, which is the opposite of what happened.
+        if (gaveUp.length > 0) {
+          results.push({
+            session_id: s.id as string, notified: 0, claimed: 0, gave_up: gaveUp.length,
+          });
+        }
+        continue;
+      }
+
+      const { notified, delivered } = await remindSessionGoers(s.id as string, null, ids);
+
+      // The receipt, for the players the notification actually reached. A
+      // claim with no receipt is left behind deliberately: the retry window
+      // above picks it up on a later tick, which is the whole point of
+      // splitting the two columns. Duplicated reminder > missing reminder.
+      if (delivered.length > 0) {
+        for (const batch of chunkIds(delivered)) {
+          const { error: receiptErr } = await admin
+            .from('session_rsvp')
+            .update({ reminded_at: new Date().toISOString() })
+            .eq('session_id', s.id)
+            .in('player_id', batch)
+            .is('reminded_at', null);
+          // Not fatal, and deliberately not silent. Failing here means these
+          // players were reminded and will be reminded again on a later tick.
+          if (receiptErr) {
+            Sentry.captureException(
+              new Error(`Reminder receipt write failed for session ${s.id} — these players may be reminded twice: ${receiptErr.message}`),
+              { extra: { job: 'session-reminders', session_id: s.id, players: batch.length } },
+            );
+          }
+        }
+      }
+
+      results.push({
+        session_id: s.id as string, notified, claimed: ids.length, gave_up: gaveUp.length,
+      });
+    }
+
+    return NextResponse.json({ ran_at: now.toISOString(), sessions: results.length, results });
+  } catch (err) {
+    Sentry.captureException(err, { extra: { job: 'session-reminders' } });
+    return NextResponse.json({ error: 'Reminder job failed' }, { status: 500 });
+  }
+}

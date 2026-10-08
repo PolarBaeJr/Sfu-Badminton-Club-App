@@ -1,0 +1,643 @@
+/* Fonts loaded via next/font in layout.tsx — don't @import them here. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+[data-theme="dark"] {
+  --bg-primary: #0a0a0a;
+  --bg-surface: #111;
+  --bg-card: #111;
+  --bg-elevated: #1a1a1a;
+  --text-primary: #f0f0f0;
+  --text-secondary: #c8c8c8;
+  --text-muted: #888;
+  --border: hsla(0, 0%, 100%, 0.08);
+  --border-hover: hsla(0, 0%, 100%, 0.14);
+  /* THE BRACKET'S CONNECTOR WORK, and it is OPAQUE on purpose. The elbows were
+     painted with --border-hover; a 1px line at 14% over --bg-card is about
+     1.5:1 against a 3:1 non-text threshold, and the diagram is then multiplied
+     down by the zoom — at the 0.5 default a 128 draw opens at, that 1px covers
+     half a device pixel and the lines were simply not on the screen. #666 on
+     #111 is 3.3:1, with headroom for the transform. NOT --border-hover at a
+     bigger alpha: an alpha over the card is what the defect was, and a Tailwind
+     opacity modifier on a var() colour compiles to nothing in this repo. */
+  --draw-link: #666;
+  --color-accent: #c00;
+  --color-accent-hover: #a30000;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #c00;
+  --color-info: #4c98b9;
+}
+
+[data-theme="light"] {
+  --bg-primary: #fafafa;
+  --bg-surface: #f5f5f5;
+  --bg-card: #fff;
+  --bg-elevated: #fff;
+  --text-primary: #111;
+  --text-secondary: #444;
+  --text-muted: #888;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-hover: rgba(0, 0, 0, 0.16);
+  /* See the dark theme's note. #888 on #fff is 3.5:1. */
+  --draw-link: #888;
+  --color-accent: #c00;
+  --color-accent-hover: #a30000;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #c00;
+  --color-info: #2c7a9c;
+}
+
+body {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+@layer base {
+  /* Display headings — Barlow Condensed */
+  h1, h2, h3, h4 {
+    font-family: var(--display);
+    letter-spacing: -0.015em;
+    font-weight: 700;
+    line-height: 1.05;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-hover);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Smooth transitions for theme changes */
+*, *::before, *::after {
+  transition-property: background-color, border-color;
+  transition-duration: 200ms;
+  transition-timing-function: ease;
+}
+
+/* Override transition for elements that shouldn't animate */
+input, textarea, select, button, a {
+  transition-property: all;
+  transition-duration: 150ms;
+}
+
+/* ------------------------------------------------------------------
+   Shared component token bridge
+   @badminton/ui components (Button, Badge, Dialog, Toast, Input, ...)
+   reference player-system token names this file never defined. Map
+   them onto the admin theme variables above. Defined once at
+   :root via var() indirection: data-theme lives on <html>, so each
+   alias resolves to the active theme's value automatically.
+   ------------------------------------------------------------------ */
+:root {
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-elevated);
+  --surface-3: #232323;
+  --ink: var(--text-primary);
+  --ink-2: var(--text-secondary);
+  --mute: var(--text-muted);
+  --line: var(--border);
+  --line-2: var(--border-hover);
+  --red: var(--color-accent);            /* #c00 */
+  --red-ink: var(--color-accent-hover);  /* #a30000 */
+  --red-wash: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  --red-border: rgba(204, 0, 0, 0.3);
+  --win: var(--color-success);
+  --loss: var(--color-danger);
+
+  /* Barlow ships as three unicode-range subsets and next/font/local gives each
+     its own family name, so the family Google served as one has to be
+     reassembled here (see layout.tsx). --font-sans and --font-display keep
+     their names because tailwind.config.ts, `body` above and every rule below
+     reference them. The subsets go FIRST: --font-*-latin ends in next/font's
+     Arial metric fallback, and Arial covers ř and ế, so anything after it is
+     dead. */
+  --font-sans:    var(--font-sans-ext), var(--font-sans-vi), var(--font-sans-latin);
+  --font-display: var(--font-display-ext), var(--font-display-vi), var(--font-display-latin);
+
+  --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  --mono: var(--font-mono), ui-monospace, monospace;
+
+  /* Corner radius on shared form controls: Input, Textarea and the
+     SearchFilter field carry rounded-[var(--r-control,8px)], and Switch's
+     focus ring does too. 8px, the same as the rounded-md scale step in
+     tailwind.config.ts: the console was square until the owner asked for
+     rounded boxes on 2026-09-17, and this token was the last place still
+     holding the old 0. It stays a token because an arbitrary rounded-[8px]
+     bypasses the scale, and SearchFilter's field takes no className, so this
+     is the only way to reach those three controls from the console.
+
+     The player app does not define it and gets the same 8px from the
+     fallback baked into the class. */
+  --r-control: 8px;
+
+  /* The sticky console header (components/sidebar.tsx): one 52px row plus its
+     1px bottom border, measured at 768 and 1440 wide on /ratings, /settings,
+     /accounts and /permissions. Sticky rails and asides sit --sticky-gap below
+     it, so they stop under the header instead of scrolling beneath it. */
+  --console-header-h: 53px;
+  --sticky-gap: 16px;
+}
+[data-theme="light"] { --surface-3: #eee; }
+
+/* ═══════════════════════════════════════════════════════════
+   EDITORIAL PATTERNS — mirrored from the player app's globals.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Layout helper */
+.row { display: flex; align-items: center; gap: 10px; }
+
+/* Editorial page header */
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+  position: relative;
+  overflow: hidden;
+}
+@media (max-width: 980px) {
+  .page-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+}
+.page-eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--red);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.page-eyebrow .bar { width: 24px; height: 2px; background: var(--red); display: inline-block; }
+.page-title {
+  font-family: var(--display);
+  font-size: clamp(34px, 5vw, 52px);
+  font-weight: 700;
+  letter-spacing: -.015em;
+  line-height: 1;
+  margin: 0;
+  overflow-wrap: break-word;
+}
+.page-title::after { content: "."; color: var(--red); }
+.page-title.no-period::after,
+.page-header.no-period .page-title::after { content: none; }
+.page-sub {
+  color: var(--mute);
+  font-size: 14px;
+  margin-top: 10px;
+  max-width: 60ch;
+}
+.page-watermark {
+  position: absolute;
+  right: 0; top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 180px;
+  line-height: 1;
+  color: hsla(0, 0%, 100%, 0.03);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+[data-theme="light"] .page-watermark { color: rgba(0, 0, 0, 0.03); }
+
+/* ------------------------------------------------------------------
+   Content card
+   `.card-base` and its head/title/sub siblings were declared only in the
+   player app's globals.css, so every @badminton/ui component that reaches
+   for them — Section, StatBlock, RouteLoading — rendered in this console
+   with no surface, no border and no padding. RouteLoading is the live
+   casualty: fourteen loading.tsx routes.
+
+   Not a copy of the player's rules. The contract each class provides is the
+   same, but the console is flat: hairline border, a 16px corner (rounded-xl,
+   the card radius since 2026-09-17), no shadow, depth from the --surface step
+   over --bg. The dimensions are chosen
+   to land exactly on the hand-rolled card chrome already shipped on /legal
+   and /fees (`border border-[var(--line)] bg-[var(--surface)] p-5`), so a
+   Section and a hand-rolled panel are indistinguishable side by side.
+   ------------------------------------------------------------------ */
+.card-base {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px;
+  position: relative;
+}
+/* Console section type, not the player's 18px sentence case: inside a card the
+   heading has to out-rank body copy that is already sentence case at a similar
+   size, so it is condensed display caps — the same shape as the SECTION_HEADING
+   constant in app/fees/card-heading.tsx. */
+.card-title {
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.card-sub { color: var(--mute); font-size: 13px; }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+/* Loading placeholder bar. The player app shimmers a gradient across these;
+   gradients are ruled out here, so it pulses between two flat fills instead.
+
+   The fills are the hairline overlays rather than a surface step, because a
+   surface step does not survive the light theme: --surface-2 resolves to
+   --bg-elevated, which is #fff there — the same value as the --surface card
+   underneath it, so the bar would be invisible on every light-theme console.
+   --line and --line-2 are alpha neutrals, so they read against #111 and #fff
+   alike, and they are the tone this console already draws its edges in. */
+.skeleton {
+  background: var(--line);
+  border-radius: 6px;
+  animation: admin-skeleton-pulse 1.6s ease-in-out infinite;
+}
+@keyframes admin-skeleton-pulse {
+  0%, 100% { background-color: var(--line); }
+  50%      { background-color: var(--line-2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* Stat strip — full-width row of hairline-separated cells */
+.stat-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border-block: 1px solid var(--line);
+}
+.stat-strip > * {
+  border-left: 1px solid var(--line);
+  padding: 16px 20px;
+}
+.stat-strip > *:first-child { border-left: 0; }
+@media (max-width: 640px) {
+  .stat-strip { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
+  .stat-strip > *:nth-child(odd) { border-left: 0; }
+}
+.stat-strip .stat-label {
+  font-family: var(--mono);
+  font-size: 10px; color: var(--mute);
+  text-transform: uppercase; letter-spacing: .1em;
+}
+.stat-strip .stat-value {
+  font-family: var(--display);
+  font-size: 28px; font-weight: 700;
+  letter-spacing: -.02em; line-height: 1;
+  margin-top: 4px;
+}
+/* Money in a stat cell. Counts are display type, but an amount is read digit by
+   digit against the amounts in the ledger below it, so money is mono everywhere
+   in this console. A Tailwind `font-mono` cannot do this job: `.stat-strip
+   .stat-value` is two classes deep and outbids it, so the override has to live
+   at the same depth. */
+.stat-strip .stat-value.is-money { font-family: var(--mono); letter-spacing: -.03em; }
+
+/* Danger zone — red-hairline box, red heading, row-per-action */
+.danger-zone {
+  border: 1px solid var(--red-border);
+  border-radius: 16px;
+  padding: 20px;
+}
+.danger-zone .danger-title {
+  color: var(--red);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+/* Dialog inset group panel — hairline border + uppercase micro-label */
+.dialog-group {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+}
+.dialog-group-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--mute);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  margin-bottom: 10px;
+}
+
+/* Hairline −/+ stepper buttons */
+.stepper-btn {
+  width: 32px; height: 32px;
+  display: inline-grid; place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background-color .15s, color .15s;
+}
+.stepper-btn:hover { background: var(--surface-2); color: var(--ink); }
+.stepper-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Settings rows — uppercase label + hint left, control right,
+   full-width hairline separators. Stacks below 640px. */
+.settings-section-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.settings-section-desc {
+  color: var(--mute);
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-row:last-child { border-bottom: 0; }
+.settings-row-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--ink);
+}
+.settings-row-hint {
+  color: var(--mute);
+  font-size: 14px;
+  margin-top: 4px;
+  max-width: 52ch;
+}
+.settings-row-control { flex-shrink: 0; }
+.settings-row-control.wide { flex: 1; min-width: 0; }
+.settings-group-heading {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--mute);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.settings-input:focus { outline: none; border-color: var(--line-2); }
+@media (max-width: 640px) {
+  .settings-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .settings-row-control { flex-shrink: 1; }
+}
+
+/* Settings section rail (sticky left nav on the settings page).
+   Visibility/direction come from the element's `hidden md:flex md:flex-col`
+   utilities — this rule must NOT set `display`, or it would (by source order)
+   override Tailwind's `.hidden` and render the rail on phones, overlapping the
+   profile content beneath its sticky position. */
+.settings-rail {
+  position: sticky;
+  top: calc(var(--console-header-h) + var(--sticky-gap));
+  align-self: start;
+}
+.settings-rail a {
+  display: block;
+  padding: 10px 14px;
+  border-left: 2px solid transparent;
+  color: var(--mute);
+  transition: background-color .15s, color .15s, border-color .15s;
+}
+.settings-rail a:hover { color: var(--ink); }
+.settings-rail a.active {
+  border-left-color: var(--red);
+  background: var(--surface);
+  color: var(--ink);
+}
+.settings-rail .rail-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+.settings-rail .rail-sub {
+  font-size: 12px;
+  color: var(--mute);
+  margin-top: 2px;
+}
+
+/* The pill variant of the rail (/accounts): rounded items, a count beside the
+   label, and an inset bar instead of the left border. Layout lives here, not in
+   utilities, because `.settings-rail a` above sets `display: block` and would
+   outrank a `flex` class on the anchor. */
+.settings-rail.is-pill a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-left: 0;
+  border-radius: 8px;
+}
+.settings-rail.is-pill a.active {
+  box-shadow: inset 2px 0 0 var(--red);
+  background: var(--surface);
+}
+.settings-rail.is-pill .rail-badge {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+}
+.settings-rail.is-pill .rail-badge.is-success { color: var(--color-success); }
+.settings-rail.is-pill .rail-badge.is-warning { color: var(--color-warning); }
+
+/* A settings row as a two-column grid: label and hint left, a fixed-width
+   control column right. The grouped layout of PlatformSettingsForm. */
+.settings-grid-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 24px;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  max-width: 760px;
+}
+.settings-grid-row:last-child { border-bottom: 0; }
+.settings-grid-row .settings-input { width: 100%; }
+
+/* The redesigned /accounts layouts size themselves by the CARD, not the
+   viewport: at 1024px the middle column is far narrower than the window, and
+   viewport breakpoints squeezed Account rules to one word per line. */
+.settings-cq { container-type: inline-size; }
+@container (max-width: 520px) {
+  .settings-grid-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}
+
+/* Account rules: a sub-nav beside the groups once the card has room for it. */
+.settings-grouped { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); }
+.settings-grouped-nav { display: none; flex-direction: column; gap: 2px; align-self: start; }
+@container (min-width: 760px) {
+  .settings-grouped { grid-template-columns: 200px minmax(0, 1fr); }
+  .settings-grouped-nav { display: flex; }
+}
+
+/* Club links: two columns once each input gets a usable width. */
+.settings-links { display: grid; column-gap: 24px; row-gap: 20px; grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 560px) {
+  .settings-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-links-wide { grid-column: span 2; }
+}
+
+/* The Member pages switches: two columns once the card is 640px wide, one below, each cell
+   drawing its own hairline so an odd count leaves no gap-coloured hole. Bleeds
+   24px either side to reach the edges of a card body padded by px-6, and draws
+   no bottom border so the last row sits flush on the card's own. */
+.setting-tiles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin-inline: -24px;
+}
+.setting-tile {
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+}
+@container (min-width: 640px) {
+  .setting-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .setting-tile:nth-child(odd) { border-right: 1px solid var(--line); }
+}
+
+/* A URL input with its fixed prefix drawn in a cell to the left (Club links).
+   The stored value is still the whole URL; see lib/prefixed-url.ts. */
+.settings-adorned {
+  display: flex;
+  align-items: stretch;
+  min-height: 40px;
+  background: var(--bg-primary);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.settings-adorned:focus-within { border-color: var(--line-2); }
+.settings-adorned-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-right: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--mute);
+}
+.settings-adorned-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.settings-adorned-input:focus { outline: none; }
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE OVERFLOW GUARD
+   Any element wider than the viewport inflates the document, and phones
+   let you pinch-zoom the whole page out (mirrors the player-app fix in
+   5e8a850). The two admin culprits are the top-nav's whitespace-nowrap
+   links and the players status-tab row — both are given local
+   overflow-x:auto scrollers (min-w-0 on the nav so the scroller can
+   engage). overflow-x:clip on the root is the belt against stragglers;
+   clip (not hidden) avoids creating a scroll container that would break
+   the sticky header.
+   ═══════════════════════════════════════════════════════════ */
+html, body { overflow-x: clip; }
+
+/* Avatar primitive — shared by AvatarChip (packages/ui). Mirrors the player
+   app's .avatar rules so AvatarChip sizes/clips correctly in admin too. */
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-2); color: var(--ink);
+  font-weight: 600; font-family: var(--display);
+  font-size: 12px; letter-spacing: -.01em;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  position: relative; overflow: hidden;
+}
+.avatar.ring { box-shadow: 0 0 0 2px var(--red); }
+.avatar[data-size="xs"] { width: 24px; height: 24px; font-size: 10px; }
+.avatar[data-size="sm"] { width: 32px; height: 32px; font-size: 11px; }
+.avatar[data-size="md"] { width: 44px; height: 44px; font-size: 14px; }
+.avatar[data-size="lg"] { width: 64px; height: 64px; font-size: 20px; }
+.avatar[data-size="xl"] { width: 96px; height: 96px; font-size: 30px; }
+.avatar[data-tone="1"] { background: #EDE4DB; color: #8B5A2B; }
+.avatar[data-tone="2"] { background: #DDE7DC; color: #37604B; }
+.avatar[data-tone="3"] { background: #E4DCEA; color: #5B4680; }
+.avatar[data-tone="4"] { background: #F5D8DC; color: #9F1239; }
+.avatar[data-tone="5"] { background: #DCE3EE; color: #3B547A; }
+.avatar[data-tone="6"] { background: #EEE1D6; color: #6B4A23; }
+.avatar[data-tone="7"] { background: #E0DEDA; color: #3D3A36; }
+[data-theme="dark"] .avatar { background: var(--surface-2); }
+[data-theme="dark"] .avatar[data-tone="1"] { background: #3A2B1F; color: #E5B880; }
+[data-theme="dark"] .avatar[data-tone="2"] { background: #22362B; color: #A8D5B5; }
+[data-theme="dark"] .avatar[data-tone="3"] { background: #2E2538; color: #C6B2E3; }
+[data-theme="dark"] .avatar[data-tone="4"] { background: #3A1420; color: #F5A8B4; }
+[data-theme="dark"] .avatar[data-tone="5"] { background: #1E2A3D; color: #A8BBD8; }
+[data-theme="dark"] .avatar[data-tone="6"] { background: #32261A; color: #D8B88C; }
+[data-theme="dark"] .avatar[data-tone="7"] { background: #2A2824; color: #BFB9B0; }
+
+/* THE BRACKET'S SCROLL BOX. A diagram narrower than the pane sits in the middle
+   of it: the box is sized to the ZOOMED diagram, so a 128 draw held at the 0.5
+   usable floor drew ~1442px into a ~1975px pane and left a third of the card
+   blank down its right, which reads as a rendering fault rather than as a zoom.
+   Grid because this box has exactly one child.
+
+   `safe` is load-bearing. Plain `center` on a scroll container centres
+   OVERFLOWING content too, which puts its top-left in negative scroll space that
+   no scrollbar can reach — a 128 draw at 100% would be cropped on every side
+   with no way back. `safe` falls back to start alignment the moment the diagram
+   is wider than the box, so a zoomed-in bracket behaves exactly as it did; a
+   browser without `safe` drops the declaration and also behaves as before.
+
+   A CLASS, not `[justify-content:safe_center]` on the element: Tailwind here is
+   3.4, which has no `*-safe` variants, and an arbitrary property has nowhere to
+   carry this note. */
+.bracket-viewport {
+  display: grid;
+  justify-content: safe center;
+}

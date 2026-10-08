@@ -1,0 +1,43 @@
+{
+  "name": "admin",
+  "version": "1.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@badminton/shared": "*",
+    "@badminton/ui": "*",
+    "@sentry/nextjs": "^10.46.0",
+    "@sentry/profiling-node": "^10.67.0",
+    "@simplewebauthn/browser": "^13.2.2",
+    "@simplewebauthn/server": "^13.2.2",
+    "@supabase/sentry-js-integration": "^0.3.0",
+    "@supabase/ssr": "^0.5.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "lucide-react": "^1.7.0",
+    "next": "15.5.24",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^15.5.22",
+    "postcss": "^8.4.45",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.2"
+  }
+}

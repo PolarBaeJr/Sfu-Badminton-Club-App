@@ -1,0 +1,44 @@
+{
+  "name": "badminton-platform",
+  "private": true,
+  "version": "1.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:player": "npm run dev --workspace=apps/player",
+    "dev:admin": "npm run dev --workspace=apps/admin",
+    "dev": "npx turbo run dev",
+    "build": "npx turbo run build",
+    "lint": "npx turbo run lint",
+    "type-check": "npx turbo run type-check",
+    "//gen:types": "The committed database.gen.ts is generated from PRODUCTION, so this names the production profile. Profiles live in scripts/gen-db-types.profiles.json, which is not tracked because it names real hosts; copy scripts/gen-db-types.profiles.example.json to create it. The generated header prints this same command, so `npm run gen:types` and the header always agree. To read a different database, pass --profile <name> (or explicit flags) to the script rather than editing this line.",
+    "gen:types": "node scripts/gen-db-types.mjs --profile production",
+    "test": "npx turbo run test"
+  },
+  "packageManager": "npm@11.17.0",
+  "//engines": "Node 24 (Krypton), the LTS line, supported to 2028-04-30. Node 20 went end-of-life 2026-04-30. Kept in lockstep with .nvmrc, the Dockerfile's node:24-bookworm-slim and @types/node ^24; .npmrc sets engine-strict=true so a mismatched Node fails `npm install` loudly instead of drifting. Pinned to the major only — patch upgrades inside 24.x are wanted. packageManager matches the npm that node:24-bookworm-slim ships, so Corepack (if ever enabled) does not download a different one.",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "//overrides": "Every consumer (lucide-react, @react-email/render, @sentry/react, next) takes react as a PEER and accepts 19 \u2014 but npm was still hoisting an 18.3.1 to the workspace root, so the apps rendered with 19 while shared components were built by 18. Two copies means elements created by one are rejected by the other: React error #31 on prerender. Force one copy.",
+  "//overrides-2": "postcss is pinned exactly at 8.4.31 inside next and sharp ships with an advisory below 0.35; both are build-time only and semver-compatible, so lift them rather than wait for a next release to do it.",
+  "//overrides-3": "nanoid: GHSA-2v37-7h3g-55p8 (high) — a custom generator loops forever when size is zero, fixed in 3.3.18. This is the dependabot alert on every push. Raising the postcss floor does not reach it: postcss 8.5.25 asks for nanoid ^3.3.16 and npm was resolving 3.3.17, so the transitive dep needs its own override. postcss is the ONLY thing in the tree that depends on nanoid, and it is build-time CSS tooling — nothing at application runtime calls it, which is why this is hygiene rather than an incident. Remove this entry once every postcss in the tree asks for ^3.3.18 on its own.",
+  "overrides": {
+    "react": "$react",
+    "react-dom": "$react-dom",
+    "postcss": "^8.5.25",
+    "nanoid": "^3.3.18",
+    "sharp": "^0.35.3"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.0",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.2"
+  }
+}

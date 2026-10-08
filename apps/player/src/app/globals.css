@@ -1,0 +1,4935 @@
+/* Fonts loaded via next/font in layout.tsx — don't @import them here. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════════════════════════
+   CLUB LADDER — VERCEL-RED DESIGN
+   True-black #0a0a0a + pure red #c00. Flat, sharp, editorial.
+   Light theme is a derived neutral+red variant.
+   ═══════════════════════════════════════════════════════════ */
+
+[data-theme="light"] {
+  /* New design tokens */
+  --red:           #c00;
+  --red-ink:       #a30000;
+  --red-wash:      rgba(204, 0, 0, 0.06);
+  --red-border:    rgba(204, 0, 0, 0.3);
+  --bg:            #fafafa;
+  --surface:       #fff;
+  --surface-2:     #f5f5f5;
+  --surface-3:     #eee;
+  --ink:           #111;
+  --ink-2:         #444;
+  --mute:          #888;
+  --dim:           #999;
+  --faint:         #bbb;
+  --ghost:         #ccc;
+  --line:          rgba(0, 0, 0, 0.08);
+  --line-2:        rgba(0, 0, 0, 0.16);
+  /* THE DRAW'S CONNECTOR WORK, and it is OPAQUE on purpose.
+     The elbows used to be painted with --border (--line, 8% alpha). A 1px line
+     at 8% over .card-surface is about 1.2:1 against a 3:1 non-text threshold,
+     and the chart is then multiplied down by a sub-1 transform — at the 0.68
+     page floor that 1px rasterises at ~68% coverage, i.e. an effective ~5%.
+     The lines were simply not on the screen. #888 on --surface is 3.5:1 (light)
+     and #666 on #111 is 3.3:1 (dark), which leaves headroom for the transform.
+     NOT --line with a bigger alpha: an alpha over the card surface is what the
+     defect was, and a Tailwind opacity modifier on a var() colour compiles to
+     nothing in this repo — color-mix() is the tool if a blend is ever wanted. */
+  --draw-link:     #888;
+  --win:           #16a34a;
+  --win-wash:      rgba(22, 163, 74, 0.08);
+  --loss:          #c00;
+  --bg-loss:       rgba(204, 0, 0, 0.04);
+  --gold:          #ca8a04;
+  --silver:        #9FA0A3;
+  --bronze:        #A6683A;
+
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+
+  /* Existing-name aliases so legacy components keep working */
+  --bg-primary:        var(--bg);
+  --bg-surface:        var(--surface);
+  --bg-card:           var(--surface);
+  --bg-elevated:       var(--surface-2);
+  --bg-overlay:        color-mix(in oklab, var(--bg) 82%, transparent);
+
+  --text-primary:      var(--ink);
+  --text-secondary:    var(--ink-2);
+  --text-muted:        var(--mute);
+  --text-dim:          color-mix(in oklab, var(--mute) 70%, var(--bg));
+
+  --border:            var(--line);
+  --border-hover:      var(--line-2);
+  --border-strong:     color-mix(in oklab, var(--ink) 24%, transparent);
+
+  --color-accent:      var(--red);
+  --color-accent-hover:#a30000;
+  --color-accent-deep: var(--red-ink);
+  --color-accent-glow: rgba(204, 0, 0, 0.08);
+
+  --color-gold:        var(--gold);
+  --color-gold-hover:  #a16207;
+  --color-gold-deep:   #854d0e;
+  --color-gold-glow:   rgba(202, 138, 4, 0.15);
+
+  --color-silver:      var(--silver);
+  --color-bronze:      var(--bronze);
+
+  --color-success:     var(--win);
+  --color-warning:     #d97706;
+  --color-danger:      var(--loss);
+  --color-info:        #2c7a9c;
+
+  --elev-1:            none;
+  --elev-2:            none;
+  --elev-3:            none;
+  --elev-4:            none;
+
+  --on-surface-soft:   rgba(0, 0, 0, 0.03);
+  --on-surface-med:    rgba(0, 0, 0, 0.06);
+  --on-surface-hard:   rgba(0, 0, 0, 0.10);
+  --on-surface-grid:   rgba(0, 0, 0, 0.04);
+  --on-surface-inset:  rgba(255, 255, 255, 0.7);
+  --shadow-deep:       transparent;
+
+  --background:        var(--bg);
+  --foreground:        var(--ink);
+  --card:              var(--surface);
+  --card-foreground:   var(--ink);
+  --popover:           var(--surface);
+  --popover-foreground:var(--ink);
+  --primary:           var(--red);
+  --primary-foreground:#FFFFFF;
+  --secondary:         var(--surface-2);
+  --secondary-foreground: var(--ink);
+  --muted:             var(--surface-2);
+  --muted-foreground:  var(--ink-2);
+  --accent:            var(--surface-2);
+  --accent-foreground: var(--ink);
+  --destructive:       var(--loss);
+  --destructive-foreground: #FFFFFF;
+  --input:             rgba(0, 0, 0, 0.10);
+  --ring:              var(--red);
+
+  --body-grad-1: none;
+  --body-grad-2: none;
+  --body-grad-3: none;
+}
+
+[data-theme="dark"] {
+  --red:           #c00;
+  --red-ink:       #a30000;
+  --red-wash:      rgba(204, 0, 0, 0.1);
+  --red-border:    rgba(204, 0, 0, 0.3);
+  --bg:            #0a0a0a;
+  --surface:       #111;
+  --surface-2:     #1a1a1a;
+  --surface-3:     #232323;
+  --ink:           #f0f0f0;
+  --ink-2:         #c8c8c8;
+  --mute:          #888;
+  --dim:           #666;
+  --faint:         #444;
+  --ghost:         #333;
+  --line:          hsla(0, 0%, 100%, 0.08);
+  --line-2:        hsla(0, 0%, 100%, 0.14);
+  /* See the light theme's note: opaque, because an alpha over the card surface
+     is the defect this token exists to fix. */
+  --draw-link:     #666;
+  --win:           #4ade80;
+  --win-wash:      rgba(74, 222, 128, 0.1);
+  --loss:          #c00;
+  --bg-loss:       rgba(204, 0, 0, 0.06);
+  --gold:          #eab308;
+  --silver:        #BCBDC0;
+  --bronze:        #C68A55;
+
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+
+  --bg-primary:        var(--bg);
+  --bg-surface:        var(--surface);
+  --bg-card:           var(--surface);
+  --bg-elevated:       var(--surface-2);
+  --bg-overlay:        color-mix(in oklab, var(--bg) 82%, transparent);
+
+  --text-primary:      var(--ink);
+  --text-secondary:    var(--ink-2);
+  --text-muted:        var(--mute);
+  --text-dim:          color-mix(in oklab, var(--mute) 60%, var(--bg));
+
+  --border:            var(--line);
+  --border-hover:      var(--line-2);
+  --border-strong:     color-mix(in oklab, var(--ink) 30%, transparent);
+
+  --color-accent:      var(--red);
+  --color-accent-hover:#a30000;
+  --color-accent-deep: var(--red-ink);
+  --color-accent-glow: rgba(204, 0, 0, 0.1);
+
+  --color-gold:        var(--gold);
+  --color-gold-hover:  #facc15;
+  --color-gold-deep:   #a16207;
+  --color-gold-glow:   rgba(234, 179, 8, 0.15);
+
+  --color-silver:      var(--silver);
+  --color-bronze:      var(--bronze);
+
+  --color-success:     var(--win);
+  --color-warning:     #fbbf24;
+  --color-danger:      var(--loss);
+  --color-info:        #4c98b9;
+
+  --elev-1:            none;
+  --elev-2:            none;
+  --elev-3:            none;
+  --elev-4:            none;
+
+  --on-surface-soft:   rgba(255, 255, 255, 0.04);
+  --on-surface-med:    rgba(255, 255, 255, 0.08);
+  --on-surface-hard:   rgba(255, 255, 255, 0.14);
+  --on-surface-grid:   rgba(255, 255, 255, 0.025);
+  --on-surface-inset:  rgba(255, 255, 255, 0.04);
+  --shadow-deep:       transparent;
+
+  --background:        var(--bg);
+  --foreground:        var(--ink);
+  --card:              var(--surface);
+  --card-foreground:   var(--ink);
+  --popover:           var(--surface-2);
+  --popover-foreground:var(--ink);
+  --primary:           var(--red);
+  --primary-foreground:#FFFFFF;
+  --secondary:         var(--surface-2);
+  --secondary-foreground: var(--ink);
+  --muted:             var(--surface-2);
+  --muted-foreground:  var(--ink-2);
+  --accent:            var(--surface-2);
+  --accent-foreground: var(--ink);
+  --destructive:       var(--loss);
+  --destructive-foreground: #FFFFFF;
+  --input:             rgba(255, 255, 255, 0.10);
+  --ring:              var(--red);
+
+  --body-grad-1: none;
+  --body-grad-2: none;
+  --body-grad-3: none;
+}
+
+/* Motion + radius tokens (theme-independent) */
+:root {
+  /* How wide the app is allowed to get. See .page. */
+  --page-max: none;
+
+  /* Barlow ships as three unicode-range subsets and next/font/local gives each
+     its own family name, so the family Google served as one has to be
+     reassembled here (see layout.tsx). --font-sans and --font-display keep
+     their names because tailwind.config.ts and every rule below reference them.
+     The subsets go FIRST: --font-*-latin ends in next/font's Arial metric
+     fallback, and Arial covers ř and ế, so anything after it is dead. */
+  --font-sans:    var(--font-sans-ext), var(--font-sans-vi), var(--font-sans-latin);
+  --font-display: var(--font-display-ext), var(--font-display-vi), var(--font-display-latin);
+
+  --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  --body:    var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  --mono:    var(--font-mono), ui-monospace, monospace;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out:   cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast:  160ms;
+  --dur-med:   240ms;
+  --dur-slow:  420ms;
+  /* THE RADIUS SCALE, AND IT IS LOAD-BEARING IN A WAY THE TAILWIND ONE IS NOT.
+     These were all 0 to match a sharp-cornered reference design. Zeroing them
+     did not remove the rounding from the markup, it removed it from the tokens,
+     so every rule that says border-radius: var(--r-lg) kept saying it and kept
+     rendering square. .card-base is the one that matters: every panel on every
+     page draws its shape from it.
+
+     Giving the Tailwind scale real values (apps/player/tailwind.config.ts) did
+     NOTHING visible here, because the player app's cards are CSS classes that
+     never carried a rounded-* utility. That is why the admin app rounded and
+     this one did not. The numbers below match that Tailwind scale on purpose:
+     md is 8px there and 8px here, lg is 12px in both. A component styled either
+     way should land on the same corner.
+
+     --radius is the older generic one and stays in step with --r-md. */
+  --radius:    8px;
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--body);
+  font-feature-settings: "ss01", "cv11";
+  transition: background-color var(--dur-med) var(--ease-in-out),
+              color var(--dur-med) var(--ease-in-out);
+}
+
+body {
+  min-height: 100dvh;
+  background-image: var(--body-grad-1), var(--body-grad-2), var(--body-grad-3);
+  background-attachment: fixed;
+  /* A column, so the page below the top bar can take the rest of the screen
+     and keep the footer at the bottom (.page-shell). Everything else that
+     hangs off body is fixed or a full-width block, which a column leaves as
+     it was. */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Neutral, not the brand red: a solid red block over a whole card read as an
+   error state. A tint of the text colour works in both themes and keeps the
+   selected text its own colour. */
+::selection {
+  background: color-mix(in oklab, var(--ink) 24%, transparent);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--on-surface-hard);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+@layer base {
+  * { border-color: var(--border); }
+  body { background-color: var(--bg); color: var(--ink); }
+
+  /* Display headings — Barlow Condensed */
+  h1, h2, h3, h4 {
+    font-family: var(--display);
+    letter-spacing: -0.015em;
+    font-weight: 700;
+    line-height: 1.05;
+  }
+
+  /* Tabular numerals */
+  .nums, [data-nums], .font-mono {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SHELL (topbar, brand, nav, mobile-tabbar)
+   ═══════════════════════════════════════════════════════════ */
+
+.topbar {
+  position: sticky; top: 0; z-index: 40;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.topbar-inner {
+  max-width: var(--page-max); margin: 0 auto;
+  padding: 14px 28px;
+  display: flex; align-items: center; gap: 28px;
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: -.01em;
+}
+.brand-wrap { display: flex; flex-direction: column; line-height: 1; }
+.brand-mark {
+  width: 34px; height: 34px; border-radius: var(--r-md);
+  background: var(--red); color: #fff;
+  display: grid; place-items: center;
+  font-weight: 700; font-family: var(--display);
+  position: relative; overflow: hidden;
+}
+.brand-mark::before {
+  content: ""; position: absolute; inset: 0;
+  background: repeating-linear-gradient(135deg, transparent 0 8px, rgba(255,255,255,.08) 8px 9px);
+}
+.brand-sub {
+  font-family: var(--body); font-weight: 500;
+  font-size: 11px; color: var(--mute);
+  letter-spacing: .08em; text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.nav { display: flex; gap: 2px; margin-left: 12px; }
+.nav-item {
+  padding: 8px 14px; border-radius: var(--r-md);
+  color: var(--mute); font-weight: 600; font-size: 12px;
+  text-transform: uppercase; letter-spacing: .08em;
+  display: flex; align-items: center; gap: 8px;
+  transition: color .15s; position: relative;
+}
+.nav-item:hover { color: var(--ink); }
+.nav-item.active { color: var(--ink); }
+.nav-item.active::after {
+  content: ""; position: absolute;
+  left: 14px; right: 14px; bottom: 0;
+  height: 2px; background: var(--red);
+}
+.nav-item .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--red); }
+
+/* A nav group: the trigger is a .nav-item button, so it takes the same look and
+   the same active underline. The panel is portalled to <body>, which is why its
+   rules are top-level and not scoped under .topbar. */
+.nav-menu {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 4px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.nav-menu a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: var(--r-md);
+  color: var(--mute); font-weight: 600; font-size: 12px;
+  text-transform: uppercase; letter-spacing: .08em;
+  transition: color .15s, background-color .15s;
+}
+.nav-menu a:hover, .nav-menu a:focus-visible { color: var(--ink); background: var(--surface-2); outline: none; }
+.nav-menu a[aria-current="page"] { color: var(--ink); box-shadow: inset 2px 0 0 var(--red); }
+
+/* Phone only, like the tab bar it stands in for: the pages behind a grouped
+   tab (Events) as a segmented switch. The desktop nav has its own menu. */
+.group-switch {
+  display: none;
+  margin-bottom: 18px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.group-switch > a {
+  flex: 1; min-height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: calc(var(--r-md) - 3px);
+  color: var(--mute); font-weight: 600; font-size: 13px;
+}
+.group-switch > a.active { background: var(--bg); color: var(--ink); box-shadow: inset 0 -2px 0 var(--red); }
+@media (max-width: 980px) { .group-switch { display: flex; } }
+
+/* The Events tab's menu: rises from the tab, 200px wide, above the tab bar (z 40). */
+.tab-menu-scrim { position: fixed; inset: 0; z-index: 44; }
+.tab-menu {
+  position: fixed; z-index: 45; width: 200px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: 0 10px 30px color-mix(in oklab, #000 35%, transparent);
+  animation: tab-menu-in .14s ease-out;
+}
+.tab-menu > a {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 44px; padding: 0 12px;
+  border-radius: calc(var(--r-md) - 4px);
+  color: var(--ink); font-weight: 600; font-size: 14px;
+}
+.tab-menu > a:active { background: var(--surface-2); }
+.tab-menu > a.active { color: var(--red); }
+@keyframes tab-menu-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .tab-menu { animation: none; } }
+
+.top-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+
+.icon-btn {
+  width: 36px; height: 36px; border-radius: var(--r-md);
+  display: grid; place-items: center;
+  border: 1px solid var(--line); color: var(--ink-2);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color .15s, color .15s;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+
+.me-chip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 12px 4px 4px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface);
+  cursor: pointer;
+  transition: background-color .15s;
+}
+.me-chip:hover { background: var(--surface-2); }
+.me-chip .name { font-weight: 600; font-size: 13px; line-height: 1.2; }
+.me-chip .sub  { font-size: 11px; color: var(--mute); font-family: var(--mono); line-height: 1.2; }
+
+/* Avatar */
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-2); color: var(--ink);
+  font-weight: 600; font-family: var(--display);
+  font-size: 12px; letter-spacing: -.01em;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  position: relative; overflow: hidden;
+}
+.avatar.ring { box-shadow: 0 0 0 2px var(--red); }
+.avatar[data-size="xs"] { width: 24px; height: 24px; font-size: 10px; }
+.avatar[data-size="sm"] { width: 32px; height: 32px; font-size: 11px; }
+.avatar[data-size="md"] { width: 44px; height: 44px; font-size: 14px; }
+.avatar[data-size="lg"] { width: 64px; height: 64px; font-size: 20px; }
+.avatar[data-size="xl"] { width: 96px; height: 96px; font-size: 30px; }
+.avatar[data-tone="1"] { background: #EDE4DB; color: #8B5A2B; }
+.avatar[data-tone="2"] { background: #DDE7DC; color: #37604B; }
+.avatar[data-tone="3"] { background: #E4DCEA; color: #5B4680; }
+.avatar[data-tone="4"] { background: #F5D8DC; color: #9F1239; }
+.avatar[data-tone="5"] { background: #DCE3EE; color: #3B547A; }
+.avatar[data-tone="6"] { background: #EEE1D6; color: #6B4A23; }
+.avatar[data-tone="7"] { background: #E0DEDA; color: #3D3A36; }
+[data-theme="dark"] .avatar { background: var(--surface-2); }
+[data-theme="dark"] .avatar[data-tone="1"] { background: #3A2B1F; color: #E5B880; }
+[data-theme="dark"] .avatar[data-tone="2"] { background: #22362B; color: #A8D5B5; }
+[data-theme="dark"] .avatar[data-tone="3"] { background: #2E2538; color: #C6B2E3; }
+[data-theme="dark"] .avatar[data-tone="4"] { background: #3A1420; color: #F5A8B4; }
+[data-theme="dark"] .avatar[data-tone="5"] { background: #1E2A3D; color: #A8BBD8; }
+[data-theme="dark"] .avatar[data-tone="6"] { background: #32261A; color: #D8B88C; }
+[data-theme="dark"] .avatar[data-tone="7"] { background: #2A2824; color: #BFB9B0; }
+
+.mobile-tabbar {
+  display: none;
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+  gap: 2px; z-index: 40;
+}
+.mobile-tabbar > a, .mobile-tabbar > button {
+  flex: 1; padding: 8px 4px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 500;
+  color: var(--mute);
+  border-radius: var(--r-md);
+  min-height: 48px;
+  position: relative;
+}
+.mobile-tabbar > a.active, .mobile-tabbar > button.active {
+  color: var(--red);
+}
+
+@media (max-width: 980px) {
+  .topbar-inner { padding: 12px 14px; gap: 10px; }
+  .nav { display: none; }
+  .brand-wrap div:last-child { display: none; }
+  .brand-mark { width: 30px; height: 30px; }
+  .brand { font-size: 15px; }
+  .me-chip { padding: 3px 6px 3px 3px; border: none; background: transparent; }
+  .me-chip .name, .me-chip .sub { display: none; }
+  .mobile-tabbar { display: flex; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BUTTONS (sharp uppercase letterspaced)
+   ═══════════════════════════════════════════════════════════ */
+
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border-radius: var(--r-md);
+  font-weight: 700; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .16em;
+  transition: all .15s;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  color: inherit;
+}
+.btn-ghost   { color: var(--ink-2); border-color: var(--line); }
+.btn-ghost:hover { background: var(--surface-2); }
+.btn-primary { background: var(--red); color: #fff; }
+.btn-primary:hover { background: var(--red-ink); }
+.btn-dark    { background: var(--ink); color: var(--bg); }
+.btn-dark:hover { opacity: .9; }
+.btn-sm      { padding: 6px 10px; font-size: 12px; }
+.btn-lg      { padding: 12px 22px; font-size: 14px; }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+/* Styled file picker: a ghost button label around a visually hidden input. */
+.file-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.file-pick-button { position: relative; }
+.file-pick-button:focus-within { outline: 2px solid var(--red); outline-offset: 2px; }
+.file-pick-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+.file-pick-name { color: var(--ink-3, var(--ink-2)); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.btn-ghost-inverse { color: var(--hero-fg); border-color: color-mix(in oklab, var(--hero-fg) 30%, transparent); }
+.btn-ghost-inverse:hover { background: color-mix(in oklab, var(--hero-fg) 8%, transparent); }
+.btn-danger-ghost {
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--loss) 40%, transparent);
+  color: var(--loss);
+}
+.btn-danger-ghost:hover { background: var(--red-wash); }
+
+/* ═══════════════════════════════════════════════════════════
+   GRID + LAYOUT HELPERS
+   ═══════════════════════════════════════════════════════════ */
+
+.row     { display: flex; align-items: center; gap: 10px; }
+.sep     { height: 1px; background: var(--line); margin: 14px 0; }
+.muted   { color: var(--mute); }
+.right   { margin-left: auto; }
+
+.grid    { display: grid; gap: 20px; }
+.grid-2  { grid-template-columns: 1fr 1fr; }
+.grid-3  { grid-template-columns: repeat(3, 1fr); }
+.grid-12 { grid-template-columns: repeat(12, 1fr); }
+
+@media (max-width: 1100px) { .grid-12 { grid-template-columns: repeat(6, 1fr); } }
+@media (max-width: 980px) {
+  .grid    { gap: 14px; }
+  .grid-12, .grid-3, .grid-2 { grid-template-columns: 1fr !important; }
+  .grid-12 > [style*="grid-column"] { grid-column: 1 / -1 !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PILLS (mono labels, smaller than tags)
+   ═══════════════════════════════════════════════════════════ */
+
+.pill {
+  display: inline-flex; align-items: center;
+  padding: 3px 8px; border-radius: 999px;
+  font-size: 11px; font-family: var(--mono); font-weight: 500;
+}
+.pill-red { background: var(--red); color: #fff; }
+.pill-out { background: transparent; border: 1px solid var(--line-2); color: var(--ink-2); }
+
+/* ═══════════════════════════════════════════════════════════
+   FEED — hero banner, match cards, sidebar
+   ═══════════════════════════════════════════════════════════ */
+
+.hero-banner {
+  /* Theme-responsive spotlight card: reads light in light mode, dark in dark
+     mode. --hero-fg drives every child (headline, stats, meta, the inverse
+     button), so swapping it per theme flips the whole card's ink at once. */
+  --hero-fg: var(--ink);
+  --hero-glow: rgba(204,0,0,.15);
+  background: linear-gradient(135deg, var(--surface), color-mix(in oklab, var(--red) 5%, var(--surface)));
+  color: var(--hero-fg);
+  border: 1px solid var(--line);
+  box-shadow: var(--elev-1);
+  border-radius: var(--r-xl);
+  padding: 32px;
+  position: relative; overflow: hidden;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 32px;
+  align-items: center;
+}
+[data-theme="dark"] .hero-banner {
+  /* Dark spotlight: near-black card lifted above the near-black page. */
+  --hero-fg: var(--ink);
+  --hero-glow: rgba(204,0,0,.15);
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: none;
+}
+.hero-banner::before {
+  content: ""; position: absolute;
+  right: -60px; top: -60px;
+  width: 340px; height: 340px;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--hero-glow), transparent 70%);
+  pointer-events: none;
+}
+.hero-banner .eyebrow {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--red); letter-spacing: .18em;
+  text-transform: uppercase; margin-bottom: 12px;
+}
+.hero-banner h2 {
+  font-family: var(--display);
+  font-size: 42px; line-height: 1; font-weight: 700;
+  letter-spacing: -.03em;
+  margin: 0 0 12px;
+  color: var(--hero-fg);
+}
+.hero-banner .lead {
+  color: color-mix(in oklab, var(--hero-fg) 70%, transparent);
+  font-size: 14px;
+  max-width: 40ch;
+  margin-bottom: 20px;
+}
+.hero-stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+  border-left: 1px solid color-mix(in oklab, var(--hero-fg) 18%, transparent);
+  padding-left: 28px;
+  position: relative; z-index: 2;
+}
+.hero-stats .stat-label { color: color-mix(in oklab, var(--hero-fg) 55%, transparent); }
+.hero-stats .stat-value { color: var(--hero-fg); }
+
+.hero-meta { color: color-mix(in oklab, var(--hero-fg) 78%, transparent); }
+.hero-meta-dim { color: color-mix(in oklab, var(--hero-fg) 55%, transparent); }
+
+.feed-col   { display: flex; flex-direction: column; gap: 20px; }
+.feed-match {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 20px;
+  align-items: center;
+}
+.feed-match .side       { display: flex; gap: 12px; align-items: center; }
+.feed-match .side.right { flex-direction: row-reverse; text-align: right; margin-left: 0; }
+
+.score {
+  font-family: var(--display);
+  font-weight: 700; font-size: 36px;
+  letter-spacing: -.03em; line-height: 1;
+}
+.score-mini {
+  font-family: var(--mono);
+  font-size: 12px; color: var(--mute);
+  display: flex; gap: 8px;
+  justify-content: center;
+  margin-top: 6px;
+}
+.score-mini span {
+  padding: 1px 6px; border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+@media (max-width: 980px) {
+  .hero-banner       { grid-template-columns: 1fr; padding: 22px; border-radius: var(--r-xl); gap: 22px; }
+  .hero-banner h2    { font-size: 24px; line-height: 1.1; word-break: break-word; overflow-wrap: anywhere; }
+  .hero-banner .lead { font-size: 13px; }
+  .hero-stats        { grid-template-columns: 1fr 1fr; border-left: 0; border-top: 1px solid color-mix(in oklab, var(--hero-fg) 15%, transparent); padding: 20px 0 0; gap: 14px; }
+  .hero-stats .stat-value { font-size: 22px; }
+
+  .feed-match              { grid-template-columns: 1fr; gap: 10px; text-align: left; }
+  .feed-match .side        { flex-direction: row !important; text-align: left !important; justify-content: flex-start; }
+  .feed-match .side.right  { flex-direction: row !important; text-align: left !important; }
+  .feed-match > div:nth-child(2) { text-align: left; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 10px 0; margin: 2px 0; }
+  .score                   { font-size: 28px; }
+  .score-mini              { justify-content: flex-start; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CAPACITY BAR + EMPTY STATE
+   ═══════════════════════════════════════════════════════════ */
+
+.capacity-bar {
+  height: 6px; border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+  position: relative;
+}
+.capacity-bar .fill {
+  height: 100%; background: var(--ink);
+  border-radius: 999px;
+  transition: width .3s;
+}
+.capacity-bar .fill.warn { background: var(--gold); }
+.capacity-bar .fill.full { background: var(--red); }
+
+.empty {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--mute);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.empty-icon {
+  width: 44px; height: 44px; border-radius: var(--r-md);
+  background: var(--surface-2);
+  display: grid; place-items: center;
+  color: var(--mute);
+}
+.empty-title { font-weight: 600; font-size: 15px; color: var(--ink); }
+.empty-hint { font-size: 13px; color: var(--mute); max-width: 38ch; }
+
+/* ═══════════════════════════════════════════════════════════
+   SHARED INPUTS, LIST ROWS, SEARCH PILL
+   ═══════════════════════════════════════════════════════════ */
+
+.input-base {
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 14px;
+  color: var(--ink);
+}
+.input-base::placeholder { color: var(--text-dim); }
+.input-base:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+.alert-danger {
+  font-size: 13px;
+  color: var(--loss);
+  background: var(--red-wash);
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+a.list-row { transition: border-color var(--dur-fast), background-color var(--dur-fast); }
+a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
+.row-title { font-weight: 600; font-size: 14px; }
+.row-sub { font-family: var(--mono); font-size: 11px; color: var(--mute); margin-top: 2px; }
+
+.search-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 6px 4px 14px;
+  background: var(--surface);
+}
+.search-pill:focus-within { border-color: var(--border-strong); }
+.search-pill input {
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+/* SIGN-IN SCREENS (/login, /signup). Page-scoped; .auth and .auth-card stay onboarding's. */
+.signin-shell {
+  /* The page renders inside the layout's .page (max-width, padding) with the
+     legal footer below it, so the backdrop cannot be this box's background: it
+     would paint as a panel. It is a fixed full-screen layer behind the content
+     instead, and this box only centres the card. position + z-index make this a
+     stacking context, so the layers' z-index: -1 lands above body's own
+     background (which would otherwise cover them) and below the card. */
+  min-height: calc(100dvh - 200px); display: grid; place-items: center; padding-block: 24px;
+  position: relative; z-index: 0;
+}
+.signin-shell::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(ellipse at top, color-mix(in oklab, var(--red) 9%, transparent) 0%, transparent 55%),
+    radial-gradient(ellipse at bottom right, color-mix(in oklab, var(--ink) 5%, transparent) 0%, transparent 50%);
+}
+.signin-grid {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .6;
+  background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
+}
+.signin-wrap { position: relative; z-index: 1; width: 100%; max-width: 400px; }
+.signin-glow {
+  position: absolute; inset: -16px; border-radius: var(--r-xl); pointer-events: none; filter: blur(32px); opacity: .45;
+  background: linear-gradient(135deg, color-mix(in oklab, var(--red) 40%, transparent), transparent 60%);
+}
+.signin-card {
+  position: relative; display: flex; flex-direction: column; gap: 22px; padding: 28px 24px;
+  background: var(--surface); border: 1px solid color-mix(in oklab, var(--red) 18%, var(--line));
+  border-radius: var(--r-xl);
+  box-shadow: 0 0 40px color-mix(in oklab, var(--red) 7%, transparent), 0 8px 32px color-mix(in oklab, var(--ink) 10%, transparent);
+}
+.signin-head { text-align: center; padding-top: 4px; }
+/* Used WITH .brand-mark, which it resizes. */
+.signin-mark { width: 56px; height: 56px; border-radius: var(--r-lg); margin: 0 auto 16px; }
+.signin-title {
+  font-family: var(--display); font-weight: 700; font-size: 30px; line-height: 1; letter-spacing: .2em;
+  text-transform: uppercase; color: var(--red); margin: 0;
+}
+.signin-sub { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--mute); margin-top: 8px; }
+.signin-heading { text-align: center; }
+.signin-heading h2 { font-family: var(--display); font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 6px 0 0; }
+.signin-heading .page-eyebrow { justify-content: center; }
+.signin-icon {
+  width: 64px; height: 64px; border-radius: 999px; margin: 0 auto 14px; display: grid; place-items: center;
+  color: var(--red); background: var(--red-wash); border: 1px solid var(--red-border);
+}
+.signin-cta { width: 100%; justify-content: center; height: 48px; box-shadow: 0 4px 16px color-mix(in oklab, var(--red) 25%, transparent); }
+.signin-alt { width: 100%; justify-content: center; height: 48px; gap: 10px; }
+.signin-code { font-family: var(--mono); font-size: 24px; letter-spacing: .4em; text-align: center; }
+.signin-links { display: flex; justify-content: center; align-items: center; gap: 10px; font-size: 12px; color: var(--mute); flex-wrap: wrap; }
+.signin-links button, .signin-links a {
+  background: none; border: 0; padding: 0; color: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 4px;
+}
+.signin-links button:disabled { opacity: .55; cursor: not-allowed; }
+.signin-switch { text-align: center; font-size: 13px; color: var(--mute); }
+.signin-switch a { color: var(--red); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.signin-notice {
+  font-size: 13px; color: var(--ink-2); background: var(--red-wash); border: 1px solid var(--red-border);
+  padding: 10px 12px; border-radius: var(--r-md);
+}
+.signin-notice a { color: var(--red); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.signin-legal { font-size: 12px; text-align: center; color: var(--mute); }
+.signin-legal a { color: inherit; text-decoration: underline; }
+
+/* Auth split-screen */
+@media (max-width: 980px) {
+  .auth { grid-template-columns: 1fr !important; }
+  .auth-panel { padding: 32px 24px !important; min-height: auto !important; }
+  .auth-hero { font-size: 40px !important; }
+  .auth-form { padding: 32px 24px !important; gap: 18px !important; }
+}
+
+/* Announcements — editorial 2-col layout */
+.ann {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 28px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ann:last-child { border-bottom: 0; }
+.ann-date {
+  font-family: var(--mono);
+  color: var(--mute);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+.ann h3 {
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  margin: 0 0 8px;
+}
+.ann p {
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 10px;
+}
+@media (max-width: 980px) {
+  .ann { grid-template-columns: 1fr; gap: 10px; padding: 18px 0; }
+  .ann h3 { font-size: 18px; }
+}
+
+/* Session-card meta line — mono row of icon+label pairs that wraps on mobile */
+.session-meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--mute);
+  font-family: var(--mono);
+}
+/* Info on the left, actions on the right, vertically centred.
+   This rule was MISSING: .session-grid existed only inside the ≤980px media
+   query below, which sets grid-template-columns — a property a flex container
+   ignores. The element carried an inline `display:flex; flex-direction:column`,
+   so the mobile override was inert AND the desktop layout never existed: every
+   card stacked its actions onto a second row at every width, leaving a tall
+   empty band above a lone right-aligned button. Most visible once a suspended
+   member's RSVP buttons are withheld and only "Add to calendar" is left. */
+.session-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+}
+
+@media (max-width: 980px) {
+  .session-meta { gap: 12px; }
+  .session-grid { grid-template-columns: 1fr !important; gap: 14px !important; }
+  /* Buttons flow in a wrapping row (content-sized, not stretched) so they stay
+     as pills instead of getting crushed into circles with wrapped labels. */
+  .session-grid > div:last-child { flex-direction: row !important; flex-wrap: wrap; align-items: center !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SCHEDULE (/sessions)
+   A day is the unit a member plans in, so the schedule is a stack of days,
+   not a stack of sessions. On a wide screen the day sits in a left rail
+   beside its sessions — the same editorial split as .ann above — and on a
+   phone it collapses to one baseline-aligned line over the cards. Same
+   content, two arrangements; nothing appears or disappears with width.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Upcoming beside past on a wide screen, stacked everywhere else. The 1101px
+   floor is where .grid-12 drops to six columns; below it there is not enough
+   room for a rail AND a side column, and the phone order (what's next, then
+   what's finished) is the right one anyway. */
+.sched-wide { display: grid; gap: 20px; }
+@media (min-width: 1101px) {
+  .sched-wide { grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  /* A member in their first week has no past sessions yet. Rather than leave
+     the side column as a bare gap, the schedule takes the full width back and
+     keeps a measure of its own. */
+  .sched-wide > section:only-child { grid-column: 1 / -1; max-width: 1100px; }
+}
+
+.sched-day { display: grid; grid-template-columns: 132px 1fr; gap: 24px; align-items: start; }
+.sched-day + .sched-day { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.sched-day-label {
+  font-family: var(--display); font-size: 20px; font-weight: 600;
+  letter-spacing: -.01em; line-height: 1.1;
+}
+.sched-day-date {
+  font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .14em; color: var(--mute); margin-top: 5px;
+}
+/* Today is the only day whose label is worth an accent — it is the one a
+   member is deciding about right now. */
+.sched-day.is-today .sched-day-date { color: var(--red); }
+.sched-day-list { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+.session-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+/* The soonest session carries a spine so the eye lands on it first without a
+   second, duplicated "next up" card to keep in sync. */
+.session-card.is-next { border-left: 3px solid var(--red); }
+.sess-eyebrow {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .16em; color: var(--red);
+  margin-bottom: 6px;
+}
+/* The time is the fact the whole card is about, so it is set larger than the
+   rest of the meta line rather than buried inside it. */
+.sess-time {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 15px; color: var(--ink); margin-top: 6px;
+}
+.sess-time .to { color: var(--mute); }
+.sess-actions { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+/* Says why there is no Check In button. Withholding the button without this
+   line is what makes the screen look broken at 5pm. */
+.sess-window {
+  font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--mute); white-space: nowrap;
+}
+
+@media (max-width: 980px) {
+  .sched-day { grid-template-columns: 1fr; gap: 10px; }
+  .sched-day + .sched-day { margin-top: 18px; padding-top: 18px; }
+  .sched-day-rail { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .sched-day-label { font-size: 17px; }
+  .sched-day-date { margin-top: 0; }
+  .session-card { padding: 16px; }
+  .sess-actions { justify-content: flex-start; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DESIGN PRIMITIVES (page-level)
+   These are component classes, not utilities — they live OUTSIDE
+   @layer utilities so Tailwind's purge doesn't strip them when no
+   .tsx file references them yet (Phase 3 pages will use them).
+   ═══════════════════════════════════════════════════════════ */
+
+.display { font-family: var(--display); letter-spacing: -.02em; }
+.mono    { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* Page container.
+   --page-max is the single source of truth for how wide the app gets. It was
+   three separate 1360px literals (.page, .topbar-inner, and an inline style in
+   the standing banner), which is how a header ends up not lining up with the
+   content under it. It went 1360px -> 2100px -> none: the admin console dropped
+   its own cap so tables and brackets can use the display they are actually on,
+   and the two halves of the product should not disagree about how wide a page
+   is. The 28px padding is what keeps content off the bezel. If one page of
+   prose ever reads too long, give THAT page a measure — putting the cap back
+   here decides it for the fixtures table and the leaderboard as well. */
+.page {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 28px;
+  width: 100%;
+}
+/* The layout's <main>: its content takes the spare height, which pushes the
+   footer to the bottom of the screen on a short page. Only the wrapper and
+   the footer are flex items, so a page's own blocks keep normal flow. */
+.page-shell {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.page-shell-content {
+  flex: 1 0 auto;
+  min-width: 0;
+}
+@media (max-width: 980px) {
+  .page { padding: 20px 16px; }
+}
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+  position: relative;
+  overflow: hidden;
+}
+@media (max-width: 980px) {
+  .page-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+}
+
+/* Page header inner */
+.page-eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--red);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .page-eyebrow .bar { width: 24px; height: 2px; background: var(--red); display: inline-block; }
+  .page-title {
+    font-family: var(--display);
+    font-size: clamp(34px, 5vw, 52px);
+    font-weight: 700;
+    letter-spacing: -.015em;
+    line-height: 1;
+    margin: 0;
+    overflow-wrap: break-word;
+  }
+  .page-title::after { content: "."; color: var(--red); }
+  .page-title.no-period::after,
+  .page-header.no-period .page-title::after { content: none; }
+  .page-sub {
+    color: var(--mute);
+    font-size: 14px;
+    margin-top: 10px;
+    max-width: 60ch;
+  }
+  .page-watermark {
+    position: absolute;
+    right: 0; top: 50%;
+    transform: translateY(-50%);
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 180px;
+    line-height: 1;
+    color: hsla(0, 0%, 100%, 0.03);
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+  }
+  [data-theme="light"] .page-watermark { color: rgba(0, 0, 0, 0.03); }
+
+  /* Cards (new design) */
+  .card-base {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 20px;
+    position: relative;
+    box-shadow: var(--elev-1);
+  }
+  .card-title {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 18px;
+    letter-spacing: -.01em;
+    margin: 0 0 4px;
+  }
+  .card-title-lg { font-size: 22px; }
+  .card-sub  { color: var(--mute); font-size: 13px; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+
+  /* Tags (small mono labels — different from chips) */
+  .tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 8px; border-radius: var(--r-sm);
+    background: var(--surface-2); color: var(--ink-2);
+    font-size: 11px; font-weight: 500;
+    font-family: var(--mono); letter-spacing: .02em; text-transform: uppercase;
+  }
+  .tag-red    { background: var(--red-wash); color: var(--red); }
+  .tag-win    { background: var(--win-wash); color: var(--win); }
+  .tag-gold   { background: rgba(202, 138, 4, 0.12); color: #854d0e; }
+  .tag-outline{ background: transparent; border: 1px solid var(--line-2); color: var(--ink-2); }
+  [data-theme="dark"] .tag-gold { background: rgba(234, 179, 8, 0.12); color: #eab308; }
+
+  /* Stat blocks */
+  .stat        { display: flex; flex-direction: column; gap: 4px; }
+  .stat-label  {
+    font-family: var(--mono);
+    font-size: 10px; color: var(--mute);
+    text-transform: uppercase; letter-spacing: .1em;
+  }
+  .stat-value  {
+    font-family: var(--display);
+    font-size: 28px; font-weight: 700;
+    letter-spacing: -.02em; line-height: 1;
+  }
+  .stat-value-lg { font-size: 56px; letter-spacing: -.04em; }
+  .stat-delta  {
+    font-family: var(--mono);
+    font-size: 12px;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .stat-delta.up   { color: var(--win); }
+  .stat-delta.down { color: var(--loss); }
+
+  /* Rank big number */
+  .rank-big       { display: flex; align-items: baseline; gap: 4px; font-family: var(--display); }
+  .rank-big .hash { color: var(--mute); font-size: 22px; font-weight: 500; }
+  .rank-big .num  { font-size: 48px; font-weight: 700; letter-spacing: -.04em; }
+
+  /* Tables */
+  .data-table { width: 100%; border-collapse: collapse; }
+  .data-table th {
+    text-align: left; font-family: var(--mono);
+    font-size: 10px; color: var(--mute);
+    text-transform: uppercase; letter-spacing: .1em;
+    font-weight: 500; padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .data-table td {
+    padding: 14px; border-bottom: 1px solid var(--line);
+    font-size: 14px; vertical-align: middle;
+  }
+  .data-table tr:last-child td { border-bottom: 0; }
+  .data-table tr.me td { background: var(--red-wash); }
+  .data-table tr.row-hover:hover td { background: var(--surface-2); cursor: pointer; }
+  .data-table td.num {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+/* ── Legacy utilities (kept for existing components) ──
+   These ARE referenced in current TSX files, so it's safe (and desirable
+   for bundle size) to keep them inside @layer utilities for Tailwind purge. */
+
+@layer utilities {
+  .text-court-red    { color: var(--red); }
+  .text-gold         { color: var(--gold); }
+  .text-shuttle-white{ color: #F8FAFC; }
+  .bg-court-red      { background-color: var(--red); }
+  .bg-gold           { background-color: var(--gold); }
+
+  .glow-red {
+    box-shadow: 0 0 0 1px var(--red-border);
+  }
+  .glow-gold {
+    box-shadow: none;
+  }
+  .glow-soft {
+    box-shadow:
+      0 1px 0 var(--on-surface-inset) inset,
+      0 20px 40px -20px var(--shadow-deep);
+  }
+
+  .gradient-court  { background: var(--red); }
+  .gradient-gold   { background: linear-gradient(135deg, var(--gold) 0%, var(--gold) 40%, #a16207 100%); }
+  .gradient-dark   { background: linear-gradient(180deg, var(--bg) 0%, var(--surface) 100%); }
+  .gradient-card   { background: linear-gradient(180deg, var(--on-surface-soft) 0%, transparent 50%), var(--surface); }
+  .gradient-text-gold {
+    background: linear-gradient(135deg, var(--gold) 0%, var(--gold) 50%, #a16207 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .gradient-text-red {
+    background: linear-gradient(135deg, var(--red) 0%, var(--red) 50%, var(--red-ink) 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* Court textures */
+  .bg-court-lines {
+    background-image:
+      linear-gradient(to right, var(--on-surface-grid) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--on-surface-grid) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+  .bg-court-grid {
+    background-image:
+      linear-gradient(var(--color-accent-glow) 1px, transparent 1px),
+      linear-gradient(to right, var(--color-accent-glow) 1px, transparent 1px);
+    background-size: 32px 32px;
+    opacity: 0.18;
+  }
+  [data-theme="dark"] .bg-court-grid { opacity: 1; }
+  .bg-noise {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.045 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  [data-theme="dark"] .bg-noise {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Card variants (legacy names) */
+  .card-surface {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    box-shadow: var(--elev-1);
+  }
+  .card-elevated {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    box-shadow: var(--elev-2);
+  }
+  .card-interactive {
+    transition: border-color var(--dur-fast) var(--ease-out-expo);
+  }
+  .card-interactive:hover {
+    border-color: var(--line-2);
+  }
+
+  /* Chip (legacy — colored variants below) */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 999px;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border: 1px solid var(--line);
+    background: var(--on-surface-soft);
+    color: var(--ink-2);
+  }
+  [data-theme="dark"] .chip-red {
+    border-color: rgba(204, 0, 0, 0.42);
+    background: rgba(204, 0, 0, 0.14);
+    color: #ff6666;
+  }
+  [data-theme="dark"] .chip-gold {
+    border-color: rgba(234, 179, 8, 0.42);
+    background: rgba(234, 179, 8, 0.12);
+    color: #eab308;
+  }
+  [data-theme="dark"] .chip-success {
+    border-color: rgba(74, 222, 128, 0.40);
+    background: rgba(74, 222, 128, 0.12);
+    color: #4ade80;
+  }
+  [data-theme="dark"] .chip-info {
+    border-color: rgba(76, 152, 185, 0.40);
+    background: rgba(76, 152, 185, 0.12);
+    color: #6fb3d2;
+  }
+  [data-theme="dark"] .chip-warning {
+    border-color: rgba(251, 191, 36, 0.42);
+    background: rgba(251, 191, 36, 0.12);
+    color: #fbbf24;
+  }
+  [data-theme="light"] .chip-red {
+    border-color: rgba(204, 0, 0, 0.25);
+    background: var(--red-wash);
+    color: var(--red-ink);
+  }
+  [data-theme="light"] .chip-gold {
+    border-color: rgba(202, 138, 4, 0.30);
+    background: rgba(202, 138, 4, 0.10);
+    color: #854d0e;
+  }
+  [data-theme="light"] .chip-success {
+    border-color: color-mix(in oklab, var(--win) 30%, transparent);
+    background: var(--win-wash);
+    color: var(--win);
+  }
+  [data-theme="light"] .chip-info {
+    border-color: rgba(44, 122, 156, 0.30);
+    background: rgba(44, 122, 156, 0.10);
+    color: #2c7a9c;
+  }
+  [data-theme="light"] .chip-warning {
+    border-color: rgba(202, 138, 4, 0.30);
+    background: rgba(202, 138, 4, 0.10);
+    color: #854d0e;
+  }
+
+  /* Filter chips (radio-style — different from labeled chips) */
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .filter-chip {
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-2);
+    font-size: 13px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all .15s;
+    cursor: pointer;
+  }
+  .filter-chip:hover { background: var(--surface-2); }
+  .filter-chip.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  [data-theme="dark"] .filter-chip.active { background: var(--red); border-color: var(--red); color: #fff; }
+  .filter-chip .count { font-family: var(--mono); font-size: 11px; opacity: .6; }
+
+  .match-winner {
+    background: var(--color-accent-glow);
+    color: var(--red);
+    font-weight: 600;
+  }
+
+  /* Eyebrow label (legacy) */
+  .eyebrow {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--mute);
+  }
+
+  /* Display headings (legacy) — now Space Grotesk, no uppercase */
+  .display-xl {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.25rem, 6vw, 4rem);
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+  }
+  .display-lg {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(1.75rem, 4.5vw, 2.75rem);
+    line-height: 0.97;
+    letter-spacing: -0.025em;
+  }
+  .display-md {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: clamp(1.25rem, 3vw, 1.75rem);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  .hr-label { display: flex; align-items: center; gap: 0.75rem; color: var(--mute); }
+  .hr-label::before, .hr-label::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem); }
+  .safe-top    { padding-top: env(safe-area-inset-top, 0px); }
+
+  .scroll-fade-x {
+    mask-image: linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent);
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--on-surface-soft) 0%,
+      var(--on-surface-med) 50%,
+      var(--on-surface-soft) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+    border-radius: var(--r-sm);
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  .press { transition: transform var(--dur-fast) var(--ease-out-expo); }
+  .press:active { transform: scale(0.97); }
+
+  .reveal { opacity: 0; transform: translateY(12px); animation: reveal var(--dur-slow) var(--ease-out-expo) forwards; }
+  @keyframes reveal { to { opacity: 1; transform: none; } }
+  .reveal-1 { animation-delay: 40ms; }
+  .reveal-2 { animation-delay: 90ms; }
+  .reveal-3 { animation-delay: 150ms; }
+  .reveal-4 { animation-delay: 220ms; }
+  .reveal-5 { animation-delay: 300ms; }
+  .reveal-6 { animation-delay: 380ms; }
+
+  /* Primary CTA — flat solid red */
+  .btn-primary-cta {
+    background: var(--red);
+    color: #fff;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    box-shadow: none;
+    transition: background-color var(--dur-fast) var(--ease-out-expo);
+  }
+  @media (hover: hover) {
+    .btn-primary-cta:hover {
+      background: var(--red-ink);
+    }
+  }
+  .btn-primary-cta:active { transform: scale(0.97); }
+
+  @media (hover: hover) {
+    .group:hover .group-chevron { transform: translateX(3px); }
+  }
+  .group-chevron { transition: transform var(--dur-fast) var(--ease-out-expo); }
+
+  /* Icon micro-interactions */
+  @keyframes trophy-shimmer {
+    0%, 100% { filter: brightness(1); }
+    50%      { filter: brightness(1.35) drop-shadow(0 0 6px rgba(229, 187, 101, 0.7)); }
+  }
+  .icon-trophy-shimmer { animation: trophy-shimmer 3s ease-in-out infinite; }
+
+  @media (hover: hover) {
+    .icon-gear:hover { animation: gear-spin 1.2s linear infinite; }
+  }
+  @keyframes gear-spin { to { transform: rotate(360deg); } }
+
+  @keyframes bell-wiggle {
+    0%,100% { transform: rotate(0deg); }
+    15%      { transform: rotate(14deg); }
+    30%      { transform: rotate(-10deg); }
+    45%      { transform: rotate(8deg); }
+    60%      { transform: rotate(-5deg); }
+    75%      { transform: rotate(3deg); }
+  }
+  .icon-bell-wiggle { animation: bell-wiggle 0.7s var(--ease-out-back) 0.3s both; }
+
+  @media (hover: hover) {
+    .icon-pop:hover { animation: icon-pop 0.25s var(--ease-out-back) both; }
+  }
+  @keyframes icon-pop {
+    0%   { transform: scale(1); }
+    60%  { transform: scale(1.22); }
+    100% { transform: scale(1.1); }
+  }
+
+  /* Superseded on mobile by the unlayered override at the end of this file —
+     see the "Mobile tabbar clearance" block. */
+  .pb-safe-nav { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal, .card-interactive, .press, .btn-primary-cta,
+    .icon-trophy-shimmer, .icon-bell-wiggle, .icon-pop,
+    * {
+      animation: none !important;
+      transition: none !important;
+    }
+    /* .reveal starts hidden and relies on its animation to appear; with
+       animations disabled it must render in its final state. */
+    .reveal { opacity: 1; transform: none; }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PUBLIC LANDING PAGE (.lp-*)
+   Extends the club identity: accent red on warm ground, Space
+   Grotesk display, mono ladder. Signature = the live ELO ladder
+   rendered like a standings terminal.
+   ═══════════════════════════════════════════════════════════ */
+.lp { max-width: 1120px; margin: 0 auto; padding: 8px 4px 48px; }
+
+.lp-hero {
+  display: grid; grid-template-columns: 1.25fr 1fr; gap: 48px;
+  align-items: center; padding: 40px 0 56px;
+}
+.lp-kicker {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 12px; letter-spacing: .16em;
+  color: var(--red); text-transform: uppercase; margin-bottom: 22px;
+}
+.lp-kicker-bar { width: 28px; height: 2px; background: var(--red); display: inline-block; }
+.lp-title {
+  font-family: var(--display); font-weight: 700;
+  font-size: clamp(40px, 6vw, 68px); line-height: .98; letter-spacing: -.03em;
+  margin: 0 0 20px; color: var(--ink);
+}
+.lp-lead {
+  font-size: 17px; line-height: 1.5; color: var(--ink-2);
+  max-width: 46ch; margin: 0 0 28px;
+}
+.lp-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.lp-sublinks { font-size: 14px; }
+.lp-guest {
+  display: flex; align-items: center; gap: 12px; max-width: 46ch; margin-bottom: 16px;
+  padding: 12px 14px; border: 1px solid var(--red-border); border-radius: var(--r-md);
+  background: var(--red-wash); color: var(--ink); text-decoration: none; font-size: 14px; line-height: 1.35;
+}
+.lp-guest:hover { border-color: var(--red); }
+.lp-guest > span { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.lp-guest-sub { color: var(--ink-2); font-size: 13px; }
+.lp-guest-icon, .lp-guest-arrow { color: var(--red); flex-shrink: 0; }
+.lp-sublinks a { color: var(--mute); text-decoration: none; border-bottom: 1px solid var(--line); padding-bottom: 1px; }
+.lp-sublinks a:hover { color: var(--red); border-color: var(--red); }
+
+.lp-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-weight: 600; font-size: 15px; border-radius: var(--r-md);
+  padding: 12px 22px; text-decoration: none; transition: all .15s ease;
+  border: 1px solid transparent; cursor: pointer;
+}
+.lp-btn-primary { background: var(--red); color: #fff; }
+.lp-btn-primary:hover { background: var(--red-ink); }
+.lp-btn-ghost { background: transparent; color: var(--ink); border-color: var(--line-2); }
+.lp-btn-ghost:hover { border-color: var(--ink); }
+.lp-btn-lg { padding: 14px 28px; font-size: 16px; }
+
+/* Signature ladder */
+.lp-ladder {
+  background: var(--surface); border: 1px solid var(--line);
+  border-top: 3px solid var(--red); border-radius: var(--r-lg);
+  padding: 20px; box-shadow: var(--shadow-md);
+}
+.lp-ladder-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600; font-size: 14px; color: var(--ink); margin-bottom: 14px;
+}
+.lp-ladder-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; color: var(--red); }
+.lp-ladder-empty { font-size: 13px; color: var(--mute); padding: 8px 0; }
+.lp-ladder-list { list-style: none; margin: 0; padding: 0; }
+.lp-ladder-row {
+  display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 12px;
+  padding: 11px 0; border-top: 1px solid var(--line);
+}
+.lp-ladder-row:first-child { border-top: 0; }
+.lp-rank { font-family: var(--mono); font-size: 13px; color: var(--mute); }
+.lp-ladder-row:nth-child(1) .lp-rank { color: var(--red); font-weight: 700; }
+.lp-name { font-weight: 600; font-size: 15px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-elo { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; color: var(--ink); }
+
+/* Features */
+.lp-features {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px;
+  padding: 8px 0 48px; border-top: 1px solid var(--line);
+}
+.lp-feature { padding-top: 26px; }
+.lp-feature-icon {
+  display: grid; place-items: center;
+  width: 40px; height: 40px; border-radius: var(--r-md);
+  background: var(--red-wash); color: var(--red);
+  margin-bottom: 14px;
+}
+.lp-feature-title { font-family: var(--display); font-size: 18px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 8px; color: var(--ink); }
+.lp-feature-body { font-size: 14px; line-height: 1.5; color: var(--ink-2); margin: 0; }
+
+/* Closing CTA */
+.lp-close {
+  text-align: center; padding: 56px 24px; border-radius: var(--r-xl);
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.lp-close-title { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); font-weight: 700; letter-spacing: -.02em; margin: 0 0 10px; color: var(--ink); }
+.lp-close-lead { font-size: 15px; color: var(--ink-2); margin: 0 0 24px; }
+
+.lp-footer { text-align: center; font-family: var(--mono); font-size: 12px; letter-spacing: .06em; color: var(--mute); padding: 40px 0 8px; }
+
+@media (max-width: 900px) {
+  .lp-hero { grid-template-columns: 1fr; gap: 32px; padding: 24px 0 40px; }
+  .lp-features { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .lp-features { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   EDITORIAL PATTERNS (stat strip, danger zone, dialog groups,
+   steppers, settings rows) — shared with the admin app.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Stat strip — full-width row of hairline-separated cells */
+.stat-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border-block: 1px solid var(--line);
+}
+.stat-strip > * {
+  border-left: 1px solid var(--line);
+  padding: 16px 20px;
+}
+.stat-strip > *:first-child { border-left: 0; }
+@media (max-width: 640px) {
+  .stat-strip { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
+  .stat-strip > *:nth-child(odd) { border-left: 0; }
+}
+
+/* Danger zone — red-hairline box, red heading, row-per-action */
+.danger-zone {
+  border: 1px solid var(--red-border);
+  padding: 20px;
+}
+.danger-zone .danger-title {
+  color: var(--red);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+/* Dialog inset group panel — hairline border + uppercase micro-label */
+.dialog-group {
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+.dialog-group-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--mute);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  margin-bottom: 10px;
+}
+
+/* Square hairline −/+ stepper buttons */
+.stepper-btn {
+  width: 32px; height: 32px;
+  display: inline-grid; place-items: center;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background-color .15s, color .15s;
+}
+.stepper-btn:hover { background: var(--surface-2); color: var(--ink); }
+.stepper-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Settings rows — uppercase label + hint left, control right,
+   full-width hairline separators. Stacks below 640px. */
+.settings-section-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.settings-section-desc {
+  color: var(--mute);
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-row:last-child { border-bottom: 0; }
+.settings-row-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--ink);
+}
+.settings-row-hint {
+  color: var(--mute);
+  font-size: 14px;
+  margin-top: 4px;
+  max-width: 52ch;
+}
+.settings-row-control { flex-shrink: 0; }
+.settings-row-control.wide { flex: 1; min-width: 0; }
+@media (max-width: 640px) {
+  .settings-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  /* Nav rows (label + hint + trailing chevron) stay horizontal so the chevron
+     sits at the end of the row instead of stacking onto its own line. */
+  .settings-row.settings-row-nav { flex-direction: row; align-items: center; gap: 16px; }
+  .settings-row-control { flex-shrink: 1; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE OVERFLOW GUARD
+   Flex/grid items default to min-width:auto, so wide content
+   inflates its card past the viewport — the document grows wider
+   than the screen and phones let you pinch-zoom the whole page.
+   min-width:0 lets items shrink so wide content scrolls inside its
+   own overflow container instead; overflow-x:clip on the root is
+   the belt against any stragglers.
+   The 680px-wide leaderboard table this was written for is gone
+   (the ladder is a row list now), but the guard is not leaderboard-
+   specific and still covers every other wide table in the app.
+   ═══════════════════════════════════════════════════════════ */
+.feed-col > * { min-width: 0; }
+.grid-2 > *, .grid-3 > *, .grid-12 > * { min-width: 0; }
+html, body { overflow-x: clip; }
+
+/* Mobile tabbar clearance. Must be unlayered: Tailwind emits all utilities
+   (including the in-layer .pb-safe-nav above) at the @tailwind utilities
+   position (line 5), so .page's shorthand `padding` was overriding it.
+   980px matches the .mobile-tabbar display breakpoint, not md/768px. */
+@media (max-width: 980px) {
+  .pb-safe-nav {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem);
+  }
+}
+
+/* Keep toasts clear of the mobile tabbar (ToastViewport in packages/ui anchors
+   at --toast-offset, default 16px; the tabbar shows at ≤980px and would sit
+   underneath them). A custom property rather than a rule on the viewport
+   itself: the viewport sets `bottom` inline so that no app can accidentally
+   lose the fixed positioning, and an inline value would out-specify a class
+   selector here. */
+@media (max-width: 980px) {
+  :root {
+    --toast-offset: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+  }
+}
+
+/* Deep-link target flash: a session scrolled to from a calendar URL gets a
+   brief red hairline ring that fades out (added then removed by DeepLinkScroll). */
+.session-deeplink-flash {
+  animation: session-deeplink-flash 1.5s var(--ease-out-expo) forwards;
+}
+@keyframes session-deeplink-flash {
+  0%   { box-shadow: 0 0 0 2px var(--red-border); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RANKS (/leaderboard)
+   The ladder used to be a 680px-wide <table> in a horizontal
+   scroller, which on the phone this app is designed for meant
+   dragging sideways to read a column — one-handed, in a gym. It is
+   a row list now: every row fits 360px with nothing clipped, and
+   the desktop layout is the same rows in a wider column rather
+   than a different component.
+   ═══════════════════════════════════════════════════════════ */
+
+/* --- the format/sort chip rails ----------------------------- */
+/* Five formats do not fit across a phone. Scrolling the rail sideways is
+   right where scrolling the ladder sideways was wrong: a chip rail advertises
+   its own overflow (a chip is cut off at the edge) and losing sight of one
+   costs a swipe, where a clipped ELO column costs you the number. */
+.ranks-rail {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+.ranks-rail::-webkit-scrollbar { display: none; }
+.ranks-rail > * { flex: 0 0 auto; }
+
+/* Full-bleed on the phone and thumb-height, rather than the 180px pill wedged
+   into the page header — search is how you find one person in ninety.
+   16px on the input, not 13px: iOS zooms the whole viewport when a field
+   smaller than that takes focus, and the page never zooms back out. */
+.ranks-search { flex: 1 1 190px; padding: 6px 12px; }
+.ranks-search input { width: 100%; min-width: 0; font-size: 16px; }
+@media (min-width: 981px) {
+  .ranks-search { flex: 0 0 260px; }
+  .ranks-search input { font-size: 13px; }
+}
+
+/* --- your position ------------------------------------------ */
+.rung {
+  height: 6px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.rung > i {
+  display: block;
+  height: 100%;
+  background: var(--red);
+  border-radius: 999px;
+}
+
+/* The shape of the field: one bar per rating band, the member's band in red.
+   Flex rather than SVG — the marks are plain rectangles on a baseline, and a
+   viewBox scaled with preserveAspectRatio="none" would stretch them unevenly
+   across viewport widths. */
+.spread {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 34px;
+  margin: 2px 0 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
+}
+.spread i {
+  flex: 1;
+  min-width: 0;
+  background: var(--faint);
+  border-radius: 1px 1px 0 0;
+}
+.spread i.me { background: var(--red); }
+/* An empty band is drawn as a hairline on the floor rather than as nothing, so
+   the bar chart keeps a readable rhythm and a gap still reads as a gap. */
+.spread i.none { background: var(--ghost); }
+.spread-axis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--mute);
+}
+
+/* --- the ladder rows ---------------------------------------- */
+.ladder-list { display: flex; flex-direction: column; }
+.ladder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 4px;
+  border-bottom: 1px solid var(--line);
+}
+.ladder-row:last-child { border-bottom: 0; }
+.ladder-row.me { background: var(--red-wash); }
+@media (hover: hover) {
+  .ladder-row:hover { background: var(--surface-2); }
+  .ladder-row.me:hover { background: var(--red-wash); }
+}
+@media (min-width: 981px) {
+  .ladder-row { padding: 0 20px 0 12px; }
+}
+
+/* The row body is a link and the Challenge control is its SIBLING, not a
+   button nested inside an anchor — nesting them is invalid and leaves the
+   button unreachable by keyboard in some browsers. */
+.lr-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  color: inherit;
+  text-decoration: none;
+}
+@media (min-width: 981px) {
+  .lr-main { grid-template-columns: 44px auto minmax(0, 1fr) auto; gap: 14px; }
+}
+
+.lr-rank {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--dim);
+}
+.lr-rank[data-medal="1"] { color: var(--gold); }
+.lr-rank[data-medal="2"] { color: var(--silver); }
+.lr-rank[data-medal="3"] { color: var(--bronze); }
+@media (min-width: 981px) { .lr-rank { font-size: 16px; } }
+
+.lr-id { min-width: 0; display: block; }
+.lr-name {
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-sub {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lr-metrics { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.lr-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+.lr-record {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--mute);
+  white-space: nowrap;
+}
+.lr-streak-win  { color: var(--win); }
+.lr-streak-loss { color: var(--loss); }
+
+/* Win share as a two-tone rule: won on the left in --win, lost on the right in
+   --loss. It is the aggregate W-L the RPC returns, not a run of recent
+   results — the query carries no per-match history to draw one from. */
+.lr-share {
+  width: 72px;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--loss) 45%, transparent);
+}
+.lr-share > i { display: block; height: 100%; background: var(--win); }
+
+/* 44px minimum, because this is pressed with a thumb next to a row that
+   navigates somewhere else entirely. */
+.lr-action {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out-expo);
+}
+.lr-action:hover { background: var(--surface-2); color: var(--ink); }
+.lr-action:active { transform: scale(0.94); }
+
+/* The marker on your own row, occupying the slot a Challenge button cannot.
+   It borrows .lr-action only for geometry, so the column stays aligned; every
+   affordance is taken back off, because pressing it does nothing and it should
+   not invite the attempt. Dashed and dimmed to read as a label. */
+.lr-action-self {
+  cursor: default;
+  border-style: dashed;
+  color: var(--dim);
+}
+.lr-action-self:hover { background: transparent; color: var(--dim); }
+.lr-action-self:active { transform: none; }
+/* Icon-only on the phone, where 90 rows of the word "Challenge" is noise and
+   the label lives in aria-label; spelled out once there is room for it. */
+.lr-action span { display: none; }
+@media (min-width: 981px) {
+  .lr-action {
+    width: auto;
+    gap: 6px;
+    grid-auto-flow: column;
+    padding: 0 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .lr-action span { display: inline; }
+}
+
+/* After the media query on purpose: that block uppercases .lr-action, and this
+   one is a sentence rather than a column label, so it has to win at both
+   widths. Same specificity, later wins. */
+.lr-action-self { text-transform: lowercase; }
+
+/* A column key, since a row list has no <th> to say what 18–6 · 75% means. */
+.ladder-key {
+  display: flex;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CHALLENGES (/challenges)
+   The app's centrepiece, so the header carries the one big action and the
+   list is rows, not cards: a hairline-ruled list per section, the same shape
+   as the ladder above. Archived sits behind a <details> so finished history
+   never outranks what is live.
+   ═══════════════════════════════════════════════════════════ */
+
+@media (min-width: 981px) {
+  .chal-header { align-items: center; }
+}
+.chal-new { padding: 12px 20px; font-size: 12px; }
+/* .page-header stacks below 980px and leaves its action row hugging the left;
+   the one thing this screen is for gets the full width under the title. */
+@media (max-width: 980px) {
+  .chal-header > .row { align-self: stretch; }
+  .chal-new { flex: 1; justify-content: center; padding: 14px 20px; }
+}
+
+/* The rules line under the subtitle. Mono with tabular figures: these are
+   quantities read against a limit, and "2 of 3" should not shift as it counts. */
+.chal-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 4px;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mute);
+}
+.chal-summary > * + *::before { content: "·"; margin: 0 8px; color: var(--dim); }
+.chal-quota { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.chal-quota .capacity-bar { display: inline-block; width: 40px; height: 4px; }
+.chal-quota[data-level="warn"] { color: color-mix(in oklab, var(--gold) 75%, var(--ink)); }
+.chal-quota[data-level="full"] { color: var(--red); }
+
+.chal-search { max-width: 360px; }
+.chal-search > div { min-height: 40px; }
+
+.chal-section,
+.chal-archive,
+.chal-empty {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+}
+.chal-section { box-shadow: var(--elev-1); }
+.chal-section[data-accent] { border-color: var(--red-border); }
+.chal-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.chal-section-head .card-title { margin: 0; font-size: 16px; }
+
+.chal-list { display: flex; flex-direction: column; }
+.chal-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  color: inherit;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out-expo);
+}
+.chal-row + .chal-row { border-top: 1px solid var(--line); }
+/* The row asking the reader for an answer. Inset, so it survives the card's
+   overflow clip and costs the row no width. */
+.chal-row[data-awaiting] { box-shadow: inset 3px 0 0 var(--red); }
+@media (hover: hover) {
+  .chal-row:hover { background: var(--surface-2); }
+}
+/* Inset for the same reason: the card clips anything drawn outside the row. */
+.chal-row:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+
+.chal-faces { display: flex; align-items: center; min-width: 44px; }
+.chal-faces > .avatar + .avatar { margin-left: -10px; box-shadow: 0 0 0 2px var(--surface); }
+
+.chal-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.chal-title { font-weight: 600; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+/* Wraps rather than ellipsing: at 390px the line runs past the row, and an
+   ellipsis would cut the date, which is the part read last and wanted. */
+.chal-meta { font-family: var(--mono); font-size: 11px; line-height: 1.4; color: var(--mute); }
+.chal-when { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+
+.chal-end { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.chal-chevron { color: var(--mute); }
+
+.chal-archive-head {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+/* list-style alone does not remove it on iOS Safari. */
+.chal-archive-head::-webkit-details-marker { display: none; }
+.chal-archive-head:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+@media (hover: hover) {
+  .chal-archive-head:hover { background: var(--surface-2); }
+}
+.chal-archive-chevron { color: var(--mute); transition: transform var(--dur-fast) var(--ease-out-expo); }
+.chal-archive[open] .chal-archive-chevron { transform: rotate(90deg); }
+.chal-archive[open] > .chal-list { border-top: 1px solid var(--line); }
+.chal-archive .chal-title { font-weight: 500; color: var(--ink-2); }
+
+@media (max-width: 560px) {
+  .chal-row { gap: 10px; padding: 12px 14px; }
+  .chal-end { flex-direction: column; align-items: flex-end; }
+  .chal-section-head,
+  .chal-archive-head { padding: 12px 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chal-row, .chal-archive-chevron { transition: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FEED — the activity river and the check-in bar
+   ═══════════════════════════════════════════════════════════ */
+
+/* The river is deliberately NOT made of cards. A card per event turns a day's
+   activity into a stack of boxes with more border than content; full-bleed rows
+   separated by hairlines read as one list, which is what it is. */
+.river-day {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 18px 0 8px;
+}
+.river-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  width: 100%;
+  text-align: left;
+}
+/* A 2px red spine marks the rows that are about the reader. On a screen that
+   mixes "You beat Marcus Ng" with "Jordan Lee beat Priya Patel", this is what
+   lets a member find their own results without reading every sentence. The
+   padding replaces what the border consumes, so avatars stay in one column
+   across rows that have the spine and rows that do not. */
+.river-row.mine {
+  border-left: 2px solid var(--red);
+  padding-left: 12px;
+  margin-left: -14px;
+}
+.river-sentence { font-size: 14px; line-height: 1.35; }
+.river-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 4px;
+}
+.river-value {
+  margin-left: auto;
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.river-delta { font-size: 14px; font-weight: 600; line-height: 1.2; }
+.river-rating { font-size: 11px; color: var(--mute); margin-top: 2px; }
+.river-end {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-top: 1px solid var(--line);
+  padding: 20px 0 4px;
+}
+
+/* Three mono figures under the next-session card, divided by hairlines. */
+.session-stats {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+.session-stats > * { padding-left: 14px; border-left: 1px solid var(--line); }
+.session-stats > *:first-child { padding-left: 0; border-left: 0; }
+
+/* The mockup's header has a hairline under it — it separates the identity
+   block from the river, which is otherwise also hairline-ruled rows. */
+.feed-header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 18px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NEWS (/announcements)
+   The screen used to be two cards in a 12-column grid — a "Pinned"
+   card, an "All updates" card, and a side panel explaining the
+   rules of the screen to a member standing in a gym. What a term's
+   notices actually are is a dated list, so that is what they are
+   now: one card for the pinned notice, because it is the thing the
+   exec wants read first, and hairline-ruled rows for everything
+   else, grouped by the month they were posted. Same shape as the
+   feed's river (.river-*) above, for the same reason.
+   Nothing here truncates: this is the screen you come to in order
+   to read the whole thing.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Phone-first: full width of .page, capped on a desktop so the 15px body
+   copy keeps a readable measure instead of running the width of a monitor. */
+.news { max-width: 620px; margin-inline: auto; }
+
+/* --- the header block --------------------------------------- */
+.news-head {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+.news-back {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  text-decoration: none;
+}
+@media (hover: hover) { .news-back:hover { color: var(--ink); } }
+.news-title {
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  margin: 10px 0 0;
+}
+.news-title .dot { color: var(--red); }
+.news-sub {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+/* --- shared bits -------------------------------------------- */
+/* The date on a row and the age on the pinned notice sit in the same place and
+   read as the same thing, so they are one class. */
+.news-stamp {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--mute);
+  white-space: nowrap;
+}
+/* The body is no longer plain text typed into a textarea: the console's Body box
+   carries a formatting toolbar and lib/announcement-markdown.tsx parses what it
+   writes, so headings, bullets, quotes and bold arrive as real elements.
+   pre-wrap stays all the same, because a single newline inside a paragraph run
+   is still meaningful and the renderer hands each run down exactly as typed.
+   overflow-wrap: anywhere, because a pasted URL is otherwise wider than a phone.
+
+   The class now sits on a div rather than a p, which changes nothing below:
+   every property here behaves identically on either element. */
+.news-body {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --- the pinned notice -------------------------------------- */
+/* The only card on the screen. The red spine is what makes it read as pinned
+   at a glance, without the row of tags the old version needed to say so. */
+.news-pin {
+  border-left: 2px solid var(--red);
+  margin-top: 20px;
+  padding: 18px;
+}
+.news-pin + .news-pin { margin-top: 12px; }
+.news-pin-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.news-pin-flag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: var(--red);
+}
+.news-pin-title {
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -.01em;
+  margin: 10px 0 0;
+}
+.news-pin-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+.news-pin-name { font-size: 13px; color: var(--ink); line-height: 1.2; }
+.news-pin-role {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 3px;
+}
+
+/* --- the month groups --------------------------------------- */
+.news-month {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 0;
+  padding: 22px 0 8px;
+}
+.news-row {
+  display: block;
+  border-top: 1px solid var(--line);
+  padding: 14px 0 18px;
+}
+.news-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* Badge (packages/ui) sets text-xs on its own; this class is emitted after the
+   @tailwind utilities position at the top of this file, so it wins on order
+   without needing !important. Mono to match every other small label here. */
+.news-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .12em;
+}
+.news-headline {
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -.01em;
+  margin: 10px 0 0;
+}
+.news-byline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: var(--mute);
+}
+/* ============================================================
+   NOTIFICATIONS  (/notifications)
+   Self-contained block — nothing above depends on it.
+   Rows are a hairline-ruled river, not cards: the screen is a list of small
+   facts, and forty bordered boxes on a phone is forty boxes of chrome.
+   ============================================================ */
+
+/* The mockup's header is one row with the title and "mark all read" sharing a
+   baseline, at 390px as well as on a laptop. .page-header stacks into a column
+   below 980px, which is right for headers carrying a sub-line and a row of
+   buttons and wrong for this one — it would push the control onto its own line
+   and cost 40px of a phone viewport. */
+.notif-header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+  margin-bottom: 0;
+}
+@media (max-width: 980px) {
+  .notif-header {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+}
+.notif-header .page-title { font-size: 38px; letter-spacing: -.02em; }
+.notif-header .page-eyebrow { font-size: 10px; letter-spacing: .18em; margin-bottom: 6px; }
+
+.notif-markall {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mute);
+  background: none;
+  border: 0;
+  padding: 0 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.notif-markall:hover:not(:disabled) { color: var(--ink); }
+.notif-markall:disabled { opacity: .45; cursor: default; }
+
+/* One gutter value drives both the row padding and the negative margin that
+   bleeds the unread row's surface out to the page edge, so the two can never
+   drift apart. It tracks .page's own padding. */
+.notif-list { --notif-gutter: 28px; }
+@media (max-width: 980px) {
+  .notif-list { --notif-gutter: 16px; }
+}
+/* A notification is a sentence; sentences stop being readable long before
+   1200px. The phone layout is the design, and the desktop is a wider version
+   of it rather than a different one. */
+@media (min-width: 981px) {
+  .notif-list { max-width: 560px; }
+}
+
+.notif-group {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 18px 0 8px;
+}
+
+.notif-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  /* The bleed has to be paid for in WIDTH as well as margin. `width: 100%` plus
+     a negative inline margin shifts the box left without widening it, so on a
+     phone the surface and its hairline stopped one gutter short of the right
+     edge while the unread spine reached the left bezel — a row visibly 32px
+     narrow on one side only. The 100% is here for the <button> row variant,
+     which does not stretch on its own, so it is widened rather than dropped. */
+  width: calc(100% + var(--notif-gutter) * 2);
+  text-align: left;
+  padding: 14px var(--notif-gutter);
+  margin-inline: calc(var(--notif-gutter) * -1);
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+/* Unread reads as present: a 2px red spine and a lifted surface. The left
+   padding gives back exactly what the border consumes, so the headline sits in
+   the same column on read and unread rows and the list has one left edge. */
+.notif-row.unread {
+  background: var(--surface);
+  border-left: 2px solid var(--red);
+  padding-left: calc(var(--notif-gutter) - 2px);
+}
+.notif-row.read { opacity: .72; }
+.notif-row.read:hover { opacity: 1; }
+
+.notif-body { flex: 1; min-width: 0; }
+.notif-headline { font-size: 14px; line-height: 1.35; }
+.notif-detail {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 4px;
+}
+/* The only place a notification's type is expressed as colour. Every value is
+   an existing token; there is no new tone here. */
+.notif-kind[data-tone="red"]  { color: var(--red); }
+.notif-kind[data-tone="win"]  { color: var(--win); }
+.notif-kind[data-tone="gold"] { color: var(--gold); }
+.notif-kind[data-tone="mute"] { color: var(--mute); }
+
+/* Reads as the system's secondary button (surface-2 on a hairline) at a 44px
+   thumb target, but is a span — the row around it is already the link, and a
+   button inside a link is invalid markup. */
+.notif-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  min-height: 44px;
+  padding: 0 14px;
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  white-space: nowrap;
+}
+.notif-row:hover .notif-cta { background: var(--line); }
+
+/* ═══════════════════════════════════════════════════════════
+   WIDE LAYOUTS — /feed and /sessions on a laptop
+   ═══════════════════════════════════════════════════════════
+   Both screens were built for a phone and read as one narrow
+   strip on a 2000px monitor: a river (or a day list) down the
+   left and nothing at all to its right.
+
+   Everything in this block is ADDITIVE at >=1101px. Below that
+   floor every selector here is either inert or single-column, so
+   the phone layout these screens were designed for is untouched.
+
+   Why 1101px and not Tailwind's lg (1024px): .grid-12 above
+   already drops to six columns at <=1100px. A 1024px floor would
+   open a 1024-1100 band where two grids disagree about how many
+   columns the page has.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Page gutter. .page already pays 28px on every side, and it is on
+   EVERY route via layout.tsx, so it must not be re-specified from
+   here — this only adds what is missing.
+
+   The house figure is 28px top / 32px sides / 56px bottom, and
+   only the bottom is taken. The extra 4px each side would push
+   these two screens' titles out of line with the brand mark in
+   .topbar-inner, which sits at 28px on every page: a title row
+   that does not line up with the nav above it reads as a mistake,
+   and it costs more than 4px of gutter buys. The bottom is the
+   half that was actually doing work — the last card used to end
+   28px from the fold. */
+@media (min-width: 1101px) {
+  .wide-page { padding-bottom: 28px; }
+}
+
+/* The identity/title row is ruled off from the body under it —
+   the same treatment /feed already carries via .feed-header, for
+   the screens that do not.
+
+   Gated, unlike .feed-header, which applies at every width. The
+   rule costs 18px of padding, and 18px at the top of a phone is
+   real: it is the difference between seeing tonight's session
+   without scrolling and not. On a laptop the vertical space is
+   free and the hairline is what stops the title floating over a
+   two-column body. */
+@media (min-width: 1101px) {
+  .wide-head {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 18px;
+  }
+}
+
+/* The two-column river/rail split. One column by default — which
+   is the phone, and also every viewport under the floor. */
+.wide-grid { display: grid; gap: 20px; }
+.wide-grid > * { min-width: 0; }
+/* The tighter phone gap .grid already applies at this width, kept
+   so that swapping /feed off .grid-12 changes nothing on a phone. */
+@media (max-width: 980px) { .wide-grid { gap: 14px; } }
+@media (min-width: 1101px) {
+  .wide-grid {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: 20px;
+    /* Cards stack from the top of the rail instead of stretching
+       to the height of the river beside them. */
+    align-items: start;
+  }
+}
+
+/* The supporting column itself: cards stacked, never stretched. */
+.wide-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.wide-rail > * { min-width: 0; }
+
+/* Section heading inside a rail card. .stat-label is the same idea
+   at .1em; this is the wider tracking the house templates use for
+   a heading as opposed to a number's label, so a card whose body
+   is prose announces itself the same way as one whose body is a
+   figure. */
+.wide-cap {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+/* Hairline-ruled rows inside a rail card — the compact form of a
+   list when it has 260px rather than 1200px to live in. */
+.wide-item { display: block; padding: 10px 0; border-top: 1px solid var(--line); }
+.wide-item:first-of-type { border-top: 0; padding-top: 0; }
+.wide-item-title { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.wide-item-sub {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 3px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+/* Body copy in a rail card: the sentence that says what an empty
+   card MEANS, rather than leaving a heading over a void. */
+.wide-note { font-size: 13px; line-height: 1.55; color: var(--mute); margin: 8px 0 0; }
+
+/* Two figures side by side in a rail card. Same rule as
+   .session-stats, but usable outside the next-session card. */
+.wide-figures { display: flex; gap: 0; margin-top: 14px; }
+.wide-figures > * { flex: 1; padding-left: 14px; border-left: 1px solid var(--line); }
+.wide-figures > *:first-child { padding-left: 0; border-left: 0; }
+
+/* Rail cards that only earn their place once there is a column
+   for them. Everything wearing this class is EXTRA — it is the
+   answer to a laptop's empty right half, and on a phone it would
+   be a second copy of something a thumb-flick away, on a screen
+   whose whole rule is fewer, bigger things. Nothing the phone
+   already had is hidden by it.
+
+   `display: block` on the shown state, so anything using this
+   must not also set display inline — an inline style would beat
+   the `none` and leak the card onto the phone. */
+.wide-desktop-only { display: none; }
+@media (min-width: 1101px) {
+  .wide-desktop-only { display: block; }
+}
+
+/* /sessions: with no closed sessions yet, Upcoming used to be the
+   only child of .sched-wide and picked up a 1100px cap with no
+   auto margin — a 1100px column pinned hard left with the right
+   half of the monitor black, which is exactly what a brand new
+   season looked like. The page now always renders a rail beside
+   it, so the rule can no longer match; this releases the cap for
+   any caller that still manages to. */
+.sched-wide > section:only-child { max-width: none; }
+
+/* ════════════════════════════════════════════════════════════
+   NOTIFICATIONS — THE DESKTOP COMPOSITION  (/notifications)
+
+   Self-contained appended block. It OVERRIDES the NOTIFICATIONS block above
+   rather than editing it: every selector here is the same specificity and
+   later in source order, so it wins, and nothing above has to move.
+
+   The bug it fixes. .page carries no max-width on purpose (--page-max: none),
+   so on a 2000px display the header ran the full 2000px — "5 UNREAD" and the
+   title at the far left, "MARK ALL READ" nineteen hundred pixels away — while
+   .notif-list was capped at 560px and pinned hard left underneath it. Header
+   and list sized independently, so they read as two different screens, and the
+   unread row's red spine ran down the edge of the VIEWPORT instead of the edge
+   of the list.
+
+   The fix is a measure on a container that holds both. .page's own comment
+   says as much: "If one page of prose ever reads too long, give THAT page a
+   measure — putting the cap back here decides it for the fixtures table and
+   the leaderboard as well." This is that page.
+
+   Everything below 981px is untouched. The phone layout is the design.
+   ════════════════════════════════════════════════════════════ */
+
+/* 1240px is chosen backwards from the river, not picked for roundness: inside
+   .page's 28px padding it leaves the notification column ~710px — a sentence
+   that is still one glance wide — and the aside ~445px. The extra 28px of
+   bottom padding puts the last row 56px clear of the tab bar. */
+@media (min-width: 981px) {
+  .notif-screen {
+    max-width: 1240px;
+    margin-inline: auto;
+    padding-bottom: 28px;
+  }
+}
+
+/* River beside a supporting column. The 1101px floor is .sched-wide's: below
+   it there is not room for both, and 981–1100px gets the capped single column,
+   which is a coherent thing to be. */
+.notif-wide { display: grid; gap: 20px; }
+@media (min-width: 1101px) {
+  .notif-wide {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+@media (min-width: 981px) {
+  /* The 560px cap is what pinned the list to the corner. The measure now comes
+     from .notif-screen, so the river simply fills the column it is given. */
+  .notif-list {
+    max-width: none;
+    --notif-gutter: 16px;
+  }
+  /* .notif-row bleeds itself out by one gutter so its surface reaches .page's
+     padding edge. Inside a grid column that bleed lands in the 20px gap and
+     under the aside, and the unread spine ends up outside the list it marks —
+     which is the reported bug at 60% scale. Zero the bleed so the spine sits
+     on the column's left edge. The gutter stays POSITIVE: .notif-row.unread's
+     padding-left is calc(var(--notif-gutter) - 2px) and must not go negative. */
+  /* Bleed zeroed, so the width compensation for it goes too — leaving the
+     widened value here would push the row a gutter past its own column. */
+  .notif-row { margin-inline: 0; width: 100%; }
+  /* Follows the row's padding so the group label and the headlines beneath it
+     share one left edge instead of stepping. */
+  .notif-group { padding-left: var(--notif-gutter); }
+}
+
+/* The sticky .topbar is 14px + a 34px mark + 14px + a hairline ≈ 63px tall.
+   Without this the aside's jump links park a section heading underneath it. */
+.notif-section { scroll-margin-top: 84px; }
+
+/* A wide-screen affordance. Hidden rather than stacked below 1101px: on a
+   phone it would sit under fifty rows, indexing a list already scrolled past,
+   and the brief for this screen is that the phone must not change. */
+.notif-aside { display: none; }
+@media (min-width: 1101px) {
+  .notif-aside {
+    display: block;
+    /* Follows the river down. The index is only useful while there is still
+       list left to jump into. */
+    position: sticky;
+    top: 84px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    padding: 18px 18px 16px;
+  }
+}
+
+.notif-aside-head {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding-bottom: 6px;
+}
+/* Rules between the two breakdowns, and only between them — the first heading
+   already has the card's own edge above it. */
+.notif-index + .notif-aside-head {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.notif-index { list-style: none; margin: 0; padding: 0; }
+.notif-index-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  color: inherit;
+  text-decoration: none;
+}
+a.notif-index-row:hover .notif-index-label { color: var(--ink); }
+
+.notif-index-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+/* Numbers are the content in this app, so the count is the largest thing in
+   the row and set in --mono with tabular figures so the column lines up. */
+.notif-index-count {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+/* The same four tokens the river's kind labels already use — no new colour on
+   this screen. A kind whose rows disagree about tone resolves to 'mute' in
+   summariseByKind() rather than picking one arbitrarily. */
+.notif-dot { width: 6px; height: 6px; flex: 0 0 auto; }
+.notif-dot[data-tone="red"]  { background: var(--red); }
+.notif-dot[data-tone="win"]  { background: var(--win); }
+.notif-dot[data-tone="gold"] { background: var(--gold); }
+.notif-dot[data-tone="mute"] { background: var(--mute); }
+
+.notif-aside-note {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--mute);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   /MY-STATS — THE WIDE LAYOUT
+   ───────────────────────────────────────────────────────────
+   Everything in this block is `me-` prefixed and used by that one screen.
+   Nothing above is touched.
+
+   The screen was built phone-first and never got a wide variant, so on a
+   laptop it ran as one column with the right half of the viewport empty. The
+   fix is a 1.6fr / 1fr grid — but the phone is the design width for this app
+   (members read it standing in a gym), so the phone layout is the DEFAULT here
+   and the second column is what the media query adds. Never the reverse.
+
+   The two column wrappers are `display: contents` below the breakpoint. That
+   dissolves them, so every card becomes a direct child of one flexbox and the
+   `order` each card carries decides the phone's reading order independently of
+   which column it sits in on a desktop. One set of markup, two layouts, no
+   card rendered twice. See ORDER in my-stats/page.tsx.
+   ═══════════════════════════════════════════════════════════ */
+
+.me-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.me-col-main,
+.me-col-side {
+  display: contents;
+}
+/* The tighter phone gap this screen had when it was a .grid — that rule keys
+   off .grid, which .me-layout is not, so it has to be restated here or every
+   card on a phone gains 6px it never used to have. */
+@media (max-width: 980px) {
+  .me-layout { gap: 14px; }
+}
+
+@media (min-width: 1024px) {
+  .me-layout {
+    display: grid;
+    /* 1.6fr is what makes the rating line a chart rather than a sparkline while
+       still leaving the rail wide enough for a ten-cell form strip. */
+    grid-template-columns: 1.6fr 1fr;
+    gap: 20px;
+    /* Without this the shorter column stretches to match the taller one and
+       its last card grows a hundred pixels of empty padding. */
+    align-items: start;
+  }
+  .me-col-main,
+  .me-col-side {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+}
+
+/* The identity header's three readouts: RANK, SINGLES, DOUBLES.
+   Stacked under the name on a phone, with a hairline above them so they read
+   as a group rather than as three loose numbers. */
+.me-readouts {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.me-readouts > .stat {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-right: 16px;
+  border-right: 1px solid var(--line);
+}
+.me-readouts > .stat:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+
+/* 981px, not 1024px, because that is where .grid-2 stops collapsing — the
+   header sits in one and the readouts have to change shape in the same frame
+   the header does, or they spend 44px sitting in a column they no longer own. */
+@media (min-width: 981px) {
+  .me-readouts {
+    justify-content: flex-end;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+  .me-readouts > .stat {
+    flex: 0 0 auto;
+    min-width: 96px;
+    text-align: right;
+    padding-right: 24px;
+  }
+}
+@media (min-width: 1024px) {
+  /* Read at arm's length across a desk rather than at phone distance. */
+  .me-readouts > .stat > .stat-value { font-size: 34px; }
+}
+
+/* The member's name. Held at the phone size until there is genuinely a desktop
+   to fill, rather than driven by a vw unit that would grow it through every
+   size in between. */
+.me-id-name {
+  font-size: clamp(24px, 4vw, 32px);
+}
+@media (min-width: 1024px) {
+  .me-id-name { font-size: 44px; }
+}
+
+/* The rating line. Height is set HERE and not by the viewBox's aspect ratio —
+   the SVG is drawn with preserveAspectRatio="none" precisely so that this
+   declaration is the one that decides, and so a chart in a column two and a
+   half times wider does not become two and a half times taller. Every figure,
+   dot and rule on it is HTML at a fixed pixel size, so stretching the box
+   distorts nothing. See my-stats/rating-chart.tsx. */
+.me-chart-svg {
+  display: block;
+  width: 100%;
+  height: 132px;
+}
+@media (min-width: 640px) { .me-chart-svg { height: 180px; } }
+@media (min-width: 1024px) { .me-chart-svg { height: 240px; } }
+
+.me-rating-figure { font-size: 40px; }
+@media (min-width: 1024px) { .me-rating-figure { font-size: 56px; } }
+
+/* The headline figure on the two rail cards — the form record and the
+   attendance streak. Mono, because it is a number the member is counting. */
+.me-form-figure {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+}
+@media (min-width: 1024px) { .me-form-figure { font-size: 36px; } }
+
+/* One cell of the recent-form run. A wash plus a 2px underline rather than a
+   solid block: ten saturated squares in a row read as a warning strip, and the
+   member's losses are not a warning. Every tone is an existing token. */
+.me-form-cell {
+  width: 22px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+.me-form-cell[data-result="W"] {
+  background: var(--win-wash);
+  border-bottom: 2px solid var(--win);
+  color: var(--win);
+}
+.me-form-cell[data-result="L"] {
+  background: var(--red-wash);
+  border-bottom: 2px solid var(--loss);
+  color: var(--ink-2);
+}
+@media (min-width: 1024px) {
+  .me-form-cell { width: 28px; height: 36px; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   EXECUTIVES  (/exec)
+   ───────────────────────────────────────────────────────────
+   Self-contained appended block. Every selector is `exec-`
+   prefixed and used by that one screen; nothing above is
+   touched, and nothing above depends on this.
+
+   The screen was a grid of centred 220px tiles — an avatar over
+   a name over a title, with the bio squeezed underneath in the
+   remaining 170px. Five people is not a gallery, it is a short
+   list you read: who they are, what they do, in that order. So
+   it is now a ruled list, one officer per block, the bio given
+   the full measure of the column.
+
+   The phone is the design width. Everything the laptop adds is
+   inside a media query at the bottom.
+   ═══════════════════════════════════════════════════════════ */
+
+/* --exec-gutter is the padding .page is already paying on each
+   side — 16px on a phone, 28px from 981px up. Named here so the
+   officer blocks can bleed out by exactly that and pay it
+   straight back as padding: the hairlines then run bezel to
+   bezel while the text keeps the same left edge as the title
+   above it.
+
+   max-width is the measure, at EVERY width — .page carries no max-width
+   (--page-max: none), so without this the 14px bio ran the full
+   width of whatever window it was in. 640px is .news's 620px
+   nudged out to pay for the 48px avatar that sits in this
+   screen's rows and not in that one's. Inert on a phone, which
+   is why it is the base rule rather than something a media query
+   remembers to add. */
+.exec-screen {
+  --exec-gutter: 16px;
+  max-width: 640px;
+  margin-inline: auto;
+}
+
+/* The full-bleed hairlines, and the arithmetic that keeps them
+   honest. A 672px viewport minus .page's two 16px gutters is
+   exactly the 640px cap, so at and below this width the cap
+   cannot be binding and the container really is the page — the
+   bleed lands on the bezel, which is the whole point of it. One
+   pixel wider and the container starts floating in the middle of
+   the window, where a block bleeding 16px past it would end its
+   hairline in open space rather than at an edge. So the bleed
+   retires at exactly the width where it stops meaning anything.
+
+   Paid for in WIDTH as well as margin: a negative inline margin
+   with a `100%` width shifts the box left without widening it,
+   leaving the hairline one gutter short on the right — the bug
+   .notif-row documents above. */
+@media (max-width: 672px) {
+  .exec-officer {
+    width: calc(100% + var(--exec-gutter) * 2);
+    margin-inline: calc(var(--exec-gutter) * -1);
+    padding-inline: var(--exec-gutter);
+  }
+}
+
+@media (min-width: 981px) {
+  /* Matches .page's own step from 16px to 28px, so the two agree
+     about where the edge of the page is. */
+  .exec-screen { --exec-gutter: 28px; }
+}
+
+/* --- the header block --------------------------------------- */
+/* Same shape as /announcements' .news-head, deliberately: these
+   two are the club's prose screens and a member arriving from
+   one should recognise the other. .wide-head adds the rule under
+   it above 1101px.
+
+   Capped below the floor so it cannot beat .wide-head's 18px:
+   both are one class, so the later of the two would otherwise
+   win on source order alone and silently undo the rule this
+   block asked for. */
+@media (max-width: 1100px) {
+  .exec-head { padding-bottom: 14px; }
+}
+.exec-back {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  text-decoration: none;
+}
+@media (hover: hover) { .exec-back:hover { color: var(--ink); } }
+.exec-title {
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  margin: 10px 0 0;
+}
+.exec-title .dot { color: var(--red); }
+.exec-sub {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+/* --- one officer -------------------------------------------- */
+/* Inside the capped column by default; the bleed above adds
+   itself back on a phone. 16px of vertical padding on each side
+   of the hairline is what turns a stack of rules into a rhythm
+   rather than a table. */
+.exec-officer {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+/* The header already rules itself off from the body above
+   1101px, and two hairlines 14px apart read as a mistake. */
+@media (min-width: 1101px) {
+  .exec-officer:first-child { border-top: 0; }
+}
+
+.exec-officer-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* min-width: 0 so a long single-token name wraps instead of
+   pushing the row wider than its own block. */
+.exec-officer-id { flex: 1; min-width: 0; }
+
+.exec-officer-name {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+/* Every title on the old screen was set in --red, which spent
+   the club's one accent five times over and said nothing. Red is
+   now the president and only the president — see isPresident()
+   in page.tsx, which decides this and the list order from the
+   same test. */
+.exec-officer-role {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 4px;
+}
+.exec-officer-role[data-lead="true"] { color: var(--red); }
+
+/* The avatar. `lg` is the 64px house size and this row wants 48
+   — sized on the instance from the page's own block rather than
+   by moving a shared token, the same way .me-chart-svg sets its
+   own height. Specificity beats .avatar[data-size="lg"] by the
+   extra class. pre-wrap on the bio for the same reason
+   /announcements gives: it is plain text typed into a textarea,
+   and the paragraph breaks are the only structure it has. */
+.exec-officer .avatar[data-size="lg"] {
+  width: 48px;
+  height: 48px;
+  font-size: 16px;
+  flex: 0 0 auto;
+}
+
+.exec-officer-bio {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --- the exec panel ----------------------------------------- */
+/* 00130 — the one officer looking at their own card edits their
+   public blurb here, on the page it is published to, instead of
+   in Settings where it used to share a field with their personal
+   bio. Rendered for exactly one card; nobody else sees any of
+   this, so it must not disturb the rhythm of the list when it is
+   sitting closed.
+
+   No box, no panel, no accent. .exec-officer-bio already owns
+   the vertical space below the row, and .exec-bio-block simply
+   inherits it — a card that gained a border the moment its owner
+   looked at it would break the "these are peers" reading the
+   two-column layout below is built on. */
+.exec-bio-block {
+  margin-top: 12px;
+}
+/* Already spaced by the block, so the paragraph inside it must
+   not add the 12px a second time. */
+.exec-bio-block .exec-officer-bio { margin-top: 0; }
+
+/* The nothing-written state. Deliberately quieter than the bio
+   itself and italic, because it is an instruction to one person
+   rather than a sentence about them — an officer must be able to
+   tell at a glance that the club page is currently blank for
+   them without it looking like published copy. */
+.exec-bio-empty {
+  font-size: 14px;
+  line-height: 1.5;
+  font-style: italic;
+  color: var(--mute);
+  margin: 0;
+}
+
+/* The same mono-uppercase voice as .exec-back and
+   .exec-officer-role, which is this screen's whole vocabulary for
+   things that are not prose. Transparent by default so a closed
+   editor reads as a link rather than a button competing with the
+   officer's name for weight.
+
+   min-height 44px is the tap target, and it is why the block sets
+   its own padding rather than leaning on the font size: at 10px
+   mono a comfortable-looking button is about 26px tall, which is
+   a miss on a phone.
+
+   NO border-radius token: Tailwind's config here replaces
+   theme.borderRadius, so rounded-* utilities compile to nothing —
+   and square is what the rest of this screen is anyway. */
+.exec-bio-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  background: transparent;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+@media (hover: hover) {
+  .exec-bio-btn:hover { color: var(--ink); border-color: var(--ink-2); }
+}
+.exec-bio-btn:disabled { opacity: .5; cursor: default; }
+/* Save. --red is this screen's one accent and it is otherwise
+   spent only on the president, so it is borrowed rather than
+   claimed: filled, so the two buttons in the row are told apart
+   by weight and not by hue alone. */
+.exec-bio-btn[data-variant="primary"] {
+  color: var(--surface);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+@media (hover: hover) {
+  .exec-bio-btn[data-variant="primary"]:hover {
+    color: var(--surface);
+    background: var(--ink-2);
+    border-color: var(--ink-2);
+  }
+}
+
+/* Wraps rather than shrinks: two 44px targets sitting side by
+   side need about 200px, and the phone column is 640px minus its
+   gutters, so this only ever fires inside a narrow laptop
+   column. */
+.exec-bio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The sentence that says this field is not the Settings one.
+   Sits between the box and its buttons because that is the last
+   thing read before Save is pressed. */
+.exec-bio-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mute);
+  margin: 8px 0 0;
+}
+
+/* --- the laptop --------------------------------------------- */
+/* Two equal columns, not the house 1.6fr/1fr river-and-rail.
+   That pattern exists to put SUPPORTING material beside a main
+   column, and this screen has none to put there: the mock's
+   MEETINGS card and elections note have no source in the
+   database (see the report), so a rail here could only be filled
+   by inventing one. A symmetric list also wants symmetric
+   columns — at 1.6fr/1fr the same bio wraps to four lines on one
+   side and seven on the other, and the two officers stop looking
+   like peers.
+
+   1101px is the house floor, matching .wide-grid and
+   .notif-wide; 981-1100px gets the capped single column.
+
+   row-gap stays 0 so the two blocks in a row share one hairline
+   and the rules run straight across both columns; a gap here
+   would break each rule in half at the column gutter. */
+@media (min-width: 1101px) {
+  /* The cap opens up because there are two columns to fill now.
+     1240px is .notif-screen's figure, chosen there for the same
+     reason: two columns and a 28px gutter either side. */
+  .exec-screen { max-width: 1240px; }
+  .exec-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 40px;
+    row-gap: 0;
+  }
+  /* A little more air than the phone gets, because the rules are
+     now twice as long and a long rule 16px from its text reads
+     tighter than a short one at the same distance. */
+  .exec-officer { padding: 20px 0; }
+  /* :first-child only zeroes the first block; in two columns the
+     SECOND one also sits on the top row and needs the same. */
+  .exec-officer:nth-child(2) { border-top: 0; }
+  /* An odd count leaves the last row half empty, which is what a
+     five-person exec always looks like. Nothing to fix — the
+     hairline above it simply stops halfway, and a rule that ends
+     where its content ends is correct. */
+}
+
+/* ════════════════════════════════════════════════════════════
+   PLAYER TOURNAMENTS — THE INDEX SCREEN  (/tournaments)
+
+   Self-contained appended block. Every selector is prefixed `.ptourn-` so it
+   cannot collide with the blocks other screens are appending alongside it, and
+   nothing above this point is edited.
+
+   The screen is three things in one column on a phone: what is open, what you
+   are in, what else is on. On a laptop it borrows the house .wide-grid
+   (1.6fr / 1fr, gap 20px, align-items: start) from the WIDE LAYOUTS block
+   rather than declaring a second two-column grid: the river keeps the first
+   two, the rail takes the rest of the calendar. There is no
+   width-specific rule below except the one that widens the title, because the
+   composition is the same at every size; only the column count changes, and
+   .wide-grid already owns that.
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Header ───────────────────────────────────────────────── */
+
+.ptourn-head { margin-bottom: 20px; }
+
+/* Title on the left, the season control on the right. This is .page-header's
+   composition restated, because the header above is hand-rolled rather than
+   that component, and it stacks at the same 980px for the same reason: below
+   it the control and a 38px title cannot share a line without one of them
+   being squeezed. */
+.ptourn-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+@media (max-width: 980px) {
+  .ptourn-head-row { flex-direction: column; align-items: flex-start; gap: 16px; }
+}
+
+/* Not a chevron and not a button: the five-tab bar is the navigation, and this
+   is a label saying where you came from. Sized as a mono micro-cap so it reads
+   as furniture and never competes with the title under it. */
+.ptourn-back {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-bottom: 10px;
+}
+.ptourn-back:hover { color: var(--ink-2); }
+
+.ptourn-title {
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.03em;
+  margin: 0;
+}
+/* The house full stop. Red, and only ever after the title — it is the brand
+   mark at text size, not punctuation the sentence needs. */
+.ptourn-stop { color: var(--red); }
+
+.ptourn-sub {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+  max-width: 46ch;
+}
+
+@media (min-width: 1101px) {
+  .ptourn-title { font-size: 46px; }
+}
+
+/* ── The river ────────────────────────────────────────────── */
+
+.ptourn-river {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* ── The open event ───────────────────────────────────────── */
+
+/* The 2px red spine is the whole reason this card is not a .card-base: it is
+   the one thing on the screen a member can act on, and the spine says so
+   without spending a second red button on a screen that already has one. */
+.ptourn-open {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--red);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  padding: 18px;
+}
+/* Nothing to enter: the spine would be pointing at an absence. */
+.ptourn-open-empty { border-left-color: var(--line); }
+
+.ptourn-open-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ptourn-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--red);
+}
+.ptourn-open-empty .ptourn-eyebrow { color: var(--mute); }
+
+.ptourn-open-name {
+  font-family: var(--display);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -.02em;
+  margin: 0;
+}
+
+.ptourn-open-meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+/* Three figures, hairline above and hairlines between. Equal flex basis rather
+   than a grid so a two-cell fallback would still divide the width evenly if a
+   cell is ever dropped for want of data. */
+.ptourn-cells {
+  display: flex;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+.ptourn-cell {
+  flex: 1;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+.ptourn-cell:first-child { padding-left: 0; border-left: 0; }
+
+.ptourn-cell-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+.ptourn-cell-value {
+  font-size: 22px;
+  line-height: 1.15;
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 44px is the thumb target the player app's guidelines ask for, and this is the
+   one primary action on the screen. Full width because a phone's thumb should
+   not have to aim. */
+.ptourn-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 16px;
+  text-align: center;
+}
+
+/* ── Sections ─────────────────────────────────────────────── */
+
+.ptourn-sec { min-width: 0; }
+
+.ptourn-sec-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 10px;
+}
+
+/* The sentence that says what an empty section MEANS. .wide-note supplies the
+   type; this only stops it sitting flush against the label above it. */
+.ptourn-empty { margin-top: 0; }
+
+/* ── An entry you are in ──────────────────────────────────── */
+
+.ptourn-entry {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  padding: 14px;
+}
+.ptourn-entry + .ptourn-entry { margin-top: 10px; }
+
+.ptourn-entry-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ptourn-entry-head { min-width: 0; }
+
+.ptourn-entry-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ptourn-entry-sub {
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: var(--mute);
+  margin-top: 4px;
+}
+
+/* Hairline-topped, because the partner is a second fact about the same entry
+   rather than a new one. */
+.ptourn-partner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.ptourn-partner-body { min-width: 0; }
+.ptourn-partner-name {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ptourn-partner-state {
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--mute);
+  margin-top: 3px;
+}
+
+/* ── The rest of the calendar ─────────────────────────────── */
+
+.ptourn-also { margin-top: 4px; }
+
+/* ── Closing note ─────────────────────────────────────────── */
+
+/* Centred, quiet, and last. It explains why any of the numbers above matter,
+   which is a thing to read once and then never again — so it is sized to be
+   skipped. */
+.ptourn-note {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  text-align: center;
+  margin: 28px 0 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   /FEES — WHAT I OWE
+   ───────────────────────────────────────────────────────────
+   Self-contained appended block. Every selector is `fees-`
+   prefixed and used by that one screen, so nothing above moves.
+
+   Phone first, and the phone IS the design: a member reads this
+   standing in a gym wondering whether they still owe the term
+   fee. One figure, big, in --mono, answers that before anything
+   else is read. The desktop is the same screen wider — the two
+   columns below are the house 1.6fr/1fr split, reusing
+   .wide-grid rather than declaring a third grid.
+
+   The one thing NOT reused is .wide-rail. It is `display: flex`
+   at every width, so under the breakpoint its cards stay
+   grouped after the main column's and the phone would read
+   Outstanding → Receipts → Prices → note. The design's phone
+   order is Outstanding → Prices → Receipts → note. So this
+   borrows /my-stats' answer instead: the two column wrappers
+   are `display: contents` below the floor, which dissolves them
+   and lets `order` on each card decide the phone's sequence
+   independently of which column it lives in on a laptop. One
+   set of markup, two layouts, nothing rendered twice.
+   ═══════════════════════════════════════════════════════════ */
+
+/* A measure on the container that holds the header AND the body, so the two
+   cannot size independently — the bug the /notifications block above documents
+   at length. 1240px is that block's figure, kept so two adjacent screens do not
+   disagree about how wide this app is. */
+@media (min-width: 981px) {
+  .fees {
+    max-width: 1240px;
+    margin-inline: auto;
+  }
+}
+
+/* --- the header block --------------------------------------- */
+.fees-head { padding-bottom: 4px; }
+
+.fees-back {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  text-decoration: none;
+}
+@media (hover: hover) { .fees-back:hover { color: var(--ink); } }
+
+.fees-title {
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  margin: 10px 0 0;
+}
+.fees-title .dot { color: var(--red); }
+
+.fees-sub {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+/* --- the two-column body ------------------------------------ */
+.fees-grid { margin-top: 20px; }
+
+/* Dissolved below the floor so `order` on the cards inside decides the phone's
+   reading sequence. .wide-grid > * { min-width: 0 } cannot reach the cards once
+   this box is gone — selectors match the DOM, not the box tree — so the same
+   guard is restated one level down. */
+.fees-col { display: contents; }
+.fees-col > * { min-width: 0; }
+@media (min-width: 1101px) {
+  .fees-col {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+}
+
+/* The phone's order. Set on the cards themselves rather than on the wrappers,
+   because under the floor the wrappers are not boxes and have no order to set.
+   Inert at >=1101px, where each card is a flex item of its own column and the
+   only order that matters is source order within that column. */
+.fees-outstanding { order: 1; }
+.fees-prices      { order: 2; }
+.fees-section     { order: 3; }
+.fees-closing     { order: 4; }
+
+/* --- the OUTSTANDING card ----------------------------------- */
+.fees-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+.fees-figure-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* 46px in --mono, not --display: this app's rule is that numbers are the
+   content, and money in particular has to line up digit for digit against the
+   amounts in the receipt list below it. line-height .85 pulls the figure tight
+   to its label so the two read as one block. */
+.fees-figure {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: .85;
+  letter-spacing: -.03em;
+  color: var(--ink);
+}
+
+/* The sentence that stops the figure being read as the whole answer — an
+   outstanding entry with no recorded price, or an exemption. */
+.fees-caveat {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mute);
+  margin: 14px 0 0;
+}
+
+/* What the figure is made of. The mockup had a single term fee and needed no
+   breakdown; three ledgers feed this number, so a member who owes $55 has to be
+   able to see which two things that is. */
+.fees-owed {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.fees-owed-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.fees-owed-name {
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--ink-2);
+  min-width: 0;
+}
+.fees-owed-amount {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.fees-foot {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+/* --- the price list ----------------------------------------- */
+/* The spine is carried by EVERY row and only coloured on the member's own, so
+   the two rows keep one left edge. Declaring it on the marked row alone would
+   start its text 14px right of its neighbour's — two prices in a list that do
+   not line up read as a rendering fault. */
+.fees-price {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 0 12px 12px;
+  border-top: 1px solid var(--line);
+  border-left: 2px solid transparent;
+}
+/* The gap between the card's label and the first row. Keyed off the label
+   rather than :first-of-type, which matches the first sibling of the same TAG —
+   and .fees-label is a div too, so :first-of-type would never match a row. */
+.fees-label + .fees-price { margin-top: 14px; }
+/* The viewer's own tier. A red spine is how .news-pin already says "this is the
+   one that concerns you"; no new colour, and it survives at a glance where a
+   weight change would not. */
+.fees-price[data-mine="true"] { border-left-color: var(--red); }
+.fees-price-main { min-width: 0; }
+.fees-price-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.fees-yours {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  color: var(--red);
+}
+.fees-price-note {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 4px;
+}
+.fees-price-amount {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* The sentence under the list. Prose in a card whose body is otherwise figures,
+   so it is set as body copy rather than as another mono line. */
+.fees-note {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mute);
+  margin: 14px 0 0;
+}
+
+/* --- receipts ----------------------------------------------- */
+/* Rows, not cards. A payment history is a list of facts, and eight surfaces
+   stacked down a phone read as eight things to decide about. */
+.fees-section-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 0 0 4px;
+}
+
+.fees-empty {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mute);
+  border-top: 1px solid var(--line);
+  margin: 0;
+  padding-top: 14px;
+}
+
+.fees-receipts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fees-receipt {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.fees-receipt-main { min-width: 0; }
+.fees-receipt-name {
+  font-size: 15px;
+  line-height: 1.3;
+  color: var(--ink);
+}
+/* The date/method/reference line. overflow-wrap because a reference is free
+   text an exec typed and can be longer than a phone is wide; <Atomic> keeps the
+   code itself whole, and this only fires when the code alone overflows. */
+.fees-receipt-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.fees-receipt-side {
+  text-align: right;
+  white-space: nowrap;
+}
+.fees-receipt-amount {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--ink);
+}
+.fees-receipt-state {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--win);
+  margin-top: 4px;
+}
+/* A waived fee settled without money moving. --mute rather than --win: it is
+   not a payment, and colouring it as one would overstate what the club took. */
+.fees-receipt-state.is-waived { color: var(--mute); }
+
+/* --- the closing note --------------------------------------- */
+.fees-closing {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.7;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dim);
+  text-align: center;
+  margin: 8px 0 0;
+}
+/* On a laptop the note sits at the foot of the rail, where centred text under a
+   left-aligned card reads as a stray line. */
+@media (min-width: 1101px) {
+  .fees-closing { text-align: left; }
+}
+
+.fees-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (hover: hover) { .fees-link:hover { color: var(--ink); } }
+
+/* ═══════════════════════════════════════════════════════════
+   PAST SEASON — /my-stats?season=<a term that is over>
+   ═══════════════════════════════════════════════════════════
+   Self-contained. This block adds only the two things that
+   screen needs and the house does not already own: the season
+   control, and the small figure grid inside its rail cards.
+   The layout is .wide-grid / .wide-rail from the WIDE LAYOUTS
+   block above, and every card, table, tag, pill and empty
+   state on it is the house component.
+   ═══════════════════════════════════════════════════════════ */
+
+/* The season control, in the page header beside the title.
+
+   A native <select>, so on a phone this is the OS wheel: full
+   height, system-sized rows, and a target a thumb hits without
+   looking. It is dressed as one of this app's mono pills, but
+   nothing here changes how it OPENS — the appearance reset is
+   on the closed box only. */
+.season-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: 0 10px 0 12px;
+  /* 40px rather than the ~34px this would come out at. The
+     header is read one-handed in a gym and this is the only
+     control on the screen; it is worth the extra six pixels. */
+  height: 40px;
+  max-width: 100%;
+}
+.season-pick:focus-within {
+  outline: 2px solid var(--red);
+  outline-offset: 0;
+  border-color: transparent;
+}
+.season-pick-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: var(--mute);
+  white-space: nowrap;
+}
+.season-pick-select {
+  /* -webkit- first: Safari on iOS still needs the prefixed form
+     to drop the native bevel, and without it the pill has a
+     rounded lozenge sitting inside its square border. */
+  -webkit-appearance: none;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  /* Room on the right for the caret, which is a background
+     image on the box rather than a pseudo-element because a
+     <select> cannot have children to hang one off. The fill is
+     written as a literal #888 rather than var(--mute) — a
+     custom property cannot be read from inside a data URI — and
+     that is safe here only because --mute is #888 in BOTH
+     themes. If either theme's --mute ever moves, this moves
+     with it or the caret goes off-palette in one of them. */
+  padding: 0 18px 0 0;
+  /* No viewport-width cap. .page-header is a COLUMN at <=980px,
+     so on a phone the control already has the line to itself and
+     a vw ceiling would only truncate "Fall 2026 · now" for no
+     reason; above that width the header is a row with 24px of
+     gap and room to spare for a term name. */
+  max-width: 100%;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z' fill='%23888888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 2px center;
+}
+/* The pill already takes a red ring via :focus-within, so a
+   second outline on the box inside it would draw two. */
+.season-pick-select:focus { outline: none; }
+/* An <option> is drawn by the OS and not by this stylesheet.
+   Naming both sides is the only thing that reliably reaches the
+   popup, and without it a dark theme can render the list as
+   black on black. */
+.season-pick-select option {
+  background: var(--surface);
+  color: var(--ink);
+}
+/* The figure grids inside the past-season rail cards — the
+   record, and the archived ladder.
+
+   Two columns, not the four the live screen's .stat-strip uses:
+   that strip is full width and scrolls sideways past its edge,
+   and a card sitting in a 1fr rail has neither the width for
+   four labels like "POINT DIFF" nor any business scrolling. */
+.season-figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 12px;
+}
+
+/* ════════════════════════════════════════════════════════════
+   SCHEDULE — THE MONTH GRID AND THE ACTION RAIL  (/sessions)
+
+   Appended block: every selector here is later in source order
+   than the SCHEDULE block near the top, so it wins without
+   anything above having to move.
+
+   The screen swapped columns. The month calendar is the main
+   column; the upcoming session cards — with their full action
+   set — are the rail beside it. Two things follow, and they are
+   the whole of this block:
+
+   1. ORDER. The DOM order is upcoming → calendar → the rest, and
+      that IS the phone's order. Nothing below 1101px reorders
+      anything, so on a phone the check-in button is the first
+      thing under the page header, exactly where it was. Every
+      placement rule lives in the single ≥1101px query below; if
+      the mobile order ever breaks, it broke there.
+
+   2. WIDTH. The rail is now the column that holds buttons, which
+      is the thing a rail is worst at. Two answers: the split is
+      opened from 2.4fr/1fr to 1.9fr/1fr (≈350px of rail at the
+      1101px floor, up from ≈300px), and inside it the card's
+      controls STACK rather than shrink. Nothing is made smaller
+      to fit, nothing truncates, and every target keeps its 44px.
+   ════════════════════════════════════════════════════════════ */
+
+/* Grid items may shrink below their content's minimum. .wide-grid
+   and .wide-rail have carried `> * { min-width: 0 }` from the
+   start; .sched-wide never did, because until now nothing in it
+   had a min-content width worth speaking of.
+   The calendar does: .cal-grid keeps a 620px floor on a phone so
+   a session's name still fits in a cell. Without this rule that
+   620px propagates all the way out through the grid item's
+   `min-width: auto` — the scroll box never gets to scroll, and
+   the WHOLE PAGE goes 620px wide inside a 380px viewport.
+   Measured at 390px: every element from .wide-page down was
+   620px and the body scrolled sideways. With it the scroll stays
+   inside .cal-scroll (348px box, 620px content) and the document
+   does not move. */
+.sched-wide > * { min-width: 0; }
+
+/* The 44px floor on the card's controls, at EVERY width — not
+   inside the desktop query, because the control that was missing
+   it is missing it on the phone too. CheckInButton and
+   RsvpButtons already carry min-h-[44px] in their own classes;
+   AddToCalendarButton's trigger is `px-3 py-1.5 text-xs`, about
+   30px tall, and has been under the floor since it was written.
+   Stated here rather than in the component so the rule holds for
+   anything that lands in this row later. */
+.sess-actions button { min-height: 44px; }
+
+/* The RSVP pair's wrapper. It was three inline `style={{display:
+   'flex'}}` objects — inline styles beat a stylesheet, so the
+   stacking rule below could never have reached them. Same
+   declarations it had; now overridable. */
+.sess-rsvp { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* A control that is real but must not compete. Used by the
+   direct "Check in without scanning" (the primary is the solid
+   red Scan button beside it) and by the RSVP answers once
+   check-in has opened. Text, not a bordered button — but the
+   full 44px of target, which is the point: what is demoted is
+   the WEIGHT, never the size of the thing you are aiming at. */
+.sess-textlink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 6px;
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mute);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-2);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .15s;
+}
+.sess-textlink:hover:not(:disabled) { color: var(--ink); text-decoration-color: currentColor; }
+.sess-textlink:disabled { opacity: .55; cursor: not-allowed; }
+
+/* ── The calendar itself ────────────────────────────────── */
+
+.cal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.cal-title {
+  font-family: var(--display); font-size: 22px; font-weight: 600;
+  letter-spacing: -.01em; line-height: 1.1; margin: 0;
+}
+.cal-nav { display: flex; align-items: center; gap: 8px; }
+.cal-nav button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.cal-nav button:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+/* A dead arrow is a boundary, not a broken button — it is the
+   edge of the data this page actually loaded. The note under the
+   grid says so in words. */
+.cal-nav button:disabled { opacity: .35; cursor: not-allowed; }
+
+/* Seven columns cannot be narrower than a session's name and
+   still be worth printing, so on a phone the grid keeps its
+   width and scrolls sideways INSIDE this box. The page body
+   never scrolls horizontally. */
+.cal-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* The one thing that tells a phone the grid drags. Hidden by default and
+   switched on inside the SAME media query that gives the grid its 620px
+   floor, so the hint exists exactly when there is something to scroll and
+   cannot outlive the overflow it describes. Nothing here has intrinsic
+   width — it is a wrapping line of text — so .cal-scroll's containment is
+   untouched and the page body still does not move sideways. */
+.cal-hint { display: none; }
+
+.cal-dow {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px; padding: 0 0 6px;
+}
+.cal-dow span {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--mute);
+  padding-left: 8px;
+}
+
+/* Hairlines via the grid's own gap over a --line background —
+   one rule instead of a border on every cell, and no doubled
+   edges. */
+.cal-grid {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px; background: var(--line);
+  border: 1px solid var(--line);
+}
+.cal-cell {
+  background: var(--bg);
+  min-height: 106px; padding: 8px;
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0;
+}
+/* A day with a night on it is lifted onto the card surface — the
+   same --surface every .session-card and .card-base already uses,
+   so "something is happening here" is legible from across the
+   room without a new colour entering the page. */
+.cal-cell.has-sessions { background: var(--surface); }
+.cal-daynum {
+  font-family: var(--mono); font-size: 12px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+/* The leading/trailing days of the neighbouring months: kept
+   visible so the weeks read as weeks, but pushed back hard
+   enough that nobody reads them as this month. */
+.cal-cell.is-out .cal-daynum { color: var(--line-2); }
+/* Today gets the accent, matching .sched-day.is-today and
+   .session-card.is-next — --red is already this page's word for
+   "the one you are deciding about now". */
+.cal-cell.is-today { box-shadow: inset 0 0 0 2px var(--red); }
+.cal-cell.is-today .cal-daynum { color: var(--red); font-weight: 700; }
+
+/* One night inside a cell. .tag / .tag-win supply the colours —
+   the same green as the "N OPEN" pill and the same grey as a
+   closed row in Past sessions. This only re-shapes them into a
+   full-width block.
+
+   44px, AND IT COSTS THE GRID NOTHING UNTIL A DAY HAS TWO NIGHTS
+   ON IT. This chip is a LINK — it jumps to the session's card in
+   the rail — and at `min-height: 22px` it was a 21px target,
+   half the floor .sess-actions button and .cal-nav button hold on
+   this same screen. Stated here in the base rule rather than
+   inside a media query, for .sess-actions button's reason: the
+   target is under the floor at EVERY width, so the fix cannot
+   live at one of them.
+
+   The objection was that three chips at 44px are 132px inside an
+   88px cell. That is not what happens: `min-height` on .cal-cell
+   is a FLOOR, and a cell that needs more simply takes it — the
+   week's row grows with it and the rest of the grid does not.
+   Measured against the compiled stylesheet, cell height by number
+   of nights on the day, at 390px / at the 1101px floor:
+
+     nights   before        after
+       1      88 / 106      88 / 106   ← unchanged, both widths
+       2     110 / 110     130 / 130
+       3     148 / 148     178 / 178
+
+   ONE NIGHT IS FREE, at both widths, and one night is the common
+   day: nothing in the schema caps a date at one session and the
+   query does not either, but the club plays one night at a time
+   and this page narrows even that to the member's own track. So a
+   month of ordinary days is pixel-for-pixel the month that was
+   there before, and the cost of the change is confined to the
+   weeks that hold a doubled-up day. The 6-week grid measured
+   640px → 690px at 390px only because the fixture deliberately
+   puts a two-night day and a three-night day in separate weeks.
+
+   FLEX, not block, and that pairing is the load-bearing part: a
+   block box with min-height:44px leaves a one-line name pinned to
+   the top of a 44px slab, which reads as a rendering fault rather
+   than as a target. .tag already says `align-items: center`, so
+   restoring the display it declares is all that is needed —
+   nothing here invents a second vocabulary. Measured: a one-line
+   name sits with 15.5px of air above and 15.5px below.
+
+   A NAME THAT NEEDS MORE THAN 44px STILL GETS IT — min-height is
+   a floor here too. The longest case measured, an unbroken token
+   split by .cal-ev-name's `overflow-wrap: anywhere`, is 73px at
+   390px, and was 73px before this change as well. */
+.cal-ev {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 6px;
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: left;
+  min-width: 0;
+}
+/* WRAPS — it used to be `white-space: nowrap` + `text-overflow: ellipsis`,
+   which is a hover-only design: the full name lived in a `title`, and a
+   title is invisible on every touch device. At the 1101px floor a cell is
+   ~96px wide and .tag is uppercase mono, so "Wednesday Doubles" arrived as
+   "WEDNESD…" on an iPad with no way at all to read the rest. A cell that
+   grows a line is cheaper than a name nobody can see; `anywhere` is there so
+   one long unbroken token breaks instead of pushing the column open.
+
+   `min-width: 0` is what keeps that true now that .cal-ev is a flex
+   container. A flex item's automatic minimum size is its min-content
+   width, and a flex item does NOT shrink below it — so without this
+   the name would set a floor on the chip, the chip on the cell, the
+   cell on .cal-grid, and a 620px grid would quietly become wider
+   than 620px. `flex: 1` so the name still fills the chip and the
+   text stays left-aligned rather than centring on its own line. */
+.cal-ev-name {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+a.cal-ev:hover { filter: brightness(1.15); }
+/* A night this member has already said yes to. A spine, the same
+   device .session-card.is-next uses, rather than a fourth colour. */
+.cal-ev.is-mine { box-shadow: inset 2px 0 0 var(--red); }
+
+@media (max-width: 760px) {
+  /* Enough width for a name to survive; below this the columns
+     would be ~50px and every cell would wrap to one letter a line. */
+  .cal-dow, .cal-grid { min-width: 620px; }
+  .cal-cell { min-height: 88px; }
+  .cal-title { font-size: 19px; }
+}
+
+/* The scroll affordance. The one caption left on this component that
+   explains the grid rather than being part of it — the .cal-foot line
+   that used to sit under the grid was removed as noise.
+   661px, NOT the 760px above, and the difference is the point: the
+   grid only overflows while its box is under the 620px floor, and the
+   page gutter is 42px, so the last width that actually scrolls is
+   661. Measured, not assumed — at 744px (an iPad mini in portrait)
+   the whole week already fits, and a caption telling someone to drag
+   a grid that cannot move is worse than no caption. If the 620px
+   floor or the gutter ever changes, re-derive this number. */
+@media (max-width: 661px) {
+  .cal-hint {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--mute);
+    margin: 0 0 8px;
+  }
+  .cal-hint svg { flex: 0 0 auto; }
+}
+
+/* The secondary rail on a phone, when everything in it is
+   desktop-only. Not `.wide-desktop-only`, which sets
+   `display: block` and would flatten .wide-rail's flex column at
+   the width it matters. */
+.sched-rail-hidden-phone { display: none; }
+@media (min-width: 1101px) {
+  .sched-rail-hidden-phone { display: flex; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   HOME (/feed): SCHEDULE FIRST, ACTIVITY BESIDE
+   The schedule is the main column and the club's activity the
+   side column from 1101px up; below that the DOM order is the
+   phone's order and nothing is repositioned. Phones get the week
+   strip, 761px and up the month grid: the grid's 620px floor and
+   88px cells would make it a sideways scroll about 500px tall on
+   a phone.
+   ════════════════════════════════════════════════════════════ */
+
+/* `min-width: 0` on every child is load-bearing: .cal-grid's 620px
+   floor would otherwise widen the page, the same bug documented
+   at .sched-wide > *. */
+.home-grid { display: grid; gap: 20px; }
+.home-grid > * { min-width: 0; }
+@media (max-width: 980px) { .home-grid { gap: 14px; } }
+@media (min-width: 1101px) {
+  .home-grid {
+    grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+.home-grid.is-single { grid-template-columns: minmax(0, 1fr); max-width: 760px; }
+
+.home-main, .home-side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.home-banners { margin-bottom: 20px; }
+
+.home-week { display: block; }
+.home-month { display: none; }
+@media (min-width: 761px) {
+  .home-week { display: none; }
+  .home-month { display: block; }
+}
+
+.week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.week-cell { min-width: 0; }
+.week-day {
+  min-height: 64px; height: 100%;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: inherit;
+  text-decoration: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.week-day.has-items { background: var(--surface); }
+.week-day.is-today { box-shadow: inset 0 0 0 2px var(--red); }
+.week-dow {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+}
+.week-num { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; }
+.week-day.is-today .week-num { color: var(--red); font-weight: 700; }
+.week-marks { display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%; }
+.week-mark { height: 4px; width: 100%; border-radius: 2px; }
+.week-more { font-family: var(--mono); font-size: 9px; color: var(--mute); text-align: center; line-height: 1; }
+
+/* One colour per tone, shared by the strip's marks and the month
+   grid's legend swatches. Solid tokens only. */
+.week-mark.is-open, .cal-swatch.is-open { background: var(--win); }
+.week-mark.is-closed, .cal-swatch.is-closed { background: var(--line-2); }
+.week-mark.is-club, .cal-swatch.is-club { background: var(--gold); }
+.week-mark.is-tournament, .cal-swatch.is-tournament { background: var(--ink-2); }
+.week-mark.is-cancelled, .cal-swatch.is-cancelled { background: var(--line-2); }
+
+/* A club event or tournament in the agenda: a compact row, not a
+   session card, because its controls live on its own page. */
+.home-row {
+  display: flex; gap: 12px; align-items: center;
+  padding: 14px 16px; min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+.home-row-title { font-weight: 600; font-size: 15px; min-width: 0; overflow-wrap: anywhere; }
+.home-row-meta { font-family: var(--mono); font-size: 11px; color: var(--mute); margin-top: 4px; }
+.home-row .is-cancelled { text-decoration: line-through; color: var(--mute); }
+/* The folded rest of the term under Up next. The summary reads as a quiet
+   full-width button; the rows inside keep the .sched-day rhythm. */
+.home-more { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.home-more > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  text-align: center;
+  font-size: 13px;
+  color: var(--mute);
+}
+.home-more > summary::-webkit-details-marker { display: none; }
+.home-more > summary:hover { color: var(--ink); border-color: color-mix(in oklab, var(--ink) 30%, transparent); }
+.home-more > summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.home-more[open] > summary { margin-bottom: 22px; }
+.home-note { font-size: 13px; color: var(--mute); margin: 12px 0 0; }
+
+.home-notice {
+  display: block;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+  border-left: 3px solid var(--gold);
+  color: inherit;
+  text-decoration: none;
+}
+.home-activity-foot {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 16px; padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.cal-ev-cancelled { color: var(--mute); }
+.cal-ev-cancelled .cal-ev-name { text-decoration: line-through; }
+.cal-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  margin: 8px 0 0;
+}
+.cal-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.cal-swatch { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+
+/* ── ≥1101px: the only place this screen states a placement ── */
+@media (min-width: 1101px) {
+  /* Wider rail than the house 2.4/1: it is holding a stack of
+     buttons now, not a list of figures. */
+  .sched-wide { grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); }
+
+  /* Source order is the phone's; these three rules are what turn
+     it back into calendar-left, cards-right. The calendar spans
+     both rows so the two rail halves stack beside it. */
+  .sched-wide > .sched-cal          { grid-column: 1; grid-row: 1 / span 2; }
+  .sched-wide > .sched-rail-primary { grid-column: 2; grid-row: 1; }
+  .sched-wide > .sched-rail-more    { grid-column: 2; grid-row: 2; }
+
+  /* The day grouping has to survive the move: SessionCard prints
+     no date of its own, so .sched-day-date is the ONLY place the
+     date appears. What cannot survive is the 132px date rail —
+     in a ~350px column it would leave the card 190px. So the
+     rail takes the phone's arrangement (a baseline-aligned line
+     over the cards) at a width where the phone's media query no
+     longer applies. */
+  .sched-rail-primary .sched-day { grid-template-columns: 1fr; gap: 10px; }
+  .sched-rail-primary .sched-day + .sched-day { margin-top: 18px; padding-top: 18px; }
+  .sched-rail-primary .sched-day-rail { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .sched-rail-primary .sched-day-label { font-size: 17px; }
+  .sched-rail-primary .sched-day-date { margin-top: 0; }
+  .sched-rail-primary .session-card { padding: 16px; }
+
+  /* THE CRAMPING, ANSWERED. The card's `1fr auto` split puts the
+     actions in a column of their own beside the text; at 350px
+     that column is where labels wrap mid-word. Instead the card
+     stacks — text over controls — and the controls stack too,
+     one full-width row each. Nothing shrinks and nothing
+     truncates; the card just gets taller, which is the one
+     dimension a rail has to spare. */
+  .sched-rail-primary .session-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    align-items: stretch;
+  }
+  .sched-rail-primary .sess-actions {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  /* Direct children only, and never the scanner dialog. That
+     dialog is rendered by CheckInButton as a sibling INSIDE
+     .sess-actions: a blanket descendant rule would stretch its
+     close X across the modal. `> div >` stops one level short of
+     the dialog's own buttons, which sit three deep. */
+  .sched-rail-primary .sess-actions > button,
+  .sched-rail-primary .sess-actions > span,
+  .sched-rail-primary .sess-actions > div:not([role='dialog']) { width: 100%; }
+  .sched-rail-primary .sess-actions .sess-rsvp {
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+  }
+  .sched-rail-primary .sess-actions > button,
+  .sched-rail-primary .sess-actions > div:not([role='dialog']) > button {
+    width: 100%;
+    justify-content: center;
+  }
+  /* The attendance chip CheckInButton swaps itself for, and the
+     RSVP state chips beside their one remaining action. Centred
+     but NOT stretched: a full-width green "GOING" bar in a
+     column of full-width buttons reads as a button, and it is a
+     status — there is nothing to press. Measured at 1120px,
+     which is where this first looked wrong. */
+  .sched-rail-primary .sess-actions > .chip,
+  .sched-rail-primary .sess-actions > .sess-rsvp > .chip {
+    align-self: center;
+    width: auto;
+    justify-content: center;
+  }
+  /* "Opens at 6:30 PM" fits on one line at this width, but a
+     longer label must wrap rather than run out of the card. */
+  .sched-rail-primary .sess-window { white-space: normal; text-align: center; }
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   THE TOURNAMENT DRAW
+   ══════════════════════════════════════════════════════════════
+   A converging draw meets in the middle, which halves its height
+   and costs it width: nine columns on a 32-entry event where the
+   old left-to-right ladder was five. That trade is right for a
+   laptop and wrong for a phone — vertical scrolling is free on a
+   phone and sideways scrolling is the expensive axis — so the two
+   get different things, switched here and nowhere else.
+
+   Below 768px the chart is DISPLAY:NONE, not merely scrolled. It
+   therefore contributes no width to the page at all, which is the
+   strongest possible answer to the bug where a wide child made a
+   380px viewport 620px wide. Above it, the chart's own overflow
+   is contained on .draw-scroll and the body still never moves. */
+
+.draw-chart-wrap { display: none; }
+.draw-rounds     { display: block; }
+
+@media (min-width: 768px) {
+  .draw-chart-wrap { display: block; }
+  .draw-rounds     { display: none; }
+}
+
+/* The scroll box. min-width:0 is the line that keeps the
+   containment honest: without it a flex or grid ancestor sizes
+   this box to its widest CHILD — the 2088px chart — instead of to
+   the space available, and the overflow escapes upwards into the
+   page body. It is cheap and it is the exact failure this app has
+   already had once. */
+.draw-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  min-width: 0;
+  max-width: 100%;
+  /* A SHEET NARROWER THAN THE PANE SITS IN THE MIDDLE OF IT. The box is sized
+     to the SCALED chart, so a 32-draw — capped at scale 1 in the page, 1704px
+     wide — left ~271px of dead card down the right of a 1975px pane and read as
+     a chart that had been shoved into the corner. Grid because this box has
+     exactly one child and exactly one mount site (DrawScroller's scroll box).
+
+     `safe` is load-bearing, for the reason the fullscreen rule at :4503 spells
+     out at length: plain `center` centres OVERFLOWING content too, which puts
+     its left edge in negative scroll space that no scrollbar can reach. `safe`
+     falls back to start the moment the sheet is wider than the pane, so a 128
+     draw still opens at its left edge and drags. A browser without `safe` drops
+     the declaration and behaves exactly as it did before.
+
+     No `align-content` here, unlike :4503. That box is `flex: 1 1 auto` inside
+     a fullscreen shell and has a real height to centre within; this one has no
+     fixed height at all — it is as tall as the chart — so vertical centring
+     would be a no-op. */
+  display: grid;
+  justify-content: safe center;
+}
+.draw-scroll:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+/* The one line that says the chart drags. Unlike .cal-hint this is
+   NOT switched by a media query: the calendar grid has one fixed
+   620px floor, so the width at which it stops overflowing is a
+   number somebody could derive once, while a draw is 552px at four
+   entrants and 2088px at sixty-four. DrawScroller measures the box
+   instead and renders this only when it actually overflows, so the
+   hint cannot outlive the overflow it describes at any width. Same
+   mono caption voice as .cal-hint. */
+.draw-hint {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  margin: 0 0 8px;
+}
+.draw-hint svg { flex: 0 0 auto; }
+
+/* ──────────────────────────────────────────────────────────────
+   THE DRAW, FULL SCREEN
+   ──────────────────────────────────────────────────────────────
+   "allow full screen too so i can just only show the thing" — a
+   tournament projects the bracket so the room can watch it fill
+   in. So this strips the app down to the chart and one line
+   saying which event it is: no topbar, no nav, no card.
+
+   SWITCHED BY :fullscreen, NOT BY A REACT CLASS. The layout then
+   changes in the same frame the browser enters full screen,
+   rather than one React render later, so there is no pass where
+   the chart is measured against a box that is full screen but
+   not yet laid out like it. React state here drives only the
+   button's wording.
+
+   The flex column is what makes the height budget honest. In the
+   page the scroll box's height is whatever the scaled chart
+   made it, so it cannot be measured to fit the chart INTO. Here
+   `flex: 1 1 auto` with `min-height: 0` sizes it from the screen
+   instead — the space left after the header — so DrawScroller
+   can read its clientHeight and get the real budget. Without
+   min-height:0 a flex item refuses to shrink below its content
+   and the box would silently be as tall as the chart again. */
+
+.draw-shell { position: relative; }
+
+/* ── THE PAGE'S HEADER ROW ─────────────────────────────────────
+   "let the full scren button on the one above" / "in the same row
+   as draw". Off full screen .draw-topline lays the card's heading
+   against the Full screen button, which is the whole of change 2:
+   the button used to be the only thing on a third stacked row
+   under the heading and the reading note, where one small chip
+   alone on a full-width line read as orphaned.
+
+   THE HEADING IS RENDERED DOWN HERE, BY A CLIENT COMPONENT, and
+   that is forced rather than chosen. The button owns the
+   fullscreen state and must stay inside .draw-chart-wrap, which
+   is display:none below 768px — that is what keeps the control
+   off a phone, which never renders the chart it projects. A flex
+   row needs both items in one box, so the heading came down to
+   the button. Draw prints a second copy inside .draw-rounds for
+   the phone; the two boxes are exact complements, so at no width
+   do both paint. The alternative was absolutely positioning the
+   button over the heading, which is the reserved-padding trick
+   the paging block below already had to undo once.
+
+   MARGIN ON THE ROW, NOT ON .draw-tools. The 8px gap to the chart
+   used to hang off .draw-tools, which was safe while its parent
+   was a plain block. As a flex item under align-items:center a
+   bottom margin is part of the margin box that gets centred, so
+   it lifts the button's ink off the title's centre line — a few
+   pixels of misalignment no type-check can see. */
+.draw-topline {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 8px;
+}
+/* gap: 8px matches the `gap-2` the four sibling cards' heading rows
+   use, so the icon sits the same distance from the title here as it
+   does on Your Matches, Round Robin and Final Standings. */
+.draw-page-head {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 auto; min-width: 0;
+}
+/* The reading note, which moved inside the shell to let the row
+   above it carry the heading and the button. 12px/16px and an 8px
+   tail reproduce exactly the `text-xs … mb-2` it had as a sibling
+   above the shell. */
+.draw-page-note {
+  font-size: 12px; line-height: 16px;
+  color: var(--text-muted); margin: 0 0 8px;
+}
+/* Both page-mode boxes are gone in full screen, which has its own
+   header in .draw-full-head and prints the same note inside it.
+   These two rules are load-bearing for the FIT, not just the look:
+   the full-screen height budget is this shell's remaining
+   clientHeight, so a page header left visible would silently eat
+   the chart's scale. */
+.draw-shell:fullscreen .draw-page-head,
+.draw-shell:fullscreen .draw-page-note { display: none; }
+
+/* Unobtrusive on the page: this is used at a tournament, not
+   every visit. Same mono caption voice as .draw-hint. */
+.draw-tools { display: flex; justify-content: flex-end; flex: 0 0 auto; }
+.draw-full-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  border: 1px solid var(--line); padding: 4px 8px;
+  background: transparent; cursor: pointer;
+}
+.draw-full-btn:hover { color: var(--ink); border-color: var(--line-2); }
+.draw-full-btn:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+
+/* Only ever seen in full screen: on the page the event name is
+   already in the header a few centimetres above. */
+.draw-full-head { display: none; }
+
+.draw-shell:fullscreen {
+  display: flex; flex-direction: column;
+  width: 100%; height: 100%;
+  background: var(--bg);
+  padding: 14px 18px;
+}
+.draw-shell:fullscreen .draw-full-head {
+  display: flex; align-items: baseline; gap: 10px;
+  /* Takes what the controls beside it in .draw-topline leave. It used to
+     reserve 160px of padding for them instead, which was a number measured
+     against a single button — see the paging block below. */
+  flex: 1 1 auto; min-width: 0;
+  /* The backstop, so that a pathologically long tournament name can only
+     ever be cut off at this box's own edge and never paint over the
+     controls beside it. Nothing reaches it at any real length. */
+  overflow: hidden;
+}
+/* *** THE NOTE IS THE ONLY THING IN HERE THAT FLEXES. ***
+   Not a preference — a measured sub-pixel trap. `text-overflow: ellipsis`
+   fires the moment an item's used width lands a hair under its ink width,
+   and a flex item that shrinks AT ALL rounds into that gap: with the note
+   absorbing all but 0.1px of a 32px squeeze, "Men's Singles" still came
+   out "Men's Singl…" and "Club Open 2026" as "Club Open 20…" at 1280x720.
+   Both boxes measured 93.3px against 93.3px of text and ellipsed anyway.
+   Shrink 0 keeps them at their exact natural width, where they paint whole
+   — which is what they did before the controls joined this row, and it is
+   only a squeeze in the row that ever exposed this. */
+.draw-shell:fullscreen .draw-full-title {
+  font-family: var(--display); font-weight: 700; font-size: 20px;
+  letter-spacing: -.01em; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+.draw-shell:fullscreen .draw-full-sub {
+  font-size: 12px; color: var(--mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+/* How the chart reads. Last, and the first to be squeezed: it is the
+   line a full room can most afford to lose to a long event name. */
+.draw-shell:fullscreen .draw-full-note {
+  font-size: 12px; color: var(--mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* The whole squeeze lands here, and only here. See the title above. */
+  flex: 0 1 auto; min-width: 0;
+}
+.draw-shell:fullscreen .draw-tools {
+  flex: 0 0 auto; margin: 0; flex-wrap: wrap; gap: 6px; max-width: 60%;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   PAGING A DRAW TOO BIG TO FIT
+   ──────────────────────────────────────────────────────────────
+   "what if u split 128 into 2 and 64 aswell, 2 pages?" A 128
+   needs 0.41 to fit a 1080p screen and is refused by the 0.80
+   floor, so it scrolls — which on a projector nobody is standing
+   at is a crop. Shown as halves it is two 64-shaped sheets at
+   0.843, whole, on screen, both axes.
+
+   THE HEADER AND THE CONTROLS SHARE A ROW rather than the
+   controls floating over the header on a reserved 160px of
+   padding. That padding was measured against one button; there
+   are now five, and the widths differ with the label. A flex row
+   cannot underlap. On the page (not full screen) .draw-topline is
+   a plain block whose only visible child is .draw-tools, which
+   keeps the right-aligned row it already had. */
+/* CENTRE, NOT BASELINE, since the view picker joined this row.
+   Baseline aligned the 44px select's text with the 20px title,
+   which pushed the title down to sit on the select's own baseline
+   and left the caption hanging below the row. The two BLOCKS are
+   centred against each other here; .draw-full-head is itself a
+   baseline flex row, so the title, the tournament and the reading
+   note still share a baseline with each other, which is the
+   alignment that was ever load-bearing. */
+.draw-shell:fullscreen .draw-topline {
+  display: flex; align-items: center; gap: 14px;
+  flex: 0 0 auto; margin-bottom: 10px; min-width: 0;
+}
+
+/* WHICH HALF, at the size the title is, because it answers a
+   question asked from the back of the hall. Same words the
+   reading note and every card's label use — the draw calls its
+   two sides the top half and the bottom half. */
+.draw-shell:fullscreen .draw-page-label {
+  font-family: var(--display); font-weight: 700; font-size: 20px;
+  letter-spacing: -.01em; color: var(--ink);
+  border-left: 3px solid var(--red); padding-left: 8px;
+  white-space: nowrap; flex: 0 0 auto;
+}
+
+.draw-pager { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* ── THE VIEW PICKER ───────────────────────────────────────────
+   "just setup a dropdown ... for all the section since one cannot
+   be active when other is active". One <select> carrying every
+   view, because the views are one mutually exclusive choice.
+
+   A NATIVE CONTROL, STYLED — not @badminton/ui's `Select`, which
+   is a 48px full-width form field with a block label and is used
+   only by admin dialogs. See the note in DrawScroller.
+
+   44px MINIMUM, and it is what sets the height of the whole
+   header row (.draw-topline is baseline-aligned, so the tallest
+   item wins). That costs the chart about 12px of height budget
+   against the row the buttons alone made — 1010px to 998px at
+   1080p — which is 1.2% of scale on a 64-draw and does not move
+   any view across the 0.80 floor. Worth it: this is the one
+   control on the sheet that has to be operable on a tablet in
+   full screen. */
+.draw-view-pick { position: relative; display: inline-flex; align-items: center; }
+.draw-view-select {
+  /* 13px, not the 10px the buttons use. The buttons are actions
+     whose meaning survives being small; this one says WHICH SHEET
+     the room is looking at, and it is glanced at across a hall.
+     The 20px .draw-page-label carries the same answer for the
+     back row — this is for whoever is at the keyboard. */
+  font-family: var(--mono); font-size: 13px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink);
+  background: transparent; border: 1px solid var(--line-2);
+  min-height: 44px; padding: 0 28px 0 10px;
+  cursor: pointer;
+  /* So the chevron below is the only arrow and the control can
+     carry the mono voice rather than the platform's. */
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+}
+.draw-view-select:hover { border-color: var(--ink); }
+.draw-view-select:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+/* THE OPEN LIST IS DRAWN BY THE PLATFORM, not by this stylesheet,
+   and on Windows and Linux Chrome it takes its colours from these
+   two properties rather than inheriting the control's. Without
+   them a dark full screen drops down a white list. */
+.draw-view-select option { background: var(--surface); color: var(--ink); }
+.draw-view-chev {
+  position: absolute; right: 9px; color: var(--mute);
+  pointer-events: none;
+}
+
+.draw-page-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  border: 1px solid var(--line); padding: 4px 8px;
+  background: transparent; cursor: pointer;
+}
+/* :not([aria-pressed='true']) IS LOAD-BEARING, not tidiness. A bare
+   :hover is one pseudo-class more specific than the [aria-pressed]
+   rule below, so hovering the button that is already showing
+   repainted its label var(--ink) on a var(--ink) fill and the text
+   vanished — measured, not theorised: rgb(240,240,240) on
+   rgb(240,240,240). It is the button the pointer is most likely to
+   be resting on, since clicking it is what turned it on. */
+.draw-page-btn:hover:not(:disabled):not([aria-pressed='true']) {
+  color: var(--ink); border-color: var(--line-2);
+}
+.draw-page-btn:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.draw-page-btn:disabled { opacity: .4; cursor: default; }
+/* The one that is showing. Filled rather than merely outlined:
+   this is read at a glance by somebody who is also holding a
+   score sheet. */
+.draw-page-btn[aria-pressed='true'] {
+  color: var(--bg); background: var(--ink); border-color: var(--ink);
+}
+.draw-page-btn[aria-pressed='true']:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+
+/* The rotation countdown, along the very top edge of the screen.
+   ABSOLUTE, SO IT COSTS THE CHART NOTHING. In the flow it took 10px
+   out of the height budget, which dropped a 128's halves from 0.842
+   to 0.833 — a chart that changed size when you turned rotation on,
+   for a bar. Out of flow the scale is the same either way. */
+.draw-rotate-bar {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 3px; background: var(--line); overflow: hidden; z-index: 1;
+}
+.draw-rotate-bar > span {
+  display: block; height: 100%; background: var(--red);
+  transform-origin: left center;
+  animation: draw-rotate-sweep linear forwards;
+}
+@keyframes draw-rotate-sweep {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+/* A page that turns on its own is a moving thing on a wall. Honour
+   the request not to animate by simply not drawing the countdown —
+   the pages still turn, which is what was asked for. */
+@media (prefers-reduced-motion: reduce) {
+  .draw-rotate-bar > span { animation: none; transform: scaleX(1); }
+}
+/* The one place a nested vertical scroller IS right: there is no
+   page behind this to scroll, so a draw past the floor has to be
+   scrollable here or it is simply cropped. */
+.draw-shell:fullscreen .draw-scroll {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  /* A SHEET SMALLER THAN THE SCREEN SITS IN THE MIDDLE OF IT.
+     Now that a view can be a deliberately small one — the
+     quarter-finals to final is 936x251 — a chart pinned to the top
+     left would leave the rest of the wall blank and read as a
+     rendering fault rather than as a choice. Grid because a single
+     child is all this box ever has.
+
+     `safe` IS THE WHOLE POINT OF THIS DECLARATION. Plain `center`
+     on a scroll container centres overflowing content too, which
+     puts its top-left in negative scroll space that no scrollbar
+     can reach — a 128 whole draw would be cropped on all four
+     sides with no way back. `safe` falls back to start alignment
+     the moment the child is bigger than the box, so the large
+     views behave exactly as they did. A browser without `safe`
+     drops the declaration and also behaves exactly as before. */
+  display: grid;
+  justify-content: safe center;
+  align-content: safe center;
+}

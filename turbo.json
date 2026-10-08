@@ -1,0 +1,66 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [
+    "**/.env.*local"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        ".next/**",
+        "!.next/cache/**",
+        "dist/**"
+      ],
+      "env": [
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "VAPID_PRIVATE_KEY",
+        "VAPID_EMAIL"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    // THE SCHEMA IS AN INPUT TO THE TESTS, and until now turbo did not know it.
+    //
+    // Fifteen test files read `supabase/migrations/*.sql` off disk and assert the
+    // code still matches the schema: grant drift, public-name drift, the
+    // migration manifest, the entry-cap fence, and the purge-coverage pins. They
+    // are the tests whose entire job is to notice a schema change.
+    //
+    // A task's default input set is the files inside its own package, and
+    // `supabase/migrations/` is in none of them. So adding a table changed
+    // nothing in any hash and every one of those tests replayed its cached PASS.
+    // Verified, not assumed: with a new unclassified `player_id` table sitting in
+    // a migration, `turbo test --filter=admin` returned FULL TURBO and reported
+    // success, while the same run uncached fails and names the table.
+    //
+    // $TURBO_DEFAULT$ keeps the per-package inputs; $TURBO_ROOT$ reaches out of
+    // the package to the migrations. Scoped to `test` rather than added to
+    // globalDependencies on purpose: a migration should invalidate the tests that
+    // read the schema, not every build and lint cache in the repo.
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/supabase/migrations/**",
+        // legal-doc-version-contract.test.ts reads docs/legal off disk the same
+        // way the schema tests read migrations. Without this line, editing an
+        // effective date leaves the cache untouched and the guard replays a PASS
+        // against the previous text, which is the exact failure the guard exists
+        // to catch.
+        "$TURBO_ROOT$/docs/legal/**",
+        // Admin tests import and read packages/ui source off disk
+        // (multi-select.test.tsx and select.test.tsx pin lines in the
+        // components), and packages/ui is outside the admin package, so a ui
+        // edit changed no hash and those tests replayed a cached PASS.
+        "$TURBO_ROOT$/packages/ui/src/**"
+      ]
+    },
+    "lint": {},
+    "type-check": {
+      "dependsOn": ["build"]
+    }
+  }
+}

@@ -1,0 +1,26 @@
+-- ============================================================
+-- 00036_realtime_publication.sql — actually publish the tables the app
+-- subscribes to
+-- ============================================================
+-- The client subscribes to postgres_changes in two places:
+--
+--   apps/player/src/app/leaderboard/leaderboard-client.tsx  -> ratings
+--   apps/player/src/components/bottom-nav.tsx               -> announcements
+--
+-- but `supabase_realtime` contained ZERO tables, so both subscribed happily and
+-- then never received an event. Nothing errors in that situation — .subscribe()
+-- succeeds, the callback simply never fires — which is why live standings and
+-- the announcements badge appeared to work and silently did not.
+--
+-- Only these two tables. Publishing a table streams its row data to every
+-- subscribed client (filtered by RLS), so this list should stay the minimum the
+-- UI actually listens to. players in particular must NOT be added: 00032
+-- deliberately took blanket SELECT away from `authenticated`, and publishing it
+-- would hand out the very columns that migration withheld.
+--
+-- Safe for both: RLS is enabled and each has an `authenticated` SELECT policy,
+-- so Realtime filters per-subscriber the same way a query would. Replica
+-- identity is left at default (primary key) — the callbacks only need to know
+-- that something changed, not the old row.
+
+ALTER PUBLICATION supabase_realtime ADD TABLE ratings, announcements;

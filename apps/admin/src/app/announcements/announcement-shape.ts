@@ -1,0 +1,423 @@
+// Vocabulary and arithmetic for the announcements screen, kept out of the
+// server component so the risky parts (the reach percentage, the byline) are
+// plain functions a test can drive.
+//
+// Every option list here is the DATABASE enum, not a nicer-sounding invention:
+// `announcement_type` and `announcement_audience` are declared in
+// 00001_schema.sql (595 and 597) and a value outside them is rejected by
+// Postgres, so a select offering anything else builds a form that cannot save.
+
+import { announcementRelayState } from '@badminton/shared';
+
+export type AnnouncementType = 'info' | 'warning' | 'urgent' | 'event';
+export type AnnouncementStatus = 'draft' | 'published';
+export type TargetAudience = 'all' | 'competitive' | 'recreational' | 'eligible_only';
+
+type BadgeVariant = 'default' | 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+
+/** `announcement_type` (00001:595). These four, and there is no fifth. */
+export const TYPE_OPTIONS: { value: AnnouncementType; label: string }[] = [
+  { value: 'info', label: 'Info' },
+  { value: 'warning', label: 'Warning' },
+  { value: 'urgent', label: 'Urgent' },
+  { value: 'event', label: 'Event' },
+];
+
+/** `announcement_audience` (00001:597). */
+export const AUDIENCE_OPTIONS: { value: TargetAudience; label: string }[] = [
+  { value: 'all', label: 'Every member' },
+  { value: 'competitive', label: 'Competitive members' },
+  { value: 'recreational', label: 'Recreational members' },
+  { value: 'eligible_only', label: 'Eligible members only' },
+];
+
+export const STATUS_OPTIONS: { value: AnnouncementStatus; label: string }[] = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'published', label: 'Published' },
+];
+
+const TYPE_BADGES: Record<AnnouncementType, { variant: BadgeVariant; label: string }> = {
+  info: { variant: 'neutral', label: 'INFO' },
+  warning: { variant: 'warning', label: 'WARNING' },
+  urgent: { variant: 'danger', label: 'URGENT' },
+  event: { variant: 'success', label: 'EVENT' },
+};
+
+/**
+ * A category's pill, with a fallback that survives a value this build has never
+ * heard of. The map this replaced was a bare `Record<Type, …>` lookup: add a
+ * fifth member to the enum in a migration and every row rendered
+ * `undefined` into the variant prop, which is a crash rather than a wrong
+ * colour. An unknown category is shown as itself, neutral.
+ */
+export function typeBadge(type: string): { variant: BadgeVariant; label: string } {
+  return TYPE_BADGES[type as AnnouncementType] ?? { variant: 'neutral', label: type.toUpperCase() };
+}
+
+export function audienceLabel(audience: string): string {
+  return AUDIENCE_OPTIONS.find((o) => o.value === audience)?.label ?? audience;
+}
+
+/**
+ * Opens as a percentage of the people the post was actually SENT to.
+ *
+ * The denominator is the targeted audience, never the whole membership: a post
+ * aimed at `competitive` never reached a recreational member, and dividing its
+ * opens by total headcount reports a failure that never happened. The caller
+ * resolves the audience with the same three-branch filter the publisher uses
+ * (resolveAudiencePlayerIds in lib/actions/announcements.ts).
+ *
+ * Clamped at 100 because `announcement_reads` is not constrained to the
+ * audience — RLS lets any authenticated member read any published post
+ * (00005:384), and marking it read inserts a receipt (00005:399). A member
+ * outside the target audience who opens the post therefore adds to the
+ * numerator and not the denominator, and an uncapped ratio renders `104%`.
+ *
+ * Returns null when there is nobody to divide by; the caller shows the bare
+ * count rather than a percentage of zero.
+ */
+export function reachPercent(opened: number, audienceSize: number): number | null {
+  if (audienceSize <= 0) return null;
+  return Math.min(100, Math.round((opened / audienceSize) * 100));
+}
+
+/**
+ * Read receipts bucketed by post — the arithmetic the screen used to make
+ * Postgres do once per published announcement.
+ *
+ * `announcement_reads` has no aggregate endpoint through PostgREST (no GROUP
+ * BY), so the page pages the receipts and counts them here. That trades N round
+ * trips, one per post, for ceil(receipts / 1000) — and the post count is the one
+ * that only ever grows, since nothing retires an announcement from this screen.
+ *
+ * COUNTS STAY EXACT. Nothing is sampled, estimated or capped: every receipt the
+ * caller read is counted, and a receipt for a post that is not in `publishedIds`
+ * is skipped rather than folded into a total.
+ *
+ * PUBLISHED POSTS ONLY, seeded to zero. A draft was never sent to anybody, so it
+ * must come back absent rather than as `0` — "0 opened" on a draft is not a
+ * reach figure, it is a category error, and the caller distinguishes the two by
+ * whether the map has the key at all.
+ */
+export function tallyOpens(
+  receipts: Array<{ announcement_id: string }>,
+  publishedIds: Iterable<string>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const id of publishedIds) counts.set(id, 0);
+
+  for (const receipt of receipts) {
+    const current = counts.get(receipt.announcement_id);
+    if (current === undefined) continue;
+    counts.set(receipt.announcement_id, current + 1);
+  }
+
+  return counts;
+}
+
+/**
+ * "Alice Mercer" → "A. MERCER". The byline is a mono micro-label at 10px, and
+ * a full name at that size in a 480px rail wraps onto the counts beside it.
+ *
+ * A single-word name keeps its whole self — "A." would name nobody.
+ */
+export function bylineName(name: string | null | undefined): string | null {
+  const trimmed = (name ?? '').trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s+/);
+  const first = parts[0] ?? '';
+  const surname = parts[parts.length - 1] ?? '';
+  if (parts.length === 1) return first.toUpperCase();
+  return `${first.slice(0, 1).toUpperCase()}. ${surname.toUpperCase()}`;
+}
+
+/** Short, unambiguous, and stable regardless of the reader's locale settings. */
+export function shortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d
+    .toLocaleDateString('en-CA', { day: '2-digit', month: 'short' })
+    .toUpperCase()
+    .replace(/\./g, '');
+}
+
+// ---------------------------------------------------------------------------
+// Discord
+// ---------------------------------------------------------------------------
+
+export interface PostedMapping {
+  syncedTitle: string;
+  syncedBody: string;
+  syncedType: string;
+}
+
+/**
+ * Two words for the list, where the full preview would not fit.
+ *
+ * The composer and the edit dialog draw the whole embed; a row only has to say
+ * whether this post is in Discord, going there, or deliberately not — enough
+ * for somebody scanning the list to notice the one that surprises them and open
+ * it. The state itself is computed by the relay's own function, so the chip
+ * cannot say something the tick will contradict.
+ */
+export function relayChip(
+  row: {
+    status: string;
+    target_audience: string;
+    expires_at: string | null;
+    /** The relay's own freshness column, not created_at — see the lookback. */
+    updated_at: string | null;
+    title: string;
+    body: string;
+    type: string;
+  },
+  context: { now: number; channelConfigured: boolean; posted: PostedMapping | null },
+): string | null {
+  const { state } = announcementRelayState(row, context);
+  switch (state) {
+    case 'posts':
+      return 'Queued';
+    case 'edits':
+      return 'Edit due';
+    case 'in_sync':
+      return 'In channel';
+    case 'retracts':
+      return 'Coming down';
+    case 'too_old':
+      return 'Not sent';
+    case 'no_channel':
+      return null;
+    case 'stays_off':
+    default:
+      // A draft says nothing — the DRAFT badge already does, and a second
+      // label repeating it in different words is noise on every row.
+      return row.status === 'published' ? 'Website only' : null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Where in Discord the console can speak
+// ---------------------------------------------------------------------------
+
+/** One entry in the channel picker: which setting it came from, and its id. */
+export interface DiscordChannelOption {
+  key: string;
+  label: string;
+  id: string;
+}
+
+/**
+ * One guild role, as both the ping picker and the preview need it.
+ *
+ * TWO CONSUMERS, ONE SHAPE. The picker wants the name, because names are what
+ * the send path resolves; the preview wants the id, because a chip is drawn
+ * from `<@&id>` and there is nothing else to look a name up by. Shipping a list
+ * of names and a list of ids would send the same nine rows down the RSC payload
+ * twice and let the two drift out of step.
+ */
+export interface DiscordRoleOption {
+  id: string;
+  name: string;
+  /**
+   * WHICH TABLE IT CAME OUT OF, and it decides more than a heading.
+   *
+   * `club` is one of the nine in `discord_guild_roles`: the app assigns it, the
+   * nightly sweep reconciles it, and it is the ONLY kind a typed `@name` in prose
+   * resolves to. `server` is a row in the `discord_server_roles` catalogue the
+   * bot syncs from Discord (00229): pickable for the ping line above an embed,
+   * and left as plain text everywhere else.
+   *
+   * So the picker groups on this, and the preview is handed club roles only. A
+   * preview that chipped a server-role name would promise a mention the send
+   * path does not make.
+   */
+  source: 'club' | 'server';
+}
+
+/**
+ * THE CHANNELS THE CLUB HAS CONFIGURED, WHICH IS NOT THE SERVER'S CHANNEL LIST.
+ *
+ * Every relay the bot runs posts into a channel named by one of these settings
+ * keys, so a key with a value is a channel somebody has already pointed the bot
+ * at. That is the whole of what this console can know: it holds no Discord
+ * token, and there is no catalogue of the server's channels in the database for
+ * it to read. A channel that exists in Discord and is wired to no relay is
+ * therefore reachable only by pasting its id.
+ *
+ * The labels are word for word the ones `/config show` prints, from
+ * `CHANNEL_SETTINGS` in `apps/bot/src/settings.ts`, and the order is the same.
+ * They are duplicated rather than imported because the admin app cannot import
+ * from `apps/bot`: the bot is a separate service whose whole justification is
+ * that nothing else links against it.
+ */
+export const DISCORD_CHANNEL_SETTINGS: readonly { key: string; label: string }[] = [
+  { key: 'announcement_channel_id', label: 'Announcements' },
+  { key: 'session_ping_channel_id', label: 'Session pings' },
+  { key: 'match_results_channel_id', label: 'Match results' },
+  { key: 'feedback_channel_id', label: 'Bug reports' },
+  { key: 'event_feedback_channel_id', label: 'Event feedback' },
+  { key: 'audit_channel_id', label: 'Audit log' },
+];
+
+// ---------------------------------------------------------------------------
+// Which composers the left card offers
+// ---------------------------------------------------------------------------
+
+export type ComposerMode = 'website' | 'discord';
+
+export const COMPOSER_MODE_LABELS: Record<ComposerMode, string> = {
+  website: 'Website post',
+  discord: 'Discord message',
+};
+
+/**
+ * THE ONLY PLACE THE FOUR CAPABILITY CASES ARE DECIDED.
+ *
+ * `announcements.create.write` and `announcements.discord.write` are separate
+ * keys reaching separate audiences by separate routes (see page.tsx:210-214),
+ * and since 00224 the second rides on External — so a viewer holding one and
+ * not the other is a live case rather than a hypothetical one.
+ *
+ * Website first when both are held, deliberately: it is the audience every
+ * member is in, and a Discord message cannot be taken back.
+ */
+export function composerModes(caps: {
+  canCreate: boolean;
+  canSendDiscord: boolean;
+}): ComposerMode[] {
+  const modes: ComposerMode[] = [];
+  if (caps.canCreate) modes.push('website');
+  if (caps.canSendDiscord) modes.push('discord');
+  return modes;
+}
+
+/**
+ * A one-option strip is never drawn — the same call the fees page makes about
+ * its ledger tabs (app/fees/page.tsx:424-426): a lone pill the viewer cannot
+ * navigate away from is noise.
+ */
+export function showsModeSelector(modes: ComposerMode[]): boolean {
+  return modes.length > 1;
+}
+
+/**
+ * WHETHER THERE IS A WEBSITE COMPOSER ON SCREEN TO FILL, which is the one
+ * question the posted list's Edit button asks before it decides between filling
+ * the composer in place and opening the dialog.
+ *
+ * DERIVED FROM THE SAME `modes` ARRAY THAT DECIDES THE RENDER (page.tsx:540),
+ * never re-derived from `canCreate`, so the button and the composer cannot drift
+ * apart: whatever moves one moves the other.
+ *
+ * And it is genuinely a different question from "may this viewer edit".
+ * `announcements.update.write` and `announcements.create.write` are independent
+ * keys, so somebody can hold Edit with no composer anywhere on the page, and for
+ * them the dialog is not a fallback but the only thing Edit can do.
+ */
+export function hasWebsiteComposer(modes: ComposerMode[]): boolean {
+  return modes.includes('website');
+}
+
+// ---------------------------------------------------------------------------
+// Editing a posted row, and where its Delete goes
+// ---------------------------------------------------------------------------
+
+export interface PendingWebsiteEdit {
+  /** The announcement row somebody pressed Edit on. */
+  id: string;
+  title: string;
+  body: string;
+  type: AnnouncementType;
+  target_audience: TargetAudience;
+  pinned: boolean;
+  send_push: boolean;
+  status: AnnouncementStatus;
+  expires_at: string | null;
+  /**
+   * The row's Discord mapping, or null when Discord has never had this post.
+   *
+   * Carried rather than looked up because the composer is SHARED: it has no row
+   * of its own to read a mapping off, and the preview it draws needs one to say
+   * whether the channel is already holding an older version of these words. The
+   * page threads the same mapping into the row that hands this over, so the two
+   * cannot answer differently.
+   */
+  posted: PostedMapping | null;
+}
+
+/**
+ * The row the composer is asked to fill from, plus its mapping.
+ *
+ * THE ROW IS A STRUCTURAL TYPE rather than `RowAnnouncement`, which lives in
+ * `actions.tsx`: that file imports this one, so reaching back for it would be
+ * an import cycle.
+ *
+ * A NEW OBJECT ON EVERY CALL, and that is the contract rather than a detail.
+ * The composer refills on the pending edit's IDENTITY, not its contents, so a
+ * second press on the same row has to hand over a fresh object or it would
+ * appear to do nothing. The fields are copied one by one so nothing else a
+ * caller's row happens to carry rides along into the context.
+ */
+export function toPendingWebsiteEdit(
+  row: {
+    id: string;
+    title: string;
+    body: string;
+    type: AnnouncementType;
+    target_audience: TargetAudience;
+    pinned: boolean;
+    send_push: boolean;
+    status: AnnouncementStatus;
+    expires_at: string | null;
+  },
+  posted: PostedMapping | null,
+): PendingWebsiteEdit {
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    type: row.type,
+    target_audience: row.target_audience,
+    pinned: row.pinned,
+    send_push: row.send_push,
+    status: row.status,
+    expires_at: row.expires_at,
+    posted,
+  };
+}
+
+/**
+ * WHICH CONTROLS A POSTED ROW DRAWS, decided in one place because no test here
+ * mounts a component and the row has two keys and a layout fact to combine.
+ *
+ * - `edit`: nothing without `announcements.update.write`; with it, the composer
+ *   in place when there is one, and the dialog when there is not.
+ * - `rowDelete`: the standalone Delete in the row, only for a viewer who may
+ *   delete and not edit. Everybody who may edit reaches Delete from wherever
+ *   Edit takes them.
+ * - `dialogDelete`: the Delete inside the edit dialog, so only on the dialog
+ *   path. On the inline path Delete lives in the composer's edit mode instead
+ *   (see `showsComposerDelete`).
+ */
+export function rowEditActions(caps: {
+  canUpdate: boolean;
+  canDelete: boolean;
+  hasWebsiteComposer: boolean;
+}): { edit: 'inline' | 'dialog' | null; rowDelete: boolean; dialogDelete: boolean } {
+  const edit = !caps.canUpdate ? null : caps.hasWebsiteComposer ? 'inline' : 'dialog';
+  return {
+    edit,
+    rowDelete: caps.canDelete && !caps.canUpdate,
+    dialogDelete: caps.canDelete && edit === 'dialog',
+  };
+}
+
+/**
+ * Whether the composer offers Delete: only while it holds a posted row, since a
+ * fresh post has nothing to delete, and only for a viewer holding the key. The
+ * gate is UI only; `deleteAnnouncement` checks `announcements.delete.write` on
+ * the server whatever this says.
+ */
+export function showsComposerDelete(state: { editing: boolean; canDelete: boolean }): boolean {
+  return state.editing && state.canDelete;
+}

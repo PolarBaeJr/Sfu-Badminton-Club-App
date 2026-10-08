@@ -1,0 +1,1018 @@
+'use client';
+
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  Button,
+  Badge,
+  Input,
+  MultiSelect,
+  Select,
+  Textarea,
+  Switch,
+  ResponsiveTable,
+  TableCard,
+  Atomic,
+} from '@badminton/ui';
+import { DISCORD_BUTTON_SETS, isDiscordButtonSet } from '@badminton/shared';
+import { useToast } from '@/components/toast-provider';
+import {
+  editDiscordMessage,
+  loadDiscordMessage,
+  queueDiscordMessage,
+  readDiscordOutbox,
+} from '@/lib/actions/discord-message';
+import {
+  OUTBOX_POLL_LIMIT_MS,
+  OUTBOX_POLL_MS,
+  shouldPollOutbox,
+  type OutboxRow,
+} from '@/lib/discord-outbox';
+import {
+  TYPE_OPTIONS,
+  type AnnouncementType,
+  type DiscordChannelOption,
+  type DiscordRoleOption,
+} from './announcement-shape';
+import { useDiscordConsole } from './discord-console-context';
+import { DiscordButtonsPreview } from './discord-buttons-preview';
+import { DISCORD_BG } from './discord-markdown';
+import { DiscordMessagePreview, DiscordPreview } from './discord-preview';
+import { FormatBar, formatShortcut } from './format-bar';
+
+// Speaking as the club in Discord, from the console.
+//
+// THE SAME ACT AS /say, AND IT SAYS SO. An exec running the slash command in
+// Discord gets an ephemeral reply telling them the message shows as coming from
+// the bot and that the audit channel has a copy with their name on it. Somebody
+// pressing Send here is doing exactly that and deserves exactly that warning.
+
+const MICRO = 'font-mono text-[10px] uppercase tracking-[0.16em]';
+
+// The two picker entries that are not a channel id.
+//
+// Neither can ever collide with a real value: the action's `assertChannelId`
+// takes `^[0-9]{5,25}$` and nothing else, so an empty string and the word
+// `custom` are both unmistakable. The empty string is the default on purpose,
+// because sending no `channelId` at all is what makes the action fall through
+// to the configured announcements channel.
+const CHANNEL_DEFAULT = '';
+const CHANNEL_CUSTOM = 'custom';
+
+const SHAPE_OPTIONS = [
+  { value: 'message', label: 'Plain message' },
+  { value: 'embed', label: 'Embed' },
+];
+
+/** One line each, in the club's words rather than the column's. */
+function stateBadge(row: OutboxRow): { variant: 'success' | 'warning' | 'danger'; label: string } {
+  if (row.state === 'sent') return { variant: 'success', label: 'SENT' };
+  if (row.state === 'failed') return { variant: 'danger', label: 'FAILED' };
+  return { variant: 'warning', label: 'QUEUED' };
+}
+
+function shortTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-CA', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+// A LONG DOCUMENT SHOULD LOOK LIKE ONE.
+//
+// The Code of Conduct runs to dozens of lines, and a fixed box turns it into a
+// letterbox with a scrollbar of its own inside a page that already scrolls.
+// Growing the element to fit its content means the page scrolls once, where the
+// reader expects it to, and the whole text is visible on the way past.
+//
+// `height = 'auto'` FIRST, every time. scrollHeight reports the content height
+// only while the element is not already tall enough to hide it, so without the
+// collapse the box can grow and then never shrink back after a deletion.
+function useAutoGrow(value: string) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const fit = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
+  // A layout effect rather than a plain one: this runs after React writes the
+  // DOM and before the browser paints, so the box is never briefly the wrong
+  // size. It shows most when Edit fills the composer with an existing message,
+  // where a plain effect would flash the letterbox first.
+  useLayoutEffect(fit, [value, fit]);
+
+  // Re-wrapping changes the line count without changing the value, so a window
+  // resize needs a pass of its own or the box is left clipped or padded out.
+  useEffect(() => {
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [fit]);
+
+  return ref;
+}
+
+export function DiscordSend({
+  channelConfigured,
+  channels,
+  roles,
+  ambiguousRoleNames,
+}: {
+  /** Whether /config has been run. Without it there is nowhere to send. */
+  channelConfigured: boolean;
+  /** The channels the club has wired to a relay. Not the server's channel list. */
+  channels: DiscordChannelOption[];
+  /**
+   * Every role the ping line can name: the club's nine and the rest of the
+   * server's, tagged with which they are.
+   *
+   * THE PICKER STILL SENDS NAMES, not the ids beside them.
+   * `QueueDiscordMessageInput.pingRoles` takes names and `resolveRoleNames`
+   * turns them into ids server-side, so posting an id from here would add a
+   * client-controlled snowflake field for a job already being done. The id is
+   * carried for the preview, which needs it to draw a chip.
+   *
+   * `source` IS NOT DECORATION. A `club` role is one of the nine in
+   * `discord_guild_roles`, and it is the only kind a typed `@name` in prose
+   * resolves to; a `server` role comes from the catalogue the bot syncs out of
+   * Discord (00229) and is pickable here and nowhere else. So the picker groups
+   * on it, the typed-@ line below lists only the club names, and the preview is
+   * handed the club roles alone.
+   */
+  roles: DiscordRoleOption[];
+  /**
+   * Server roles that could not be offered because two of them share a name.
+   *
+   * Named on screen rather than quietly dropped: `mergeGuildRoles` refuses to
+   * guess which of two identically named roles an exec meant, and a role plainly
+   * visible in Discord that is simply missing here, with no reason given, is the
+   * worse of the two failures.
+   */
+  ambiguousRoleNames: string[];
+}) {
+  const [shape, setShape] = useState<'message' | 'embed'>('message');
+  const [content, setContent] = useState('');
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [type, setType] = useState<AnnouncementType>('info');
+  const [channelId, setChannelId] = useState('');
+  // `Select` renders exactly the options it is handed and has no placeholder
+  // support, so "the announcements channel" has to be a real entry rather than
+  // an empty field. When no announcements channel is configured that entry is
+  // not offered at all, and the picker opens on the paste box instead: an option
+  // the action would refuse is worse than no option.
+  const [channelChoice, setChannelChoice] = useState(
+    channels.some((c) => c.key === 'announcement_channel_id') ? CHANNEL_DEFAULT : CHANNEL_CUSTOM,
+  );
+  const [ping, setPing] = useState(false);
+  /** The roles a ping line above an embed names. Picking one IS the opt-in. */
+  const [pingRoles, setPingRoles] = useState<string[]>([]);
+  /**
+   * The member buttons this message will carry, by NAME, or null for none.
+   *
+   * A name rather than a boolean because the column is one (00228) and the
+   * action takes one. There are four sets now, so this is also the picker's
+   * value, with no boolean to untangle: the empty option maps back to null.
+   */
+  const [buttonSet, setButtonSet] = useState<string | null>(null);
+  /** The message being edited, or null when this is a fresh one. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
+  const { pending, clearEdit, refreshRecent } = useDiscordConsole();
+
+  // One per box rather than one shared. Only ever one is mounted, since they
+  // sit in opposite branches of the shape, but each hook tracks the value it is
+  // sizing against and the two values are separate pieces of state.
+  const contentRef = useAutoGrow(content);
+  const bodyRef = useAutoGrow(body);
+
+  // FILLING THE COMPOSER FROM THE ROW SOMEBODY PRESSED EDIT ON. The list below
+  // reads the message and hands it over; this is where it lands. The shape
+  // comes from the row rather than from what is on screen, because a message
+  // cannot change between plain text and an embed once Discord has it.
+  useEffect(() => {
+    if (!pending) return;
+    setEditingId(pending.id);
+    if (pending.embedTitle !== null) {
+      setShape('embed');
+      setTitle(pending.embedTitle);
+      setBody(pending.embedBody ?? '');
+      setType((pending.embedType as AnnouncementType | null) ?? 'info');
+    } else {
+      setShape('message');
+      setContent(pending.content ?? '');
+    }
+    // OUTSIDE THE SHAPE BRANCHES, because buttons are legal under either one and
+    // both arms would otherwise need the same line. It is also load-bearing for
+    // the happy path rather than only for the picker's appearance: `send()` only
+    // ships `buttonSet` when it is set, so a row that already has buttons and did
+    // not refill this would be an edit the server refuses as a removal.
+    setButtonSet(pending.buttonSet);
+  }, [pending]);
+
+  const editing = editingId !== null;
+
+  /**
+   * Whether this message's buttons can no longer be taken off.
+   *
+   * A message Discord already has can GAIN buttons, or SWAP one set for another,
+   * and cannot lose them: its PATCH leaves a field it is not sent standing, so
+   * omitting them would be a save that appears to work and changes nothing in
+   * the channel. `editDiscordMessage` refuses the removal and nothing else, and
+   * this is that refusal shown before somebody runs into it.
+   */
+  const buttonsLocked = editing && Boolean(pending?.buttonSet);
+
+  const buttonOptions = [
+    // "No buttons" IS A REAL OPTION rather than an empty field, for the reason
+    // the channel picker's comment above gives: Select renders exactly the
+    // options it is handed and has no placeholder support.
+    //
+    // AND IT IS THE OPTION THAT GOES AWAY WHEN THE ROW IS LOCKED, rather than
+    // the control being disabled. The server refuses set-to-NULL and nothing
+    // else, so add, keep and swap all pass; disabling the picker would
+    // over-enforce that rule and make the actual task impossible, which is
+    // editing the guide messages already in the channel down to one button each.
+    //
+    // `&& buttonSet` keeps the value and the option list agreeing on the single
+    // render between the list handing over a `pending` row and the effect above
+    // refilling `buttonSet` from it.
+    ...(buttonsLocked && buttonSet ? [] : [{ value: '', label: 'No buttons' }]),
+    // BUILT FROM THE ALLOWLIST, so a fifth set is a change to
+    // @badminton/shared and nothing here. The declaration order there is this
+    // picker's option order.
+    ...Object.entries(DISCORD_BUTTON_SETS).map(([value, set]) => ({
+      value,
+      label: set.optionLabel,
+    })),
+  ];
+
+  /** The chosen set, for the helper line under the picker. Null means none. */
+  const chosenButtonSet = isDiscordButtonSet(buttonSet) ? buttonSet : null;
+
+  /**
+   * The nine the app manages, and the only roles the PROSE path resolves.
+   *
+   * Handed to the preview and quoted in the typed-@ line below. A server role
+   * left out of both is deliberate: `resolveForDiscord` runs
+   * `resolveRoleMentions` over the club map alone, so a typed `@Varsity` reaches
+   * Discord as literal text, and a preview or a helper line that said otherwise
+   * would promise a mention nothing makes.
+   */
+  const clubRoles = roles.filter((r) => r.source === 'club');
+
+  /**
+   * The notify picker's options, KEYED ON THE NAME because names are what goes
+   * down the wire. Unique by construction: `mergeGuildRoles` drops a catalogue
+   * row whose name normalises onto another offered role, so no two entries here
+   * can carry the same value.
+   *
+   * Grouped rather than sorted together, so the nine roles the club manages sit
+   * above a list that will grow as the server gains roles like @Advanced.
+   */
+  const roleOptions = [
+    ...clubRoles.map((r) => ({ value: r.name, label: r.name, group: 'Club roles' })),
+    ...roles
+      .filter((r) => r.source === 'server')
+      .map((r) => ({ value: r.name, label: r.name, group: 'Server roles' })),
+  ];
+
+  const channelOptions = [
+    ...(channels.some((c) => c.key === 'announcement_channel_id')
+      ? [{ value: CHANNEL_DEFAULT, label: 'Announcements (default)' }]
+      : []),
+    // The announcements channel is excluded here so it cannot appear twice
+    // meaning the same thing: once as the default and once under its own name.
+    ...channels
+      .filter((c) => c.key !== 'announcement_channel_id')
+      .map((c) => ({ value: c.id, label: c.label })),
+    // ALWAYS LAST AND ALWAYS PRESENT, even when all six settings are filled in.
+    // The picker only knows the channels a relay posts into, and the rest of the
+    // server is reachable no other way.
+    { value: CHANNEL_CUSTOM, label: 'Paste a channel ID...' },
+  ];
+
+  /** What goes down the wire. Empty means "the action picks the default". */
+  const chosenChannel = channelChoice === CHANNEL_CUSTOM ? channelId.trim() : channelChoice;
+
+  /** Whether a channel can be resolved at all, which the preview asks about. */
+  const channelResolvable =
+    channelChoice === CHANNEL_CUSTOM
+      ? channelId.trim().length > 0
+      : channelChoice !== CHANNEL_DEFAULT || channelConfigured;
+
+  /**
+   * Whether pressing the button buzzes a phone.
+   *
+   * AN EDIT NEVER DOES, whatever the row was sent with: Discord does not
+   * re-notify anybody when a message changes. So the badge goes quiet in edit
+   * mode rather than promising something that cannot happen.
+   */
+  function pickShape(next: 'message' | 'embed') {
+    if (next === shape) return;
+    setShape(next);
+    // THE PING CONTROLS ARE PER SHAPE AND THE STATE IS NOT. Without this,
+    // switching to Embed after arming the switch leaves `ping` true and
+    // lights the PINGS badge over a message that pings nobody, and
+    // switching the other way would carry a picked role into a shape that
+    // has no line to put it on.
+    setPing(false);
+    setPingRoles([]);
+    // AND `buttonSet` IS DELIBERATELY LEFT ALONE, which is the opposite of
+    // the two lines above and needs saying because of them: the ping
+    // controls are per shape, the buttons are not. A button means the same
+    // thing under a plain message as it does under an embed, so clearing
+    // the choice here would throw one away for no reason.
+  }
+
+  const willPing = editing ? false : shape === 'message' ? ping : pingRoles.length > 0;
+
+  // Choosing to paste and then pasting nothing is now an incomplete form rather
+  // than a shorthand. Nothing is lost by refusing it: "leave it blank for the
+  // announcements channel" is its own entry in the picker above.
+  const ready =
+    (shape === 'message' ? content.trim().length > 0 : title.trim().length > 0) &&
+    (editing || channelChoice !== CHANNEL_CUSTOM || channelId.trim().length > 0);
+
+  /** Back to a fresh compose, from either a save or a cancel. */
+  const clearComposer = () => {
+    setContent('');
+    setTitle('');
+    setBody('');
+    setPing(false);
+    setPingRoles([]);
+    setButtonSet(null);
+    setEditingId(null);
+    clearEdit();
+  };
+
+  const send = async () => {
+    if (!ready || busy) return;
+    setBusy(true);
+    try {
+      const words =
+        shape === 'message'
+          ? { content: content.trim() }
+          : { embed: { title: title.trim(), body: body.trim(), type } };
+
+      if (editingId) {
+        // SPREAD RATHER THAN PASSED AS NULL, so a message with no buttons sends
+        // the same fields it always did and the action's own default decides.
+        await editDiscordMessage({
+          id: editingId,
+          ...words,
+          ...(buttonSet ? { buttonSet } : {}),
+        });
+        // Same five minute window as a send, because an edit is a re-queue: the
+        // bot picks the row up on the next announcements tick and PATCHes the
+        // message that is already in the channel.
+        toast('Saved. Discord catches up within five minutes', 'success');
+      } else {
+        await queueDiscordMessage({
+          ...words,
+          // A PICKED CHANNEL GOES DOWN THE PATH A PASTED ONE ALREADY USES, and
+          // the action needs no new parameter for it: it is a channel id either
+          // way, checked by the same `assertChannelId`. A `channelKey` parameter
+          // would be a second client-controlled POST field duplicating one that is
+          // already there, which is exactly what that file's own comment warns off.
+          ...(chosenChannel ? { channelId: chosenChannel } : {}),
+          ...(shape === 'embed' && pingRoles.length > 0 ? { pingRoles } : {}),
+          ...(buttonSet ? { buttonSet } : {}),
+          ping,
+        });
+        // "Queued", never "Sent". The bot has not been asked yet, pg_cron will
+        // ask it within five minutes, and the list below is where the real
+        // answer appears.
+        toast('Queued for Discord: it posts within five minutes', 'success');
+      }
+      // CLEARED INCLUDING `editingId`, or the next fresh message would silently
+      // overwrite the one that was just edited.
+      clearComposer();
+      // One immediate read, so the new or re-queued row is on screen now rather
+      // than on the list's next tick.
+      refreshRecent();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Could not queue that', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-[14px]">
+      <div className="flex items-center justify-between">
+        <span className={`${MICRO} text-[var(--mute)]`}>
+          {editing ? 'Edit what Discord already has' : 'Say something in Discord'}
+        </span>
+        {willPing && <Badge variant="danger">PINGS</Badge>}
+      </div>
+
+      {/* TWO BUTTONS, NOT A SELECT. The select drew no box, so it read as a
+          line of text and nobody could see there was a choice to make. With
+          two options a toggle shows both at once. */}
+      <div className="space-y-1.5">
+        <span className="block text-sm font-medium text-[var(--text-secondary)]">Shape</span>
+        <div
+          role="radiogroup"
+          aria-label="Shape"
+          className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)]"
+        >
+          {SHAPE_OPTIONS.map((o) => {
+            const on = shape === o.value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                // FIXED WHILE EDITING. Discord's edit endpoint leaves a field it
+                // is not sent standing, so a message that posted as plain text
+                // cannot become an embed without the old line remaining above it.
+                disabled={editing}
+                onClick={() => pickShape(o.value as 'message' | 'embed')}
+                className={`min-h-[40px] rounded-md text-sm transition-colors disabled:cursor-not-allowed ${
+                  on
+                    ? 'bg-[var(--bg-card)] text-[var(--text-primary)] shadow-[inset_0_-2px_0_var(--color-accent)]'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50'
+                }`}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {shape === 'message' ? (
+        <div className="space-y-1">
+          {/* The label is rendered here rather than through the component's own
+              `label` prop so the formatting buttons can sit on the line beside
+              it, which is where a toolbar belongs. The explicit id is what keeps
+              htmlFor pointing at the right element once the prop is gone. */}
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <label
+              htmlFor="discord-message"
+              className="block text-[13px] font-medium text-[var(--text-secondary)]"
+            >
+              Message
+            </label>
+            <FormatBar target={contentRef} onChange={setContent} surface="message" />
+          </div>
+          <Textarea
+            id="discord-message"
+            ref={contentRef}
+            // Room to write a Code of Conduct in, and it grows past that on its
+            // own. `resize-y` is gone with the fixed height: a grab handle the
+            // next keystroke overrules is worse than no grab handle. The
+            // shared component's `resize-none` stays as it is because a dozen
+            // other forms rely on it; `cn` is twMerge, so this className wins.
+            className="min-h-[320px] overflow-hidden"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onKeyDown={(e) => formatShortcut(e, setContent)}
+            // Discord's own cap, enforced here where the writer can still see
+            // and cut what they typed, not as a 400 after the words are gone.
+            maxLength={2000}
+            placeholder="Posted exactly as typed, as the bot. Nobody sees that you sent it."
+          />
+          {/* THE ONLY THING THERE IS TO PREVIEW ON A PLAIN MESSAGE. The text is
+              posted exactly as typed, which is why this shape has never had a
+              preview and should not grow one; the buttons are the one part of it
+              that is not visible in the box above. Without this the preview
+              would show nothing for a message that does carry buttons, which is
+              the same lie the embed preview exists to remove.
+
+              On the Discord surface rather than the console's, for the reason
+              discord-markdown.tsx gives about every colour in this panel: it is a
+              picture of somebody else's app, and the caption's grey is only
+              legible against it. aria-hidden because the line under the picker
+              says all of this in words. */}
+          {buttonSet && (
+            <div className="px-3 pt-1 pb-3" style={{ background: DISCORD_BG }} aria-hidden>
+              <DiscordButtonsPreview set={buttonSet} />
+            </div>
+          )}
+        </div>
+      ) : (
+        // EXPLICIT IDS, because these three labels are word-for-word the ones
+        // the website composer uses and both composers are now mounted at once
+        // in the same card. Input/Textarea/Select derive the element id (and the
+        // label's htmlFor) from the label text, so without these the embed
+        // branch collides with AnnouncementFields on headline, body and
+        // category: two elements sharing an id, and a label pointing at
+        // whichever came first.
+        <>
+          <Input
+            id="discord-headline"
+            label="Headline"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={256}
+            placeholder="Say the thing in one line"
+          />
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <label
+                htmlFor="discord-body"
+                className="block text-[13px] font-medium text-[var(--text-secondary)]"
+              >
+                Body
+              </label>
+              {/* Masked links are offered here and not on the plain message,
+                  because [text](url) renders inside an embed and shows as raw
+                  brackets anywhere else. */}
+              <FormatBar target={bodyRef} onChange={setBody} surface="embed" />
+            </div>
+            <Textarea
+              id="discord-body"
+              ref={bodyRef}
+              // 4096 characters allowed below, so this one needs MORE room than
+              // the plain message, not less, and it grows past that on its own.
+              className="min-h-[320px] overflow-hidden"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              onKeyDown={(e) => formatShortcut(e, setBody)}
+              maxLength={4096}
+            />
+          </div>
+          <Select
+            id="discord-category"
+            label="Category"
+            value={type}
+            onChange={(e) => setType(e.target.value as AnnouncementType)}
+            options={TYPE_OPTIONS}
+          />
+        </>
+      )}
+
+      {/* WHERE IT WENT IS NOT EDITABLE. Discord cannot move a message between
+          channels, so offering the picker here would promise something that
+          cannot happen. */}
+      {editing ? (
+        <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+          It stays in the channel it was posted in, keeps its place in the conversation, and
+          notifies nobody again. Editing never rings a phone.
+        </p>
+      ) : (
+        <>
+          {/* AN EXPLICIT ID, for the same reason the embed branch above carries
+              three of them: both composers are mounted at once and Select derives
+              its element id from the label text. */}
+          <Select
+            id="discord-channel"
+            label="Channel"
+            value={channelChoice}
+            onChange={(e) => setChannelChoice(e.target.value)}
+            options={channelOptions}
+          />
+
+          {channelChoice === CHANNEL_CUSTOM && (
+            <>
+              <Input
+                id="discord-channel-id"
+                label="Channel ID"
+                value={channelId}
+                onChange={(e) => setChannelId(e.target.value)}
+                placeholder={
+                  channelConfigured
+                    ? 'Paste the channel ID'
+                    : 'Required: no announcements channel is configured'
+                }
+              />
+              <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
+                {/* The picker lists the channels the club has wired to a relay, and
+                    that is all this console can know: it holds no Discord token and
+                    nothing in the database catalogues the server's channels. Every
+                    other channel in the server is reached exactly one way, which is
+                    this box. */}
+                Turn on Developer Mode in Discord, right-click a channel and choose Copy Channel
+                ID.
+              </p>
+            </>
+          )}
+        </>
+      )}
+
+      {/* THE MEMBER BUTTONS, and this one is offered UNDER BOTH SHAPES AND
+          WHILE EDITING, which is the opposite of the two controls below it. A
+          button means the same thing under a plain message as it does under an
+          embed, so there is nothing for the shape to decide, and an edit is how
+          the guide messages already in the channel get theirs cut down to the
+          one button each of them is about. They notify nobody: a click answers
+          the person who clicked and nobody else sees the reply. */}
+      <div className="flex flex-col gap-2 border-y border-[var(--line)] py-3">
+        {/* AN EXPLICIT ID, for the same reason the embed branch and the channel
+            picker above carry theirs: both composers are mounted at once and
+            Select derives its element id from the label text. */}
+        <Select
+          id="discord-buttons"
+          label="Member buttons"
+          value={buttonSet ?? ''}
+          // The empty option round-trips back to null, which is what `send()`'s
+          // `...(buttonSet ? { buttonSet } : {})` spread reads.
+          onChange={(e) => setButtonSet(e.target.value || null)}
+          options={buttonOptions}
+        />
+        {/* SELECT HAS NO `description` PROP, so the chosen set's own words go in
+            a sibling paragraph, styled like the channel-ID helper above. The
+            copy lives in @badminton/shared beside the allowlist, so the picker
+            and the preview cannot describe different buttons. */}
+        <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+          {chosenButtonSet
+            ? DISCORD_BUTTON_SETS[chosenButtonSet].description
+            : 'Nothing is added under the message.'}
+        </p>
+        {buttonsLocked && (
+          <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+            Buttons can be added to a message Discord already has, or swapped for a different set,
+            but not taken off again: leaving them out of an edit would change nothing in the
+            channel.
+          </p>
+        )}
+      </div>
+
+      {/* THE SWITCH BELONGS TO THE PLAIN MESSAGE ALONE. In the embed shape it
+          never did anything: the payload the bot builds for an embed has no
+          content field, so there is nothing for allowed_mentions to act on. The
+          embed's own control is the role picker below, and neither is offered
+          in edit mode, where nothing can notify anybody. */}
+      {shape === 'message' && !editing && (
+        <div className="flex flex-col border-y border-[var(--line)] py-3">
+          <Switch
+            label="Let mentions notify people"
+            description={
+              // Both directions stated, because the default is the quiet one and
+              // somebody who wants a ping needs to know it is off.
+              ping
+                ? 'An @everyone or @role in the text WILL buzz every phone it names. This cannot be taken back.'
+                : 'Off: @everyone and @role in the text read as mentions but notify nobody.'
+            }
+            checked={ping}
+            onChange={setPing}
+          />
+        </div>
+      )}
+
+      {/* THE PING LINE, which is the only way an embed reaches a phone. A
+          mention inside embed text can never notify anybody, so the roles
+          picked here go on a line of ordinary content ABOVE the embed, in the
+          same message. Picking one is the whole opt-in: there is no second
+          switch to arm and nothing to confirm. */}
+      {shape === 'embed' && !editing && roles.length > 0 && (
+        <div className="flex flex-col gap-2 border-y border-[var(--line)] py-3">
+          <span className={`${MICRO} text-[var(--mute)]`}>Notify</span>
+          {/* AN EXPLICIT ID, for the same reason the channel and button pickers
+              above carry theirs: both composers are mounted at once, and a
+              control deriving its element id from its label would collide.
+              MultiSelect makes `id` required rather than optional for exactly
+              that reason.
+
+              A MULTI-SELECT AND NOT NINE CHECKBOXES, because the list is no
+              longer nine: it is every mentionable role in the server, and it
+              grows when somebody creates one. A wall of checkboxes does not
+              scale to that and cannot be searched. */}
+          <MultiSelect
+            id="discord-notify"
+            value={pingRoles}
+            onChange={setPingRoles}
+            options={roleOptions}
+            placeholder="Search roles…"
+            helpText={
+              pingRoles.length > 0
+                ? 'Anyone in these roles gets a notification. Their names go on a line above the embed.'
+                : 'Nobody is notified. Server roles come from Discord itself, so the list follows whatever the server has.'
+            }
+          />
+          {ambiguousRoleNames.length > 0 && (
+            // SAID, NOT SWALLOWED. Two Discord roles whose names read the same
+            // cannot be told apart by a name, and the ping line travels as a
+            // name, so neither can be offered. Without this line the role is
+            // simply absent and the exec has no way to learn why.
+            <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+              Not offered, because more than one role in the server is called this:{' '}
+              {ambiguousRoleNames.join(', ')}. Rename one of them in Discord.
+            </p>
+          )}
+        </div>
+      )}
+
+      {clubRoles.length > 0 && (
+        <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
+          {/* THE VOCABULARY, BEFORE THEY TYPE IT rather than after they send it.
+              Three of these names (internal, external, competitive) are ordinary
+              English words, so "email us @external" really does ping a role once
+              the switch above is on, and seeing the list is what makes that
+              predictable.
+
+              THE CLUB'S NINE AND NOTHING ELSE, which is now a narrower list than
+              the picker's and must stay that way. `resolveForDiscord` runs the
+              prose scanner over the managed roles alone, deliberately: a
+              catalogue that may hold @Advanced or @Session Pings would turn
+              ordinary words in a Code of Conduct into live pings. A member's own
+              ping role in `discord_self_roles` (00168) is left out for the same
+              reason, and its trigger guarantees the two sets never overlap. */}
+          Type an @ and a role name to mention it: {clubRoles.map((r) => r.name).join(', ')}.
+          Underscores or spaces both work. Anything else after an @ stays plain text, including
+          the server roles in the Notify list above.
+        </p>
+      )}
+
+      {shape === 'embed' && (
+        <p className="text-xs text-[var(--text-muted)] -mt-1 leading-relaxed">
+          {/* Stated here because the plain-message branch promises a ping and
+              this shape cannot give one from its body. The reasoning is in
+              lib/actions/discord-message.ts. */}
+          Role names in the body become blue role chips, so a reader can hover one and see who it
+          is. A chip inside an embed never notifies anybody.
+        </p>
+      )}
+
+      {/* Both shapes show a preview from the moment the shape is picked, empty
+          form included: a preview that appeared only after the headline was
+          typed read as no preview at all. The embed gets the same preview the
+          website composer does, from the same code. */}
+      {shape === 'message' && (
+        <DiscordMessagePreview
+          content={content}
+          // Club roles only, as below: the send path resolves those alone.
+          roles={clubRoles}
+          buttonSet={buttonSet}
+          pings={ping && !editing}
+        />
+      )}
+      {shape === 'embed' && (
+        <DiscordPreview
+          title={title}
+          body={body}
+          type={type}
+          // An outbox message is not an announcement: it has no audience rule
+          // and no expiry, and the bot posts it because a person asked. So the
+          // relay-state line is fixed at the one true answer for this panel.
+          targetAudience="all"
+          expiresAt={null}
+          status="published"
+          // "A channel is resolvable", which is now three cases rather than
+          // two: the default picked and configured, a named channel picked, or
+          // something pasted.
+          channelConfigured={channelResolvable}
+          url={null}
+          posted={null}
+          updatedAt={null}
+          // CLUB ROLES ONLY, and not the picker's merged list. The preview's
+          // prose path calls `resolveRoleMentions`, which the send path runs over
+          // the managed roles alone, so a merged list here would chip a
+          // server-role name that reaches Discord as plain text: the preview
+          // would lie in exactly the direction the asymmetry test in
+          // __tests__/discord-preview.test.tsx exists to prevent.
+          roles={clubRoles}
+          // TRUE HERE AND FALSE ON THE WEBSITE COMPOSER. This body goes through
+          // `resolveForDiscord` on its way out, so `@executives` really does
+          // reach Discord as a chip and a preview that drew grey text would be
+          // lying about the thing it exists to show.
+          resolvesRoleNames
+          // Drawn under the embed card, which is where Discord puts them.
+          buttonSet={buttonSet}
+        />
+      )}
+
+      <Button
+        type="button"
+        variant="primary"
+        className="min-h-[44px]"
+        disabled={!ready || busy}
+        onClick={send}
+      >
+        {busy ? (editing ? 'Saving…' : 'Queueing…') : editing ? 'Save edit' : 'Send to Discord'}
+      </Button>
+
+      {editing && (
+        <Button type="button" variant="ghost" className="min-h-[44px]" onClick={clearComposer}>
+          Cancel
+        </Button>
+      )}
+
+      <p className={`${MICRO} text-[var(--text-muted)] leading-relaxed`}>
+        It shows as coming from the bot, not from you. The audit log has a copy with your name
+        on it, and so does the Discord audit channel.
+      </p>
+    </div>
+  );
+}
+
+// WHY THERE IS A STATE LIST UNDERNEATH RATHER THAN JUST A TOAST. This does not
+// post the message. It queues a row the bot drains on the announcements tick,
+// so Send means "within five minutes". A toast saying "Sent" would be a lie for
+// most of that window, and the failure mode it hides is the one that matters: a
+// channel the bot cannot post in fails silently five minutes after the person
+// who could fix it has closed the tab.
+//
+// AND WHY IT LIVES OUTSIDE THE COMPOSER, in its own card rather than inside
+// this one: the card above now switches between the website composer and the
+// Discord one, and a queued row that is about to fail must not be hidden by
+// somebody going back to write a website post. The failure has to stay on
+// screen in both modes, because it is the only place it is ever visible.
+//
+// AND WHY IT ASKS AGAIN BY ITSELF. The row it shows changes five minutes after
+// it is written, in another process, which means the badge on screen is a
+// photograph of a queue rather than the queue. Somebody who has just pressed
+// Send is the one person watching, and telling them to reload the page to find
+// out whether the club's message went out is telling them to do the polling by
+// hand.
+export function DiscordRecent({ recent }: { recent: OutboxRow[] }) {
+  // SEEDED FROM THE SERVER, THEN OWNED HERE. The first paint is the page's own
+  // read, so there is no empty list and no flash; from mount on, this component
+  // is the one that decides what these five rows say.
+  const [rows, setRows] = useState<OutboxRow[]>(recent);
+  const [opening, setOpening] = useState<string | null>(null);
+  const { startEdit, nudge } = useDiscordConsole();
+  const { toast } = useToast();
+
+  const polling = shouldPollOutbox(rows);
+
+  // ONE READ AFTER A SEND OR AN EDIT, rather than waiting up to four seconds
+  // for a row that is already known to exist.
+  useEffect(() => {
+    if (nudge === 0) return;
+    let live = true;
+    readDiscordOutbox()
+      .then((next) => {
+        if (live) setRows(next);
+      })
+      // SILENT. A blip while somebody watches a queued row must not take the
+      // list off the screen or put an error over it.
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [nudge]);
+
+  // THE POLL EXISTS ONLY WHILE SOMETHING IS QUEUED, which is the normal case
+  // for about five minutes a week. `polling` is a boolean, so this effect is
+  // not re-created while it stays true and `startedAt` measures one continuous
+  // run of queued rows rather than restarting on every tick.
+  useEffect(() => {
+    if (!polling) return;
+    let live = true;
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      // BOUNDED. A row that is genuinely stuck must not poll a tab somebody
+      // left open all night. It stops quietly, leaving the last known state on
+      // screen, because a message saying "we gave up asking" would be less
+      // useful than the badge already there.
+      if (Date.now() - startedAt > OUTBOX_POLL_LIMIT_MS) {
+        clearInterval(timer);
+        return;
+      }
+      readDiscordOutbox()
+        .then((next) => {
+          // A response that lands after this component is gone must not set
+          // state, and one that lands after the timer was cleared is stale.
+          if (live) setRows(next);
+        })
+        .catch(() => {});
+    }, OUTBOX_POLL_MS);
+
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [polling]);
+
+  const openForEdit = async (row: OutboxRow) => {
+    if (opening) return;
+    setOpening(row.id);
+    try {
+      const message = await loadDiscordMessage(row.id);
+      startEdit({
+        id: message.id,
+        content: message.content,
+        embedTitle: message.embedTitle,
+        embedBody: message.embedBody,
+        embedType: message.embedType,
+        // Carried through so the composer knows this row's buttons cannot be
+        // taken off again, only swapped for another set.
+        buttonSet: message.buttonSet,
+      });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Could not open that message', 'error');
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  // EDIT IS OFFERED ON A ROW DISCORD HAS SEEN, and that is not the same as a
+  // sent one: saving an edit re-queues the row, so the badge beside this button
+  // reads QUEUED for up to five minutes while the message is still very much in
+  // the channel. Gating on the badge would take the button away from the one
+  // person who has just noticed a second typo.
+  //
+  // IT IS THE POSTED LIST'S OWN CONTROL (actions.tsx:758-766), deliberately:
+  // the two lists are now two panels of one card, so the same affordance has to
+  // sit in the same place and look the same in both. Returns null rather than a
+  // disabled button when Discord has never seen the row, which leaves the cell
+  // empty exactly as the posted table does for a viewer who cannot act.
+  const editButton = (row: OutboxRow) =>
+    row.discordMessageId ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        className="min-h-[44px] min-w-[44px]"
+        onClick={() => openForEdit(row)}
+        disabled={opening !== null}
+      >
+        {opening === row.id ? 'Opening…' : 'Edit'}
+      </Button>
+    ) : null;
+
+  // THE SAME TABLE THE POSTED LIST DRAWS (page.tsx:664). These two are panels of
+  // a single card that a switch moves between, so anything that differs between
+  // them reads as the card breaking rather than as the list changing. The column
+  // classes are copied verbatim from that table on purpose: `MICRO` here is
+  // 10px/0.16em and the posted headers are 9px/0.14em, so reusing `MICRO` for
+  // the `th` would leave the two headers subtly mismatched.
+  return (
+    <ResponsiveTable
+      cards={rows.map((row) => {
+        const badge = stateBadge(row);
+        return (
+          <TableCard
+            key={row.id}
+            title={row.preview}
+            badges={
+              <>
+                <Badge variant={badge.variant}>{badge.label}</Badge>
+                {row.ping && <Badge variant="danger">PINGED</Badge>}
+              </>
+            }
+            fields={[
+              { label: 'Sent', value: <Atomic>{shortTime(row.createdAt)}</Atomic> },
+              ...(row.error ? [{ label: 'Error', wide: true, value: row.error }] : []),
+            ]}
+            actions={editButton(row)}
+          />
+        );
+      })}
+    >
+      <table className="w-full">
+        <thead>
+          <tr>
+            <th className="px-5 pb-2 pt-4 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              Message
+            </th>
+            <th className="px-5 pb-2 pt-4 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              Sent
+            </th>
+            <th className="px-5 pb-2 pt-4 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <span className="sr-only">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const badge = stateBadge(row);
+            return (
+              <tr key={row.id} className="border-t border-[var(--line)] align-top">
+                <td className="px-5 py-4">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant={badge.variant}>{badge.label}</Badge>
+                    {row.ping && <Badge variant="danger">PINGED</Badge>}
+                  </div>
+                  <div className="mt-2 text-[15px] leading-snug text-[var(--text-primary)] break-words">
+                    {row.preview}
+                  </div>
+                  {row.error && (
+                    // Discord's own words. The person who can fix a missing
+                    // permission is the one reading this, and paraphrasing the
+                    // error would take away the only clue they have. NOT set in
+                    // `MICRO` like the posted byline beside it: that utility
+                    // uppercases, and shouting a sentence Discord wrote makes it
+                    // harder to read at the moment it matters most.
+                    <div className="mt-1.5 text-xs text-[var(--red)] break-words">{row.error}</div>
+                  )}
+                </td>
+                <td className="px-5 py-4 text-right">
+                  <span className={`${MICRO} text-[var(--mute)]`}>
+                    <Atomic>{shortTime(row.createdAt)}</Atomic>
+                  </span>
+                </td>
+                <td className="px-5 py-4 text-right">
+                  <div className="flex justify-end [&_button]:min-h-[44px] [&_button]:min-w-[44px]">
+                    {editButton(row)}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </ResponsiveTable>
+  );
+}

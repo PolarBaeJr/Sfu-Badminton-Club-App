@@ -1,0 +1,43 @@
+-- ============================================================
+-- 00090 — a varsity trainer can be composed too
+--
+-- NOTHING IN THE SCHEMA CHANGES, AND THAT IS THE FINDING. The permission
+-- columns were designed level-blind and they are: 00087's five CHECKs — the
+-- role vocabulary (line 79), no NULL elements (93), grants and revokes disjoint
+-- (102), no deltas without a role (112) and the capability vocabulary (138,
+-- re-pinned by 00088 and 00089) — name is_exec and is_trainer nowhere, and
+-- neither does guard_player_privileged_columns(), which refuses a member's own
+-- write to all three columns regardless of what level they hold.
+-- admin_console_access() returns the raw triple and leaves the resolving to the
+-- app. So a trainer with a permission_role has always been a state the database
+-- would accept; the only thing refusing to create one was a guard in
+-- setPlayerPermissions(), which is code.
+--
+-- WHAT IS ACTUALLY WRONG IS A SENTENCE. 00087's comment on permission_role ends
+-- "Ignored for admins (superusers by level) and never set on a trainer." The
+-- first half is still true and load-bearing. The second half is now false, and
+-- a column comment is where somebody reading the live schema — with no access to
+-- this repository — finds out what the column means. Leaving it would tell them
+-- a rule the app no longer enforces.
+--
+-- WHY A NEW FILE FOR A COMMENT, rather than editing 00087. Staging has 00087
+-- recorded as applied, so an in-place edit never re-runs there and the two
+-- databases diverge on what the column claims about itself. Same reason 00087
+-- was not edited into 00086, and 00089 not into 00088.
+--
+-- NOTHING CHANGES FOR ANYONE. Every row still has permission_role IS NULL, so
+-- every exec still resolves to EXEC_BASELINE and every trainer to
+-- TRAINER_BASELINE. This file is safe to apply before or after the code, and
+-- safe never to apply at all — a stale comment misleads a reader; it does not
+-- gate a write.
+-- ============================================================
+
+COMMENT ON COLUMN public.players.permission_role IS
+  'Which set of capabilities this person STARTS from: finance | tournaments | internal | external, or NULL for "not composed". NULL is the deploy-day state of every row and means the level baseline applies — exactly the access this person had before per-user permissions existed. A role REPLACES the baseline rather than adding to it, so assigning one is how somebody is narrowed to their own job — and, on a varsity trainer, how they are given an area their level never reached without being made an executive. Settable on an executive or a varsity trainer; IGNORED for admins, who are superusers by level (permits() short-circuits before any stored set is read), which is why setPlayerPermissions() refuses to store one on an admin rather than storing a value nothing consults. Privileged: guarded by guard_player_privileged_columns and writable only by setPlayerPermissions() in the admin console, which enforces grant closure and is audited.';
+
+-- The comments on permission_grants and permission_revokes are unchanged: both
+-- describe the deltas against the role's defaults and the closure rule that
+-- bounds them, and neither says anything about which level the row belongs to.
+--
+-- No NOTIFY: no column, function or signature changed, so PostgREST's cached
+-- schema is still correct.

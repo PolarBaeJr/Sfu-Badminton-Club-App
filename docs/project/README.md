@@ -1,0 +1,35 @@
+# Club Ladder App: Project Overview
+
+*A living overview of the club's app: what it is, what's built, what's next, and how it's kept safe and running. Written for the executive team — no engineering background needed.*
+
+**Status:** Live to members since **2026-09-13**. General sign-up opens with the semester.
+**Live at:** [example.com](https://example.com), with the admin console at [example.com/admin](https://example.com/admin)
+
+---
+
+## In two sentences
+
+The club App is a members' web app (installable on phones like a real app) that runs the club's **competitive ladder, sessions, tournaments, and fees** in one place. Players challenge each other and climb a live ELO ranking; execs and admins run the club — sessions, tournaments, money, and members — from a private console, while a public site shows off the ladder and the exec team.
+
+---
+
+## The documents
+
+| File | What's inside |
+|------|---------------|
+| **[01-overview.md](01-overview.md)** | What the app is, who it's for, and the three parts of it |
+| **[02-completed.md](02-completed.md)** | Everything built so far — the full feature list, start to now, including the small stuff |
+| **[03-roadmap.md](03-roadmap.md)** | What's coming next — 14 planned features, grouped into delivery waves |
+| **[04-security.md](04-security.md)** | How members' data and the club's money are protected — in plain language |
+| **[06-tech-stack.md](06-tech-stack.md)** | The technologies it's built on (for a technical successor) |
+
+---
+
+## The very short version
+
+- **Built and live:** dual ELO ladder (singles + doubles), seasons with fees, sessions with attendance, full tournament system, challenges/matches, public leaderboard, admin console with role-based access, signed waivers and club policies, email + push notifications, a Discord bot, and a light/dark design.
+- **Planned:** online fee payment, richer competitive formats, permission upgrades, an open data feed for stats/AI, and more (see the roadmap).
+- **Security:** multiple layers: modern login (including passkeys), role-based access, database-level protection, and backups.
+- **Running cost:** near-zero, because it is built on open-source components.
+
+*Last updated: October 2, 2026.*

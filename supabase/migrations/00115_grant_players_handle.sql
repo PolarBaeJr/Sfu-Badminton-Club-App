@@ -1,0 +1,49 @@
+-- ============================================================
+-- 00115_grant_players_handle.sql — restate 00092's column grant, because one
+-- database lost it
+-- ============================================================
+-- This migration adds nothing new. 00092:584 already says:
+--
+--     GRANT SELECT (handle, member_code) ON public.players TO authenticated;
+--
+-- Production has both columns granted. Staging had NEITHER, which is drift,
+-- not design — the same `players` grant drift that was repaired once before at
+-- the table level (arwdm -> UPDATE,DELETE) without anyone checking the column
+-- grants underneath it.
+--
+-- WHY IT WENT UNNOTICED FOR SO LONG. A missing column grant is not a missing
+-- value. PostgREST refuses the ENTIRE request with 403, supabase-js resolves
+-- rather than rejects, and the app's `?? []` renders the refusal as an empty
+-- list. On staging that silently emptied:
+--
+--   app/challenges/page.tsx:54          the challenge list      (handle)
+--   app/challenges/new/…client.tsx:80   the opponent picker     (handle)
+--   app/feed/page.tsx:202               the match river         (handle)
+--   app/settings/page.tsx:139           your own identity       (member_code)
+--   app/my-stats/page.tsx:335           your own member code    (member_code)
+--
+-- The symptom that finally gave it away was a disagreement, not an error:
+-- "OPEN CHALLENGES 1 / 3" printed above a list reading "No challenges yet",
+-- because the count is a HEAD request selecting only `id` — granted, so it
+-- succeeded and told the truth — while the list beside it was refused.
+--
+-- Restated as a single idempotent GRANT so both databases can be brought to
+-- the state 00092 always intended. Running it where 00092 already landed is a
+-- no-op; GRANT does not error on a privilege already held.
+--
+-- ON member_code SPECIFICALLY. Granting it to `authenticated` does mean any
+-- signed-in member can read every member's code, because a column grant is not
+-- row-scoped — rows are decided by players_select, which admits any member to
+-- any approved row. That is 00092's deliberate trade: the member's OWN
+-- Settings and My Stats read the column from the base table, and there is no
+-- way to grant "your own row's member_code" alone. It is a safe trade because
+-- the code authenticates NOTHING: no query anywhere looks a person up by it
+-- (`eq('member_code', …)` appears nowhere in the app), it is assigned once,
+-- non-sequential so it publishes no join order, and deliberately unrelated to
+-- any student number.
+--
+-- Still withheld, and untouched here: `email`, `phone`. Those are what 00032
+-- exists to protect, and nothing below widens the grant beyond the two columns
+-- 00092 named.
+
+GRANT SELECT (handle, member_code) ON public.players TO authenticated;
