@@ -5,8 +5,8 @@ import { createServiceRoleClient } from './supabase-server';
 // switches, club links and officer roles, in plain language.
 //
 // Read with the service-role client because the tables grant nothing to
-// `authenticated`. The page decides who may see them (approved members only)
-// before calling this, so nothing here is reachable by a signed-out visitor.
+// `authenticated`. Posted entries are public: the What's new page shows them to
+// everyone, signed in or not. Drafts are never read here.
 // Never throws: a failed read is an empty list, and the release notes still
 // render.
 

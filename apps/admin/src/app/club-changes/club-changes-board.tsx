@@ -314,7 +314,7 @@ export function ClubChangesBoard({
         <Card>
           <h2 className="mb-1 text-base font-semibold text-[var(--text-primary)]">Post to members</h2>
           <p className="mb-4 text-sm text-[var(--text-muted)]">
-            The ticked lines go on the What&apos;s new page as one entry, which signed-in members can read.
+            The ticked lines go on the What&apos;s new page as one entry, which anyone can read, signed in or not.
           </p>
           <div className="space-y-3">
             <Input

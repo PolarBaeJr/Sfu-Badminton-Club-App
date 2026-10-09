@@ -1,17 +1,13 @@
 import { PageHeader } from '@badminton/ui';
 import { WHATS_NEW, type WhatsNewEntry } from '@/lib/whats-new';
-import { getViewer } from '@/lib/supabase-server';
 import { getClubChangeEntries, type ClubChangeEntry } from '@/lib/club-changes';
 import { buildWhatsNewTimeline } from '@/lib/whats-new-timeline';
 
 // Public page: viewable without an account (see lib/public-paths.ts).
 //
-// The app's release notes are public. The club's own changes (rating
-// settings, account rules and the like, posted from the console's Club changes
-// page, 00286) are for members: they are read and shown only to a signed-in,
-// approved member, using the same "approved" test as the Membership page. A
-// signed-out visitor, a pending account or a suspended one sees the release
-// notes alone, and the page is dynamic so that choice is made per request.
+// The app's release notes and the club's own changes (rating settings, account
+// rules and the like, posted from the console's Club changes page, 00286) are
+// both public. The page is dynamic so a newly posted entry shows at once.
 export const metadata = { title: "What's new" };
 export const dynamic = 'force-dynamic';
 
@@ -83,9 +79,7 @@ function ClubChangeCard({ entry, date }: { entry: ClubChangeEntry; date: string 
 
 export default async function WhatsNewPage() {
   const current = process.env.NEXT_PUBLIC_APP_VERSION;
-  const { player } = await getViewer().catch(() => ({ user: null, player: null }));
-  const approved = player !== null && player.status !== 'pending_approval' && player.status !== 'suspended';
-  const clubChanges = approved ? await getClubChangeEntries() : [];
+  const clubChanges = await getClubChangeEntries();
   const timeline = buildWhatsNewTimeline(WHATS_NEW, clubChanges);
 
   return (
@@ -93,11 +87,7 @@ export default async function WhatsNewPage() {
       <PageHeader
         eyebrow="RELEASE NOTES"
         title="What's new"
-        sub={
-          approved
-            ? 'What changed in each version of the app, and changes to how the club runs.'
-            : 'What changed in each version of the app.'
-        }
+        sub="What changed in each version of the app, and changes to how the club runs."
       />
       <div className="grid" style={{ gap: 12 }}>
         {timeline.map((item) =>
