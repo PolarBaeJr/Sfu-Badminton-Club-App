@@ -8,7 +8,8 @@ import { createHash } from 'node:crypto';
 // route, scope, query parameter or error code is missing from this page.
 //
 // The CSP allows exactly this one stylesheet by hash, so the page must carry
-// no other <style> block and no style="" attribute.
+// no other <style> block and no style="" attribute. The changelog page
+// (changelog-page.ts) shares the stylesheet and the CSP.
 
 const STYLE = `
 :root { color-scheme: light dark; --bg: #ffffff; --fg: #1b1f24; --mute: #57606a; --line: #d0d7de; --code-bg: #f3f5f7; --accent: #b5121b; }
@@ -35,7 +36,10 @@ nav { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem 1rem; 
 nav ol { margin: 0.25rem 0 0; padding-left: 1.25rem; }
 td code { white-space: nowrap; }
 .note { border-left: 3px solid var(--accent); padding: 0.25rem 0 0.25rem 0.9rem; color: var(--mute); }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--mute); font-size: 0.9em; }
 `;
+
+export const PAGE_STYLE = STYLE;
 
 export const DOCS_STYLE_HASH = `sha256-${createHash('sha256').update(STYLE).digest('base64')}`;
 
@@ -82,6 +86,7 @@ export const DOCS_HTML = `<!doctype html>
 <li><a href="#errors">Errors and status codes</a></li>
 <li><a href="#rate-limits">Rate limits</a></li>
 <li><a href="#versioning">Versioning and stability</a></li>
+<li><a href="#changelog">Changelog</a></li>
 <li><a href="#data-handling">Data handling</a></li>
 <li><a href="#contact">Contact</a></li>
 </ol>
@@ -97,10 +102,10 @@ export const DOCS_HTML = `<!doctype html>
 <tr><th>Environment</th><th>Base URL</th></tr>
 <tr><td>Production</td><td><code>${API}</code></td></tr>
 </table>
-<p>All responses except this page are JSON (<code>application/json; charset=utf-8</code>) and are sent with <code>Cache-Control: no-store</code>. Every timestamp is ISO 8601 UTC to the second, for example <code>2026-10-02T18:30:12Z</code>. Dates without a time (<code>start_date</code>, a session's <code>date</code>) are <code>YYYY-MM-DD</code> in the club's local calendar.</p>
+<p>All responses except this page and <code>/changelog</code> are JSON (<code>application/json; charset=utf-8</code>) and are sent with <code>Cache-Control: no-store</code>. Every timestamp is ISO 8601 UTC to the second, for example <code>2026-10-02T18:30:12Z</code>. Dates without a time (<code>start_date</code>, a session's <code>date</code>) are <code>YYYY-MM-DD</code> in the club's local calendar.</p>
 
 <h2 id="authentication">Authentication</h2>
-<p>Every endpoint except <code>/health</code> and this page needs a key, sent in the <code>Authorization</code> header:</p>
+<p>Every endpoint except <code>/health</code>, this page and <code>/changelog</code> needs a key, sent in the <code>Authorization</code> header:</p>
 <pre><code>Authorization: Bearer sfubad_&lt;43 characters&gt;</code></pre>
 <ul>
 <li>A key is <code>sfubad_</code> followed by exactly 43 characters from <code>A-Z a-z 0-9 _ -</code>.</li>
@@ -350,6 +355,9 @@ export const DOCS_HTML = `<!doctype html>
 <h3 id="documentations">GET /documentations</h3>
 <p>This page. No key. Also served at <code>/documentations/</code>.</p>
 
+<h3 id="changelog">GET /changelog</h3>
+<p>What changed in each version of this API. No key. Also served at <code>/changelog/</code>.</p>
+
 <h2 id="fields">Player fields</h2>
 <table>
 <tr><th>Field</th><th>Type</th><th>Meaning</th></tr>
@@ -393,7 +401,7 @@ export const DOCS_HTML = `<!doctype html>
 <tr><td><code>401</code></td><td><code>unauthorized</code></td><td>Key missing, malformed, unknown, expired or revoked. Deliberately identical in all five cases, with a <code>WWW-Authenticate: Bearer</code> header.</td></tr>
 <tr><td><code>403</code></td><td><code>forbidden</code></td><td>Valid key without the scope this endpoint needs.</td></tr>
 <tr><td><code>404</code></td><td><code>not_found</code></td><td>No such route, or a ref or id in the path that is malformed, unknown or not published to you.</td></tr>
-<tr><td><code>405</code></td><td><code>method_not_allowed</code></td><td>A method other than <code>GET</code> on an existing route (other than <code>GET</code> or <code>HEAD</code> on this page). The <code>Allow</code> header lists what is accepted.</td></tr>
+<tr><td><code>405</code></td><td><code>method_not_allowed</code></td><td>A method other than <code>GET</code> on an existing route (other than <code>GET</code> or <code>HEAD</code> on this page and <code>/changelog</code>). The <code>Allow</code> header lists what is accepted.</td></tr>
 <tr><td><code>429</code></td><td><code>rate_limited</code></td><td>A rate limit was hit. The <code>Retry-After</code> header gives whole seconds to wait.</td></tr>
 <tr><td><code>503</code></td><td><code>unavailable</code></td><td>The club's database could not be reached or answered with an error. Retry later with backoff.</td></tr>
 </table>
@@ -403,14 +411,14 @@ export const DOCS_HTML = `<!doctype html>
 <ul>
 <li><strong>Per key: 60 requests per minute.</strong> A token bucket holding 60, refilling at one per second, so a burst of 60 is allowed and then one request per second.</li>
 <li><strong>Per client address: 30 failed key lookups per minute.</strong> Every <code>401</code> spends one, including a missing or malformed header. When the budget is empty, a well-formed key that the server has not checked recently gets <code>429</code> instead of being looked up. A missing or malformed header still gets <code>401</code>, as does a key rejected in the last 5 seconds, and a key verified in the last 30 seconds is not affected by this limit.</li>
-<li><code>/health</code> and this page are not rate-limited by key.</li>
+<li><code>/health</code>, this page and <code>/changelog</code> are not rate-limited by key.</li>
 <li>The limits are enforced per server process, and the club's network edge applies its own limits in front of them. Do not rely on the exact figures; honour <code>Retry-After</code>.</li>
 </ul>
 <p>The data changes slowly. Pull the roster on a schedule measured in hours, and keep match history in sync with <code>updated_since</code> rather than re-reading it.</p>
 <p>Responses may be up to 15 seconds old: the server reuses a recent answer to the same request rather than asking the database again. <code>generated_at</code> is when the response was sent, not when the data was read.</p>
 
 <h2 id="versioning">Versioning and stability</h2>
-<p>The <code>/v1</code> prefix is the contract. Within it, new fields and new routes may be added, and existing fields will not be removed or change meaning. Ignore fields you do not recognise. A breaking change becomes <code>/v2</code>. <code>/health</code> reports the running version.</p>
+<p>The <code>/v1</code> prefix is the contract. Within it, new fields and new routes may be added, and existing fields will not be removed or change meaning. Ignore fields you do not recognise. A breaking change becomes <code>/v2</code>. <code>/health</code> reports the running version. See the <a href="/changelog">changelog</a> for what changed in each version.</p>
 
 <h2 id="data-handling">Data handling</h2>
 <p>This is real data about real people, shared under a named key that identifies who received it.</p>
@@ -423,6 +431,7 @@ export const DOCS_HTML = `<!doctype html>
 
 <h2 id="contact">Contact</h2>
 <p>For a key, a scope change, a leaked key or a question about the data, contact the club exec, for example through the club Discord at <a href="https://discord.sfubadminton.com">discord.sfubadminton.com</a>.</p>
+<footer><a href="/changelog">Changelog</a> · <a href="https://sfubadminton.com/">SFU Badminton Club</a></footer>
 </main>
 </body>
 </html>

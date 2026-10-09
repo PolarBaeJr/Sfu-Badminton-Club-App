@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Badge, Button, Card, Checkbox, EmptyState, Input } from '@badminton/ui';
+import { Badge, Button, Card, Checkbox, DatePicker, EmptyState, Input } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import type { DataApiScope } from '@badminton/shared/src/utils/data-api-key';
 import { mintDataApiKey, revokeDataApiKey, updateDataApiKeyScopes } from '@/lib/actions/data-api-keys';
@@ -108,6 +108,9 @@ export function DataApiKeysCard({
   const [consumerName, setConsumerName] = useState('');
   const [label, setLabel] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  // A key lasts until revoked unless an expiry is asked for, so the date
+  // field only appears once this is unticked.
+  const [neverExpires, setNeverExpires] = useState(true);
   const [scopes, setScopes] = useState<string[]>(['players:read']);
   const [minting, setMinting] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
@@ -146,7 +149,7 @@ export function DataApiKeysCard({
         consumerName,
         label: label.trim() || null,
         scopes,
-        expiresAt: expiresAt.trim() || null,
+        expiresAt: neverExpires ? null : expiresAt.trim() || null,
       });
       if (!result.ok) {
         toast(result.error, 'error');
@@ -157,6 +160,7 @@ export function DataApiKeysCard({
       setConsumerName('');
       setLabel('');
       setExpiresAt('');
+      setNeverExpires(true);
       setScopes(['players:read']);
       toast('Key minted. Copy it now, it is not shown again.', 'success');
     } finally {
@@ -247,12 +251,26 @@ export function DataApiKeysCard({
               onChange={(e) => setLabel(e.target.value)}
               placeholder="Optional, e.g. laptop script"
             />
-            <Input
-              label="Expires"
-              type="date"
-              value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
-            />
+            <div className="flex flex-col gap-2">
+              {!neverExpires && (
+                <DatePicker
+                  label="Expires"
+                  value={expiresAt}
+                  onChange={setExpiresAt}
+                  min={tomorrowIso()}
+                  placeholder="Pick the last day"
+                />
+              )}
+              <Checkbox
+                label="Never expires"
+                showLabel
+                checked={neverExpires}
+                onChange={(checked) => {
+                  setNeverExpires(checked);
+                  if (checked) setExpiresAt('');
+                }}
+              />
+            </div>
           </div>
           <div className="mt-4">
             <ScopePicker selected={scopes} onChange={setScopes} />
@@ -261,7 +279,7 @@ export function DataApiKeysCard({
             <Button
               onClick={handleMint}
               loading={minting}
-              disabled={consumerName.trim() === '' || scopes.length === 0}
+              disabled={consumerName.trim() === '' || scopes.length === 0 || (!neverExpires && expiresAt === '')}
             >
               Mint key
             </Button>
@@ -388,6 +406,16 @@ export function DataApiKeysCard({
       </div>
     </Card>
   );
+}
+
+// The earliest expiry the database accepts: it must fall after the key's
+// creation, so today is already too late.
+function tomorrowIso(): string {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
+  const day = String(tomorrow.getDate()).padStart(2, '0');
+  return `${tomorrow.getFullYear()}-${month}-${day}`;
 }
 
 function isExpired(expiresAt: string | null): boolean {

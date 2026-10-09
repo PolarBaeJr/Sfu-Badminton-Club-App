@@ -2,7 +2,7 @@
 
 **Status: version 0. Implemented in `apps/data-api`: roster, match history,
 head-to-head, per-season records, rating history, seasons and standings,
-tournaments and draws, and the schedule (18 routes, listed under "Endpoints").
+tournaments and draws, and the schedule (19 routes, listed under "Endpoints").
 The reference the service serves at `/documentations` describes what the code
 does, route by route and field by field; see also "Known gaps" in
 [`README.md`](./README.md).**
@@ -79,7 +79,7 @@ lowercase hex characters; that is not a promise.
 
 ## Authentication
 
-Every endpoint except `/health` and `/documentations` requires a key:
+Every endpoint except `/health`, `/documentations` and `/changelog` requires a key:
 
 ```
 Authorization: Bearer <your key>
@@ -129,6 +129,7 @@ value that is malformed is a `404` without a database call.
 |---|---|---|
 | `/health` | none | none |
 | `/documentations` | none | none |
+| `/changelog` | none | none |
 | `/v1/players` | `players:read` | none (query string ignored) |
 | `/v1/players/:ref` | `players:read` | none (query string ignored) |
 | `/v1/players/:ref/matches` | `matches:read` | as `/v1/matches`, minus `player` |
@@ -471,6 +472,7 @@ time the response was sent, not the time the data was read.
 The `/v1` prefix is the contract. Within it, **new fields and routes may be added** and
 existing fields will not be removed or change meaning. Parse defensively and
 ignore fields you do not recognise. A breaking change becomes `/v2`.
+Changes are listed at `/changelog`.
 
 ---
 

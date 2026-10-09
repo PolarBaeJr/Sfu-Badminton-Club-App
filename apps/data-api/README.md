@@ -11,7 +11,8 @@ Consumer-facing documentation is served by the service itself at
 `GET /documentations` (for example `https://api.sfubadminton.com/documentations`):
 one self-contained HTML page, no key, from `src/docs-page.ts`. Tests fail when
 a route, scope, query parameter or error code in `src/server.ts` or
-`src/params.ts` is missing from it or from `API.md`.
+`src/params.ts` is missing from it or from `API.md`. `GET /changelog` is the
+keyless list of what changed in each version, from `src/changelog-page.ts`.
 
 The routes live in one table, `ROUTES` in `src/server.ts`: template, scope,
 accepted parameters, and whether unknown parameters are refused. Parameter

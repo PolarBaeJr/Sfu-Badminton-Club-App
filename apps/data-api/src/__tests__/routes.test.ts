@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CHANGELOG_HTML } from '../changelog-page.js';
 import { DOCS_HTML } from '../docs-page.js';
 import { QUERY_PARAMS } from '../params.js';
 import { DATA_API_SCOPES } from '../scopes.js';
@@ -1159,8 +1160,9 @@ describe('route table drift', () => {
     }
   });
 
-  it('has no em dash in the docs page or API.md', () => {
+  it('has no em dash in the docs page, the changelog or API.md', () => {
     expect(DOCS_HTML).not.toContain('—');
+    expect(CHANGELOG_HTML).not.toContain('\u2014');
     expect(apiMd).not.toContain('—');
   });
 });

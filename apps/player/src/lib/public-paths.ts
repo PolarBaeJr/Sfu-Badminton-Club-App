@@ -14,7 +14,7 @@
  * Two kinds of entry live here and they are worth telling apart:
  *
  *  - PAGES anyone may read (`/`, `/legal`, `/leaderboard`, `/membership`,
- *    `/socials`).
+ *    `/socials`, `/whats-new`).
  *  - ROUTES THAT CARRY THEIR OWN CREDENTIAL — a signed token, a bearer secret,
  *    a passkey challenge. These are not "public" in the sense of unprotected;
  *    they are protected by something the session gate cannot see, and putting
@@ -79,6 +79,8 @@ export function isPublicPath(pathname: string): boolean {
     // join. Exact: the page has no subroutes. The statement a member owes is
     // /fees, which stays gated.
     pathname === '/membership' ||
+    // Release notes, readable before joining. Exact: no subroutes.
+    pathname === '/whats-new' ||
     // The club's social links. Exact, same reason.
     pathname === '/socials' ||
     // A guest with no account signs the waiver here, and the proof link under

@@ -5191,7 +5191,7 @@ export function openSignupModal(): BotResponse {
       custom_id: SIGNUP_DETAILS_MODAL,
       title: 'Join the club',
       components: [
-        input('email', 'Email', true, { min_length: 3, max_length: 254 }, 'We email you a code to finish'),
+        input('email', 'Email', true, { min_length: 3, max_length: 254 }, 'Use your SFU email if you have one. We email you a code.'),
         input('first_name', 'First name', true, { min_length: 1, max_length: 40 }),
         input('last_name', 'Last name', true, { min_length: 1, max_length: 40 }),
         // No min_length on an optional box: the app checks 2 to 40 when it is filled.
