@@ -17,6 +17,7 @@ import {
   FileSignature,
   FileCheck,
   Camera,
+  History,
 } from 'lucide-react';
 import {
   canAccess,
@@ -97,6 +98,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       // Platform configuration, split out of /settings — which stays trainer-level
       // for passkey enrolment and no longer carries any of it.
       { href: '/ratings', label: 'Ratings', icon: Gauge, area: 'ratings' },
+      { href: '/club-changes', label: 'Club changes', icon: History, area: 'changelog' },
       { href: '/accounts', label: 'Accounts', icon: UserCog, area: 'accounts' },
       { href: '/legal', label: 'Legal', icon: Scale, area: 'legal' },
       { href: '/legal/signatures', label: 'Member signatures', icon: FileCheck, area: 'legal' },
@@ -168,7 +170,7 @@ export const NAV_LAYOUT: NavEntry<NavItem>[] = [
     ['/announcements', '/fees', '/legal', '/legal/signatures', '/legal/guests', '/legal/media-consent'],
     [{ parent: '/legal', selfLabel: 'Documents', children: ['/legal/signatures', '/legal/guests', '/legal/media-consent'] }],
   ),
-  group('system', 'System', ['/ratings', '/audit']),
+  group('system', 'System', ['/ratings', '/club-changes', '/audit']),
   { kind: 'link', item: navItem('/settings') },
 ];
 

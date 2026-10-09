@@ -347,10 +347,12 @@ describe('every table in the schema is considered for the member data export', (
     expect(drifted, 'player-referencing column(s) missing from the registry').toEqual([]);
   });
 
-  it('names the five tables that reference a member with no foreign key', () => {
-    // WHY THE PARTITION HAS TO BE TOTAL, in five concrete cases. An FK-only
+  it('names the seven tables that reference a member with no foreign key', () => {
+    // WHY THE PARTITION HAS TO BE TOTAL, in seven concrete cases. An FK-only
     // scan finds none of them and every one holds personal information.
     expect(Object.keys(NON_FK_PLAYER_TABLES).sort()).toEqual([
+      'club_change_drafts',
+      'club_change_entries',
       'console_passkey_grace',
       'discord_role_revocations',
       'email_suppressions',

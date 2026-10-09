@@ -356,6 +356,92 @@ export type Database = {
           },
         ]
       }
+      club_change_drafts: {
+        Row: {
+          changed_at: string
+          created_at: string
+          field: string | null
+          first_actor_id: string | null
+          from_value: Json | null
+          id: string
+          last_actor_id: string | null
+          override_to_value: Json | null
+          revision: number
+          source: string
+          subject: string | null
+          text_override: string | null
+          to_value: Json | null
+        }
+        Insert: {
+          changed_at?: string
+          created_at?: string
+          field?: string | null
+          first_actor_id?: string | null
+          from_value?: Json | null
+          id?: string
+          last_actor_id?: string | null
+          override_to_value?: Json | null
+          revision?: number
+          source: string
+          subject?: string | null
+          text_override?: string | null
+          to_value?: Json | null
+        }
+        Update: {
+          changed_at?: string
+          created_at?: string
+          field?: string | null
+          first_actor_id?: string | null
+          from_value?: Json | null
+          id?: string
+          last_actor_id?: string | null
+          override_to_value?: Json | null
+          revision?: number
+          source?: string
+          subject?: string | null
+          text_override?: string | null
+          to_value?: Json | null
+        }
+        Relationships: []
+      }
+      club_change_entries: {
+        Row: {
+          announcement_id: string | null
+          id: string
+          intro: string | null
+          lines: Json
+          posted_at: string
+          posted_by: string | null
+          title: string | null
+        }
+        Insert: {
+          announcement_id?: string | null
+          id?: string
+          intro?: string | null
+          lines: Json
+          posted_at?: string
+          posted_by?: string | null
+          title?: string | null
+        }
+        Update: {
+          announcement_id?: string | null
+          id?: string
+          intro?: string | null
+          lines?: Json
+          posted_at?: string
+          posted_by?: string | null
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "club_change_entries_announcement_id_fkey"
+            columns: ["announcement_id"]
+            isOneToOne: false
+            referencedRelation: "announcements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       club_fees: {
         Row: {
           amount_cents: number | null
@@ -4714,6 +4800,19 @@ export type Database = {
         Returns: number
       }
       points_cap: { Args: { p_target: number }; Returns: number }
+      post_club_changes: {
+        Args: {
+          p_actor: string
+          p_discard_ids: string[]
+          p_discard_revisions: number[]
+          p_draft_ids: string[]
+          p_intro: string
+          p_lines: string[]
+          p_revisions: number[]
+          p_title: string
+        }
+        Returns: string
+      }
       promote_pool_qualifier: {
         Args: {
           p_admin_id: string

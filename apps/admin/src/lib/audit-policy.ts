@@ -179,6 +179,14 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   'registration_form_bound',
   'registration_form_unbound',
 
+  // CLUB CHANGES (00286). Posting is the club speaking to every member, so the
+  // record of who posted what is classified by hand; post_club_changes writes
+  // it in SQL inside the same transaction. Deleting a pending line matches the
+  // _deleted pattern and would be forced in anyway: it is a change members will
+  // now never be told about.
+  'club_changes_posted',
+  'club_change_draft_deleted',
+
   // CLUB EVENTS (00244). The delete and the removal match the risk patterns and
   // would be forced in anyway. The cancellation matches none, so it is
   // classified by hand, like 'discord_link_forced': a cancellation is what

@@ -633,6 +633,19 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     disposition: 'counted',
     why: 'Permission templates you created or edited, as an officer. Counted rather than listed. The permissions YOUR account holds are in your players row above.',
   },
+  club_change_drafts: {
+    // Bare uuids with no foreign key (00286), so the officer who made a change
+    // can be deleted without losing the line.
+    playerColumns: ['first_actor_id', 'last_actor_id'],
+    disposition: 'counted',
+    why: 'Club change lines waiting to be posted that your edits as an officer started or last changed. Counted rather than listed, for the same reason.',
+  },
+  club_change_entries: {
+    // A bare uuid with no foreign key (00286).
+    playerColumns: ['posted_by'],
+    disposition: 'counted',
+    why: 'Club change entries you posted to members, as an officer. Counted rather than listed: the entries are club-wide.',
+  },
   event_waiver_templates: {
     playerColumns: ['updated_by'],
     disposition: 'counted',
@@ -863,6 +876,10 @@ export const NON_FK_PLAYER_TABLES: Record<string, string> = {
     'A bare `user_id uuid` (the auth user id) with no foreign key (00262), and only for people with console access.',
   tournament_bonus_grants:
     '`subject_id uuid NOT NULL`, "Deliberately not a foreign key" (00188:43-58): a players.id for a rating grant, a tournament_participants.id for a participant credit.',
+  club_change_drafts:
+    'Bare `first_actor_id` and `last_actor_id` uuids with no foreign key (00286): the officer whose edit started or last changed a pending line.',
+  club_change_entries:
+    'A bare `posted_by` uuid with no foreign key (00286): the officer who posted the entry.',
 };
 
 /**

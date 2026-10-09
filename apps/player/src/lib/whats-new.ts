@@ -36,6 +36,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
       'Joining from Discord asks for your SFU email if you have one.',
       'Your challenges can show a predicted chance of winning, when the club turns predictions on.',
       "Signed up through the club's Google Form? Confirm the entry in the app, or say it was not you.",
+      'Signed in, this page also lists changes to how the club runs, such as rating settings and club rules, when the club posts them.',
     ],
     execs: [
       'Fee tools: receipt review, Paste a list, and named payments that follow a member who signs up later.',
@@ -49,6 +50,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
       'The Accounts side menu follows the section you are reading.',
       'Data API keys can carry a predictions write scope.',
       'Bind a Google Form to a tournament or club event: members confirm in the app, and non-members are entered with a named fee and a guest waiver email.',
+      'Club changes: edits to ratings, account rules, member pages, club links and officer roles collect as plain-language lines. Reword them and post one or all to members, optionally as an announcement.',
     ],
   },
   {

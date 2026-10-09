@@ -60,6 +60,13 @@ describe('the console top bar layout', () => {
     expect(visibleFor('admin', UNRESTRICTED)).toEqual(NAV_LAYOUT);
   });
 
+  // Club changes sits beside Ratings, where most of its lines come from.
+  it('puts Club changes between Ratings and the Audit Log in the System menu of an admin', () => {
+    expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({
+      system: ['/ratings', '/club-changes', '/audit'],
+    });
+  });
+
   it('puts club events beside tournaments in the Events menu of an admin', () => {
     expect(shape(visibleFor('admin', UNRESTRICTED))).toContainEqual({ events: ['/tournaments', '/events'] });
   });

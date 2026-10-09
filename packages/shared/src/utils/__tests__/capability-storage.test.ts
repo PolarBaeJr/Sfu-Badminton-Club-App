@@ -60,10 +60,13 @@ describe('the migrations and the vocabulary', () => {
   // socials switch keys, reaching 141, and 00254 adds the guest waivers switch
   // key, reaching 142, and 00256 adds the audit export's `audit.export.read`
   // and `audit.signins.read`, reaching 144, and 00282 adds the predictions
-  // switch key, reaching 145. THE LIVE LIST IS THE LAST ONE, and only the last
-  // one.
-  const vocabularySql = migration('00282_');
-  // 00282 again, under a content name, for the same reason 00247 has one.
+  // switch key, reaching 145, and 00286 adds Club changes' `changelog.page`
+  // and `changelog.post.write`, reaching 147. THE LIVE LIST IS THE LAST ONE,
+  // and only the last one.
+  const vocabularySql = migration('00286_');
+  // 00286 again, under a content name, for the same reason 00247 has one.
+  const clubChangesVocabularySql = migration('00286_');
+  // 00282, under a content name. It was `vocabularySql` until 00286 landed.
   const predictionsVocabularySql = migration('00282_');
   // 00256, under a content name. It was `vocabularySql` until 00282 landed.
   const auditExportVocabularySql = migration('00256_');
@@ -293,11 +296,29 @@ describe('the migrations and the vocabulary', () => {
     expect(before.filter((capability) => !after.has(capability))).toEqual([]);
   });
 
-  // ...nor in 00282, the newest link and the live list.
+  // ...nor in 00282.
   it('removes nothing going from 00256 to 00282, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(auditExportVocabularySql, 'players_permission_vocabulary_check');
     const after = new Set(arrayLiteralAfter(predictionsVocabularySql, 'players_permission_vocabulary_check'));
     expect(before.filter((capability) => !after.has(capability))).toEqual([]);
+  });
+
+  // ...nor in 00286, the newest link and the live list.
+  it('removes nothing going from 00282 to 00286, which is why it needs no rewrite', () => {
+    const before = arrayLiteralAfter(predictionsVocabularySql, 'players_permission_vocabulary_check');
+    const after = new Set(arrayLiteralAfter(clubChangesVocabularySql, 'players_permission_vocabulary_check'));
+    expect(before.filter((capability) => !after.has(capability))).toEqual([]);
+  });
+
+  // THE TWO STRINGS 00286 IS FOR, and nothing else. Both admin-only, in no
+  // baseline, admitted to keep this list the code's list exactly.
+  it('admits exactly changelog.page and changelog.post.write, which is what 00286 is for', () => {
+    const before = new Set(arrayLiteralAfter(predictionsVocabularySql, 'players_permission_vocabulary_check'));
+    const after = arrayLiteralAfter(clubChangesVocabularySql, 'players_permission_vocabulary_check');
+    expect(after.filter((capability) => !before.has(capability))).toEqual([
+      'changelog.page',
+      'changelog.post.write',
+    ]);
   });
 
   // THE ONE KEY 00282 IS FOR, and nothing else.
@@ -418,10 +439,10 @@ describe('the migrations and the vocabulary', () => {
     // vocabulary assertion back to 00093 would check a list that is no longer
     // the live one. The vocabulary pointer moves with every migration that
     // re-adds the CHECK (00097, 00098, 00105, 00223, 00232, 00238, 00243, 00244,
-    // 00247, 00254, 00256, now 00282) while the guard pointer stays where the
-    // function is defined.
+    // 00247, 00254, 00256, 00282, now 00286) while the guard pointer stays
+    // where the function is defined.
     const baselineGuardSql = migration('00093_');
-    const baselineSql = migration('00282_');
+    const baselineSql = migration('00286_');
 
     it('pins the same vocabulary the players columns pin', () => {
       const stored = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');
