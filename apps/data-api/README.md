@@ -49,7 +49,7 @@ key. It calls these functions and nothing else:
 | `data_api_club_events` | 00266 | `/v1/events` |
 | `data_api_write_predictions` | 00282, 00283 | `POST /v1/predictions` |
 | `data_api_delete_predictions` | 00282, 00283 | `DELETE /v1/predictions` |
-| `data_api_import_registration` | 00283, 00284 | `POST /v1/registrations` |
+| `data_api_import_registration` | 00283, 00284, 00287 | `POST /v1/registrations` (00287: the key check, then the shared `registration_import_apply`) |
 
 Every match-reading function goes through ONE internal gate,
 `data_api_match_rows()`, which unions club and tournament matches and keeps a

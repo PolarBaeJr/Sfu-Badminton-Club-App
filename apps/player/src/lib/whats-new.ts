@@ -50,6 +50,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
       'The Accounts side menu follows the section you are reading.',
       'Data API keys can carry a predictions write scope.',
       'Bind a Google Form to a tournament or club event: members confirm in the app, and non-members are entered with a named fee and a guest waiver email.',
+      "The console can read a Google Form itself, with no script on the form: keep the form in the club's forms folder and set its question titles on the Google Form card.",
       'Club changes: edits to ratings, account rules, member pages, club links and officer roles collect as plain-language lines. Reword them and post one or all to members, optionally as an announcement.',
     ],
   },

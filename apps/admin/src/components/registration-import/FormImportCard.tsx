@@ -5,9 +5,11 @@ import { useRouter } from 'next/navigation';
 import { Badge, Button, Checkbox, useConfirm } from '@badminton/ui';
 import {
   bindRegistrationForm,
+  saveRegistrationFormMapping,
   setRegistrationFormActive,
   undoImportedEntry,
 } from '@/lib/actions/registration-imports';
+import { FormReaderPanel, type MappableEvent } from './FormReaderPanel';
 import type { ActionResult } from '@/lib/action-result';
 import type { FormBinding, ImportedEntry, ImportTargetKind } from '@/lib/registration-imports';
 
@@ -16,7 +18,9 @@ import type { FormBinding, ImportedEntry, ImportTargetKind } from '@/lib/registr
 //
 // The form's Apps Script posts each response to the Data API with a key that
 // carries registrations:write. A response lands here only once the form is
-// bound to this target against that key's consumer. Members are never entered
+// bound to this target against that key's consumer. Or (00287) the console
+// reads the form itself through the Google Forms API, once the binding has a
+// question mapping; a form takes one road or the other, never both. Members are never entered
 // by a form: they confirm in the app. Non-members are entered at once in the
 // events open to them, owe a named fee, and are sent the guest waiver once
 // that feature is on.
@@ -104,6 +108,8 @@ export function FormImportCard({
   canBind,
   canUndo,
   migrationMissing,
+  reader,
+  events = [],
 }: {
   targetKind: ImportTargetKind;
   targetId: string;
@@ -116,6 +122,10 @@ export function FormImportCard({
   /** Any remove capability for this target's entries; the server asks per entry. */
   canUndo: boolean;
   migrationMissing: string;
+  /** The console's Google Forms reader: never the key, at most the account's email. */
+  reader: { state: 'not_configured' } | { state: 'invalid' } | { state: 'ready'; clientEmail: string };
+  /** A tournament's events, for the question mapping. */
+  events?: MappableEvent[];
 }) {
   const router = useRouter();
   const confirm = useConfirm();
@@ -141,9 +151,24 @@ export function FormImportCard({
   }
 
   const live = entries.filter((e) => e.status !== 'superseded');
+  const readerShown = bindings.some((b) => b.reader !== null);
 
   return (
     <div className="space-y-4">
+      {readerShown && (
+        <p className="text-xs text-[var(--text-muted)]">
+          {reader.state === 'ready' ? (
+            <>
+              The console can read a form itself when the form is in the club&apos;s forms folder, shared with{' '}
+              <code className="break-all">{reader.clientEmail}</code>.
+            </>
+          ) : reader.state === 'invalid' ? (
+            "Reading forms with Google is not working: the console's service account key could not be read."
+          ) : (
+            'Reading forms with Google is not set up for this console, so forms are posted by their Apps Script.'
+          )}
+        </p>
+      )}
       {bindings.length === 0 ? (
         <p className="text-sm text-[var(--text-muted)]">
           No Google Form is linked yet. Paste the form&apos;s id and pick the Data API key its script sends with.
@@ -167,6 +192,17 @@ export function FormImportCard({
                 >
                   {b.active ? 'Switch off' : 'Switch on'}
                 </Button>
+              )}
+              {b.reader && (reader.state !== 'not_configured' || b.reader.mapping) && (
+                <FormReaderPanel
+                  binding={b}
+                  targetKind={targetKind}
+                  targetId={targetId}
+                  events={events}
+                  canEdit={canBind}
+                  pending={pending}
+                  onSave={(mapping, after) => run(() => saveRegistrationFormMapping(b.id, mapping), after)}
+                />
               )}
             </li>
           ))}

@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import type { createAdminClient } from './supabase-server';
+import { formMappingSchema, type FormMapping } from './registration-form-mapping';
 
 // GOOGLE FORM REGISTRATIONS (00283, 00284): what the console shows about them.
 //
@@ -24,6 +25,20 @@ export interface FormBinding {
   joinWaitlist: boolean;
   soloDoublesAck: boolean;
   createdAt: string;
+  /**
+   * Reading the form through the Google Forms API (00287). Null before that
+   * migration. `mapping` null: the console does not read this form and its
+   * Apps Script may post it.
+   */
+  reader: {
+    mapping: FormMapping | null;
+    /** A stored mapping that no longer parses; the card asks for a fresh save. */
+    mappingInvalid: boolean;
+    readAt: string | null;
+    attemptedAt: string | null;
+    importedCount: number;
+    error: string | null;
+  } | null;
 }
 
 export interface ImportedEntry {
@@ -54,6 +69,20 @@ export interface RegistrationImportView {
 }
 
 const MISSING = 'PGRST205';
+const UNDEFINED_COLUMN = '42703';
+
+function readerOf(row: Record<string, unknown>): FormBinding['reader'] {
+  const stored = row.read_mapping;
+  const parsed = stored == null ? null : formMappingSchema.safeParse(stored);
+  return {
+    mapping: parsed?.success ? parsed.data : null,
+    mappingInvalid: !!parsed && !parsed.success,
+    readAt: (row.poll_read_at as string | null) ?? null,
+    attemptedAt: (row.poll_attempted_at as string | null) ?? null,
+    importedCount: (row.poll_imported_count as number | null) ?? 0,
+    error: (row.poll_error as string | null) ?? null,
+  };
+}
 
 /** Every row this page needs, or bindings null before the migration. */
 export async function loadRegistrationImports(
@@ -63,15 +92,18 @@ export async function loadRegistrationImports(
   opts: { guestWaiversOn: boolean },
 ): Promise<RegistrationImportView> {
   const column = kind === 'tournament' ? 'tournament_id' : 'club_event_id';
-  const [bindingsRes, consumersRes] = await Promise.all([
-    admin
-      .from('registration_import_forms')
-      .select('id, form_id, consumer_id, active, join_waitlist, solo_doubles_ack, created_at')
-      .eq(column, targetId)
-      .order('created_at'),
+  const baseColumns = 'id, form_id, consumer_id, active, join_waitlist, solo_doubles_ack, created_at';
+  const readerColumns = 'read_mapping, poll_read_at, poll_attempted_at, poll_imported_count, poll_error';
+  const readBindings = (columns: string) =>
+    admin.from('registration_import_forms').select(columns).eq(column, targetId).order('created_at');
+  const [firstBindingsRes, consumersRes] = await Promise.all([
+    readBindings(`${baseColumns}, ${readerColumns}`),
     // Never `*`: 00241 grants the service role named columns only.
     admin.from('data_api_consumers').select('id, name').order('name'),
   ]);
+  // Before 00287 the reader's columns do not exist: read without them.
+  const readerMissing = firstBindingsRes.error?.code === UNDEFINED_COLUMN;
+  const bindingsRes = readerMissing ? await readBindings(baseColumns) : firstBindingsRes;
   if (bindingsRes.error) {
     if (bindingsRes.error.code === MISSING) return { bindings: null, consumers: [], entries: [] };
     throw new Error(`Could not read the form bindings: ${bindingsRes.error.message}`);
@@ -80,7 +112,8 @@ export async function loadRegistrationImports(
   const consumers = (consumersRes.data ?? []) as { id: string; name: string }[];
   const consumerName = (id: string) => consumers.find((c) => c.id === id)?.name ?? 'Unknown consumer';
 
-  const bindings: FormBinding[] = (bindingsRes.data ?? []).map((b) => ({
+  const bindingRows = (bindingsRes.data ?? []) as unknown as Record<string, unknown>[];
+  const bindings: FormBinding[] = bindingRows.map((b) => ({
     id: b.id as string,
     formId: b.form_id as string,
     consumerId: b.consumer_id as string,
@@ -89,6 +122,7 @@ export async function loadRegistrationImports(
     joinWaitlist: b.join_waitlist as boolean,
     soloDoublesAck: b.solo_doubles_ack as boolean,
     createdAt: b.created_at as string,
+    reader: readerMissing ? null : readerOf(b),
   }));
   if (bindings.length === 0) return { bindings, consumers, entries: [] };
 

@@ -7,6 +7,7 @@ import { createAdminClient } from '../supabase-server';
 import { requireCapability } from './_shared';
 import { logAdminAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
+import { formMappingSchema } from '../registration-form-mapping';
 
 // GOOGLE FORM REGISTRATIONS (00283, 00284): the console's writes.
 //
@@ -139,7 +140,13 @@ async function setActiveImpl(bindingId: string, active: boolean): Promise<void> 
     .from('registration_import_forms')
     .update({ active: on, updated_at: new Date().toISOString() })
     .eq('id', id);
-  if (updateError) throw new Error(`The binding was not changed: ${updateError.message}`);
+  if (updateError) {
+    // 00287: one form is read by the console under one active binding.
+    if (updateError.code === '23505') {
+      throw new ExpectedError('Another link of this form is already read by the console. Switch that one off first.');
+    }
+    throw new Error(`The binding was not changed: ${updateError.message}`);
+  }
 
   const entry = {
     actor_id: actor.id as string,
@@ -162,6 +169,89 @@ async function setActiveImpl(bindingId: string, active: boolean): Promise<void> 
     });
   }
   if (targetId) revalidateTarget(kind, targetId);
+}
+
+// ---- READING THE FORM WITH GOOGLE (00287) ----------------------------------
+// The question mapping turns the console's reader on for a binding (null turns
+// it off, and the form's Apps Script may post it again). The target is the one
+// the binding row records, never one the client names, and every event id in
+// the mapping must be an event of that tournament (or the club event itself).
+// Saving resets the watermark, so the next read goes over every response
+// again: unchanged ones replay, ones the old mapping got wrong are edits.
+
+export async function saveRegistrationFormMapping(bindingId: string, mapping: unknown): Promise<ActionResult> {
+  return runAction(() => saveMappingImpl(bindingId, mapping));
+}
+
+async function saveMappingImpl(bindingId: string, mapping: unknown): Promise<void> {
+  const id = parseOrThrow(uuid, bindingId);
+  const parsed = mapping === null ? null : parseOrThrow(formMappingSchema, mapping);
+  const admin = createAdminClient();
+  const { data: binding, error } = await admin
+    .from('registration_import_forms')
+    .select('id, target_kind, tournament_id, club_event_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read the binding: ${error.message}`);
+  if (!binding) throw new ExpectedError('That form binding no longer exists.');
+  const kind = binding.target_kind as 'tournament' | 'club_event';
+  const targetId = (kind === 'tournament' ? binding.tournament_id : binding.club_event_id) as string | null;
+  const actor = await requireCapability(updateCapabilityFor(kind));
+  if (!targetId) throw new ExpectedError('That form binding has no tournament or event any more.');
+
+  if (parsed) {
+    const named = [...Object.values(parsed.EVENTS), ...(parsed.DEFAULT_EVENT_ID ? [parsed.DEFAULT_EVENT_ID] : [])];
+    if (kind === 'tournament') {
+      const unique = [...new Set(named)];
+      if (unique.length > 0) {
+        const { data: events, error: eventsError } = await admin
+          .from('tournament_events')
+          .select('id')
+          .eq('tournament_id', targetId)
+          .in('id', unique);
+        if (eventsError) throw new Error(`Could not read the events: ${eventsError.message}`);
+        if ((events ?? []).length !== unique.length) {
+          throw new ExpectedError('The mapping names an event that is not in this tournament.');
+        }
+      }
+    } else if (named.some((eventId) => eventId !== targetId)) {
+      throw new ExpectedError('A club event form can only name this event.');
+    }
+    for (const choice of Object.keys(parsed.PARTNERS)) {
+      if (!Object.prototype.hasOwnProperty.call(parsed.EVENTS, choice)) {
+        throw new ExpectedError('Partner questions are set for a choice that names no event.');
+      }
+    }
+  }
+
+  const { error: updateError } = await admin
+    .from('registration_import_forms')
+    .update({
+      read_mapping: parsed,
+      poll_watermark: null,
+      poll_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+  if (updateError) {
+    if (updateError.code === '23505') {
+      throw new ExpectedError('Another link of this form is already read by the console. Switch that one off first.');
+    }
+    throw new Error(`The mapping was not saved: ${updateError.message}`);
+  }
+
+  // Question titles and event ids only: no answer is in the mapping.
+  await logAdminAudit(admin, {
+    actor_id: actor.id as string,
+    action_type: 'registration_form_bound',
+    target_type: 'registration_import_form',
+    target_id: id,
+    new_value: { target_kind: kind, target_id: targetId, read_by_console: parsed !== null, read_mapping: parsed },
+    reason: parsed
+      ? 'A Google Form is read by the console with this question mapping'
+      : 'A Google Form is no longer read by the console',
+  });
+  revalidateTarget(kind, targetId);
 }
 
 const UNDO_REFUSALS: Record<string, string> = {

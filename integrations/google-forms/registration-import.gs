@@ -41,6 +41,20 @@
  *
  *   Logs carry the response id and the status code only, never a name or an
  *   email.
+ *
+ * NO SCRIPT AT ALL
+ *   The console can instead read the form itself through the Google Forms
+ *   API, when it has a service account and the form sits in the folder shared
+ *   with that account: "Read this form with Google" on the form's binding,
+ *   with the same question titles as CONFIG below. A form is read one way or
+ *   the other: while the console reads it, this script's posts for it answer
+ *   404 (settled, not retried), so a response is never imported twice at the
+ *   same time. Both build the same request from the same answers. Whether
+ *   Google gives a response the same id here as through the Forms API is not
+ *   confirmed, so moving a form between the script and the console during
+ *   registration may import its earlier responses again as new ones; avoid
+ *   it, or check the form's imported entries afterwards. For a club event
+ *   form, set DEFAULT_EVENT_ID to the event's id (as the console does).
  */
 
 var CONFIG = {

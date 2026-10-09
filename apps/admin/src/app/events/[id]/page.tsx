@@ -14,6 +14,7 @@ import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/p
 import { ClubEventControls, ClubEventForm, type ClubEventFormValues } from '../event-form';
 import { ClubEventSignupsTable, type ClubEventSignupRow } from '../signups-table';
 import { loadRegistrationImports } from '@/lib/registration-imports';
+import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
 
 type EventRow = {
@@ -189,6 +190,7 @@ export default async function ClubEventPage({ params }: { params: Promise<{ id: 
               canBind={canEdit}
               canUndo={canRemoveSignup}
               migrationMissing="Form registrations need migration 00283."
+              reader={readerStatus()}
             />
           </Card>
         )}

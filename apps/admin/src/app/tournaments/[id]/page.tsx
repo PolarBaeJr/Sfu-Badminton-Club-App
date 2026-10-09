@@ -2,8 +2,8 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
-import { formatDate, eventStatusLabel, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, describeStagedFormat, parseFormatConfig, loadTournamentEntryCounts, selectInChunks, readFeatureFlags } from '@badminton/shared';
-import type { TournamentEventFormat } from '@badminton/shared';
+import { formatDate, eventStatusLabel, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, describeStagedFormat, parseFormatConfig, loadTournamentEntryCounts, selectInChunks, readFeatureFlags, isDoublesEvent } from '@badminton/shared';
+import type { TournamentEventFormat, TournamentEventType } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign, MapPin } from 'lucide-react';
 import Link from 'next/link';
@@ -13,6 +13,7 @@ import { LiveTournament } from '../live-tournament';
 import { CourtsEditor } from './courts-editor';
 import { COURTS_MIGRATION_MISSING, readTournamentCourts, readUsedCourtLabels } from '@/lib/tournament-courts';
 import { loadRegistrationImports } from '@/lib/registration-imports';
+import { readerStatus } from '@/lib/google-forms';
 import { FormImportCard } from '@/components/registration-import/FormImportCard';
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -316,6 +317,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           canBind={canEditCourts}
           canUndo={canUndoImports}
           migrationMissing="Form registrations need migration 00283."
+          reader={readerStatus()}
+          events={(events ?? []).map((ev) => ({
+            id: ev.id as string,
+            label: `${TOURNAMENT_EVENT_TYPE_LABELS[ev.event_type as keyof typeof TOURNAMENT_EVENT_TYPE_LABELS] ?? ev.event_type}${ev.external_event ? ' (external)' : ''}`,
+            doubles: isDoublesEvent(ev.event_type as TournamentEventType),
+          }))}
         />
       </div>
       )}

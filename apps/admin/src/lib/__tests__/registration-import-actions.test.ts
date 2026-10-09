@@ -24,6 +24,8 @@ vi.mock('../audit', () => ({
 }));
 
 let rows: Record<string, Record<string, unknown> | null>;
+/** What an awaited list read of a table returns (default: one row). */
+let lists: Record<string, Record<string, unknown>[]> = {};
 const rpcs: { fn: string; args: unknown }[] = [];
 const updates: { table: string; values: unknown }[] = [];
 let reads = 0;
@@ -36,6 +38,7 @@ vi.mock('../supabase-server', () => ({
       Object.assign(chain, {
         select: () => chain,
         eq: () => chain,
+        in: () => chain,
         is: () => chain,
         insert: (values: unknown) => {
           updates.push({ table, values });
@@ -51,7 +54,8 @@ vi.mock('../supabase-server', () => ({
           reads += 1;
           return { data: mode === 'update' ? { id: 'new-id' } : (rows[table] ?? null), error: null };
         },
-        then: (resolve: (value: unknown) => void) => resolve({ data: [{ id: 'row' }], error: null }),
+        then: (resolve: (value: unknown) => void) =>
+          resolve({ data: mode === 'select' && lists[table] ? lists[table] : [{ id: 'row' }], error: null }),
       });
       return chain;
     },
@@ -76,6 +80,7 @@ beforeEach(() => {
   updates.length = 0;
   reads = 0;
   rows = {};
+  lists = {};
 });
 
 describe('form registration actions', () => {
@@ -144,5 +149,61 @@ describe('form registration actions', () => {
     expect((await actions.markNonMemberFeePaid(ENTRY, 'waived')).ok).toBe(false);
     expect((await actions.markNonMemberFeePaid(ENTRY, 'cash')).ok).toBe(true);
     expect(audits.map((a) => a.action_type)).toEqual(['tournament_fee_marked_paid']);
+  });
+});
+
+describe('reading a form with Google (00287)', () => {
+  const BINDING = '55555555-5555-4555-8555-555555555555';
+  const mapping = {
+    EMAIL_QUESTION: 'Email address',
+    NAME_QUESTION: 'Full name',
+    EVENT_QUESTION: 'Events',
+    EVENTS: { Singles: EVENT },
+    DEFAULT_EVENT_ID: '',
+    PARTNERS: {},
+  };
+
+  it('refuses a malformed id or mapping before asking for a capability', async () => {
+    expect((await actions.saveRegistrationFormMapping('nope', mapping)).ok).toBe(false);
+    expect((await actions.saveRegistrationFormMapping(BINDING, { ...mapping, EXTRA: 'x' })).ok).toBe(false);
+    expect((await actions.saveRegistrationFormMapping(BINDING, { ...mapping, EVENTS: { Singles: 'x' } })).ok).toBe(false);
+    expect(capabilities).toEqual([]);
+    expect(updates).toEqual([]);
+  });
+
+  it('takes the target from the stored binding and resets the watermark', async () => {
+    rows = { registration_import_forms: { id: BINDING, target_kind: 'tournament', tournament_id: TOURNAMENT, club_event_id: null } };
+    lists = { tournament_events: [{ id: EVENT }] };
+    const result = await actions.saveRegistrationFormMapping(BINDING, mapping);
+    expect(result.ok).toBe(true);
+    expect(capabilities).toEqual(['tournaments.manage.update.write']);
+    expect(updates).toEqual([
+      {
+        table: 'registration_import_forms',
+        values: expect.objectContaining({ read_mapping: mapping, poll_watermark: null, poll_error: null }),
+      },
+    ]);
+    expect(audits.map((a) => a.action_type)).toEqual(['registration_form_bound']);
+  });
+
+  it('refuses an event that is not in the binding\'s tournament', async () => {
+    rows = { registration_import_forms: { id: BINDING, target_kind: 'tournament', tournament_id: TOURNAMENT, club_event_id: null } };
+    lists = { tournament_events: [] };
+    expect((await actions.saveRegistrationFormMapping(BINDING, mapping)).ok).toBe(false);
+    expect(updates).toEqual([]);
+  });
+
+  it('lets a club event form name only that event', async () => {
+    rows = { registration_import_forms: { id: BINDING, target_kind: 'club_event', tournament_id: null, club_event_id: EVENT } };
+    const club = { ...mapping, EVENT_QUESTION: '', EVENTS: {}, DEFAULT_EVENT_ID: TOURNAMENT };
+    expect((await actions.saveRegistrationFormMapping(BINDING, club)).ok).toBe(false);
+    expect((await actions.saveRegistrationFormMapping(BINDING, { ...club, DEFAULT_EVENT_ID: EVENT })).ok).toBe(true);
+    expect(capabilities).toEqual(['events.manage.update.write', 'events.manage.update.write']);
+  });
+
+  it('stops reading with null', async () => {
+    rows = { registration_import_forms: { id: BINDING, target_kind: 'tournament', tournament_id: TOURNAMENT, club_event_id: null } };
+    expect((await actions.saveRegistrationFormMapping(BINDING, null)).ok).toBe(true);
+    expect(updates[0]!.values).toMatchObject({ read_mapping: null });
   });
 });
