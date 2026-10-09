@@ -52,6 +52,10 @@ supabase/One Time Scripts/README.md
 supabase/One Time Scripts/00094-fee-ledger-data-migration.sql
 supabase/One Time Scripts/cleanup-orphan-challenges.sql
 
+# Integrations. No secrets: the Google Form script reads its URL and key from
+# Script Properties, and its examples are neutral.
+integrations/google-forms/**
+
 # Tooling
 scripts/README.md
 scripts/gen-db-types.mjs

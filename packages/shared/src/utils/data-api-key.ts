@@ -21,7 +21,7 @@ export function hashDataApiKey(key: string): string {
 
 /**
  * Every scope a key can carry. The SQL CHECK data_api_keys_scope_vocabulary
- * (00282) admits exactly these, the console offers exactly these, and
+ * (00283) admits exactly these, the console offers exactly these, and
  * apps/data-api keeps a copy in src/scopes.ts that its tests assert against
  * this list.
  */
@@ -33,6 +33,7 @@ export const DATA_API_SCOPES = [
   'tournaments:read',
   'schedule:read',
   'predictions:write',
+  'registrations:write',
 ] as const;
 
 export type DataApiScope = (typeof DATA_API_SCOPES)[number];

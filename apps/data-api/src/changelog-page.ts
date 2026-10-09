@@ -8,6 +8,16 @@ import { PAGE_STYLE } from './docs-page.js';
 
 const VERSIONS: { version: string; date: string; title: string; items: string[] }[] = [
   {
+    version: '0.3.0',
+    date: '2026-10-09',
+    title: 'Registrations',
+    items: [
+      'A second write: <code>POST /v1/registrations</code> delivers one response from a Google Form an exec has bound to a tournament or a club event. It needs the new <code>registrations:write</code> scope, meant for the club\'s own form script; no existing key carries it.',
+      'Each entry is answered <code>entered</code>, <code>pending</code> or <code>refused</code>, and a refusal names only something about the event. A member is never entered by a form: they confirm the entry in the club app.',
+      'The same response sent again answers from the record with <code>replayed: true</code>; an edited response replaces the earlier one. A form with no active binding for the key is a <code>404</code>.',
+    ],
+  },
+  {
     version: '0.2.0',
     date: '2026-10-09',
     title: 'Predictions',

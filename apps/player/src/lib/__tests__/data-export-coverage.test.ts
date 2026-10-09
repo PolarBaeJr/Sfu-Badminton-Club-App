@@ -703,6 +703,50 @@ const FIXTURES: Record<string, StubRow[]> = {
       ready_player_ids: [PLAYER_ID, SENTINEL],
     },
   ],
+  registration_imports: [
+    {
+      id: 'ri-1',
+      binding_id: 'rif-1',
+      key_id: SENTINEL,
+      response_id: 'resp-1',
+      submitted_at: '2026-10-01T18:00:00Z',
+      payload_hash: 'abc',
+      result: [{ item: 1, status: 'pending' }],
+      submitter_player_id: PLAYER_ID,
+      submitter_name: null,
+      submitter_email: null,
+      superseded_by: null,
+      created_at: '2026-10-01T18:00:01Z',
+      updated_at: '2026-10-01T18:00:01Z',
+    },
+  ],
+  registration_import_entries: [
+    {
+      id: 'rie-1',
+      import_id: 'ri-1',
+      item: 1,
+      tournament_event_id: 'ev-1',
+      club_event_id: null,
+      entrant_id: PLAYER_ID,
+      requested_partner_id: SENTINEL,
+      partner_email: PAYLOAD_EMAIL,
+      partner_name: 'Typed Partner',
+      status: 'undone',
+      undone_by: SENTINEL,
+      undone_at: '2026-10-02T18:00:00Z',
+    },
+    {
+      id: 'rie-2',
+      import_id: 'ri-other',
+      item: 1,
+      tournament_event_id: 'ev-1',
+      club_event_id: null,
+      entrant_id: SENTINEL,
+      requested_partner_id: PLAYER_ID,
+      status: 'awaiting_partner',
+      undone_by: null,
+    },
+  ],
   tournament_event_waitlist: [
     {
       id: 'wl-1',
@@ -1035,6 +1079,26 @@ describe('no third party survives into the file', () => {
     expect(rows[0]).not.toHaveProperty('resolved_by');
     expect(rows[0]).toHaveProperty('resolved_by_role');
     expect(rows[0]!.status).toBe('removed');
+  });
+
+  it('exports form entries without the other member or anything typed about a partner', async () => {
+    const result = await assembleMemberExport(stubClient(), PLAYER_ID);
+    if (!result.ok) throw new Error(result.failures.join('; '));
+    const rows = result.document.data.registration_import_entries as Array<Record<string, unknown>>;
+    expect(rows.map((r) => [r.id, r.you_are])).toEqual([
+      ['rie-1', 'the entrant'],
+      ['rie-2', 'the named partner'],
+    ]);
+    for (const row of rows) {
+      for (const column of ['entrant_id', 'requested_partner_id', 'undone_by', 'partner_email', 'partner_name']) {
+        expect(row, column).not.toHaveProperty(column);
+      }
+    }
+    expect(rows[0]!.undone_by_role).toBeTruthy();
+    expect(rows[1]).not.toHaveProperty('import_id');
+    const imports = result.document.data.registration_imports as Array<Record<string, unknown>>;
+    expect(imports).toHaveLength(1);
+    expect(imports[0]).not.toHaveProperty('key_id');
   });
 
   it('exports predictions with the member\'s side first and the model withheld', async () => {

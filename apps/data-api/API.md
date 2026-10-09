@@ -93,8 +93,8 @@ it, it gets revoked and you get a new one.
 ### Scopes
 
 A key carries only the scopes it was granted. A key is not allowed everything by
-default; it is allowed nothing by default. One key may carry all seven. The
-console's "All read scopes" button ticks the six `:read` scopes and never the
+default; it is allowed nothing by default. One key may carry all eight. The
+console's "All read scopes" button ticks the six `:read` scopes and never a
 write one. An exec can change the scopes of a live key without reissuing it.
 
 | Scope | Grants |
@@ -105,7 +105,8 @@ write one. An exec can change the scopes of a live key without reissuing it.
 | `seasons:read` | seasons, season totals, season standings |
 | `tournaments:read` | tournaments, events, entrants, draws |
 | `schedule:read` | club sessions and club events, counts only |
-| `predictions:write` | posting and deleting head-to-head win predictions (the only scope that writes; no existing key carries it unless an exec adds it) |
+| `predictions:write` | posting and deleting head-to-head win predictions (a write; no existing key carries it unless an exec adds it) |
+| `registrations:write` | delivering responses from the club's own Google Forms (a write, meant for the club's form script, not for outside consumers) |
 
 A correction to earlier versions of this file: `ratings:history:read` was
 described as "accepted and empty" because nothing journals a rating change. That
@@ -150,6 +151,7 @@ value that is malformed is a `404` without a database call.
 | `/v1/sessions` | `schedule:read` | `from`, `to` |
 | `/v1/events` | `schedule:read` | `from`, `to` |
 | `/v1/predictions` | `predictions:write` | none; a JSON body (see "Predictions") |
+| `/v1/registrations` | `registrations:write` | none; a JSON body (see "Registrations") |
 
 The response shape of every route, with examples, is on the served
 `/documentations` page. The rules that matter for modelling are below.
@@ -496,15 +498,61 @@ predictions are ever deleted.
 
 ---
 
+## Registrations
+
+`POST /v1/registrations` is how the club's own Google Forms enter people into a
+tournament or a club event. An exec binds a form to one target in the admin
+console, against the key its Apps Script sends; the script is in
+`integrations/google-forms/`. A response for a form with no active binding for
+the key is a `404`.
+
+The body is one form response:
+
+```json
+{ "form_id": "<form id>", "response_id": "<response id>",
+  "submitted_at": "2026-10-08T18:00:00Z",
+  "email": "<submitter email>", "name": "<submitter name>",
+  "entries": [ { "event_id": "<event uuid>", "partner_email": "<email>",
+                 "partner_name": "<name>", "category": "<category>" } ] }
+```
+
+`submitted_at`, `partner_email`, `partner_name` and `category` are optional; up
+to 20 `entries`; a club event form sends none. The answer is per entry:
+
+```json
+{ "replayed": false, "entered": 1, "pending": 1, "refused": 0,
+  "results": [ { "index": 1, "event_id": "<uuid>", "status": "entered", "reason": null } ] }
+```
+
+- `entered`: a non-member, or a team of two non-members, is in the event and
+  owes its fee as a named entry. They are sent the guest waiver once the club
+  turns that feature on.
+- `pending`: something must happen first. A member is never entered by a form:
+  they confirm the entry in the club app, where the usual rules and fees apply.
+  A doubles entry waits for the partner's own response, and anything odd waits
+  for an exec.
+- `refused`: `reason` is about the event only (`event_full`, `waitlist_queue`,
+  `registration_closed`, `registration_not_open`, `registration_window_closed`,
+  `event_not_in_target`, `duplicate_in_submission`). Nothing in an answer says
+  whether an email belongs to a member.
+
+Sending the same response again answers from the record with `replayed: true`.
+An edited response, or a new one from the same person, replaces the earlier
+one: entries it no longer names are withdrawn if nobody has paid or been drawn,
+and otherwise left for an exec. The service never logs the body, and the club's
+record of an import names no email.
+
+---
+
 ## Errors
 
 | Status | Meaning |
 |---|---|
-| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it. On `/v1/predictions`, a body that is not JSON or not the documented shape; `field` names it |
-| `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. A write is also refused this way when the key was revoked or lost `predictions:write` in the last 30 seconds. |
+| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it. On `/v1/predictions` and `/v1/registrations`, a body that is not JSON or not the documented shape; `field` names it |
+| `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. A write is also refused this way when the key was revoked or lost its write scope in the last 30 seconds. |
 | `403` | valid key, but it lacks the scope for this endpoint |
-| `404` | no such route, or a ref or id in the path that is malformed, unknown or not published |
-| `405` | a method the route does not answer (`GET` on read routes, `POST` and `DELETE` on `/v1/predictions`, `GET` and `HEAD` on `/documentations` and `/changelog`); `Allow` lists them |
+| `404` | no such route, or a ref or id in the path that is malformed, unknown or not published; on `/v1/registrations`, a form with no active binding |
+| `405` | a method the route does not answer (`GET` on read routes, `POST` and `DELETE` on `/v1/predictions`, `POST` on `/v1/registrations`, `GET` and `HEAD` on `/documentations` and `/changelog`); `Allow` lists them |
 | `413` | a write body over 64 KiB |
 | `415` | a write body not sent as `application/json` |
 | `422` | a write where at least one item was refused (the results body, not an error object) |

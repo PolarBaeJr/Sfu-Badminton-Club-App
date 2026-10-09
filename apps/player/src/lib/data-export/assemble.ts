@@ -917,6 +917,51 @@ export async function assembleMemberExport(
     }
   }
 
+  // Google Form registrations (00283). The member's own responses, then the
+  // entries they asked for and the entries another member's form named them as
+  // a partner in. Columns are named rather than starred, so a typed partner
+  // name or email can never ride along.
+  data.registration_imports = (
+    await reader.all(
+      'registration_imports',
+      (q) => q.eq('submitter_player_id', playerId),
+      'id, binding_id, response_id, submitted_at, result, superseded_by, created_at, updated_at',
+    )
+  ).map((row) =>
+    dropColumns(row, ['submitter_player_id', 'key_id', 'payload_hash', 'submitter_name', 'submitter_email']),
+  );
+  const entryColumns =
+    'id, import_id, item, tournament_event_id, club_event_id, category, wants_waitlist, status, reason, confirmed_at, confirm_email_sent_at, undone_at, undone_by, created_at, updated_at';
+  const ownEntries = await reader.all(
+    'registration_import_entries',
+    (q) => q.eq('entrant_id', playerId),
+    entryColumns,
+  );
+  const namedAsPartner = await reader.all(
+    'registration_import_entries',
+    (q) => q.eq('requested_partner_id', playerId),
+    entryColumns,
+  );
+  const entriesAboutMember: Row[] = [
+    ...ownEntries.map((row) => ({ ...row, you_are: 'the entrant' })),
+    ...namedAsPartner
+      .filter((row) => !ownEntries.some((own) => own.id === row.id))
+      .map((row) => ({ ...dropColumns(row, ['import_id']), you_are: 'the named partner' })),
+  ];
+  data.registration_import_entries = entriesAboutMember.map((row) => ({
+    ...dropColumns(row, [
+      'entrant_id',
+      'requested_partner_id',
+      'undone_by',
+      'external_name',
+      'external_email',
+      'partner_name',
+      'partner_email',
+      'confirm_email_error',
+    ]),
+    undone_by_role: officerDescriptor(row.undone_by as string | null),
+  }));
+
   // Announcements they wrote, reduced to the title and the dates: the
   // announcement itself was published to the whole club.
   data.announcements = (

@@ -20,6 +20,7 @@ function migration(prefix: string): string {
 
 const scopes = migration('00264_');
 const predictions = migration('00282_');
+const formImport = migration('00283_');
 const history = migration('00265_');
 const schedule = migration('00266_');
 const header = migration('00267_');
@@ -82,11 +83,11 @@ const INTERNAL_FUNCTIONS: Record<string, string> = {
   data_api_draw_side: 'uuid, uuid, text',
 };
 
-describe('00264 and 00282: the scope vocabulary', () => {
-  // 00282 restates the CHECK with `predictions:write`, so it is the one a
+describe('00264, 00282 and 00283: the scope vocabulary', () => {
+  // 00283 restates the CHECK with `registrations:write`, so it is the one a
   // database ends up with.
   it('admits exactly DATA_API_SCOPES, in order', () => {
-    const check = /ADD CONSTRAINT data_api_keys_scope_vocabulary\s+CHECK \(scopes <@ ARRAY\[([^\]]+)\]/.exec(predictions);
+    const check = /ADD CONSTRAINT data_api_keys_scope_vocabulary\s+CHECK \(scopes <@ ARRAY\[([^\]]+)\]/.exec(formImport);
     expect(check).not.toBeNull();
     const admitted = [...check![1]!.matchAll(/'([^']+)'/g)].map((m) => m[1]);
     expect(admitted).toEqual([...DATA_API_SCOPES]);
@@ -279,6 +280,21 @@ describe('no identity, no free text', () => {
     'waiver_text',
     'external1_name',
     'external2_name',
+    // The form import (00283, 00284) keeps typed names and emails for people
+    // who are not members. No read function may serve any of them.
+    'manual_name',
+    'manual_email',
+    'submitter_name',
+    'submitter_email',
+    'external_name',
+    'external_email',
+    'partner_name',
+    'partner_email',
+    'registration_imports',
+    'registration_import_entries',
+    'registration_import_forms',
+    'guest_waiver_invites',
+    'club_event_external_signups',
   ];
 
   for (const column of FORBIDDEN) {
@@ -372,15 +388,38 @@ describe('00282: predictions never feed ratings, and the purge reaches them', ()
   // A later migration restating merge_players_disposable carries the four
   // (table, column) rows, so those are allowed anywhere. Anything else naming
   // the table outside 00282 is something reading predictions, and nothing may.
+  // 00283 restates the two write functions to route their key check through
+  // data_api_write_key; their bodies, and its precondition that the table
+  // exists, are the only other places the name may appear.
   it('is the only migration that names the table, outside the merge guard rows', () => {
+    const withoutRestatedWrites = (source: string) =>
+      source
+        .replace(
+          /CREATE OR REPLACE FUNCTION public\.data_api_(?:write|delete)_predictions\([\s\S]*?\n\$function\$;/g,
+          '',
+        )
+        .replace(/to_regclass\('public\.data_api_predictions'\)/g, '');
     const naming = readdirSync(MIGRATIONS_DIR)
       .filter((f) => f.endsWith('.sql') && !f.startsWith('00282_'))
       .filter((f) =>
-        readFileSync(join(MIGRATIONS_DIR, f), 'utf8')
+        withoutRestatedWrites(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'))
           .replace(/\('data_api_predictions',\s*'side[12]_p[12]'\)/g, '')
           .includes('data_api_predictions'),
       );
     expect(naming).toEqual([]);
+  });
+
+  it('00283 changes only the key check of the two write functions', () => {
+    const bodyOf = (source: string, fn: string) => {
+      const start = source.lastIndexOf(`CREATE OR REPLACE FUNCTION public.${fn}(`);
+      expect(start, fn).toBeGreaterThan(-1);
+      return source.slice(start, source.indexOf('\n$function$;', start));
+    };
+    for (const fn of ['data_api_write_predictions', 'data_api_delete_predictions']) {
+      const restated = bodyOf(formImport, fn);
+      expect(restated).toContain("FROM data_api_write_key(p_key_hash, 'predictions:write')");
+      expect(restated).toContain('data_api_predictions');
+    }
   });
 
   it('keeps all sixteen disposable rows from 00279 and adds the four side columns', () => {

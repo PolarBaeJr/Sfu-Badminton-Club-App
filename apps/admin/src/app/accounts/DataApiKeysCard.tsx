@@ -56,9 +56,13 @@ const SCOPE_CHOICES: { scope: DataApiScope; hint: string }[] = [
     scope: 'predictions:write',
     hint: 'Lets this key post head-to-head win predictions. Never changes ratings.',
   },
+  {
+    scope: 'registrations:write',
+    hint: 'Import form registrations. A write: lets a Google Form script enter non-members and ask members to confirm, only into the tournaments and events a form is bound to.',
+  },
 ];
 
-// The one write scope is never granted by the shortcut; it has to be ticked.
+// The write scopes are never granted by the shortcut; each has to be ticked.
 const READ_SCOPES: string[] = SCOPE_CHOICES.map((c) => c.scope).filter((s) => s.endsWith(':read'));
 
 function ScopePicker({
@@ -211,7 +215,7 @@ export function DataApiKeysCard({
           Data API keys
         </h2>
         <p className="mt-1 text-[13px] text-[var(--mute)]">
-          Keys for outside consumers. Each key sees pseudonyms, never names. Only predictions:write lets a key write anything.
+          Keys for outside consumers. Each key sees pseudonyms, never names. Only predictions:write and registrations:write let a key write anything.
         </p>
       </div>
 

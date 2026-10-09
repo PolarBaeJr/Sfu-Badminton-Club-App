@@ -69,7 +69,7 @@ export const DOCS_HTML = `<!doctype html>
 <body>
 <main>
 <h1>SFU Badminton Data API</h1>
-<p class="lede">A key-authenticated JSON feed of pseudonymous ratings, match history, seasons, tournaments and the schedule of the SFU Badminton Club, and one write: head-to-head win predictions.</p>
+<p class="lede">A key-authenticated JSON feed of pseudonymous ratings, match history, seasons, tournaments and the schedule of the SFU Badminton Club, and two writes: head-to-head win predictions, and registrations from the club's own sign-up forms.</p>
 
 <nav aria-label="Contents">
 <strong>Contents</strong>
@@ -84,6 +84,7 @@ export const DOCS_HTML = `<!doctype html>
 <li><a href="#fields">Player fields</a></li>
 <li><a href="#match-fields">Match fields</a></li>
 <li><a href="#predictions">Predictions</a></li>
+<li><a href="#registrations">Registrations</a></li>
 <li><a href="#errors">Errors and status codes</a></li>
 <li><a href="#rate-limits">Rate limits</a></li>
 <li><a href="#versioning">Versioning and stability</a></li>
@@ -117,7 +118,7 @@ export const DOCS_HTML = `<!doctype html>
 <p><strong>Revocation.</strong> Verification results are cached briefly. A revoked or expired key, or a scope change, takes effect within 30 seconds. A key that was rejected (for example, used a moment before it was minted) keeps being rejected for up to 5 seconds.</p>
 
 <h2 id="scopes">Scopes</h2>
-<p>A key is allowed nothing by default, only the scopes it was granted. One key may carry all seven. The six <code>:read</code> scopes only read; <code>predictions:write</code> is the one scope that writes, and no existing key carries it unless an exec adds it.</p>
+<p>A key is allowed nothing by default, only the scopes it was granted. One key may carry all eight. The six <code>:read</code> scopes only read; <code>predictions:write</code> and <code>registrations:write</code> are the two scopes that write, and no existing key carries either unless an exec adds it.</p>
 <table>
 <tr><th>Scope</th><th>Needed for</th></tr>
 <tr><td><code>players:read</code></td><td><code>/v1/players</code>, <code>/v1/players/:ref</code></td></tr>
@@ -127,6 +128,7 @@ export const DOCS_HTML = `<!doctype html>
 <tr><td><code>tournaments:read</code></td><td><code>/v1/tournaments</code>, <code>/v1/tournaments/:id</code>, <code>/v1/tournaments/:id/events/:event_id</code></td></tr>
 <tr><td><code>schedule:read</code></td><td><code>/v1/sessions</code>, <code>/v1/events</code></td></tr>
 <tr><td><code>predictions:write</code></td><td><code>POST /v1/predictions</code>, <code>DELETE /v1/predictions</code></td></tr>
+<tr><td><code>registrations:write</code></td><td><code>POST /v1/registrations</code>. For the club's own form script, not for outside consumers.</td></tr>
 </table>
 <p>A valid key without the needed scope gets <code>403</code>.</p>
 
@@ -162,12 +164,12 @@ export const DOCS_HTML = `<!doctype html>
 <p><strong>Syncing.</strong> To keep a copy up to date, page <code>/v1/matches?status=all&amp;updated_since=&lt;last seen&gt;</code>, which is ordered by <code>updated_at</code> oldest first, and store the largest <code>updated_at</code> you received. A match that was voided, corrected or re-entered comes back with a newer <code>updated_at</code>. A match that stops being published (a player opted out, a season was hidden) does <strong>not</strong> come back; rebuild from scratch periodically to drop those.</p>
 
 <h2 id="endpoints">Endpoints</h2>
-<p>Every endpoint answers <code>GET</code> only, except <code>/v1/predictions</code>, which answers <code>POST</code> and <code>DELETE</code> only. Any other method, including <code>HEAD</code>, gets <code>405</code>. (This page and <code>/changelog</code> also answer <code>HEAD</code>.) In the examples, <code>$K</code> holds your key.</p>
+<p>Every endpoint answers <code>GET</code> only, except <code>/v1/predictions</code>, which answers <code>POST</code> and <code>DELETE</code> only, and <code>/v1/registrations</code>, which answers <code>POST</code> only. Any other method, including <code>HEAD</code>, gets <code>405</code>. (This page and <code>/changelog</code> also answer <code>HEAD</code>.) In the examples, <code>$K</code> holds your key.</p>
 
 <h3 id="health">GET /health</h3>
 <p>No key. For uptime checks. <code>version</code> is the service's release version.</p>
 <pre><code>curl -s ${API}/health</code></pre>
-<pre><code>{ "ok": true, "version": "0.2.0" }</code></pre>
+<pre><code>{ "ok": true, "version": "0.3.0" }</code></pre>
 
 <h3 id="players">GET /v1/players</h3>
 <p>Requires <code>players:read</code>. Every player on the roster, one object each, with their <strong>lifetime</strong> ratings and counters.</p>
@@ -367,6 +369,15 @@ export const DOCS_HTML = `<!doctype html>
 <h3 id="delete-predictions">DELETE /v1/predictions</h3>
 <p>Requires <code>predictions:write</code>. Removes your own predictions by matchup: <code>{ "matchups": [ { "format", "side_a", "side_b" } ] }</code>, 1 to 100 items, sides in either order. Each item is <code>deleted</code> or <code>not_found</code>, with <code>deleted</code>, <code>not_found</code> and <code>refused</code> counts. A ref that names nobody you can see is <code>not_found</code>.</p>
 
+<h3 id="post-registrations">POST /v1/registrations</h3>
+<p>Requires <code>registrations:write</code>. Delivers one response from a Google Form an exec has bound to a tournament or a club event; see <a href="#registrations">Registrations</a>. The body is JSON, at most 64 KiB: <code>{ "form_id", "response_id", "submitted_at"?, "email", "name", "entries"? }</code>, where each of up to 20 <code>entries</code> is <code>{ "event_id", "partner_email"?, "partner_name"?, "category"? }</code>. A club event form sends no entries.</p>
+<pre><code>curl -s -X POST -H "Authorization: Bearer $K" -H 'Content-Type: application/json' \\
+  -d '{"form_id":"&lt;form id&gt;","response_id":"&lt;response id&gt;","email":"&lt;email&gt;","name":"&lt;name&gt;","entries":[{"event_id":"&lt;event id&gt;","partner_name":"&lt;name&gt;"}]}' \\
+  ${API}/v1/registrations</code></pre>
+<pre><code>{ "replayed": false, "entered": 1, "pending": 0, "refused": 0,
+  "results": [ { "index": 1, "event_id": "&lt;event id&gt;", "status": "entered", "reason": null } ] }</code></pre>
+<p>Each entry is <code>entered</code>, <code>pending</code> (a member must confirm it in the club app, a partner has not answered yet, or an exec must look at it) or <code>refused</code>. A refusal's <code>reason</code> is only ever about the event: <code>event_full</code>, <code>waitlist_queue</code>, <code>registration_closed</code>, <code>registration_not_open</code>, <code>registration_window_closed</code>, <code>event_not_in_target</code> or <code>duplicate_in_submission</code>. Nothing in the answer says whether an email belongs to a member. Sending the same response again answers from the record with <code>replayed: true</code>; an edited response replaces the earlier one. A form with no active binding for your key is a <code>404</code>, and a malformed body a <code>400</code> naming the <code>field</code>.</p>
+
 <h3 id="documentations">GET /documentations</h3>
 <p>This page. No key. Also served at <code>/documentations/</code>.</p>
 
@@ -414,18 +425,26 @@ export const DOCS_HTML = `<!doctype html>
 <li>Every write and delete is recorded against the key, with counts and no players.</li>
 </ul>
 
+<h2 id="registrations">Registrations</h2>
+<ul>
+<li><strong>The club's own forms only.</strong> An exec binds a Google Form to one tournament or club event in the admin console, against the key the form's script uses. A response for any other form is a <code>404</code>.</li>
+<li><strong>Members confirm their own entries.</strong> A response from a member's email never enters them. It leaves an entry waiting in the club app, and the member confirms it there, where the usual rules and fees apply.</li>
+<li><strong>Non-members enter only events open to them.</strong> They are entered at once, owe the fee as a named entry, and are sent the guest waiver once that feature is on. Doubles teams of two non-members are entered as one team.</li>
+<li><strong>Nothing is logged.</strong> The body carries a typed name and email; the service never writes it to its log, and the club's record of each import names no email.</li>
+</ul>
+
 <h2 id="errors">Errors and status codes</h2>
-<p>Every error is a JSON object with an <code>error</code> string. A <code>403</code> also carries a <code>detail</code> string, and a <code>400</code> a <code>parameter</code> string, or on <code>/v1/predictions</code> a <code>field</code> string.</p>
+<p>Every error is a JSON object with an <code>error</code> string. A <code>403</code> also carries a <code>detail</code> string, and a <code>400</code> a <code>parameter</code> string, or on <code>/v1/predictions</code> and <code>/v1/registrations</code> a <code>field</code> string.</p>
 <pre><code>{ "error": "forbidden", "detail": "this key does not carry players:read" }
 { "error": "bad_request", "parameter": "since" }</code></pre>
 <table>
 <tr><th>Status</th><th><code>error</code></th><th>When</th></tr>
 <tr><td><code>200</code></td><td></td><td>Success.</td></tr>
-<tr><td><code>400</code></td><td><code>bad_request</code></td><td>A query parameter the route does not take, a repeated one, or a value that does not parse. <code>parameter</code> names it. On <code>/v1/predictions</code>, a body that is not valid JSON or not the documented shape; <code>field</code> names it.</td></tr>
-<tr><td><code>401</code></td><td><code>unauthorized</code></td><td>Key missing, malformed, unknown, expired or revoked. Deliberately identical in all five cases, with a <code>WWW-Authenticate: Bearer</code> header. A write is also refused this way when the key was revoked or lost <code>predictions:write</code> in the last 30 seconds.</td></tr>
+<tr><td><code>400</code></td><td><code>bad_request</code></td><td>A query parameter the route does not take, a repeated one, or a value that does not parse. <code>parameter</code> names it. On <code>/v1/predictions</code> and <code>/v1/registrations</code>, a body that is not valid JSON or not the documented shape; <code>field</code> names it.</td></tr>
+<tr><td><code>401</code></td><td><code>unauthorized</code></td><td>Key missing, malformed, unknown, expired or revoked. Deliberately identical in all five cases, with a <code>WWW-Authenticate: Bearer</code> header. A write is also refused this way when the key was revoked or lost its write scope in the last 30 seconds.</td></tr>
 <tr><td><code>403</code></td><td><code>forbidden</code></td><td>Valid key without the scope this endpoint needs.</td></tr>
-<tr><td><code>404</code></td><td><code>not_found</code></td><td>No such route, or a ref or id in the path that is malformed, unknown or not published to you.</td></tr>
-<tr><td><code>405</code></td><td><code>method_not_allowed</code></td><td>A method the route does not answer: anything but <code>GET</code> on a read route, anything but <code>POST</code> or <code>DELETE</code> on <code>/v1/predictions</code>, and anything but <code>GET</code> or <code>HEAD</code> on this page and <code>/changelog</code>. The <code>Allow</code> header lists what is accepted.</td></tr>
+<tr><td><code>404</code></td><td><code>not_found</code></td><td>No such route, or a ref or id in the path that is malformed, unknown or not published to you. On <code>/v1/registrations</code>, a form with no active binding for your key.</td></tr>
+<tr><td><code>405</code></td><td><code>method_not_allowed</code></td><td>A method the route does not answer: anything but <code>GET</code> on a read route, anything but <code>POST</code> or <code>DELETE</code> on <code>/v1/predictions</code>, anything but <code>POST</code> on <code>/v1/registrations</code>, and anything but <code>GET</code> or <code>HEAD</code> on this page and <code>/changelog</code>. The <code>Allow</code> header lists what is accepted.</td></tr>
 <tr><td><code>413</code></td><td><code>payload_too_large</code></td><td>A write body over 64 KiB.</td></tr>
 <tr><td><code>415</code></td><td><code>unsupported_media_type</code></td><td>A write body not sent as <code>Content-Type: application/json</code>.</td></tr>
 <tr><td><code>422</code></td><td></td><td>A write where at least one item was refused. The body is the usual results, not an error object.</td></tr>

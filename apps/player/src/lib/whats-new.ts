@@ -35,6 +35,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
       'This page: a list of what changed in each version, under Settings > About.',
       'Joining from Discord asks for your SFU email if you have one.',
       'Your challenges can show a predicted chance of winning, when the club turns predictions on.',
+      "Signed up through the club's Google Form? Confirm the entry in the app, or say it was not you.",
     ],
     execs: [
       'Fee tools: receipt review, Paste a list, and named payments that follow a member who signs up later.',
@@ -47,6 +48,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
       'A Data API key can be minted with no expiry, and its date uses the club calendar.',
       'The Accounts side menu follows the section you are reading.',
       'Data API keys can carry a predictions write scope.',
+      'Bind a Google Form to a tournament or club event: members confirm in the app, and non-members are entered with a named fee and a guest waiver email.',
     ],
   },
   {

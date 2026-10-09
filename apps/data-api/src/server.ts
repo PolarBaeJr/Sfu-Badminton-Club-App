@@ -13,6 +13,7 @@ import {
   type ParsedParams,
 } from './params.js';
 import { BadBody, MAX_BODY_BYTES, parseMatchups, parsePredictions } from './predictions.js';
+import { parseRegistration } from './registrations.js';
 import { TokenBuckets } from './rate-limit.js';
 import { RpcCache } from './rpc-cache.js';
 import type { DataApiScope } from './scopes.js';
@@ -58,7 +59,8 @@ type RouteName =
   | 'tournament_event'
   | 'sessions'
   | 'events'
-  | 'predictions';
+  | 'predictions'
+  | 'registrations';
 
 type Method = 'GET' | 'POST' | 'DELETE';
 
@@ -121,7 +123,7 @@ export const ROUTES: readonly RouteDef[] = [
   },
   { name: 'sessions', template: '/v1/sessions', scope: 'schedule:read', params: ['from', 'to'], strict: true },
   { name: 'events', template: '/v1/events', scope: 'schedule:read', params: ['from', 'to'], strict: true },
-  // The one write. No read route shares the path, so a GET here is a 405.
+  // The writes. No read route shares either path, so a GET here is a 405.
   {
     name: 'predictions',
     template: '/v1/predictions',
@@ -129,6 +131,14 @@ export const ROUTES: readonly RouteDef[] = [
     params: [],
     strict: true,
     methods: ['POST', 'DELETE'],
+  },
+  {
+    name: 'registrations',
+    template: '/v1/registrations',
+    scope: 'registrations:write',
+    params: [],
+    strict: true,
+    methods: ['POST'],
   },
 ];
 
@@ -834,6 +844,58 @@ export function createHandler(deps: HandlerDeps) {
     return status;
   }
 
+  // One Google Form response. The answer is per entry: entered, pending (the
+  // club has something to do, or the person does), or refused with a reason
+  // that is only ever about the event. A response that was already received
+  // answers from the record with `replayed: true`. Refusals of single entries
+  // are a 200: they are answers, and a retry would get the same one. The body
+  // and its emails are never logged.
+  async function importRegistration(
+    req: IncomingMessage,
+    res: ServerResponse,
+    keyHash: string,
+  ): Promise<number> {
+    const body = await readBody(req, res);
+    if (typeof body === 'number') return body;
+    let payload;
+    try {
+      payload = parseRegistration(body.value);
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err;
+      send(res, 400, { error: 'bad_request', field: err.field });
+      return 400;
+    }
+    const rows = (await deps.upstream.rpc('data_api_import_registration', {
+      p_key_hash: keyHash,
+      p_payload: payload,
+    })) as Row[];
+    const whole = rows.find((r) => num(r.item) === 0 && r.status === 'refused');
+    if (whole?.reason === 'key') return unauthorized(res);
+    if (whole?.reason === 'not_found') {
+      send(res, 404, { error: 'not_found', detail: 'no active form binding for this key and form_id' });
+      return 404;
+    }
+    if (whole) {
+      send(res, 400, { error: 'bad_request', field: 'body' });
+      return 400;
+    }
+    const results = rows.map((r) => ({
+      index: num(r.item),
+      event_id: orNull(r.event_id),
+      status: orNull(r.status),
+      reason: r.status === 'refused' ? orNull(r.reason) : null,
+    }));
+    const count = (status: string) => results.filter((r) => r.status === status).length;
+    send(res, 200, {
+      replayed: rows.length > 0 && rows.every((r) => r.replayed === true),
+      results,
+      entered: count('entered'),
+      pending: count('pending'),
+      refused: count('refused'),
+    });
+    return 200;
+  }
+
   function pageOf(params: ParsedParams): { limit: number; offset: number } {
     return {
       limit: typeof params.limit === 'number' ? params.limit : DEFAULT_LIMIT,
@@ -1127,7 +1189,9 @@ export function createHandler(deps: HandlerDeps) {
       case 'docs':
       case 'changelog':
       case 'predictions':
-        // The first three are answered before authentication, the write by write().
+      case 'registrations':
+        // The first three are answered before authentication, the writes by
+        // write() and importRegistration().
         return notFound(res);
     }
   }
@@ -1187,6 +1251,7 @@ export function createHandler(deps: HandlerDeps) {
     }
 
     if (def.name === 'predictions') return write(req, res, auth.hash);
+    if (def.name === 'registrations') return importRegistration(req, res, auth.hash);
 
     const generatedAt = isoSeconds(new Date(now()).toISOString());
     return serve(res, def.name, vars, params, auth.consumerId, generatedAt);
