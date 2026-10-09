@@ -13,8 +13,8 @@ import { SubmissionActions } from './submission-actions';
 const money = (cents: number | null) => (cents != null ? `$${(cents / 100).toFixed(2)}` : 'No amount');
 
 // Split by where the money went. An e-transfer lands in the club's own account,
-// so it is checked against the club's bank. An SFU Rec purchase is paid to SFU
-// Rec and never reaches the club, so it is checked against SFU Rec's records.
+// so it is checked against the club's bank. An SFU Rec purchase is paid to
+// SFU Rec and never reaches the club, so it is checked against SFU Rec's records.
 // Unclear receipts sit apart until an exec picks the method on confirm.
 const RECEIPT_GROUPS: { method: PendingSubmission['method']; title: string; sub: string }[] = [
   { method: 'e_transfer', title: 'E-transfer', sub: "Paid into the club's account. Check each against the club's bank." },
