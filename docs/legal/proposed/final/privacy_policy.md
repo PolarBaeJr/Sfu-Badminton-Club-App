@@ -28,13 +28,13 @@ From guests who are not members:
 - To send you sign-in codes, reminders, and club announcements.
 - To keep the app secure and working (error monitoring, abuse prevention).
 - To produce club statistics (e.g. standings, participation).
-- To show **match predictions**: a club-run model estimates who is likely to win a singles or doubles match between members, from their match results and ratings. Predictions are shown in the app as estimates. They never change anyone's rating, ranking or record, and no decision about you is made from them.
+- To show **match predictions**: a club-run model estimates who is likely to win a singles or doubles match between members, from their match results and ratings. Predictions are shown in the app as estimates, and only to the members playing in that challenge. They never change anyone's rating, ranking or record, and no decision about you is made from them.
 
 We do **not** sell your personal information.
 
 ## 4. Who can see what
 
-- **Other members and the public:** your **name and rating** appear on the ladder and may appear on the public leaderboard, unless you opt out (you can hide yourself from the public leaderboard in Settings). Match predictions involving you may be shown to members in the app.
+- **Other members and the public:** your **name and rating** appear on the ladder and may appear on the public leaderboard, unless you opt out (you can hide yourself from the public leaderboard in Settings). A match prediction is shown only to the members playing in that challenge.
 - **Executives:** club-activity data (sessions, tournaments, matches).
 - **Admins:** the above **plus** sensitive data (email, phone, fee status, member records, guest waivers).
 - **External entrants:** their name is shown on the pages of the tournament or event they entered. Their email, fee record and waiver status are seen only by admins and the event's organisers.
