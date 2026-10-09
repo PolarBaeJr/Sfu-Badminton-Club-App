@@ -92,7 +92,17 @@ function ReceiptTable({ submissions }: { submissions: PendingSubmission[] }) {
         />
       ))}
     >
-      <table className="w-full">
+      {/* Fixed widths so the columns line up from one method group to the next. */}
+      <table className="w-full min-w-[60rem] table-fixed">
+        <colgroup>
+          <col className="w-[20%]" />
+          <col className="w-[20%]" />
+          <col className="w-[9%]" />
+          <col className="w-[10%]" />
+          <col className="w-[11%]" />
+          <col className="w-[10%]" />
+          <col className="w-[20%]" />
+        </colgroup>
         <thead>
           <tr className="border-b border-[var(--border)]">
             <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Member</th>

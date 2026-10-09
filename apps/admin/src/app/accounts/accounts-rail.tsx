@@ -15,8 +15,8 @@ export type AccountsRailSection = {
  *
  * The rail was server-rendered with the first link always marked active, so
  * scrolling or clicking left "Member pages" lit whatever was on screen. This
- * is the scroll-spy /ratings uses: the "current" line sits just under the
- * sticky console header, where a link's scroll-mt lands its section.
+ * is the scroll-spy /ratings uses: the "current" line sits where a link's
+ * scroll-mt lands its section, below the sticky console header.
  */
 export function AccountsRail({ sections }: { sections: AccountsRailSection[] }) {
   const [active, setActive] = useState(sections[0]?.id ?? '');
@@ -28,13 +28,33 @@ export function AccountsRail({ sections }: { sections: AccountsRailSection[] }) 
       .map((id) => document.getElementById(id))
       .filter((node): node is HTMLElement => node !== null);
     if (nodes.length === 0) return;
+    // The line is where a rail link lands its section: the section's own
+    // scroll-margin-top. The header height alone sits higher than that, so a
+    // click left the section above still across the line and lit it instead.
     const css = getComputedStyle(document.documentElement);
+    const landing = parseFloat(getComputedStyle(nodes[0]!).scrollMarginTop);
     const line =
-      (parseFloat(css.getPropertyValue('--console-header-h')) || 0) +
-      (parseFloat(css.getPropertyValue('--sticky-gap')) || 0);
+      (Number.isFinite(landing) && landing > 0
+        ? landing
+        : (parseFloat(css.getPropertyValue('--console-header-h')) || 0) +
+          (parseFloat(css.getPropertyValue('--sticky-gap')) || 0)) + 1;
+
+    // The last sections are short, so at the foot of the page they never climb
+    // to the line. Reaching the bottom selects the last one instead, and the
+    // observer checks it too: it fires after the scroll event and would
+    // otherwise hand the highlight back to the section above.
+    const lastId = ids[ids.length - 1]!;
+    const atBottom = () => {
+      const scroller = document.scrollingElement ?? document.documentElement;
+      return scroller.scrollTop + window.innerHeight >= scroller.scrollHeight - 4;
+    };
 
     const observer = new IntersectionObserver(
       (entries) => {
+        if (atBottom()) {
+          setActive(lastId);
+          return;
+        }
         const visible = entries
           .filter((entry) => entry.isIntersecting)
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
@@ -44,12 +64,8 @@ export function AccountsRail({ sections }: { sections: AccountsRailSection[] }) 
     );
     nodes.forEach((node) => observer.observe(node));
 
-    // The last sections are short, so at the foot of the page they never climb
-    // to the line. Reaching the bottom selects the last one instead.
-    const lastId = ids[ids.length - 1]!;
     const onScroll = () => {
-      const scroller = document.scrollingElement ?? document.documentElement;
-      if (scroller.scrollTop + window.innerHeight >= scroller.scrollHeight - 4) setActive(lastId);
+      if (atBottom()) setActive(lastId);
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => {
