@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, Button, useConfirm } from '@badminton/ui';
+import { Badge, Button, Checkbox, useConfirm } from '@badminton/ui';
 import {
   bindRegistrationForm,
   setRegistrationFormActive,
@@ -146,8 +146,8 @@ export function FormImportCard({
     <div className="space-y-4">
       {bindings.length === 0 ? (
         <p className="text-sm text-[var(--text-muted)]">
-          No Google Form is bound here. Bind the form&apos;s id against the data API consumer whose key its script
-          uses, and its responses start arriving below.
+          No Google Form is linked yet. Paste the form&apos;s id and pick the Data API key its script sends with.
+          Its responses then show up below.
         </p>
       ) : (
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
@@ -177,48 +177,54 @@ export function FormImportCard({
         <div className="space-y-2 rounded-xl border border-[var(--border)] p-3">
           {consumers.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">
-              Add a data API consumer and mint it a key with the form registrations scope on the Accounts page
-              first.
+              First mint a Data API key with &quot;Import form registrations&quot; ticked, under Accounts, then
+              come back here to link the form.
             </p>
           ) : (
             <>
               <div className="flex flex-wrap gap-2">
-                <input
-                  className={`${inputClass} flex-1 min-w-[12rem]`}
-                  placeholder="Google Form id"
-                  value={formId}
-                  onChange={(e) => setFormId(e.target.value)}
-                  disabled={pending}
-                  aria-label="Google Form id"
-                />
-                <select
-                  className={inputClass}
-                  value={consumerId}
-                  onChange={(e) => setConsumerId(e.target.value)}
-                  disabled={pending}
-                  aria-label="Data API consumer"
-                >
-                  {consumers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                <label className="flex flex-1 min-w-[12rem] flex-col gap-1 text-sm text-[var(--text-secondary)]">
+                  Google Form id
+                  <input
+                    className={inputClass}
+                    placeholder="The long id in the form's edit link"
+                    value={formId}
+                    onChange={(e) => setFormId(e.target.value)}
+                    disabled={pending}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
+                  Data API key holder
+                  <select
+                    className={inputClass}
+                    value={consumerId}
+                    onChange={(e) => setConsumerId(e.target.value)}
+                    disabled={pending}
+                  >
+                    {consumers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
               {targetKind === 'tournament' && (
-                <div className="flex flex-col gap-1 text-sm">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={joinWaitlist} onChange={(e) => setJoinWaitlist(e.target.checked)} />
-                    Put non-members on the waitlist when an event is full
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={soloDoublesAck}
-                      onChange={(e) => setSoloDoublesAck(e.target.checked)}
-                    />
-                    The form explains that a doubles entry without a partner may be paired by the exec
-                  </label>
+                <div className="flex flex-col gap-2 py-1">
+                  <Checkbox
+                    checked={joinWaitlist}
+                    onChange={setJoinWaitlist}
+                    disabled={pending}
+                    label="Put non-members on the waitlist when an event is full"
+                    showLabel
+                  />
+                  <Checkbox
+                    checked={soloDoublesAck}
+                    onChange={setSoloDoublesAck}
+                    disabled={pending}
+                    label="The form explains that a doubles entry without a partner may be paired by the exec"
+                    showLabel
+                  />
                 </div>
               )}
               <Button
@@ -238,7 +244,7 @@ export function FormImportCard({
                   )
                 }
               >
-                Bind form
+                Link form
               </Button>
             </>
           )}
