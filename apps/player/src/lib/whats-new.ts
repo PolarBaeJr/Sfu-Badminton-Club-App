@@ -28,6 +28,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
       'A short tour on your first visit. Replay it from Settings.',
       'Challenges are redesigned, and best of 5 and best of 7 results can be reported in full.',
       'Challenge, report a result or join the club from Discord.',
+      'Send a fee receipt from Discord with /receipt, once your Discord account is linked.',
       'Choose whether the club may use photos and videos of you, in Settings.',
       'A Discord link on every page, and a Socials page.',
       'Error screens show a short code to quote when you report a problem.',
