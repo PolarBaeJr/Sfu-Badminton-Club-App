@@ -60,23 +60,28 @@ export const WHATS_NEW: WhatsNewEntry[] = [
     date: '2026-09-29',
     title: 'Tournament fixes',
     members: [
+      'Repeat challenges against the same opponent within 30 days count for less. Past ratings are not recalculated.',
       "A tournament's start date shows the right day, and pairs are called pairs.",
+      'Confirming a rated challenge result no longer fails.',
     ],
     execs: [
+      'Unrated events for teams from other clubs, entered by name.',
+      'Boost one rated match by up to 2x, and tune how much repeat challenges count.',
       'Undo a check-in or a no-show.',
     ],
   },
   {
     version: '1.0.6',
-    date: '2026-09-28',
+    date: '2026-09-29',
     title: 'My stats by season',
     members: [
       'Every card on My stats now follows the season you pick.',
+      'Signed-in pages, the Feed and Settings load faster.',
     ],
   },
   {
     version: '1.0.5',
-    date: '2026-09-27',
+    date: '2026-09-26',
     title: 'Passkey fixes',
     members: [
       "If a passkey cannot work inside an app's built-in browser, the page now says so.",
@@ -90,15 +95,13 @@ export const WHATS_NEW: WhatsNewEntry[] = [
     title: 'Your data',
     members: [
       'Download everything the club holds about you, from Settings.',
-      'The legal documents name the club and how to reach it.',
     ],
   },
   {
     version: '1.0.3',
     date: '2026-09-19',
-    title: 'Handles and final standings',
+    title: 'Final standings',
     members: [
-      'Every member has a handle.',
       'The leaderboard shows final standings for a finished season and marks your own row.',
       'Rounded corners across the app.',
     ],
@@ -108,7 +111,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
     date: '2026-09-18',
     title: 'Tidying up',
     members: [
-      'Unfinished sign-ups are cleared after 30 days.',
+      'A zero singles streak no longer shows as a bare 0 on your profile.',
+      'The ladder and your profile say which figures count since the last season rollover.',
+    ],
+    execs: [
+      'Edit a posted announcement in place in the composer.',
+      'Boxes in the console have rounded corners again.',
     ],
   },
   {
