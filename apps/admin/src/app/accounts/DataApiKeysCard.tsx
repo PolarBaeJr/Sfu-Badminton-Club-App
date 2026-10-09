@@ -52,9 +52,14 @@ const SCOPE_CHOICES: { scope: DataApiScope; hint: string }[] = [
   { scope: 'seasons:read', hint: 'Seasons, season totals and standings' },
   { scope: 'tournaments:read', hint: 'Tournaments, events, entrants and draws' },
   { scope: 'schedule:read', hint: 'Sessions and club events, counts only' },
+  {
+    scope: 'predictions:write',
+    hint: 'Lets this key post head-to-head win predictions. Never changes ratings.',
+  },
 ];
 
-const ALL_SCOPES: string[] = SCOPE_CHOICES.map((c) => c.scope);
+// The one write scope is never granted by the shortcut; it has to be ticked.
+const READ_SCOPES: string[] = SCOPE_CHOICES.map((c) => c.scope).filter((s) => s.endsWith(':read'));
 
 function ScopePicker({
   selected,
@@ -63,7 +68,7 @@ function ScopePicker({
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
-  const everything = ALL_SCOPES.every((s) => selected.includes(s));
+  const everything = READ_SCOPES.every((s) => selected.includes(s));
   return (
     <div className="flex flex-col gap-2">
       {SCOPE_CHOICES.map(({ scope, hint }) => (
@@ -84,7 +89,7 @@ function ScopePicker({
           size="sm"
           variant="ghost"
           disabled={everything}
-          onClick={() => onChange([...ALL_SCOPES])}
+          onClick={() => onChange([...new Set([...selected, ...READ_SCOPES])])}
         >
           All read scopes
         </Button>
@@ -206,7 +211,7 @@ export function DataApiKeysCard({
           Data API keys
         </h2>
         <p className="mt-1 text-[13px] text-[var(--mute)]">
-          Read-only keys for outside consumers. Each key sees pseudonyms, never names.
+          Keys for outside consumers. Each key sees pseudonyms, never names. Only predictions:write lets a key write anything.
         </p>
       </div>
 

@@ -8,6 +8,19 @@ import { PAGE_STYLE } from './docs-page.js';
 
 const VERSIONS: { version: string; date: string; title: string; items: string[] }[] = [
   {
+    version: '0.2.0',
+    date: '2026-10-09',
+    title: 'Predictions',
+    items: [
+      'The first write: <code>POST /v1/predictions</code> stores head-to-head win predictions from your model, and <code>DELETE /v1/predictions</code> removes your own. Both need the new <code>predictions:write</code> scope, which no existing key carries unless an exec adds it.',
+      'A prediction names a <code>singles</code> or <code>doubles</code> matchup by <code>player_ref</code>, side A\'s chance of winning, a <code>model</code> name and <code>made_at</code>. A matchup is two unordered sides, so predicting it again replaces the earlier row.',
+      'Up to 100 items a call. Each one is answered <code>created</code>, <code>replaced</code> or <code>refused</code>; the call is <code>422</code> with the same body when anything was refused.',
+      'New errors on the write: <code>413</code> for a body over 64 KiB and <code>415</code> for a body not sent as <code>application/json</code>.',
+      'Writes are never served from the read cache, and predictions never change a rating or a statistic.',
+      'A member may see a prediction in the club app only for a challenge they play in, labelled as one with its model and time, never with the consumer that made it.',
+    ],
+  },
+  {
     version: '0.1.0',
     date: '2026-10-09',
     title: 'First public version',

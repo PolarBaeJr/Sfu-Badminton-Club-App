@@ -12,7 +12,7 @@ describe('scope vocabulary agrees with the console and the database', () => {
 
   it('is exactly what the newest vocabulary CHECK admits', () => {
     const sql = readFileSync(
-      new URL('../../../../supabase/migrations/00264_the_data_api_reads_more_scopes.sql', import.meta.url),
+      new URL('../../../../supabase/migrations/00282_the_data_api_takes_predictions.sql', import.meta.url),
       'utf8',
     );
     const check = /ADD CONSTRAINT data_api_keys_scope_vocabulary\s+CHECK \(scopes <@ ARRAY\[([^\]]+)\]/.exec(sql);

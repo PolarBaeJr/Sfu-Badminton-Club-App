@@ -47,6 +47,8 @@ key. It calls these functions and nothing else:
 | `data_api_tournament_draw` | 00266, 00270 | `/v1/tournaments/:id/events/:event_id` |
 | `data_api_sessions` | 00266 | `/v1/sessions` |
 | `data_api_club_events` | 00266 | `/v1/events` |
+| `data_api_write_predictions` | 00282 | `POST /v1/predictions` |
+| `data_api_delete_predictions` | 00282 | `DELETE /v1/predictions` |
 
 Every match-reading function goes through ONE internal gate,
 `data_api_match_rows()`, which unions club and tournament matches and keeps a
@@ -152,8 +154,14 @@ secret invalidates this token along with every other.
 - **Paging** asks the database for `limit + 1` rows and sets `next_offset` only
   when the extra row came back, so there is never a count query.
 - **Check order** is route, method, key, rate, scope, query parameters (400),
-  path format (404), database. A malformed ref or id never reaches the
-  database.
+  path format (404), then for a write the body (415, 413, 400), database. A
+  malformed ref or id never reaches the database.
+- **Writes** (`/v1/predictions`, scope `predictions:write`) bypass the read
+  cache and send the key HASH, not the consumer id: the write and delete
+  functions re-check the key, its scope, revocation and expiry themselves,
+  because the verification cache may be up to 30 seconds stale. A `key`
+  refusal from the database is answered `401`. A batch is one request against
+  the rate limit.
 
 ## Known gaps
 

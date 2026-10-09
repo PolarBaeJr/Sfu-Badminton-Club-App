@@ -55,6 +55,7 @@ import {
   dropColumns,
   filterAuditPayload,
   truncateEndpoint,
+  rewritePredictionRelative,
   rewriteRequesterRelative,
 } from './project';
 
@@ -388,6 +389,14 @@ export async function assembleMemberExport(
       ['id', 'match_type', 'total_matches', 'last_played_at', 'updated_at'],
     ),
   );
+
+  // Predictions (00282) are stored in a canonical side order, so the member may
+  // be in any of the four slots: all four are queried, and every row is
+  // rewritten with the member's side first.
+  const predictions = await reader.all('data_api_predictions', (q) =>
+    q.or(orEq(['side1_p1', 'side1_p2', 'side2_p1', 'side2_p2'], playerId)),
+  );
+  data.data_api_predictions = predictions.map((row) => rewritePredictionRelative(row, playerId, members));
 
   const partnerships = await reader.all('partnership_stats', (q) =>
     q.or(orEq(['player_a_id', 'player_b_id'], playerId)),

@@ -628,6 +628,21 @@ const FIXTURES: Record<string, StubRow[]> = {
   partnership_stats: [
     { id: 'ps1', player_a_id: PLAYER_ID, player_b_id: SENTINEL, matches_played: 4, wins: 3 },
   ],
+  data_api_predictions: [
+    {
+      id: 'dp1',
+      consumer_id: 'consumer-1',
+      key_id: 'key-1',
+      format: 'doubles',
+      side1_p1: SENTINEL,
+      side1_p2: SENTINEL,
+      side2_p1: PLAYER_ID,
+      side2_p2: SENTINEL,
+      side1_win_probability: 0.64,
+      model: 'WITHHELD-MODEL-NAME',
+      made_at: '2026-10-08T18:00:00Z',
+    },
+  ],
   match_participants: [
     { id: 'mp1', match_id: 'match-1', player_id: PLAYER_ID, team_side: 'a', rating_delta: 12 },
     { id: 'mp2', match_id: 'match-1', player_id: SENTINEL, team_side: 'b', rating_delta: -12 },
@@ -1020,6 +1035,20 @@ describe('no third party survives into the file', () => {
     expect(rows[0]).not.toHaveProperty('resolved_by');
     expect(rows[0]).toHaveProperty('resolved_by_role');
     expect(rows[0]!.status).toBe('removed');
+  });
+
+  it('exports predictions with the member\'s side first and the model withheld', async () => {
+    const result = await assembleMemberExport(stubClient(), PLAYER_ID);
+    if (!result.ok) throw new Error(result.failures.join('; '));
+    const rows = result.document.data.data_api_predictions as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.my_side_win_probability).toBe(0.36);
+    expect(rows[0]!.partner).toMatch(/^member_\d+$/);
+    expect(rows[0]!.opponents).toHaveLength(2);
+    const serialised = JSON.stringify(rows);
+    expect(serialised).not.toContain('WITHHELD-MODEL-NAME');
+    expect(serialised).not.toContain('consumer-1');
+    expect(serialised).not.toContain('key-1');
   });
 
   it('never emits a jsonb payload key outside the allowlist', async () => {

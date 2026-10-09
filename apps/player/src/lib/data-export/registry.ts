@@ -423,6 +423,15 @@ export const EXPORT_TABLES: Record<string, ExportTable> = {
     withheldColumns: ['resolved_by'],
     why: 'Every tournament event waitlist you joined, when, and whether you were entered from it, left it, were skipped or were removed.',
   },
+  data_api_predictions: {
+    playerColumns: ['side1_p1', 'side1_p2', 'side2_p1', 'side2_p2'],
+    disposition: 'project',
+    // The consumer and the key are the club's arrangement with an outside
+    // party, not the member's data. The model name is withheld by the club's
+    // decision: it identifies the consumer as surely as the consumer id would.
+    withheldColumns: ['side1_p1', 'side1_p2', 'side2_p1', 'side2_p2', 'consumer_id', 'key_id', 'model'],
+    why: 'Win predictions an outside model made about matchups you are in, rewritten so the probability is your side\'s chance. Your partner and opponents appear as pseudonyms. Which outside party made each prediction is withheld. Predictions never changed your rating.',
+  },
   legacy_tournament_participants: {
     playerColumns: ['player_id', 'partner_id'],
     disposition: 'project',

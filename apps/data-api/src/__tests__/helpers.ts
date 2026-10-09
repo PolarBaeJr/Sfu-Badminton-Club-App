@@ -130,3 +130,17 @@ export function get(h: Harness, path: string, key?: string, init: RequestInit = 
   if (key !== undefined) headers.Authorization = `Bearer ${key}`;
   return fetch(h.base + path, { ...init, headers: { ...headers, ...(init.headers as Record<string, string>) } });
 }
+
+/** A JSON body to /v1/predictions, POST unless told otherwise. */
+export function writePredictions(
+  h: Harness,
+  key: string | undefined,
+  body: unknown,
+  init: { method?: string; headers?: Record<string, string> } = {},
+): Promise<Response> {
+  return get(h, '/v1/predictions', key, {
+    method: init.method ?? 'POST',
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json', ...init.headers },
+  });
+}

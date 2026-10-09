@@ -33,6 +33,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
       'Error screens show a short code to quote when you report a problem.',
       'This page: a list of what changed in each version, under Settings > About.',
       'Joining from Discord asks for your SFU email if you have one.',
+      'Your challenges can show a predicted chance of winning, when the club turns predictions on.',
     ],
     execs: [
       'Fee tools: receipt review, Paste a list, and named payments that follow a member who signs up later.',
@@ -44,6 +45,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
       'The Data API has a public changelog page.',
       'A Data API key can be minted with no expiry, and its date uses the club calendar.',
       'The Accounts side menu follows the section you are reading.',
+      'Data API keys can carry a predictions write scope.',
     ],
   },
   {

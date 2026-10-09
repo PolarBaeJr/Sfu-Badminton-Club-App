@@ -153,6 +153,14 @@ export const REQUIRED_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   // Widening a live key's scopes grants the same durable read access as
   // minting a new key with them, so it is recorded with the same weight.
   'data_api_key_scopes_changed',
+  // PREDICTIONS (00282). The first rows a key WRITES rather than reads. The
+  // write and delete functions each record one row per call, against the key,
+  // with counts and no players. The delete matches the _deleted pattern and
+  // would be forced in anyway; the write is classified by hand for the same
+  // reason as the mint: it is the only record of what a key put in front of
+  // members.
+  'data_api_predictions_written',
+  'data_api_predictions_deleted',
 
   // CLUB EVENTS (00244). The delete and the removal match the risk patterns and
   // would be forced in anyway. The cancellation matches none, so it is

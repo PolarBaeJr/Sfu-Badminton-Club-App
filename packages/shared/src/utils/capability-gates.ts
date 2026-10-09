@@ -848,6 +848,12 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     also: ['player actions/guest-waiver.ts signGuestWaiver'],
     merged: SWITCHED_OFF,
   },
+  // No page to gate: the challenge screens and the profile each ask this one
+  // helper before reading a prediction.
+  'page.access.predictions': {
+    label: 'Match predictions while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player lib/predictions.ts predictionsVisible',
+  },
 };
 
 /**

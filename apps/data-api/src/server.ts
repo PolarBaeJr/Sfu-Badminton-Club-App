@@ -12,6 +12,7 @@ import {
   type ParamName,
   type ParsedParams,
 } from './params.js';
+import { BadBody, MAX_BODY_BYTES, parseMatchups, parsePredictions } from './predictions.js';
 import { TokenBuckets } from './rate-limit.js';
 import { RpcCache } from './rpc-cache.js';
 import type { DataApiScope } from './scopes.js';
@@ -25,9 +26,10 @@ export { QUERY_PARAMS } from './params.js';
 // ORDER OF CHECKS: route (404), the public docs and changelog pages (served
 // here, GET and HEAD only, 405 otherwise), method (405), key (401, or 429 from
 // the per-address failed-auth bucket), per-key rate (429), scope (403), query
-// parameters (400), path ref and id format (404), database. A caller learns nothing about keys
-// from a route that does not exist, and a malformed ref never costs a database
-// call: the by-ref functions rehash the whole eligible roster on every call.
+// parameters (400), path ref and id format (404), then for a write the body
+// (415, 413, 400), database. A caller learns nothing about keys from a route
+// that does not exist, and a malformed ref never costs a database call: the
+// by-ref functions rehash the whole eligible roster on every call.
 
 export interface HandlerDeps {
   upstream: Upstream;
@@ -55,7 +57,10 @@ type RouteName =
   | 'tournament'
   | 'tournament_event'
   | 'sessions'
-  | 'events';
+  | 'events'
+  | 'predictions';
+
+type Method = 'GET' | 'POST' | 'DELETE';
 
 export interface RouteDef {
   name: RouteName;
@@ -65,6 +70,8 @@ export interface RouteDef {
   params: readonly ParamName[];
   /** False only for the routes that predate query parameters and ignore them. */
   strict: boolean;
+  /** Absent means GET only. */
+  methods?: readonly Method[];
 }
 
 const MATCH_PARAMS: readonly ParamName[] = [
@@ -114,6 +121,15 @@ export const ROUTES: readonly RouteDef[] = [
   },
   { name: 'sessions', template: '/v1/sessions', scope: 'schedule:read', params: ['from', 'to'], strict: true },
   { name: 'events', template: '/v1/events', scope: 'schedule:read', params: ['from', 'to'], strict: true },
+  // The one write. No read route shares the path, so a GET here is a 405.
+  {
+    name: 'predictions',
+    template: '/v1/predictions',
+    scope: 'predictions:write',
+    params: [],
+    strict: true,
+    methods: ['POST', 'DELETE'],
+  },
 ];
 
 interface Matched {
@@ -726,7 +742,7 @@ export function createHandler(deps: HandlerDeps) {
     return 429;
   }
 
-  async function authenticate(req: IncomingMessage, res: ServerResponse): Promise<VerifiedKey | number> {
+  async function authenticate(req: IncomingMessage, res: ServerResponse): Promise<(VerifiedKey & { hash: string }) | number> {
     const ip = clientIp(req);
     const inspected = verifier.inspect(req.headers.authorization);
     let key: VerifiedKey | null;
@@ -741,11 +757,81 @@ export function createHandler(deps: HandlerDeps) {
       if (!gate.ok) return rateLimited(res, gate.retryAfter);
       key = await verifier.verify(inspected.hash);
     }
-    if (!key) {
+    if (!key || inspected.kind === 'malformed') {
       failBuckets.take(ip);
       return unauthorized(res);
     }
-    return key;
+    return { ...key, hash: inspected.hash };
+  }
+
+  /**
+   * The JSON body of a write, or the status already sent. A body over the cap
+   * is read to its end and dropped, so the 413 reaches a client still sending.
+   */
+  async function readBody(req: IncomingMessage, res: ServerResponse): Promise<{ value: unknown } | number> {
+    const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+    if (type !== 'application/json') {
+      send(res, 415, { error: 'unsupported_media_type' });
+      return 415;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size <= MAX_BODY_BYTES) chunks.push(chunk);
+    }
+    if (size > MAX_BODY_BYTES) {
+      send(res, 413, { error: 'payload_too_large' });
+      return 413;
+    }
+    try {
+      return { value: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown };
+    } catch {
+      send(res, 400, { error: 'bad_request', field: 'body' });
+      return 400;
+    }
+  }
+
+  // One row per item from the write or delete function. A `key` refusal means
+  // the database no longer accepts a key the 30-second cache still holds:
+  // revoked, expired or narrowed a moment ago.
+  async function write(
+    req: IncomingMessage,
+    res: ServerResponse,
+    keyHash: string,
+  ): Promise<number> {
+    const body = await readBody(req, res);
+    if (typeof body === 'number') return body;
+    const deleting = req.method === 'DELETE';
+    let items: Row[];
+    try {
+      items = deleting ? parseMatchups(body.value) : parsePredictions(body.value, now());
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err;
+      send(res, 400, { error: 'bad_request', field: err.field });
+      return 400;
+    }
+    const fn = deleting ? 'data_api_delete_predictions' : 'data_api_write_predictions';
+    // Straight to the upstream, never through the read cache: two identical
+    // writes are two writes.
+    const rows = (await deps.upstream.rpc(fn, {
+      p_key_hash: keyHash,
+      [deleting ? 'p_matchups' : 'p_predictions']: items,
+    })) as Row[];
+    if (rows.some((r) => r.status === 'refused' && r.reason === 'key')) return unauthorized(res);
+    const results = rows.map((r) =>
+      r.status === 'refused'
+        ? { index: num(r.item), status: 'refused', reason: orNull(r.reason) }
+        : { index: num(r.item), status: orNull(r.status) },
+    );
+    const count = (status: string) => results.filter((r) => r.status === status).length;
+    const refused = count('refused');
+    const out = deleting
+      ? { results, deleted: count('deleted'), not_found: count('not_found'), refused }
+      : { results, created: count('created'), replaced: count('replaced'), refused };
+    const status = refused > 0 ? 422 : 200;
+    send(res, status, out);
+    return status;
   }
 
   function pageOf(params: ParsedParams): { limit: number; offset: number } {
@@ -1040,7 +1126,8 @@ export function createHandler(deps: HandlerDeps) {
       case 'health':
       case 'docs':
       case 'changelog':
-        // All three are answered before authentication.
+      case 'predictions':
+        // The first three are answered before authentication, the write by write().
         return notFound(res);
     }
   }
@@ -1059,8 +1146,9 @@ export function createHandler(deps: HandlerDeps) {
       sendHtml(res, def.name === 'docs' ? DOCS_BODY : CHANGELOG_BODY);
       return 200;
     }
-    if (req.method !== 'GET') {
-      send(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET' });
+    const methods = def.methods ?? ['GET'];
+    if (!methods.includes(req.method as Method)) {
+      send(res, 405, { error: 'method_not_allowed' }, { Allow: methods.join(', ') });
       return 405;
     }
     if (def.name === 'health') {
@@ -1097,6 +1185,8 @@ export function createHandler(deps: HandlerDeps) {
       if (ID_VARS.has(key) && !UUID_PATTERN.test(value)) return notFound(res);
       vars[key] = ID_VARS.has(key) ? value.toLowerCase() : value;
     }
+
+    if (def.name === 'predictions') return write(req, res, auth.hash);
 
     const generatedAt = isoSeconds(new Date(now()).toISOString());
     return serve(res, def.name, vars, params, auth.consumerId, generatedAt);

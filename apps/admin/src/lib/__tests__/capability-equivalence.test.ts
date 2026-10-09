@@ -374,6 +374,7 @@ const TODAY: Row[] = [
   { capability: 'page.access.membership',             admin: T, exec: F, trainer: F, was: 'no prior gate: the membership switch is new in 00247' },
   { capability: 'page.access.socials',                admin: T, exec: F, trainer: F, was: 'no prior gate: the socials switch is new in 00247' },
   { capability: 'page.access.guest_waivers',          admin: T, exec: F, trainer: F, was: 'no prior gate: the guest waivers switch is new in 00254' },
+  { capability: 'page.access.predictions',            admin: T, exec: F, trainer: F, was: 'no prior gate: the predictions switch is new in 00282' },
 ];
 
 describe('capability equivalence — nobody gained anything', () => {

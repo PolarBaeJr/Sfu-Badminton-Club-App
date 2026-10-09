@@ -2,7 +2,8 @@
 
 **Status: version 0. Implemented in `apps/data-api`: roster, match history,
 head-to-head, per-season records, rating history, seasons and standings,
-tournaments and draws, and the schedule (19 routes, listed under "Endpoints").
+tournaments and draws, the schedule, and one write, head-to-head win
+predictions (20 routes, listed under "Endpoints").
 The reference the service serves at `/documentations` describes what the code
 does, route by route and field by field; see also "Known gaps" in
 [`README.md`](./README.md).**
@@ -92,9 +93,9 @@ it, it gets revoked and you get a new one.
 ### Scopes
 
 A key carries only the scopes it was granted. A key is not allowed everything by
-default; it is allowed nothing by default. One key may carry all six, and the
-console has an "All read scopes" button for exactly that. An exec can change
-the scopes of a live key without reissuing it.
+default; it is allowed nothing by default. One key may carry all seven. The
+console's "All read scopes" button ticks the six `:read` scopes and never the
+write one. An exec can change the scopes of a live key without reissuing it.
 
 | Scope | Grants |
 |---|---|
@@ -104,6 +105,7 @@ the scopes of a live key without reissuing it.
 | `seasons:read` | seasons, season totals, season standings |
 | `tournaments:read` | tournaments, events, entrants, draws |
 | `schedule:read` | club sessions and club events, counts only |
+| `predictions:write` | posting and deleting head-to-head win predictions (the only scope that writes; no existing key carries it unless an exec adds it) |
 
 A correction to earlier versions of this file: `ratings:history:read` was
 described as "accepted and empty" because nothing journals a rating change. That
@@ -121,7 +123,8 @@ read per request.
 
 ## Endpoints
 
-Every route answers `GET` only. Path values: `:ref` and `:other_ref` are
+Every route answers `GET` only, except `/v1/predictions`, which answers `POST`
+and `DELETE` only, and `/documentations` and `/changelog`, which also answer `HEAD`. Path values: `:ref` and `:other_ref` are
 `player_ref`s, `:match_ref` a `match_ref`, `:id` and `:event_id` uuids. A path
 value that is malformed is a `404` without a database call.
 
@@ -146,6 +149,7 @@ value that is malformed is a `404` without a database call.
 | `/v1/tournaments/:id/events/:event_id` | `tournaments:read` | none |
 | `/v1/sessions` | `schedule:read` | `from`, `to` |
 | `/v1/events` | `schedule:read` | `from`, `to` |
+| `/v1/predictions` | `predictions:write` | none; a JSON body (see "Predictions") |
 
 The response shape of every route, with examples, is on the served
 `/documentations` page. The rules that matter for modelling are below.
@@ -435,15 +439,75 @@ it.
 
 ---
 
+## Predictions
+
+`POST /v1/predictions` stores head-to-head win predictions made by your model,
+and `DELETE /v1/predictions` removes them. A member may be shown a prediction in
+the club app only for a challenge they play in, labelled as a prediction, with
+the `model` name and `made_at`, but never which consumer made it.
+
+```
+POST /v1/predictions
+Content-Type: application/json
+
+{"predictions":[{"format":"doubles","side_a":["<ref>","<ref>"],"side_b":["<ref>","<ref>"],
+                 "probability":0.64,"model":"elo-v3","made_at":"2026-10-08T18:00:00Z"}]}
+```
+
+- The body is at most 64 KiB, and either `{"predictions": [...]}` with 1 to 100
+  items or one item on its own. Each item has exactly the six fields above.
+  `format` is `singles` (one ref a side) or `doubles` (two); no player twice.
+  `probability` is side A's chance of winning, from 0 to 1. `model` is 1 to 64
+  characters from `A-Z a-z 0-9`, space and `. _ : + -`. `made_at` is UTC ending
+  in `Z` and not more than 5 minutes ahead of the server clock.
+- **A matchup is two unordered sides.** A and B against C and D is the same
+  matchup as D and C against B and A. Predicting a matchup you already predicted
+  replaces the earlier row. If you swap the sides, swap the probability to
+  `1 - p`.
+- **Only published players.** Every ref must name a member who passes the
+  history test in "Who is in the feed". A member who later opts out or asks for
+  deletion disappears from every prediction at once, and their predictions are
+  erased with their account.
+- **Predictions never change ratings.** Nothing that rates a match or builds a
+  statistic reads them. When two consumers predict the same matchup, members
+  see the newer one.
+- A batch costs one request against the rate limit, and writes are never served
+  from the read cache. Every call is recorded against the key, with counts and
+  no players.
+
+The answer lists every item as `created`, `replaced` or `refused`:
+
+```json
+{ "results": [ { "index": 0, "status": "created" },
+               { "index": 1, "status": "refused", "reason": "player" } ],
+  "created": 1, "replaced": 0, "refused": 1 }
+```
+
+It is `200` when nothing was refused and `422`, with the same body, when
+anything was. `reason` `player` means a ref is unknown to you or names a member
+who is not published; it deliberately does not say which. A body that is not
+the documented shape is a `400` naming the `field` (for example
+`predictions[3].side_b`), and nothing in it is stored.
+
+`DELETE /v1/predictions` takes `{"matchups": [{"format", "side_a", "side_b"}]}`
+(1 to 100, sides in either order) and answers each item `deleted` or
+`not_found`, with `deleted`, `not_found` and `refused` counts. Only your own
+predictions are ever deleted.
+
+---
+
 ## Errors
 
 | Status | Meaning |
 |---|---|
-| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it |
-| `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. |
+| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it. On `/v1/predictions`, a body that is not JSON or not the documented shape; `field` names it |
+| `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. A write is also refused this way when the key was revoked or lost `predictions:write` in the last 30 seconds. |
 | `403` | valid key, but it lacks the scope for this endpoint |
 | `404` | no such route, or a ref or id in the path that is malformed, unknown or not published |
-| `405` | a method other than `GET` |
+| `405` | a method the route does not answer (`GET` on read routes, `POST` and `DELETE` on `/v1/predictions`, `GET` and `HEAD` on `/documentations` and `/changelog`); `Allow` lists them |
+| `413` | a write body over 64 KiB |
+| `415` | a write body not sent as `application/json` |
+| `422` | a write where at least one item was refused (the results body, not an error object) |
 | `429` | rate limited |
 | `503` | the club's database could not be reached |
 
