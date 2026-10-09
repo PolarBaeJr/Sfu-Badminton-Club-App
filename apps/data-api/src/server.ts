@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
 import { KeyVerifier, type VerifiedKey } from './auth.js';
+import { CHANGELOG_HTML } from './changelog-page.js';
 import { DOCS_CSP, DOCS_HTML } from './docs-page.js';
 import {
   BadParam,
@@ -11,6 +12,8 @@ import {
   type ParamName,
   type ParsedParams,
 } from './params.js';
+import { BadBody, MAX_BODY_BYTES, parseMatchups, parsePredictions } from './predictions.js';
+import { parseRegistration } from './registrations.js';
 import { TokenBuckets } from './rate-limit.js';
 import { RpcCache } from './rpc-cache.js';
 import type { DataApiScope } from './scopes.js';
@@ -21,12 +24,13 @@ export { QUERY_PARAMS } from './params.js';
 // The request handler. Everything it needs is passed in, so tests drive it with
 // a mocked upstream and a hand-moved clock rather than a spawned process.
 //
-// ORDER OF CHECKS: route (404), the public docs page (served here, GET and HEAD
-// only, 405 otherwise), method (405), key (401, or 429 from the per-address
-// failed-auth bucket), per-key rate (429), scope (403), query parameters (400),
-// path ref and id format (404), database. A caller learns nothing about keys
-// from a route that does not exist, and a malformed ref never costs a database
-// call: the by-ref functions rehash the whole eligible roster on every call.
+// ORDER OF CHECKS: route (404), the public docs and changelog pages (served
+// here, GET and HEAD only, 405 otherwise), method (405), key (401, or 429 from
+// the per-address failed-auth bucket), per-key rate (429), scope (403), query
+// parameters (400), path ref and id format (404), then for a write the body
+// (415, 413, 400), database. A caller learns nothing about keys from a route
+// that does not exist, and a malformed ref never costs a database call: the
+// by-ref functions rehash the whole eligible roster on every call.
 
 export interface HandlerDeps {
   upstream: Upstream;
@@ -38,6 +42,7 @@ export interface HandlerDeps {
 type RouteName =
   | 'health'
   | 'docs'
+  | 'changelog'
   | 'players'
   | 'player'
   | 'player_matches'
@@ -53,16 +58,22 @@ type RouteName =
   | 'tournament'
   | 'tournament_event'
   | 'sessions'
-  | 'events';
+  | 'events'
+  | 'predictions'
+  | 'registrations';
+
+type Method = 'GET' | 'POST' | 'DELETE';
 
 export interface RouteDef {
   name: RouteName;
   template: string;
-  /** Null for the two routes that need no key. */
+  /** Null for the three routes that need no key. */
   scope: DataApiScope | null;
   params: readonly ParamName[];
   /** False only for the routes that predate query parameters and ignore them. */
   strict: boolean;
+  /** Absent means GET only. */
+  methods?: readonly Method[];
 }
 
 const MATCH_PARAMS: readonly ParamName[] = [
@@ -76,6 +87,7 @@ const MATCH_PARAMS: readonly ParamName[] = [
 export const ROUTES: readonly RouteDef[] = [
   { name: 'health', template: '/health', scope: null, params: [], strict: false },
   { name: 'docs', template: '/documentations', scope: null, params: [], strict: false },
+  { name: 'changelog', template: '/changelog', scope: null, params: [], strict: false },
   { name: 'players', template: '/v1/players', scope: 'players:read', params: [], strict: false },
   { name: 'player', template: '/v1/players/:ref', scope: 'players:read', params: [], strict: false },
   {
@@ -111,6 +123,23 @@ export const ROUTES: readonly RouteDef[] = [
   },
   { name: 'sessions', template: '/v1/sessions', scope: 'schedule:read', params: ['from', 'to'], strict: true },
   { name: 'events', template: '/v1/events', scope: 'schedule:read', params: ['from', 'to'], strict: true },
+  // The writes. No read route shares either path, so a GET here is a 405.
+  {
+    name: 'predictions',
+    template: '/v1/predictions',
+    scope: 'predictions:write',
+    params: [],
+    strict: true,
+    methods: ['POST', 'DELETE'],
+  },
+  {
+    name: 'registrations',
+    template: '/v1/registrations',
+    scope: 'registrations:write',
+    params: [],
+    strict: true,
+    methods: ['POST'],
+  },
 ];
 
 interface Matched {
@@ -156,16 +185,36 @@ const EVENT_FIELDS = [
   'group_count',
   'qualifiers_per_group',
   'seeded_from_event_id',
+  'rated',
+  'current_stage',
 ] as const;
 
+/** STAGE_TIEBREAKS in packages/shared staged-format/schema.ts. */
+const STAGE_TIEBREAKS = new Set([
+  'wins',
+  'point_diff',
+  'points_for',
+  'points_against_low',
+  'game_diff',
+  'h2h',
+  'seed',
+]);
+
+/** How long a v2 reader PostgREST does not know is skipped before it is asked again. */
+const V2_RETRY_MS = 60_000;
+
 const DOCS_BODY = Buffer.from(DOCS_HTML, 'utf8');
+const CHANGELOG_BODY = Buffer.from(CHANGELOG_HTML, 'utf8');
 
 const KEY_RATE = { capacity: 60, windowMs: 60_000 };
 const FAILED_AUTH_RATE = { capacity: 30, windowMs: 60_000 };
 const VS_RECENT = 10;
 
 function matchRoute(pathname: string): Matched | null {
-  const path = pathname === '/documentations/' ? '/documentations' : pathname;
+  const path =
+    pathname === '/documentations/' ? '/documentations'
+    : pathname === '/changelog/' ? '/changelog'
+    : pathname;
   const segments = path.split('/');
   for (const def of ROUTES) {
     const parts = def.template.split('/');
@@ -218,6 +267,22 @@ function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function numOrNull(value: unknown): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+function boolOrNull(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function strOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function numOrAuto(value: unknown): number | 'auto' | null {
+  return typeof value === 'number' || value === 'auto' ? value : null;
+}
+
 function shapePlayer(row: Row): Row {
   const out: Row = {};
   for (const field of PLAYER_FIELDS) {
@@ -253,8 +318,17 @@ function shapeSide(value: unknown): Row[] {
   });
 }
 
+// A draw side. An external team (00269) is one element with no player_ref and
+// an external_ref; a member is one element each, with external false.
 function shapeRefSide(value: unknown): Row[] {
-  return asArray(value).map((p) => ({ player_ref: orNull(asObject(p)?.player_ref) }));
+  return asArray(value).map((p) => {
+    const o = asObject(p);
+    return {
+      player_ref: orNull(o?.player_ref),
+      external: o?.external === true,
+      external_ref: orNull(o?.external_ref),
+    };
+  });
 }
 
 function shapeSeasonRef(id: unknown, name: unknown): Row | null {
@@ -281,6 +355,10 @@ function shapeMatchTournament(value: unknown): Row | null {
     round_name: orNull(o.round_name),
     phase: orNull(o.phase),
     is_third_place: orNull(o.is_third_place),
+    stage: orNull(o.stage),
+    match_label: orNull(o.match_label),
+    handicap_a: orNull(o.handicap_a),
+    handicap_b: orNull(o.handicap_b),
   };
 }
 
@@ -349,15 +427,108 @@ function shapeTournament(row: Row): Row {
   };
 }
 
+// The structure of a staged event (00272). The database already rebuilds each
+// of these from an allowlist; they are rebuilt again here, so a key the stored
+// config grows (a stage's courts, say) cannot reach a consumer either way. A
+// v1 row has none of them and every one comes back null.
+function shapeScoring(value: unknown): Row | null {
+  const o = asObject(value);
+  if (!o) return null;
+  const forfeit = asObject(o.forfeit);
+  return {
+    best_of: numOrNull(o.best_of),
+    target: numOrNull(o.target),
+    win_by_two: boolOrNull(o.win_by_two),
+    cap: numOrNull(o.cap),
+    handicap: boolOrNull(o.handicap),
+    forfeit: forfeit ? { winner: numOrNull(forfeit.winner), loser: numOrNull(forfeit.loser) } : null,
+  };
+}
+
+function shapeStages(value: unknown): Row[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.map((s) => {
+    const o = asObject(s) ?? {};
+    return {
+      index: numOrNull(o.index),
+      key: strOrNull(o.key),
+      name: strOrNull(o.name),
+      kind: strOrNull(o.kind),
+      rated: boolOrNull(o.rated),
+      scoring: shapeScoring(o.scoring),
+      pools: numOrNull(o.pools),
+      groups_per_pool: numOrNull(o.groups_per_pool),
+      group_size: numOrAuto(o.group_size),
+      tiebreaks: Array.isArray(o.tiebreaks)
+        ? o.tiebreaks.filter((t): t is string => typeof t === 'string' && STAGE_TIEBREAKS.has(t))
+        : null,
+      size: numOrAuto(o.size),
+      third_place: boolOrNull(o.third_place),
+      matches: Array.isArray(o.matches)
+        ? o.matches.map((m) => {
+            const d = asObject(m) ?? {};
+            return {
+              label: strOrNull(d.label),
+              name: strOrNull(d.name),
+              winner_place: numOrNull(d.winner_place),
+              loser_place: numOrNull(d.loser_place),
+            };
+          })
+        : null,
+    };
+  });
+}
+
+function shapeCategories(value: unknown): Row[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.map((c) => {
+    const o = asObject(c) ?? {};
+    return { key: strOrNull(o.key), label: strOrNull(o.label) };
+  });
+}
+
+function shapeHeadStarts(value: unknown): Record<string, Record<string, number>> | null {
+  const o = asObject(value);
+  if (!o) return null;
+  const out: Record<string, Record<string, number>> = {};
+  for (const [row, cols] of Object.entries(o)) {
+    const c = asObject(cols);
+    if (!c) continue;
+    out[row] = {};
+    for (const [col, start] of Object.entries(c)) if (typeof start === 'number') out[row][col] = start;
+  }
+  return out;
+}
+
+function shapePointsTable(value: unknown): Row | null {
+  const o = asObject(value);
+  if (!o) return null;
+  return {
+    by_place: asArray(o.by_place).filter((n): n is number => typeof n === 'number'),
+    rest: numOrNull(o.rest) ?? 0,
+    participation: numOrNull(o.participation),
+    per_win: numOrNull(o.per_win),
+  };
+}
+
 function shapeEvent(row: Row): Row {
   const out: Row = {};
   for (const field of EVENT_FIELDS) out[field] = orNull(row[field]);
+  // An event of external teams (00269): unrated, and its entrants have no
+  // player_refs.
+  out.external = row.external_event === true;
+  out.stages = shapeStages(row.stages);
+  out.categories = shapeCategories(row.categories);
+  out.head_starts = shapeHeadStarts(row.head_starts);
+  out.points_table = shapePointsTable(row.points_table);
   return out;
 }
 
 function shapeEntrant(row: Row): Row {
   return {
     players: asArray(row.player_refs).map((r) => ({ player_ref: r })),
+    external: row.external === true,
+    external_ref: orNull(row.external_ref),
     seed: orNull(row.seed),
     status: orNull(row.status),
     final_position: orNull(row.final_position),
@@ -365,6 +536,7 @@ function shapeEntrant(row: Row): Row {
     points: orNull(row.points),
     elo: { before: orNull(row.elo_before), after: orNull(row.elo_after), change: orNull(row.elo_change) },
     combined_elo: orNull(row.combined_elo),
+    team_category: orNull(row.team_category),
   };
 }
 
@@ -395,6 +567,13 @@ function shapeDrawRow(row: Row): Row {
     sides: withheld || !sides ? null : { a: shapeRefSide(sides.a), b: shapeRefSide(sides.b) },
     winner_side: withheld ? null : orNull(row.winner_side),
     games: withheld ? null : shapeGames(row.games),
+    stage: orNull(row.stage),
+    pool_number: orNull(row.pool_number),
+    group_number: orNull(row.group_number),
+    slot: orNull(row.slot),
+    match_label: orNull(row.match_label),
+    handicap_a: withheld ? null : orNull(row.handicap_a),
+    handicap_b: withheld ? null : orNull(row.handicap_b),
   };
 }
 
@@ -506,6 +685,25 @@ export function createHandler(deps: HandlerDeps) {
   const rpc = (fn: string, args: Record<string, unknown>) =>
     cache.get(fn, args, () => deps.upstream.rpc(fn, args)) as Promise<Row[]>;
 
+  // A v2 reader is newer than the image that calls it only during a rollout:
+  // images update before migrations run. Until PostgREST knows the v2 (404,
+  // PGRST202) the v1 answers, without the newer fields. Any other failure of
+  // the v2 is a failure, never a reason to read v1.
+  const v2MissingUntil = new Map<string, number>();
+  async function rpcPrefer(v2: string, v1: string, args: Record<string, unknown>): Promise<Row[]> {
+    const until = v2MissingUntil.get(v2);
+    if (until === undefined || until <= now()) {
+      try {
+        return await rpc(v2, args);
+      } catch (err) {
+        if (!(err instanceof UpstreamError) || err.fn !== v2 || err.status !== 404) throw err;
+        v2MissingUntil.set(v2, now() + V2_RETRY_MS);
+        log(JSON.stringify({ level: 'warn', msg: 'v2_unavailable', fn: v2, upstream_status: 404 }));
+      }
+    }
+    return rpc(v1, args);
+  }
+
   function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
     const payload = JSON.stringify(body);
     res.writeHead(status, {
@@ -520,16 +718,16 @@ export function createHandler(deps: HandlerDeps) {
 
   // Static and public, so it is cacheable, unlike every JSON response. Node
   // drops the body of a HEAD response by itself.
-  function sendDocs(res: ServerResponse): void {
+  function sendHtml(res: ServerResponse, body: Buffer): void {
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=300',
       'Content-Security-Policy': DOCS_CSP,
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
-      'Content-Length': String(DOCS_BODY.length),
+      'Content-Length': String(body.length),
     });
-    res.end(DOCS_BODY);
+    res.end(body);
   }
 
   function ok(res: ServerResponse, body: unknown): number {
@@ -554,7 +752,7 @@ export function createHandler(deps: HandlerDeps) {
     return 429;
   }
 
-  async function authenticate(req: IncomingMessage, res: ServerResponse): Promise<VerifiedKey | number> {
+  async function authenticate(req: IncomingMessage, res: ServerResponse): Promise<(VerifiedKey & { hash: string }) | number> {
     const ip = clientIp(req);
     const inspected = verifier.inspect(req.headers.authorization);
     let key: VerifiedKey | null;
@@ -569,11 +767,133 @@ export function createHandler(deps: HandlerDeps) {
       if (!gate.ok) return rateLimited(res, gate.retryAfter);
       key = await verifier.verify(inspected.hash);
     }
-    if (!key) {
+    if (!key || inspected.kind === 'malformed') {
       failBuckets.take(ip);
       return unauthorized(res);
     }
-    return key;
+    return { ...key, hash: inspected.hash };
+  }
+
+  /**
+   * The JSON body of a write, or the status already sent. A body over the cap
+   * is read to its end and dropped, so the 413 reaches a client still sending.
+   */
+  async function readBody(req: IncomingMessage, res: ServerResponse): Promise<{ value: unknown } | number> {
+    const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+    if (type !== 'application/json') {
+      send(res, 415, { error: 'unsupported_media_type' });
+      return 415;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size <= MAX_BODY_BYTES) chunks.push(chunk);
+    }
+    if (size > MAX_BODY_BYTES) {
+      send(res, 413, { error: 'payload_too_large' });
+      return 413;
+    }
+    try {
+      return { value: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown };
+    } catch {
+      send(res, 400, { error: 'bad_request', field: 'body' });
+      return 400;
+    }
+  }
+
+  // One row per item from the write or delete function. A `key` refusal means
+  // the database no longer accepts a key the 30-second cache still holds:
+  // revoked, expired or narrowed a moment ago.
+  async function write(
+    req: IncomingMessage,
+    res: ServerResponse,
+    keyHash: string,
+  ): Promise<number> {
+    const body = await readBody(req, res);
+    if (typeof body === 'number') return body;
+    const deleting = req.method === 'DELETE';
+    let items: Row[];
+    try {
+      items = deleting ? parseMatchups(body.value) : parsePredictions(body.value, now());
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err;
+      send(res, 400, { error: 'bad_request', field: err.field });
+      return 400;
+    }
+    const fn = deleting ? 'data_api_delete_predictions' : 'data_api_write_predictions';
+    // Straight to the upstream, never through the read cache: two identical
+    // writes are two writes.
+    const rows = (await deps.upstream.rpc(fn, {
+      p_key_hash: keyHash,
+      [deleting ? 'p_matchups' : 'p_predictions']: items,
+    })) as Row[];
+    if (rows.some((r) => r.status === 'refused' && r.reason === 'key')) return unauthorized(res);
+    const results = rows.map((r) =>
+      r.status === 'refused'
+        ? { index: num(r.item), status: 'refused', reason: orNull(r.reason) }
+        : { index: num(r.item), status: orNull(r.status) },
+    );
+    const count = (status: string) => results.filter((r) => r.status === status).length;
+    const refused = count('refused');
+    const out = deleting
+      ? { results, deleted: count('deleted'), not_found: count('not_found'), refused }
+      : { results, created: count('created'), replaced: count('replaced'), refused };
+    const status = refused > 0 ? 422 : 200;
+    send(res, status, out);
+    return status;
+  }
+
+  // One Google Form response. The answer is per entry: entered, pending (the
+  // club has something to do, or the person does), or refused with a reason
+  // that is only ever about the event. A response that was already received
+  // answers from the record with `replayed: true`. Refusals of single entries
+  // are a 200: they are answers, and a retry would get the same one. The body
+  // and its emails are never logged.
+  async function importRegistration(
+    req: IncomingMessage,
+    res: ServerResponse,
+    keyHash: string,
+  ): Promise<number> {
+    const body = await readBody(req, res);
+    if (typeof body === 'number') return body;
+    let payload;
+    try {
+      payload = parseRegistration(body.value);
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err;
+      send(res, 400, { error: 'bad_request', field: err.field });
+      return 400;
+    }
+    const rows = (await deps.upstream.rpc('data_api_import_registration', {
+      p_key_hash: keyHash,
+      p_payload: payload,
+    })) as Row[];
+    const whole = rows.find((r) => num(r.item) === 0 && r.status === 'refused');
+    if (whole?.reason === 'key') return unauthorized(res);
+    if (whole?.reason === 'not_found') {
+      send(res, 404, { error: 'not_found', detail: 'no active form binding for this key and form_id' });
+      return 404;
+    }
+    if (whole) {
+      send(res, 400, { error: 'bad_request', field: 'body' });
+      return 400;
+    }
+    const results = rows.map((r) => ({
+      index: num(r.item),
+      event_id: orNull(r.event_id),
+      status: orNull(r.status),
+      reason: r.status === 'refused' ? orNull(r.reason) : null,
+    }));
+    const count = (status: string) => results.filter((r) => r.status === status).length;
+    send(res, 200, {
+      replayed: rows.length > 0 && rows.every((r) => r.replayed === true),
+      results,
+      entered: count('entered'),
+      pending: count('pending'),
+      refused: count('refused'),
+    });
+    return 200;
   }
 
   function pageOf(params: ParsedParams): { limit: number; offset: number } {
@@ -805,8 +1125,14 @@ export function createHandler(deps: HandlerDeps) {
       case 'tournament': {
         const rows = await rpc('data_api_tournaments', { ...c, p_tournament_id: v.id });
         if (!rows[0]) return notFound(res);
-        const events = await rpc('data_api_tournament_events', { ...c, p_tournament_id: v.id });
-        const entrants = await rpc('data_api_tournament_entrants', { ...c, p_tournament_id: v.id });
+        const events = await rpcPrefer('data_api_tournament_events_v2', 'data_api_tournament_events', {
+          ...c,
+          p_tournament_id: v.id,
+        });
+        const entrants = await rpcPrefer('data_api_tournament_entrants_v2', 'data_api_tournament_entrants', {
+          ...c,
+          p_tournament_id: v.id,
+        });
         return ok(res, {
           generated_at: generatedAt,
           tournament: {
@@ -822,10 +1148,16 @@ export function createHandler(deps: HandlerDeps) {
       case 'tournament_event': {
         // The event list is the tournament's visibility check as well: a draft
         // tournament or a hidden season returns no events, so the event 404s.
-        const events = await rpc('data_api_tournament_events', { ...c, p_tournament_id: v.id });
+        const events = await rpcPrefer('data_api_tournament_events_v2', 'data_api_tournament_events', {
+          ...c,
+          p_tournament_id: v.id,
+        });
         const event = events.find((e) => e.id === v.event_id);
         if (!event) return notFound(res);
-        const draw = await rpc('data_api_tournament_draw', { ...c, p_event_id: v.event_id });
+        const draw = await rpcPrefer('data_api_tournament_draw_v2', 'data_api_tournament_draw', {
+          ...c,
+          p_event_id: v.event_id,
+        });
         return ok(res, {
           generated_at: generatedAt,
           tournament_id: v.id,
@@ -855,7 +1187,11 @@ export function createHandler(deps: HandlerDeps) {
 
       case 'health':
       case 'docs':
-        // Both are answered before authentication.
+      case 'changelog':
+      case 'predictions':
+      case 'registrations':
+        // The first three are answered before authentication, the writes by
+        // write() and importRegistration().
         return notFound(res);
     }
   }
@@ -866,16 +1202,17 @@ export function createHandler(deps: HandlerDeps) {
     if (!matched) return notFound(res);
     const { def } = matched;
     ctx.path = def.template;
-    if (def.name === 'docs') {
+    if (def.name === 'docs' || def.name === 'changelog') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         send(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET, HEAD' });
         return 405;
       }
-      sendDocs(res);
+      sendHtml(res, def.name === 'docs' ? DOCS_BODY : CHANGELOG_BODY);
       return 200;
     }
-    if (req.method !== 'GET') {
-      send(res, 405, { error: 'method_not_allowed' }, { Allow: 'GET' });
+    const methods = def.methods ?? ['GET'];
+    if (!methods.includes(req.method as Method)) {
+      send(res, 405, { error: 'method_not_allowed' }, { Allow: methods.join(', ') });
       return 405;
     }
     if (def.name === 'health') {
@@ -912,6 +1249,9 @@ export function createHandler(deps: HandlerDeps) {
       if (ID_VARS.has(key) && !UUID_PATTERN.test(value)) return notFound(res);
       vars[key] = ID_VARS.has(key) ? value.toLowerCase() : value;
     }
+
+    if (def.name === 'predictions') return write(req, res, auth.hash);
+    if (def.name === 'registrations') return importRegistration(req, res, auth.hash);
 
     const generatedAt = isoSeconds(new Date(now()).toISOString());
     return serve(res, def.name, vars, params, auth.consumerId, generatedAt);

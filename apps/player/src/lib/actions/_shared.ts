@@ -77,21 +77,7 @@ export async function requirePlayer() {
     Sentry.setUser(null);
     throw new ExpectedError('Not authenticated', 'AUTH-101');
   }
-  if (player.status === 'pending_approval') {
-    Sentry.setUser(null);
-    throw new ExpectedError('Account pending approval', 'ACC-101');
-  }
-  if (player.status === 'suspended') {
-    Sentry.setUser(null);
-    throw new ExpectedError('Account suspended', 'ACC-102');
-  }
-  // is_banned is an independent column, not folded into status — without this
-  // a banned player could still create/accept challenges, check into sessions
-  // and submit rated results (tournament register/check-in already re-check it).
-  if (player.is_banned) {
-    Sentry.setUser(null);
-    throw new ExpectedError('Account suspended pending reinstatement', 'ACC-103');
-  }
+  assertPlayerStanding(player);
   // active_flag, last, and the ordering above is doing real work. By the time
   // we get here the pending / suspended / banned rows have already thrown, so
   // the ONLY deactivated accounts left are the nightly job's lapsed members and
@@ -119,6 +105,27 @@ export async function requirePlayer() {
   }
   Sentry.setUser({ id: player.id });
   return player;
+}
+
+// The standing half of requirePlayer, for a caller that resolved the player
+// some other way (the Discord routes resolve them from a linked Discord id, so
+// there is no session for getCurrentPlayer to read). Same refusals, same codes.
+export function assertPlayerStanding(player: { status: string; is_banned: boolean | null }) {
+  if (player.status === 'pending_approval') {
+    Sentry.setUser(null);
+    throw new ExpectedError('Account pending approval', 'ACC-101');
+  }
+  if (player.status === 'suspended') {
+    Sentry.setUser(null);
+    throw new ExpectedError('Account suspended', 'ACC-102');
+  }
+  // is_banned is an independent column, not folded into status. Without this
+  // a banned player could still create/accept challenges, check into sessions
+  // and submit rated results (tournament register/check-in already re-check it).
+  if (player.is_banned) {
+    Sentry.setUser(null);
+    throw new ExpectedError('Account suspended pending reinstatement', 'ACC-103');
+  }
 }
 
 // Blocks gameplay actions (check-in, challenges, tournament registration)

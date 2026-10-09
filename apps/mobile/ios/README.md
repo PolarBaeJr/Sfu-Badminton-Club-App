@@ -80,8 +80,8 @@ scheme. A signed device build needs:
 3. In `Config/Local.xcconfig`, set `DEVELOPMENT_TEAM = <TEAMID>` and
    `BADMINTON_ENTITLEMENTS_FILE = SFUBadminton/SFUBadminton.entitlements`. Leave both
    empty for unsigned simulator builds, which then carry no capabilities.
-4. On the staging player service, through the dashboard (`set_service_env`, not a
-   compose file), set `PASSKEY_IOS_APP_IDS=<TEAMID>.com.sfubadminton.app`. Then
+4. In the staging player service's environment, set
+   `PASSKEY_IOS_APP_IDS=<TEAMID>.com.sfubadminton.app`. Then
    check that `https://<rp host>/.well-known/apple-app-site-association` answers 200
    with JSON and no redirect. The RP ID host (passkeys) and the site host (universal
    links) may differ, and the file must be served on each.

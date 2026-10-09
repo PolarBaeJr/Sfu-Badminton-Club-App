@@ -15,12 +15,13 @@ import {
   knockoutLadder,
   POOL_LADDER_SHAPE,
   TOURNAMENT_EVENT_FORMAT_LABELS,
+  groupLabel,
 } from '../tournament-phases';
 import { eventHasDraw } from '../tournament-withdrawal';
 import { getEventRules, describeMatchShape, derivedFormatWeight } from '../constants';
 import type { TournamentEventFormat, TournamentEventStatus } from '../../types/database';
 
-const FORMATS: TournamentEventFormat[] = ['single_elimination', 'round_robin', 'pool_to_bracket'];
+const FORMATS: TournamentEventFormat[] = ['single_elimination', 'round_robin', 'pool_to_bracket', 'staged'];
 
 describe('format predicates', () => {
   it('labels every format', () => {
@@ -64,6 +65,12 @@ describe('the status machine', () => {
         'registration', 'checkin', 'bracket_generated', 'live', 'completed',
       ]);
     }
+  });
+
+  it('walks a staged event down the five-step path: its stages are drawn inside bracket_generated and live', () => {
+    expect(statusStepsFor('staged')).toEqual([
+      'registration', 'checkin', 'bracket_generated', 'live', 'completed',
+    ]);
   });
 
   it('inserts the pool half in the middle and changes nothing else', () => {
@@ -251,5 +258,30 @@ describe('the club ladder', () => {
     expect(quarter).toBeLessThan(semi);
     expect(semi).toBeLessThan(final);
     expect(final).toBeCloseTo(1.25, 5);
+  });
+});
+
+describe('groupLabel', () => {
+  it('letters groups in bijective base 26', () => {
+    expect(groupLabel(1)).toBe('A');
+    expect(groupLabel(26)).toBe('Z');
+    expect(groupLabel(27)).toBe('AA');
+    expect(groupLabel(28)).toBe('AB');
+    expect(groupLabel(32)).toBe('AF');
+    expect(groupLabel(52)).toBe('AZ');
+    expect(groupLabel(53)).toBe('BA');
+    expect(groupLabel(702)).toBe('ZZ');
+    expect(groupLabel(703)).toBe('AAA');
+  });
+
+  it('gives every group its own label', () => {
+    const labels = new Set(Array.from({ length: 800 }, (_, i) => groupLabel(i + 1)));
+    expect(labels.size).toBe(800);
+  });
+
+  it('returns the number for anything that is not a positive integer', () => {
+    expect(groupLabel(0)).toBe('0');
+    expect(groupLabel(-3)).toBe('-3');
+    expect(groupLabel(1.5)).toBe('1.5');
   });
 });

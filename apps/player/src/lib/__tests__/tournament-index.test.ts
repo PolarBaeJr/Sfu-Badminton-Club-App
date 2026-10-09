@@ -50,6 +50,14 @@ describe('pickHeroTournament', () => {
   it('returns null when there is nothing open', () => {
     expect(pickHeroTournament([])).toBeNull();
   });
+
+  it('ignores an event whose registration window is shut', () => {
+    for (const registration_window of ['not_open_yet', 'closed'] as const) {
+      expect(pickHeroTournament([tournament({ tournament_events: [event({ registration_window })] })])).toBeNull();
+    }
+    expect(pickHeroTournament([tournament({ tournament_events: [event({ registration_window: 'open' })] })])?.id)
+      .toBe('t1');
+  });
 });
 
 describe('describeDisciplines', () => {
@@ -96,6 +104,13 @@ describe('countEnteredPlayers', () => {
       [{ player1_id: 'e', player2_id: 'f', status: 'withdrawn' }],
     );
     expect(n).toBe(2);
+  });
+
+  it('counts each external team as two people, however many there are', () => {
+    const external = { player1_id: null, player2_id: null, status: 'registered' };
+    expect(countEnteredPlayers([], [external])).toBe(2);
+    expect(countEnteredPlayers([], [external, external])).toBe(4);
+    expect(countEnteredPlayers([], [external, { ...external, status: 'withdrawn' }])).toBe(2);
   });
 });
 
@@ -217,6 +232,13 @@ describe('soleEnterableEvent', () => {
       event({ id: 'a' }),
       event({ id: 'b', event_type: 'mixed_doubles' }),
     ])).toBeNull();
+  });
+
+  it('skips an event whose registration window is shut', () => {
+    expect(soleEnterableEvent([
+      event({ id: 'a', registration_window: 'closed' }),
+      event({ id: 'b' }),
+    ])?.id).toBe('b');
   });
 
   it('declines when the only doubles event is not taking entries', () => {

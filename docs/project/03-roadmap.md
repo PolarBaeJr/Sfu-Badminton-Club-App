@@ -55,7 +55,7 @@
 
 ## Also on the table (not yet committed)
 
-A longer list of ideas we've captured for future consideration, including: session capacity + waitlists, court allocation, membership renewals, a merch store, door-QR / wallet-pass check-in, a phone-as-scoreboard live mode, coach roles + drills, richer player profiles, gamification (badges, hall of fame), a churn/disengagement flag for exec outreach, a full finance dashboard, exec task boards, sponsorship management, SFU single-sign-on, inter-university fixtures, and accessibility/inclusivity improvements (para categories, localization).
+A longer list of ideas we've captured for future consideration, including: session capacity + waitlists, court allocation, membership renewals, a merch store, door-QR / wallet-pass check-in, a phone-as-scoreboard live mode, coach roles + drills, richer player profiles, gamification (badges, hall of fame), a churn/disengagement flag for exec outreach, a full finance dashboard, exec task boards, sponsorship management, university single-sign-on, inter-university fixtures, and accessibility/inclusivity improvements (para categories, localization).
 
 *These are parked as candidates — they can be promoted into the committed list anytime.*
 

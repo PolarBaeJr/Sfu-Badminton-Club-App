@@ -1,20 +1,17 @@
 import { NextResponse } from 'next/server';
-import { DISCORD_LINK_TOKEN_TTL_MINUTES, hashDiscordLinkToken } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import {
   discordServiceUnauthorized,
   isAuthorizedDiscordService,
 } from '@/lib/discord-service-auth';
+import { mintDiscordLinkToken } from '@/lib/discord-link';
 
 export const dynamic = 'force-dynamic';
 
 // Mint a one-time /link token.
 //
-// The APP generates it, not the bot. The bot could perfectly well produce 32
-// random bytes itself, but then the token would exist in two processes and the
-// hashing would have two call sites; here the plaintext is created, hashed and
-// handed back in a single function, and the only copy that ever leaves is the
-// one the member is about to click.
+// The APP generates it, not the bot (lib/discord-link.ts says why), and the
+// only copy that ever leaves is the one the member is about to click.
 export async function POST(request: Request) {
   if (!isAuthorizedDiscordService(request)) return discordServiceUnauthorized();
 
@@ -76,34 +73,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'already_linked' }, { status: 409 });
   }
 
-  // 32 bytes, matching DISCORD_LINK_TOKEN_REGEX. crypto.getRandomValues rather
-  // than Math.random for the obvious reason: this string is the entire proof
-  // that the person on the website is the person who ran the command.
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  const token = Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  const minted = await mintDiscordLinkToken(
+    createServiceRoleClient(),
+    discordUserId,
+    typeof guildId === 'string' ? guildId : null
+  );
 
-  const expiresAt = new Date(Date.now() + DISCORD_LINK_TOKEN_TTL_MINUTES * 60_000);
-
-  const { error } = await createServiceRoleClient()
-    .from('discord_link_tokens')
-    .insert({
-      token_hash: await hashDiscordLinkToken(token),
-      discord_user_id: discordUserId,
-      guild_id: typeof guildId === 'string' ? guildId : null,
-      expires_at: expiresAt.toISOString(),
-    });
-
-  if (error) {
+  if (!minted.ok) {
     // Named, for the same reason the members read is: until 00165 is applied
     // this table does not exist, and a silent failure here would hand the
     // member a link that can never work.
-    console.error('[discord] link token mint failed:', error.message);
-    return NextResponse.json({ error: 'mint_failed', detail: error.message }, { status: 503 });
+    console.error('[discord] link token mint failed:', minted.error);
+    return NextResponse.json({ error: 'mint_failed', detail: minted.error }, { status: 503 });
   }
 
-  // The ONLY time the plaintext exists outside this function.
-  return NextResponse.json({ token, expiresAt: expiresAt.toISOString() });
+  // The ONLY time the plaintext exists outside the mint.
+  return NextResponse.json({ token: minted.token, expiresAt: minted.expiresAt.toISOString() });
 }

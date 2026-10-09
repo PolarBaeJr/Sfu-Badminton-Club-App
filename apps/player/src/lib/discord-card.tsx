@@ -1090,8 +1090,8 @@ const HEADER_GAP = 24;
  * fraction of the font size.
  *
  * MEASURED, not taken from a spec: 'Bartholomew Fitzgerald-Kensington' inks
- * 492px at 38px and 751px at 58px, both 0.392 em/char, and 'Matthew Cheng'
- * reads 0.420. 0.44 is above both with margin for a name whose letters run
+ * 492px at 38px and 751px at 58px, both 0.392 em/char, and an ordinary two-word
+ * name reads 0.420. 0.44 is above both with margin for a name whose letters run
  * wider than either -- a string of capital Ms measures 0.546, which no real
  * name approaches, and the render test asserts the step-downs hold for the
  * worst name the card admits rather than trusting this number alone.

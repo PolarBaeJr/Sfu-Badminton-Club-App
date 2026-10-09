@@ -89,6 +89,7 @@ inside the same transaction as the change, and never reach `audit.ts`:
 - `void_club_match` (00203)
 - `convert_club_match_to_casual` (00203)
 - `resolve_dispute_unrated` (00203)
+- `post_club_changes` (00286)
 
 The last three arrived together and none of them were built for this: 00203 put
 those three operations into one transaction each for their own reasons, and the

@@ -99,6 +99,69 @@ describe('/documentations', () => {
     const body = await (await get(h, '/documentations')).text();
     for (const s of [...routes, ...errors, ...scopes]) expect(body, s).toContain(s);
   });
+
+  it('links to the changelog', async () => {
+    const body = await (await get(h, '/documentations')).text();
+    expect(body).toContain('href="/changelog"');
+  });
+});
+
+describe('/changelog', () => {
+  it('serves HTML without a key, with the security headers, and never asks the database', async () => {
+    for (const path of ['/changelog', '/changelog/']) {
+      const res = await get(h, path);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+      expect(res.headers.get('cache-control')).toBe('public, max-age=300');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+      const csp = res.headers.get('content-security-policy') ?? '';
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).not.toContain('script-src');
+      expect(csp).not.toContain('unsafe-inline');
+      const body = await res.text();
+      expect(body).toContain('<title>SFU Badminton Data API changelog</title>');
+      const styles = [...body.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]!);
+      expect(styles).toHaveLength(1);
+      expect(body).not.toMatch(/\sstyle=/);
+      expect(body).not.toMatch(/<script/i);
+      const hash = createHash('sha256').update(styles[0]!).digest('base64');
+      expect(csp).toContain(`style-src 'sha256-${hash}'`);
+      expect(body).toContain('href="/documentations"');
+      expect(body).toContain('href="https://sfubadminton.com/"');
+    }
+    expect(h.calls).toHaveLength(0);
+    const lines = h.logs.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines[0]).toMatchObject({ method: 'GET', path: '/changelog', status: 200 });
+    expect(lines[0]).not.toHaveProperty('key');
+  });
+
+  it('answers HEAD with the headers and no body', async () => {
+    const res = await get(h, '/changelog', undefined, { method: 'HEAD' });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(Number(res.headers.get('content-length'))).toBeGreaterThan(0);
+    expect(await res.text()).toBe('');
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('405s any other method', async () => {
+    const res = await get(h, '/changelog', newKey(), { method: 'POST' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('GET, HEAD');
+    expect(await res.json()).toEqual({ error: 'method_not_allowed' });
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('ignores a key and is not charged to its rate budget', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    for (let i = 0; i < 70; i++) {
+      expect((await get(h, '/changelog', key)).status).toBe(200);
+    }
+    expect(h.calls).toHaveLength(0);
+    expect((await get(h, '/v1/players', key)).status).toBe(200);
+  });
 });
 
 describe('response headers', () => {

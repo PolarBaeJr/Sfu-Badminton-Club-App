@@ -109,14 +109,14 @@ describe('reapplyDecisions', () => {
         'Sam Lee': 'skip', // the row is gone: someone marked Sam meanwhile
       },
       keep: {
-        'Robin Park': { name: 'Robin Park', email: 'robin@gmail.com', amount: '25' },
+        'Robin Park': { name: 'Robin Park', email: 'robin@example.net', amount: '25' },
         'Jane Doe': { name: 'Jane Doe', email: '', amount: '' }, // not a not-found row any more
       },
       dismissed: ['f-1', 'f-2'],
     });
     expect(out).toEqual({
       choices: { 'Jane Doe': 'b', 'Robin Park': 'keep' },
-      keep: { 'Robin Park': { name: 'Robin Park', email: 'robin@gmail.com', amount: '25' } },
+      keep: { 'Robin Park': { name: 'Robin Park', email: 'robin@example.net', amount: '25' } },
       dismissed: ['f-1'],
     });
   });

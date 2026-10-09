@@ -92,7 +92,7 @@ describe('isPublicPath', () => {
   });
 
   describe('public pages', () => {
-    it.each(['/', '/login', '/login/forgot', '/signup', '/auth/callback', '/exec', '/legal/privacy', '/leaderboard', '/membership', '/socials'])(
+    it.each(['/', '/login', '/login/forgot', '/signup', '/auth/callback', '/exec', '/legal/privacy', '/leaderboard', '/membership', '/socials', '/whats-new'])(
       'treats %s as public',
       (path) => {
         expect(isPublicPath(path)).toBe(true);
@@ -112,6 +112,11 @@ describe('isPublicPath', () => {
       expect(isPublicPath('/socialsX')).toBe(false);
       expect(isPublicPath('/socials/anything')).toBe(false);
       expect(isPublicPath('/fees')).toBe(false);
+    });
+
+    it('matches /whats-new exactly', () => {
+      expect(isPublicPath('/whats-newX')).toBe(false);
+      expect(isPublicPath('/whats-new/1.1.1')).toBe(false);
     });
 
     // A guest has no account, and a proof link is opened by whoever holds it.

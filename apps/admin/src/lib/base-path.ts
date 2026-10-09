@@ -16,8 +16,8 @@
  * Every such string has to go through withBase().
  *
  * NEXT_PUBLIC_BASE_PATH is read at BUILD time (it is inlined into the client
- * bundle, like every NEXT_PUBLIC_* var); setting it in the Pi's runtime .env
- * does nothing. Keep this module free of Node-only imports — the Edge
+ * bundle, like every NEXT_PUBLIC_* var); setting it in a runtime .env does
+ * nothing. Keep this module free of Node-only imports: the Edge
  * middleware pulls it in via lib/passkey/config.
  */
 

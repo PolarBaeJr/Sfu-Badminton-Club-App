@@ -37,6 +37,9 @@ const store = vi.hoisted(() => ({
   // The stored club feature switches; null is no row, which is every feature on.
   features: null as Record<string, unknown> | null,
   isExec: false,
+  // The 00276 window rows the separate window read returns, per table.
+  eventWindows: [] as Array<Record<string, unknown>>,
+  tournamentWindows: [] as Array<Record<string, unknown>>,
   // The viewer's granted capabilities; any at all composes them as `custom`.
   grants: [] as string[],
 }));
@@ -81,7 +84,8 @@ vi.mock('../supabase-server', async (importOriginal) => ({
         else if (table === 'tournament_pairs') {
           const on = filters.find(([c]) => c === 'player1_id' || c === 'player2_id');
           data = on ? store.pairs.filter((row) => row[on[0]] === on[1]) : [];
-        }
+        } else if (table === 'tournament_events') data = store.eventWindows;
+        else if (table === 'tournaments') data = store.tournamentWindows;
         return Promise.resolve({ data, error: null }).then(resolve);
       };
       return chain;
@@ -135,6 +139,7 @@ beforeEach(() => {
   store.requiredHash = null; store.acceptances = [];
   store.entries = [entry('pt1')];
   store.features = null; store.isExec = false; store.grants = [];
+  store.eventWindows = []; store.tournamentWindows = [];
 });
 
 // TOURNAMENTS SWITCHED OFF. The page gate redirects a member, but a scan posts
@@ -366,6 +371,82 @@ describe('the QR check-in scan goes through the field fence', () => {
 
     expect(r.ok).toBe(false);
     expect(store.rpc).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 00276. THE CHECK-IN WINDOW, ON TOP OF THE EVENT STATUS.
+// ---------------------------------------------------------------------------
+// An event in check-in whose window has not opened is early, like an event
+// still in registration: pending, not refused. Past the window's close the desk
+// is the remedy, so it is a refusal that says so.
+describe('the QR scan honours the check-in window', () => {
+  const HOUR = 60 * 60 * 1000;
+  const at = (offset: number) => new Date(Date.now() + offset).toISOString();
+
+  it('reports an event whose window has not opened as pending, without calling the fence', async () => {
+    store.entries = [entry('pt1'), entry('pt2')];
+    store.eventWindows = [{ id: 'e-pt2', checkin_opens_at: at(HOUR), checkin_closes_at: null }];
+    store.rpcResults = [{ ok: true, already: false }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.checkedIn).toHaveLength(1);
+      expect(r.data.pending).toHaveLength(1);
+      expect(r.data.refused).toHaveLength(0);
+    }
+    expect(store.rpc).toHaveLength(1);
+  });
+
+  it('refuses an event whose window has closed, and says to see the desk', async () => {
+    store.entries = [entry('pt1'), entry('pt2')];
+    store.tournamentWindows = [{ id: 't1', checkin_opens_at: null, checkin_closes_at: at(-HOUR) }];
+    store.eventWindows = [{ id: 'e-pt1', checkin_opens_at: null, checkin_closes_at: at(HOUR) }];
+    store.rpcResults = [{ ok: true, already: false }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.checkedIn).toHaveLength(1);
+      expect(r.data.refused).toEqual([
+        { event: 'mens_singles', detail: 'check-in has closed for this event, see the desk' },
+      ]);
+    }
+    expect(store.rpc).toHaveLength(1);
+  });
+
+  it('treats the fence saying not open yet as pending, not as a refusal', async () => {
+    store.entries = [entry('pt1'), entry('pt2')];
+    store.rpcResults = [{ ok: true, already: false }, { ok: false, reason: 'checkin_not_open' }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.checkedIn).toHaveLength(1);
+      expect(r.data.pending).toHaveLength(1);
+      expect(r.data.refused).toHaveLength(0);
+    }
+  });
+
+  it('keeps the not-open-yet sentence when every event is early', async () => {
+    store.entries = [entry('pt1')];
+    store.tournamentWindows = [{ id: 't1', checkin_opens_at: at(HOUR), checkin_closes_at: null }];
+
+    const r = await checkInToTournament(TOKEN);
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('Check-in is not open for your events yet.');
+    expect(store.rpc).toHaveLength(0);
+  });
+
+  it('reads the windows on their own, never through the entry embed', async () => {
+    await checkInToTournament(TOKEN);
+    expect(store.tableReads).toContain('tournament_events');
+    expect(store.tableReads).toContain('tournaments');
   });
 });
 

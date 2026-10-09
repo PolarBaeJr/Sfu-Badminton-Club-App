@@ -70,6 +70,30 @@ export const COMPETITION_CATEGORY_CHOICES: ReadonlyArray<{
 ] as const;
 
 /**
+ * The question a NEW member answers at sign-up, on the web onboarding page and
+ * in Discord /signup, and its three answers. Required: the member picks one.
+ *
+ * Not COMPETITION_CATEGORY_CHOICES, on the club owner's instruction: at sign-up
+ * the question is about draws, not the person, and the third answer is "Open
+ * events only" rather than "Prefer not to say". Both store NULL, so the column
+ * and the Settings control are unchanged. 'open' is a sign-up answer only and
+ * never reaches the database (categoryFromSignupAnswer).
+ */
+export const SIGNUP_EVENTS_QUESTION = 'Which events do you play in tournaments?';
+
+export type SignupEventsAnswer = 'mens' | 'womens' | 'open';
+
+export const SIGNUP_EVENTS_CHOICES: ReadonlyArray<{ value: SignupEventsAnswer; label: string }> = [
+  { value: 'mens', label: "Men's" },
+  { value: 'womens', label: "Women's" },
+  { value: 'open', label: 'Open events only' },
+] as const;
+
+export function categoryFromSignupAnswer(answer: SignupEventsAnswer): CompetitionCategory | null {
+  return answer === 'open' ? null : answer;
+}
+
+/**
  * The sentence a member sees when the lock refuses their write, and the one the
  * database raises. KEPT IDENTICAL IN BOTH PLACES on purpose: the trigger's
  * message is what a hand-rolled PostgREST call gets, and the app's is what the

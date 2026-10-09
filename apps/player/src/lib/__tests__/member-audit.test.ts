@@ -208,6 +208,8 @@ describe('restoreMyAccount', () => {
 describe('the onboarding rating seed', () => {
   const onboarding = {
     first_name: 'Ada',
+    last_name: 'Lovelace',
+    event_category: 'open' as const,
     waiver_accepted: true,
     code_of_conduct_accepted: true,
     terms_accepted: true,

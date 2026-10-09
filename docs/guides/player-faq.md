@@ -62,7 +62,7 @@ Yes — enable push notifications for reminders and challenge alerts.
 Yes — there's an option to be hidden from the public ranking. Ask an admin if you don't see it.
 
 **Who can see my info?**
-Your name and rating appear on the ladder (unless you opt out). Personal details (email, fees) are only visible to admins. See the [Privacy Policy](../legal/privacy-policy.md).
+Your name and rating appear on the ladder (unless you opt out). Personal details (email, fees) are only visible to admins. See the Privacy Policy in the app.
 
 **Can I get a copy of everything the club holds about me?**
 Yes, and you don't have to ask anyone. Go to **Settings → your data** and download it. It's one file covering every part of your record: your profile, matches, sessions, RSVPs, waivers, notifications and more. It also tells you what *isn't* in the file and why, so you can see where the edges are instead of guessing.

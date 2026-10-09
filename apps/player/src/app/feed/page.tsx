@@ -15,6 +15,8 @@ import {
   scopeToActiveSeason,
   selectAllInChunks,
   wallClockToUtc,
+  windowState,
+  checkinWindowNotice,
   type AttendanceStatus,
   type FeatureId,
   type SessionIntent,
@@ -46,6 +48,7 @@ import {
 } from '@/lib/feed-activity';
 import { isUnderWay, runningEvents, type FeedTournament } from '@/lib/feed-tournament';
 import { countEnteredPlayers, occupiesAPlace } from '@/lib/tournament-index';
+import { loadEntryWindows, windowsFor, type EntryWindows } from '@/lib/tournament-windows';
 import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
 import { onVisibleTracks } from '@/lib/session-track-filter';
 import { getFeatureFlags } from '@/lib/feature-gate';
@@ -465,7 +468,7 @@ export default async function FeedPage() {
   // The counts are scoped to the cards and paged, exactly as /sessions did it:
   // an unscoped read of either table truncates silently at PGRST_DB_MAX_ROWS.
   // `as never` is the cast /sessions carries for the same TS2589.
-  const [entryResults, checkedInBySession, goingRes] = await Promise.all([
+  const [entryResults, checkedInBySession, goingRes, feedWindows] = await Promise.all([
     runningEventIds.length > 0
       ? Promise.all([
           supabase
@@ -488,6 +491,17 @@ export default async function FeedPage() {
         .order('session_id')
         .range(from, to) as never,
     ),
+    // The running events' check-in windows (00276), for the card's wording
+    // only. Display, so a failed read degrades to no window and is reported.
+    runningEventIds.length > 0
+      ? loadEntryWindows(supabase, {
+          eventIds: runningEventIds,
+          tournamentIds: liveTournaments.map((t) => t.id),
+        }).catch((err: unknown): EntryWindows | null => {
+          Sentry.captureException(err, { extra: { action: 'feed:entryWindows' } });
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
   if (goingRes.error) {
     Sentry.captureException(new Error(goingRes.error.message), {
@@ -538,6 +552,13 @@ export default async function FeedPage() {
     );
     if (pair) return { checkedIn: pair.status === 'checked_in' };
     return null;
+  };
+
+  /** One running event's check-in window (00276), for the card's wording. */
+  const checkinWindowOf = (eventId: string, tournamentId: string): Pick<ActiveEntry, 'checkinWindow' | 'checkinNotice'> => {
+    if (!feedWindows) return {};
+    const w = windowsFor(feedWindows, eventId, tournamentId).checkin;
+    return { checkinWindow: windowState(w.opens_at, w.closes_at, now), checkinNotice: checkinWindowNotice(w, now) };
   };
 
   // RLS only checks status='published'. Expiry and season are filtered in the
@@ -910,6 +931,7 @@ export default async function FeedPage() {
                       eventType: e.event_type,
                       status: e.status,
                       mine: myEntryIn(e.id),
+                      ...checkinWindowOf(e.id, t.id),
                     }),
                   )}
                   // Distinct PEOPLE, not rows: a member in both the singles and

@@ -2,7 +2,8 @@
 
 **Status: version 0. Implemented in `apps/data-api`: roster, match history,
 head-to-head, per-season records, rating history, seasons and standings,
-tournaments and draws, and the schedule (18 routes, listed under "Endpoints").
+tournaments and draws, the schedule, and one write, head-to-head win
+predictions (20 routes, listed under "Endpoints").
 The reference the service serves at `/documentations` describes what the code
 does, route by route and field by field; see also "Known gaps" in
 [`README.md`](./README.md).**
@@ -17,7 +18,6 @@ Base URL, once live:
 | Environment | Host |
 |---|---|
 | Production | `https://api.sfubadminton.com` |
-| Staging | `https://api.polardev.org` |
 
 ---
 
@@ -80,7 +80,7 @@ lowercase hex characters; that is not a promise.
 
 ## Authentication
 
-Every endpoint except `/health` and `/documentations` requires a key:
+Every endpoint except `/health`, `/documentations` and `/changelog` requires a key:
 
 ```
 Authorization: Bearer <your key>
@@ -93,9 +93,9 @@ it, it gets revoked and you get a new one.
 ### Scopes
 
 A key carries only the scopes it was granted. A key is not allowed everything by
-default; it is allowed nothing by default. One key may carry all six, and the
-console has an "All read scopes" button for exactly that. An exec can change
-the scopes of a live key without reissuing it.
+default; it is allowed nothing by default. One key may carry all eight. The
+console's "All read scopes" button ticks the six `:read` scopes and never a
+write one. An exec can change the scopes of a live key without reissuing it.
 
 | Scope | Grants |
 |---|---|
@@ -105,6 +105,8 @@ the scopes of a live key without reissuing it.
 | `seasons:read` | seasons, season totals, season standings |
 | `tournaments:read` | tournaments, events, entrants, draws |
 | `schedule:read` | club sessions and club events, counts only |
+| `predictions:write` | posting and deleting head-to-head win predictions (a write; no existing key carries it unless an exec adds it) |
+| `registrations:write` | delivering responses from the club's own Google Forms (a write, meant for the club's form script, not for outside consumers) |
 
 A correction to earlier versions of this file: `ratings:history:read` was
 described as "accepted and empty" because nothing journals a rating change. That
@@ -122,7 +124,8 @@ read per request.
 
 ## Endpoints
 
-Every route answers `GET` only. Path values: `:ref` and `:other_ref` are
+Every route answers `GET` only, except `/v1/predictions`, which answers `POST`
+and `DELETE` only, and `/documentations` and `/changelog`, which also answer `HEAD`. Path values: `:ref` and `:other_ref` are
 `player_ref`s, `:match_ref` a `match_ref`, `:id` and `:event_id` uuids. A path
 value that is malformed is a `404` without a database call.
 
@@ -130,6 +133,7 @@ value that is malformed is a `404` without a database call.
 |---|---|---|
 | `/health` | none | none |
 | `/documentations` | none | none |
+| `/changelog` | none | none |
 | `/v1/players` | `players:read` | none (query string ignored) |
 | `/v1/players/:ref` | `players:read` | none (query string ignored) |
 | `/v1/players/:ref/matches` | `matches:read` | as `/v1/matches`, minus `player` |
@@ -146,6 +150,8 @@ value that is malformed is a `404` without a database call.
 | `/v1/tournaments/:id/events/:event_id` | `tournaments:read` | none |
 | `/v1/sessions` | `schedule:read` | `from`, `to` |
 | `/v1/events` | `schedule:read` | `from`, `to` |
+| `/v1/predictions` | `predictions:write` | none; a JSON body (see "Predictions") |
+| `/v1/registrations` | `registrations:write` | none; a JSON body (see "Registrations") |
 
 The response shape of every route, with examples, is on the served
 `/documentations` page. The rules that matter for modelling are below.
@@ -182,8 +188,10 @@ and its result entry, because that table has no update trigger.
 A match object carries `match_ref`, `source` (`club` or `tournament`),
 `status`, `counts_toward_stats`, `played_at`, `updated_at`, `season`, `type`,
 `kind`, `rated`, `format`, `games_per_match`, `points_per_game`, `walkover`,
-`winner_side`, `score_summary`, `games` and `sides`, plus `tournament` (round,
-phase, event) for a tournament match. Each side is a list of
+`winner_side`, `score_summary`, `games` and `sides`, plus `tournament` for a
+tournament match: `{id, event_id, event_type, round_number, round_name, phase,
+is_third_place, stage, match_label, handicap_a, handicap_b}`. The last four are
+`null` (`0` for the handicaps) outside a staged event; see "Staged events". Each side is a list of
 `{player_ref, won, rating: {before, after, delta} | null, points_scored,
 points_allowed, games_won, games_lost}`. A voided match keeps its result but its
 `rating` is `null`, because the change was reversed.
@@ -200,6 +208,74 @@ below, is **withheld**: it keeps its place in the bracket (`round_number`,
 `sides`, `winner_side` and `games` all `null`. The bracket's shape survives; who
 played does not. Entrants with an unpublished player are left out of the
 entrant list, and a pair needs both players published.
+
+### External teams
+
+An event with `"external": true` is an unrated round robin of teams who are
+not club members, entered by the organisers. Such a team is served without a
+name and without `player_ref`s: an entrant has `"players": []`,
+`"external": true` and an `external_ref`, and in a draw each side of its slot
+is one element, `{"player_ref": null, "external": true, "external_ref": "..."}`.
+An `external_ref` is opaque, stable and per-consumer like a `player_ref`, names
+the team rather than a person, and never equals a `player_ref`. Every member
+entrant and draw element carries `"external": false` and `"external_ref": null`.
+A slot in an external event is withheld only when disputed. External matches
+move no rating, so they are not in `/v1/matches` or any match history.
+
+### Staged events
+
+An event with `"format": "staged"` is played as a list of stages: groups, a
+knockout, or a set of named matches, each fed by the field or by places out of
+the stages before it. Every event also carries `rated` (whether the event moves
+ratings at all) and `current_stage` (the latest stage drawn, 1-based, or
+`null`). On a staged event four more fields describe it; on any other event
+`stages`, `categories` and `head_starts` are `null`:
+
+- `stages`: one object per stage, in order, with `index` (1-based), `key`,
+  `name`, `kind` (`groups`, `knockout` or `matches`), `rated` (`false` for a
+  stage that moves no rating even in a rated event) and `scoring`
+  (`{best_of, target, win_by_two, cap, handicap, forfeit}`, where `forfeit` is
+  the score a walkover is recorded as, `{winner, loser}`, or `null` for
+  target to nil). A groups stage fills `pools`, `groups_per_pool`, `group_size`
+  (a number or `"auto"`) and `tiebreaks` (in order; any of `wins`,
+  `point_diff`, `points_for`, `points_against_low`, `game_diff`, `h2h`,
+  `seed`). A knockout fills `size` (a power of 2 or `"auto"`) and
+  `third_place`. A matches stage fills `matches`, a list of
+  `{label, name, winner_place, loser_place}`. A field a stage's kind does not
+  use is `null`.
+- `categories`: the team categories, `[{key, label}]`. `null` means the
+  defaults: `mens`, `womens` and `mixed`.
+- `head_starts`: row category, then column category, then the points a team of
+  the row category starts each game on against one of the column category, for
+  example `{"womens": {"mens": 3}}`. A pair not listed starts on 0.
+- `points_table`: the ladder points the event pays, `{by_place, rest,
+  participation, per_win}`: `by_place[0]` is first place, a place past the end
+  of the list takes `rest`, and every entrant also gets `participation` plus
+  `per_win` for each win. It is served on every event, staged or not, and is
+  `null` when the event pays its format's default: `single_elimination` and
+  `pool_to_bracket` pay `[100, 75, 50, 40, 25, 25, 25, 25]` by place with
+  `rest` 10 and nothing for taking part or winning; `round_robin` pays
+  `participation` 1 and `per_win` 3 and nothing by place. A staged event pays the knockout default unless its last
+  stage is groups, which pays the round robin default.
+
+An entrant carries `team_category`, the category key the team plays as, or
+`null` (always `null` for a singles entrant).
+
+A staged draw slot has `phase: null` and these instead: `stage` (the 1-based
+index into `stages`), `pool_number`, `group_number`, `slot`, `match_label` (the
+`label` of a named match), and `handicap_a` and `handicap_b`, the head start
+each side started every game on. **Recorded scores include the head start**:
+`games` is the score as it was played, so subtract the handicap to get the
+points won from play. A withheld slot keeps `stage`, `pool_number`,
+`group_number`, `slot` and `match_label`, and has both handicaps `null`. On a
+slot outside a staged event the stage fields are `null` and the handicaps `0`.
+
+Courts are still not served: neither a match's court nor the courts a stage
+plays on.
+
+A staged event of club members with `"rated": false` moves no rating, but
+unlike an external event its matches are member matches: they appear in
+`/v1/matches` and the match history with `"rated": false` and a `null` rating.
 
 ### `GET /v1/players`
 
@@ -365,15 +441,121 @@ it.
 
 ---
 
+## Predictions
+
+`POST /v1/predictions` stores head-to-head win predictions made by your model,
+and `DELETE /v1/predictions` removes them. A member may be shown a prediction in
+the club app only for a challenge they play in, labelled as a prediction, with
+the `model` name and `made_at`, but never which consumer made it.
+
+```
+POST /v1/predictions
+Content-Type: application/json
+
+{"predictions":[{"format":"doubles","side_a":["<ref>","<ref>"],"side_b":["<ref>","<ref>"],
+                 "probability":0.64,"model":"elo-v3","made_at":"2026-10-08T18:00:00Z"}]}
+```
+
+- The body is at most 64 KiB, and either `{"predictions": [...]}` with 1 to 100
+  items or one item on its own. Each item has exactly the six fields above.
+  `format` is `singles` (one ref a side) or `doubles` (two); no player twice.
+  `probability` is side A's chance of winning, from 0 to 1. `model` is 1 to 64
+  characters from `A-Z a-z 0-9`, space and `. _ : + -`. `made_at` is UTC ending
+  in `Z` and not more than 5 minutes ahead of the server clock.
+- **A matchup is two unordered sides.** A and B against C and D is the same
+  matchup as D and C against B and A. Predicting a matchup you already predicted
+  replaces the earlier row. If you swap the sides, swap the probability to
+  `1 - p`.
+- **Only published players.** Every ref must name a member who passes the
+  history test in "Who is in the feed". A member who later opts out or asks for
+  deletion disappears from every prediction at once, and their predictions are
+  erased with their account.
+- **Predictions never change ratings.** Nothing that rates a match or builds a
+  statistic reads them. When two consumers predict the same matchup, members
+  see the newer one.
+- A batch costs one request against the rate limit, and writes are never served
+  from the read cache. Every call is recorded against the key, with counts and
+  no players.
+
+The answer lists every item as `created`, `replaced` or `refused`:
+
+```json
+{ "results": [ { "index": 0, "status": "created" },
+               { "index": 1, "status": "refused", "reason": "player" } ],
+  "created": 1, "replaced": 0, "refused": 1 }
+```
+
+It is `200` when nothing was refused and `422`, with the same body, when
+anything was. `reason` `player` means a ref is unknown to you or names a member
+who is not published; it deliberately does not say which. A body that is not
+the documented shape is a `400` naming the `field` (for example
+`predictions[3].side_b`), and nothing in it is stored.
+
+`DELETE /v1/predictions` takes `{"matchups": [{"format", "side_a", "side_b"}]}`
+(1 to 100, sides in either order) and answers each item `deleted` or
+`not_found`, with `deleted`, `not_found` and `refused` counts. Only your own
+predictions are ever deleted.
+
+---
+
+## Registrations
+
+`POST /v1/registrations` is how the club's own Google Forms enter people into a
+tournament or a club event. An exec binds a form to one target in the admin
+console, against the key its Apps Script sends; the script is in
+`integrations/google-forms/`. A response for a form with no active binding for
+the key is a `404`.
+
+The body is one form response:
+
+```json
+{ "form_id": "<form id>", "response_id": "<response id>",
+  "submitted_at": "2026-10-08T18:00:00Z",
+  "email": "<submitter email>", "name": "<submitter name>",
+  "entries": [ { "event_id": "<event uuid>", "partner_email": "<email>",
+                 "partner_name": "<name>", "category": "<category>" } ] }
+```
+
+`submitted_at`, `partner_email`, `partner_name` and `category` are optional; up
+to 20 `entries`; a club event form sends none. The answer is per entry:
+
+```json
+{ "replayed": false, "entered": 1, "pending": 1, "refused": 0,
+  "results": [ { "index": 1, "event_id": "<uuid>", "status": "entered", "reason": null } ] }
+```
+
+- `entered`: a non-member, or a team of two non-members, is in the event and
+  owes its fee as a named entry. They are sent the guest waiver once the club
+  turns that feature on.
+- `pending`: something must happen first. A member is never entered by a form:
+  they confirm the entry in the club app, where the usual rules and fees apply.
+  A doubles entry waits for the partner's own response, and anything odd waits
+  for an exec.
+- `refused`: `reason` is about the event only (`event_full`, `waitlist_queue`,
+  `registration_closed`, `registration_not_open`, `registration_window_closed`,
+  `event_not_in_target`, `duplicate_in_submission`). Nothing in an answer says
+  whether an email belongs to a member.
+
+Sending the same response again answers from the record with `replayed: true`.
+An edited response, or a new one from the same person, replaces the earlier
+one: entries it no longer names are withdrawn if nobody has paid or been drawn,
+and otherwise left for an exec. The service never logs the body, and the club's
+record of an import names no email.
+
+---
+
 ## Errors
 
 | Status | Meaning |
 |---|---|
-| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it |
-| `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. |
+| `400` | a query parameter the route does not take, a repeated one, or a value that does not parse; `parameter` names it. On `/v1/predictions` and `/v1/registrations`, a body that is not JSON or not the documented shape; `field` names it |
+| `401` | missing, malformed, unknown, expired or revoked key. Deliberately identical in all five cases. A write is also refused this way when the key was revoked or lost its write scope in the last 30 seconds. |
 | `403` | valid key, but it lacks the scope for this endpoint |
-| `404` | no such route, or a ref or id in the path that is malformed, unknown or not published |
-| `405` | a method other than `GET` |
+| `404` | no such route, or a ref or id in the path that is malformed, unknown or not published; on `/v1/registrations`, a form with no active binding |
+| `405` | a method the route does not answer (`GET` on read routes, `POST` and `DELETE` on `/v1/predictions`, `POST` on `/v1/registrations`, `GET` and `HEAD` on `/documentations` and `/changelog`); `Allow` lists them |
+| `413` | a write body over 64 KiB |
+| `415` | a write body not sent as `application/json` |
+| `422` | a write where at least one item was refused (the results body, not an error object) |
 | `429` | rate limited |
 | `503` | the club's database could not be reached |
 
@@ -402,6 +584,7 @@ time the response was sent, not the time the data was read.
 The `/v1` prefix is the contract. Within it, **new fields and routes may be added** and
 existing fields will not be removed or change meaning. Parse defensively and
 ignore fields you do not recognise. A breaking change becomes `/v2`.
+Changes are listed at `/changelog`.
 
 ---
 

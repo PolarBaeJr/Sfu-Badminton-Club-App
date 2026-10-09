@@ -1,10 +1,16 @@
-import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
+import * as Sentry from '@sentry/nextjs';
+import { createServerSupabaseClient, createServiceRoleClient, getViewer } from '@/lib/supabase-server';
 import {
   formatDate,
   isDoublesEvent,
   TOURNAMENT_EVENT_TYPE_LABELS,
-  TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
+  eventStatusLabel,
+  formatResultsFrom,
+  parseFormatConfig,
+  describeStagedFormat,
+  stagedMatchHeading,
+  stagesView,
   describeMatchShape,
   isOutOfEvent,
   unwrap,
@@ -18,7 +24,11 @@ import {
   membershipUnpaidMessage,
   eventRecordFor,
   eventRatingLine,
+  registrationWindowNotice,
+  checkinWindowNotice,
 } from '@badminton/shared';
+import { loadEntryWindows, windowsFor } from '@/lib/tournament-windows';
+import { getMyWaitlistState, type MyWaitlistState } from '@/lib/event-waitlist';
 import type {
   TournamentEventType,
   TournamentEventStatus,
@@ -32,6 +42,7 @@ import { EventActions } from './EventActions';
 import { ParticipantsList, type ParticipantEntry } from './ParticipantsList';
 import { LiveTournament } from '../../../live-tournament';
 import { Draw, type DrawMatch } from './Draw';
+import { Stages, type StagedPlayerMatch } from './Stages';
 import { MatchReady } from './MatchReady';
 import { loadMyMembershipScreen } from '@/lib/membership-screen';
 import { getFeatureFlags } from '@/lib/feature-gate';
@@ -138,7 +149,7 @@ export default async function EventDetailPage({
         // filters and sorts it. player1_id/player2_id are NOT here — the only
         // code that compares them is the "who is my partner" lookup below, which
         // has always had its own narrow select.
-        .select('id, seed_number, status, final_position, points, pair_name, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
+        .select('id, seed_number, status, final_position, points, pair_name, external1_name, external2_name, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
         .eq('event_id', eventId)
         .order('seed_number'),
       'TRN-101',
@@ -160,7 +171,23 @@ export default async function EventDetailPage({
     participants = data as Array<Record<string, unknown>>;
   }
 
-  const matches = unwrap(
+  // A STAGED EVENT (00272) also needs each match's stage, pool, group, slot,
+  // label, number and head starts. Asked for only on a staged event, and with
+  // the old list as the fallback, because PostgREST fails the whole request on
+  // a column the database has not got (42703 / PGRST204), and 00272 is applied
+  // by hand: a build ahead of the migration must still render every other event.
+  const staged = event.format === 'staged';
+  const stagedRes = staged
+    ? await supabase
+      .from('tournament_matches')
+      .select('id, round_number, bracket_position, round_name, court, status, scores, is_bye, is_third_place, phase, participant_a_id, participant_b_id, pair_a_id, pair_b_id, winner_participant_id, winner_pair_id, ready_player_ids, stage, pool_number, group_number, slot, match_label, match_number, handicap_a, handicap_b')
+      .eq('event_id', eventId)
+      .order('round_number')
+      .order('bracket_position')
+    : null;
+  const stagedColumnsMissing = stagedRes?.error != null
+    && (stagedRes.error.code === '42703' || stagedRes.error.code === 'PGRST204');
+  const matches = stagedRes && !stagedColumnsMissing ? unwrap(stagedRes, 'TRN-101') : unwrap(
     await supabase
       .from('tournament_matches')
       // bracket_position is the second .order() key rather than something the
@@ -262,12 +289,23 @@ export default async function EventDetailPage({
 
   const playerOutOfEvent = isOutOfEvent(playerRegistration?.status);
 
+  // The registration and check-in windows (00276), on their own read so a
+  // database without them shows no window rather than no page.
+  const entryWindows = windowsFor(
+    await loadEntryWindows(supabase, { eventIds: [eventId], tournamentIds: [tournamentId] }),
+    eventId,
+    tournamentId,
+  );
+  const windowNow = new Date();
+  const registrationNotice = registrationWindowNotice(entryWindows.registration, windowNow);
+  const checkinNotice = checkinWindowNotice(entryWindows.checkin, windowNow);
+
   // The club-fee refusal registerForEvent would make (00260), said before the
   // click. Only asked of somebody not already in the event, and a failed read
   // says nothing: see lib/membership-screen.
   let membershipBlocked: { message: string; receiptPending: boolean; payHref: string | null } | null = null;
   if (
-    currentPlayer && !playerRegistration && eventStatus === 'registration' &&
+    currentPlayer && !playerRegistration && eventStatus === 'registration' && !registrationNotice &&
     !tournament.suspended_at && refuseClosedTournament(tournament.status, 'enter this event') === null
   ) {
     const [membership, flags] = await Promise.all([
@@ -283,6 +321,21 @@ export default async function EventDetailPage({
     }
   }
 
+  // The waitlist (00278), on its own service-role read: the table has no
+  // member-facing grant, and a database without 00278 shows no waitlist. A
+  // failed read costs the waitlist controls, never the page.
+  let waitlist: MyWaitlistState | null = null;
+  if (currentPlayer && !playerRegistration && event.external_event !== true) {
+    try {
+      waitlist = await getMyWaitlistState(createServiceRoleClient(), eventId, currentPlayer.id, {
+        max: (event.max_participants as number | null) ?? null,
+        doubles,
+      });
+    } catch (err) {
+      Sentry.captureException(err);
+    }
+  }
+
   const participantNameMap: Record<string, string> = {};
   const participantSeedMap: Record<string, number | null> = {};
 
@@ -290,8 +343,13 @@ export default async function EventDetailPage({
     for (const p of pairs) {
       const p1 = p.player1 as Record<string, unknown> | null;
       const p2 = p.player2 as Record<string, unknown> | null;
-      const name = [p1?.full_name, p2?.full_name].filter(Boolean).join(' & ');
-      participantNameMap[p.id as string] = name || 'Unknown Pair';
+      // An external team (00269) has no player embeds; its names are on the row,
+      // and pair_name is its team name when the desk gave one.
+      const teamNamed = p.external1_name != null && p.pair_name !== `${p.external1_name} / ${p.external2_name}`;
+      const name = teamNamed
+        ? (p.pair_name as string)
+        : [p1?.full_name ?? p.external1_name, p2?.full_name ?? p.external2_name].filter(Boolean).join(' & ');
+      participantNameMap[p.id as string] = name || (p.pair_name as string | null) || 'Unknown Pair';
       participantSeedMap[p.id as string] = p.seed_number as number | null;
     }
   } else {
@@ -316,8 +374,8 @@ export default async function EventDetailPage({
           status:        p.status as string,
           finalPosition: p.final_position as number | null,
           avatars: [
-            { name: (p1?.full_name as string) || '', url: (p1?.avatar_url as string | null) ?? null },
-            { name: (p2?.full_name as string) || '', url: (p2?.avatar_url as string | null) ?? null },
+            { name: (p1?.full_name as string) || (p.external1_name as string | null) || '', url: (p1?.avatar_url as string | null) ?? null },
+            { name: (p2?.full_name as string) || (p.external2_name as string | null) || '', url: (p2?.avatar_url as string | null) ?? null },
           ],
         };
       })
@@ -403,8 +461,10 @@ export default async function EventDetailPage({
   }
 
   // endsInKnockout, not `=== 'single_elimination'`: a pool_to_bracket event has
-  // a bracket too, and it is the half that decides the event.
-  const isSingleElim = endsInKnockout(event.format as string);
+  // a bracket too, and it is the half that decides the event. A staged event is
+  // drawn stage by stage below instead, so neither legacy card shows for it.
+  const isSingleElim = !staged && endsInKnockout(event.format as string, event.format_config);
+  const stagedCfg = staged ? parseFormatConfig(event.format_config) : null;
 
   // The draw, flattened to entry ids ONCE. Everything below the flattening is
   // the same code for singles and for doubles — the `doubles` branch is spent
@@ -423,6 +483,33 @@ export default async function EventDetailPage({
     winnerId:         (doubles ? m.winner_pair_id : m.winner_participant_id) as string | null,
   });
   const drawMatches = bracketMatches.map(toDrawMatch);
+  const stagedMatches: StagedPlayerMatch[] = stagedCfg
+    ? allMatches.filter((m) => m.stage != null).map((m) => ({
+        ...toDrawMatch(m),
+        stage:          m.stage as number,
+        pool_number:    (m.pool_number as number | null) ?? null,
+        group_number:   (m.group_number as number | null) ?? null,
+        slot:           (m.slot as number | null) ?? null,
+        match_label:    (m.match_label as string | null) ?? null,
+        match_number:   (m.match_number as number | null) ?? null,
+        is_third_place: !!m.is_third_place,
+        handicap_a:     (m.handicap_a as number | null) ?? 0,
+        handicap_b:     (m.handicap_b as number | null) ?? 0,
+      }))
+    : [];
+  const stageViews = stagedCfg
+    ? stagesView(stagedCfg, formatResultsFrom(
+        stagedCfg,
+        (doubles ? pairs : participants).map((e) => ({
+          id: e.id as string, seed: (e.seed_number as number | null) ?? null, status: e.status as string,
+        })),
+        stagedMatches.map((m) => ({
+          stage: m.stage, status: m.status, pool_number: m.pool_number, group_number: m.group_number,
+          round_number: m.round_number, match_label: m.match_label, is_third_place: m.is_third_place,
+          a: m.aId, b: m.bId, winner: m.winnerId, scores: m.scores,
+        })),
+      ))
+    : [];
   const drawThirdPlace = thirdPlaceMatch ? toDrawMatch(thirdPlaceMatch) : null;
 
   // THE VIEWER'S OWN RECORD, over EVERY match in the event (pool, knockout and
@@ -505,14 +592,14 @@ export default async function EventDetailPage({
                 style={{ borderColor: `${statusColor}50`, background: `${statusColor}18`, color: statusColor }}
               >
                 <span className="sr-only">Event status: </span>
-                {TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]}
+                {eventStatusLabel(event.format as string, eventStatus)}
               </span>
               <span className="chip">
                 {TOURNAMENT_EVENT_FORMAT_LABELS[event.format as keyof typeof TOURNAMENT_EVENT_FORMAT_LABELS]
                   ?? (event.format as string)}
               </span>
               <span className="chip">
-                {matchShape}
+                {staged ? describeStagedFormat(stagedCfg) : matchShape}
               </span>
               {playerRegistration && (
                 <span className={`chip ${
@@ -546,6 +633,9 @@ export default async function EventDetailPage({
               suspended={!!tournament.suspended_at}
               eventWaiverText={tournament.waiver_text}
               membershipBlocked={membershipBlocked}
+              registrationNotice={registrationNotice}
+              checkinNotice={checkinNotice}
+              waitlist={waitlist}
             />
           </div>
         </div>
@@ -660,7 +750,14 @@ export default async function EventDetailPage({
                             vs {opponentName}
                           </p>
                           <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                            {(m.round_name as string) || `Round ${m.round_number}`}
+                            {(stagedCfg && stagedMatchHeading(stagedCfg, m)) || (m.round_name as string) || `Round ${m.round_number}`}
+                            {/* A head start, said as the score the viewer's side begins on. */}
+                            {Number(m[playerSide === 'a' ? 'handicap_a' : 'handicap_b'] ?? 0) > 0 && (
+                              <> &middot; you start at {Number(m[playerSide === 'a' ? 'handicap_a' : 'handicap_b'])}</>
+                            )}
+                            {Number(m[playerSide === 'a' ? 'handicap_b' : 'handicap_a'] ?? 0) > 0 && (
+                              <> &middot; they start at {Number(m[playerSide === 'a' ? 'handicap_b' : 'handicap_a'])}</>
+                            )}
                           </p>
                         </div>
                         <div className="text-right shrink-0">
@@ -765,11 +862,27 @@ export default async function EventDetailPage({
         </FadeIn>
       )}
 
+      {stagedCfg && stagedMatches.length > 0 && (
+        <FadeIn delay={0.1}>
+          <div className="space-y-5">
+            <Stages
+              cfg={stagedCfg}
+              views={stageViews}
+              matches={stagedMatches}
+              nameOf={participantNameMap}
+              seedOf={participantSeedMap}
+              title={TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
+              subtitle={tournament.name}
+            />
+          </div>
+        </FadeIn>
+      )}
+
       {/* Round Robin View — the whole event on a round_robin, and the pool half
           on a pool_to_bracket. Shown ALONGSIDE the bracket on that format
           rather than instead of it: a player wants to see the pool they played
           and the draw it put them into. */}
-      {poolMatches.length > 0 && (!isSingleElim || poolToBracket) && (
+      {!staged && poolMatches.length > 0 && (!isSingleElim || poolToBracket) && (
         <FadeIn delay={0.1}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">

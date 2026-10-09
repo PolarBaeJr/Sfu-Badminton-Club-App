@@ -2,7 +2,7 @@ import * as Sentry from '@sentry/nextjs';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseIntegration } from '@supabase/sentry-js-integration';
 
-// Performance trace sample rate. Full sampling was a beta setting. On the Pi
+// Performance trace sample rate. Full sampling was a beta setting. On the server
 // this instrumentation runs on the same single thread as SSR, and it measured
 // as the likely cause of prod serving ~18 rps where an un-instrumented staging
 // served ~28 (docs/sensitive/LOAD-TEST-2026-08-18.md).

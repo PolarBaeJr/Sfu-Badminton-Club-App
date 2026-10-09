@@ -8,6 +8,8 @@ import {
   requireCapability,
   revalidateEventPaths,
   planGroupAssignment,
+  makeDrawRng,
+  newDrawSeed,
   fencedRefusal,
   type GroupCandidate,
   type FencedFieldResult,
@@ -260,7 +262,15 @@ async function assignEventGroupsImpl(eventId: string) {
   // reassignAll, because this is the button that means "deal the groups". The
   // fill-the-gaps behaviour that preserves hand-placements belongs to the
   // generator, which runs without anybody asking for a re-deal.
-  const plan = planGroupAssignment(entries, groupCount, { reassignAll: true });
+  //
+  // seeding_method = 'random' deals a shuffled field instead, from a seed the
+  // audit row records.
+  const randomSeeding = event.seeding_method === 'random';
+  const drawSeed = newDrawSeed();
+  const plan = planGroupAssignment(entries, groupCount, {
+    reassignAll: true,
+    ...(randomSeeding ? { rng: makeDrawRng(drawSeed) } : {}),
+  });
 
   // THE PLAN STAYS HERE AND THE FIELD IT WAS MADE FROM IS VERIFIED THERE.
   // planGroupAssignment is serpentine-by-seed with a tier walk and its own
@@ -291,7 +301,12 @@ async function assignEventGroupsImpl(eventId: string) {
     event_id: eventId,
     action: 'groups_assigned',
     performed_by: admin.id,
-    details: { group_count: groupCount, entries: entries.length, method: 'serpentine_by_seed' },
+    details: {
+      group_count: groupCount,
+      entries: entries.length,
+      method: randomSeeding ? 'serpentine_random' : 'serpentine_by_seed',
+      ...(randomSeeding ? { draw_seed: drawSeed } : {}),
+    },
   });
 
   revalidateEventPaths(event.tournament_id, eventId);

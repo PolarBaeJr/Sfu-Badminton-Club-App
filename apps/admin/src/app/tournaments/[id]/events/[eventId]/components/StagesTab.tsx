@@ -1,0 +1,394 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Badge, Button, useConfirm } from '@badminton/ui';
+import {
+  describeStageScoring,
+  eventIsPlaying,
+  formatResultsFrom,
+  matchSides,
+  parseFormatConfig,
+  slotRefLabel,
+  stagedMatchHeading,
+  stagesView,
+  type StageView,
+  type TournamentEventStatus,
+} from '@badminton/shared';
+import { Layers, RefreshCw } from 'lucide-react';
+import { drawStage, redrawStage } from '@/lib/tournament-actions';
+import { stageDrawControl, uncategorisedWarning } from '@/lib/stage-controls';
+import { useToast } from '@/components/toast-provider';
+import { ScoreEntryDialog } from './ScoreEntryDialog';
+import { getName } from './entry-name';
+import type {
+  TournamentEventRow,
+  TournamentMatchRow,
+  ParticipantWithPlayer,
+  PairWithPlayers,
+  GameScore,
+} from '@/lib/tournament-types';
+
+interface Props {
+  event: TournamentEventRow;
+  matches: TournamentMatchRow[];
+  participants: ParticipantWithPlayer[];
+  pairs: PairWithPlayers[];
+  isDoubles: boolean;
+  canGenerate: boolean;
+}
+
+const KIND_LABELS = { groups: 'Groups', knockout: 'Knockout', matches: 'Named matches' } as const;
+
+/**
+ * A STAGED EVENT, STAGE BY STAGE (00272). Each stage shows what it is played
+ * to, its groups with their tables or its matches with the slots they wait on,
+ * and the one button that draws it. The tables come from the same builder the
+ * draw and the finaliser read (formatResultsFrom), so what is highlighted here
+ * as going through is what the next draw will take.
+ */
+export function StagesTab({ event, matches, participants, pairs, isDoubles, canGenerate }: Props) {
+  const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const { toast } = useToast();
+  const confirm = useConfirm();
+  const router = useRouter();
+  const status = event.status as TournamentEventStatus;
+  // The server's rule (enterMatchResultImpl), not the legacy tabs' wider one:
+  // a drawn stage sits at bracket_generated until Start, and a Score button
+  // there only led to "Start the event before entering results."
+  const isLive = eventIsPlaying(status);
+
+  const cfg = useMemo(() => parseFormatConfig(event.format_config), [event.format_config]);
+  const entries = useMemo<Array<ParticipantWithPlayer | PairWithPlayers>>(
+    () => (isDoubles ? pairs : participants),
+    [isDoubles, pairs, participants],
+  );
+  const { nameMap, seedMap } = useMemo(() => {
+    const nameMap: Record<string, string> = {};
+    const seedMap: Record<string, number> = {};
+    for (const e of entries) {
+      nameMap[e.id] = getName(e, isDoubles);
+      if (e.seed_number) seedMap[e.id] = e.seed_number;
+    }
+    return { nameMap, seedMap };
+  }, [entries, isDoubles]);
+  const placeableEntries = useMemo(
+    () => entries
+      .filter((e) => e.status !== 'withdrawn' && e.status !== 'disqualified')
+      .map((e) => ({ id: e.id, name: nameMap[e.id] ?? 'Unknown' })),
+    [entries, nameMap],
+  );
+
+  const views = useMemo(() => {
+    if (!cfg) return [];
+    const results = formatResultsFrom(
+      cfg,
+      entries.map((e) => ({ id: e.id, seed: e.seed_number ?? null, status: e.status })),
+      matches.map((m) => ({
+        stage: m.stage,
+        status: m.status,
+        pool_number: m.pool_number,
+        group_number: m.group_number,
+        round_number: m.round_number,
+        match_label: m.match_label,
+        is_third_place: m.is_third_place,
+        scores: m.scores,
+        ...matchSides(m, isDoubles),
+      })),
+    );
+    return stagesView(cfg, results);
+  }, [cfg, entries, matches, isDoubles]);
+
+  const categoryWarning = useMemo(() => (isDoubles ? uncategorisedWarning(pairs) : null), [isDoubles, pairs]);
+
+  const scoreMatch = scoreMatchId ? matches.find((m) => m.id === scoreMatchId) ?? null : null;
+
+  if (!cfg) {
+    return (
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center text-sm text-[var(--text-muted)]">
+        This event&rsquo;s stages are not set out correctly. Fix them in Event Settings.
+      </div>
+    );
+  }
+
+  async function press(view: StageView, action: 'draw' | 'redraw') {
+    if (action === 'redraw') {
+      const ok = await confirm({
+        title: `Redraw ${view.stage.name}?`,
+        message: `Every match in ${view.stage.name} is deleted and drawn again. Match numbers, courts and who plays whom can all change.`,
+        confirmLabel: 'Redraw stage',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setBusy(view.stage.key);
+    const res = action === 'draw' ? await drawStage(event.id, view.stage.key) : await redrawStage(event.id, view.stage.key);
+    setBusy(null);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    toast(action === 'draw' ? `${view.stage.name} drawn` : `${view.stage.name} redrawn`, 'success');
+    router.refresh();
+  }
+
+  return (
+    <>
+      <div className="space-y-6">
+        {views.map((view) => {
+          const own = matches.filter((m) => m.stage === view.number);
+          const control = stageDrawControl(
+            { number: view.number, name: view.stage.name, drawn: view.drawn, ready: view.ready, waitingOn: view.waitingOn },
+            {
+              status,
+              drawLocked: event.draw_locked === true,
+              canGenerate,
+              laterDrawn: matches.some((m) => m.stage != null && m.stage > view.number),
+              rows: own,
+            },
+          );
+          const hintId = `stage-${view.number}-draw-hint`;
+          return (
+            <section
+              key={view.stage.key}
+              className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 space-y-4"
+              aria-label={`Stage ${view.number}: ${view.stage.name}`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                <div className="space-y-1.5">
+                  <h3 className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-[var(--color-accent)]" aria-hidden />
+                    Stage {view.number}: {view.stage.name}
+                  </h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge variant="default">{KIND_LABELS[view.stage.kind]}</Badge>
+                    <Badge variant="default">{describeStageScoring(view.stage.scoring)}</Badge>
+                    <Badge variant="default">{view.stage.rated && event.rated !== false ? 'Rated' : 'Unrated'}</Badge>
+                    <Badge variant="default">
+                      {view.complete ? 'Complete' : view.drawn ? 'Drawn' : view.ready ? 'Ready to draw' : 'Not drawn'}
+                    </Badge>
+                  </div>
+                </div>
+                {status !== 'completed' && (
+                  <div className="flex flex-col items-end gap-1">
+                    <Button
+                      variant={control.action === 'draw' ? 'primary' : 'ghost'}
+                      loading={busy === view.stage.key}
+                      disabled={control.blockedReason !== null || (busy !== null && busy !== view.stage.key)}
+                      aria-describedby={control.blockedReason ? hintId : undefined}
+                      onClick={() => press(view, control.action)}
+                      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                    >
+                      {control.action === 'redraw' && <RefreshCw className="w-4 h-4 mr-1" />}
+                      {control.action === 'draw' ? `Draw ${view.stage.name}` : 'Redraw'}
+                    </Button>
+                    {control.blockedReason && (
+                      <p id={hintId} className="text-xs text-[var(--text-muted)] max-w-[15rem] text-right">
+                        {control.blockedReason}
+                      </p>
+                    )}
+                    {control.action === 'draw' && view.stage.scoring.handicap && categoryWarning && (
+                      <p role="status" className="text-xs text-[var(--color-warning)] max-w-[15rem] text-right">
+                        {categoryWarning}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {!view.drawn && view.stage.entrants.from === 'slots' && (
+                <p className="text-xs text-[var(--text-muted)]">
+                  Takes: {view.stage.entrants.slots.map((s, i) => slotRefLabel(s, cfg, i)).join(', ')}
+                </p>
+              )}
+
+              {view.pools.map((pool) => (
+                <div key={pool.pool} className="space-y-2">
+                  {pool.label && (
+                    <h4 className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">{pool.label}</h4>
+                  )}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {pool.groups.map((g) => (
+                      <div
+                        key={`${g.pool}-${g.group}`}
+                        className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] overflow-hidden"
+                        role="region"
+                        aria-label={`${g.label} standings`}
+                      >
+                        <div className="px-3 py-2 border-b border-[var(--border)] flex items-center justify-between">
+                          <span className="text-sm font-semibold text-[var(--text-primary)]">{g.label}</span>
+                          {g.complete && <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Played out</span>}
+                        </div>
+                        <table className="w-full" aria-label={`${g.label} standings table`}>
+                          <thead>
+                            <tr className="border-b border-[var(--border)]">
+                              <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-1.5 w-8">#</th>
+                              <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-1.5">{isDoubles ? 'Pair' : 'Player'}</th>
+                              <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-10">W</th>
+                              <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-10">L</th>
+                              <th className="text-center text-xs font-medium text-[var(--text-muted)] uppercase px-2 py-1.5 w-12">+/-</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {g.rows.map((r) => {
+                              const diff = r.pointsFor - r.pointsAgainst;
+                              return (
+                                <tr
+                                  key={r.id}
+                                  className="border-b last:border-b-0 border-[var(--border)]"
+                                  style={r.qualified
+                                    ? { backgroundColor: 'color-mix(in oklab, var(--color-success) 10%, transparent)' }
+                                    : undefined}
+                                >
+                                  <td className={`px-3 py-1.5 text-sm font-mono ${r.advancingPlace ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--text-muted)]'}`}>{r.place}</td>
+                                  <td className="px-3 py-1.5 text-sm font-medium text-[var(--text-primary)]">
+                                    {nameMap[r.id] ?? 'Unknown'}
+                                    {r.qualified && <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-success)]">Through</span>}
+                                  </td>
+                                  <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-success)]">{r.wins}</td>
+                                  <td className="px-2 py-1.5 text-sm text-center font-mono text-[var(--color-danger)]">{r.losses}</td>
+                                  <td className={`px-2 py-1.5 text-sm text-center font-mono ${diff > 0 ? 'text-[var(--color-success)]' : diff < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
+                                    {diff > 0 ? '+' : ''}{diff}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {view.stage.kind === 'matches' && !view.drawn && view.fixtures.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {view.fixtures.map((f) => (
+                    <div key={f.label} className="p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent)]">
+                        {f.name}{f.winnerPlace != null ? ` · for place ${f.winnerPlace}` : ''}
+                      </p>
+                      <p className="text-sm text-[var(--text-primary)]">
+                        {f.a.entry ? nameMap[f.a.entry] ?? f.a.slot : f.a.slot}
+                        <span className="text-xs text-[var(--text-muted)]"> vs </span>
+                        {f.b.entry ? nameMap[f.b.entry] ?? f.b.slot : f.b.slot}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {own.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {[...own]
+                    .sort((x, y) => (x.slot ?? x.round_number) - (y.slot ?? y.round_number) || (x.match_number ?? 0) - (y.match_number ?? 0))
+                    .map((m) => (
+                      <StageMatchRow
+                        key={m.id}
+                        match={m}
+                        view={view}
+                        heading={stagedMatchHeading(cfg, m)}
+                        nameMap={nameMap}
+                        isDoubles={isDoubles}
+                        isLive={isLive}
+                        onOpen={() => setScoreMatchId(m.id)}
+                      />
+                    ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+
+      {scoreMatch && (
+        <ScoreEntryDialog
+          match={scoreMatch}
+          event={event}
+          nameMap={nameMap}
+          seedMap={seedMap}
+          isDoubles={isDoubles}
+          entries={placeableEntries}
+          onClose={() => setScoreMatchId(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function StageMatchRow({
+  match: m,
+  view,
+  heading,
+  nameMap,
+  isDoubles,
+  isLive,
+  onOpen,
+}: {
+  match: TournamentMatchRow;
+  view: StageView;
+  heading: string | null;
+  nameMap: Record<string, string>;
+  isDoubles: boolean;
+  isLive: boolean;
+  onOpen: () => void;
+}) {
+  const { a: aId, b: bId, winner: winnerId } = matchSides(m, isDoubles);
+  const isCompleted = m.status === 'completed' || m.status === 'walkover';
+  const isVoided = m.status === 'voided';
+  const canScore = isLive && aId && bId && !isCompleted && !isVoided;
+  const canRestore = isLive && isVoided;
+  const canChangeResult = isCompleted && !m.is_bye;
+  const fixture = m.match_label ? view.fixtures.find((f) => f.label === m.match_label) : undefined;
+  const side = (id: string | null, slot: string | undefined, start: number) => (
+    <span className={`text-sm truncate ${isCompleted && winnerId === id ? 'text-[var(--color-success)] font-semibold' : 'text-[var(--text-primary)]'}`}>
+      {id ? nameMap[id] ?? 'Unknown' : slot ?? 'TBD'}
+      {start > 0 && <span className="ml-1 text-[10px] text-[var(--text-muted)]">(starts at {start})</span>}
+      {isCompleted && winnerId === id && <span className="sr-only"> (Winner)</span>}
+    </span>
+  );
+  return (
+    <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent)]">
+          {m.match_number != null ? `M${m.match_number} · ` : ''}{heading}
+        </p>
+        <div className="flex items-center gap-2 min-w-0">
+          {side(aId, fixture?.a.slot, m.handicap_a)}
+          <span className="text-xs text-[var(--text-muted)]">vs</span>
+          {side(bId, fixture?.b.slot, m.handicap_b)}
+        </div>
+      </div>
+      {isCompleted && Array.isArray(m.scores) && (
+        <span className="text-xs font-mono text-[var(--text-muted)] ml-2">
+          {(m.scores as GameScore[]).map((g) => `${g.a}-${g.b}`).join(', ')}
+        </span>
+      )}
+      {canScore && (
+        <button
+          onClick={onOpen}
+          aria-label={`Enter score for match ${m.match_number ?? ''}`}
+          className="text-xs text-[var(--color-accent)] font-medium ml-2 hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
+        >
+          Score
+        </button>
+      )}
+      {canRestore && (
+        <button
+          onClick={onOpen}
+          aria-label={`Restore voided match ${m.match_number ?? ''}`}
+          className="text-xs text-[var(--color-warning)] font-medium ml-2 hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none rounded"
+        >
+          Restore
+        </button>
+      )}
+      {canChangeResult && (
+        <button
+          onClick={onOpen}
+          aria-label={`Change the recorded result for match ${m.match_number ?? ''}`}
+          className="text-xs text-[var(--text-muted)] font-medium ml-2 hover:underline hover:text-[var(--color-warning)] focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none rounded"
+        >
+          Change
+        </button>
+      )}
+    </div>
+  );
+}

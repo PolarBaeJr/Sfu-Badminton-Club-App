@@ -19,9 +19,9 @@
 // whoever can receive mail at that address an admin the moment they finished
 // onboarding — no approval, no audit entry, nothing to notice afterwards.
 //
-// The example it cited as the danger was lsa139@sfu.ca. That address is Steven
-// Sun, and Steven Sun is this club's admin. On 2026-08-15 he signed in, the
-// claim fired, and it took role='admin' and is_exec away from him. The one time
+// The example it cited as the danger was a real officer's address, and that
+// officer is this club's admin. On 2026-08-15 they signed in, the claim fired,
+// and it took role='admin' and is_exec away from them. The one time
 // the guard ever fired in production it fired against the person it was written
 // to protect, and nothing told anybody: the audit row it wrote is real but is
 // excluded from /accounts' access-change card by ACCESS_CHANGE_ACTION_TYPES,
@@ -42,8 +42,8 @@
 //   A privilege that nobody can be shown to have conferred is HELD, not
 //   discarded: the member gets in as an ordinary member, and the privilege waits
 //   in players.privilege_claim_review where the console shows it and an admin
-//   restores it in one action. The lsa139 shape — an unclaimed privileged row
-//   whose address anyone could receive mail at — still confers nothing unasked.
+//   restores it in one action. That shape (an unclaimed privileged row
+//   whose address anyone could receive mail at) still confers nothing unasked.
 //
 //   Either way it is AUDITED and SURFACED. Both directions: a claim that keeps
 //   privileges is as worth telling an admin about as one that withholds them.

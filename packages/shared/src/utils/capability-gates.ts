@@ -214,8 +214,17 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     gate: 'route /matches',
   },
   'matches.void.write': {
-    label: 'Void a match', area: 'matches', group: null, mode: 'write',
+    label: 'Void or boost a match, and set repeat challenge rules', area: 'matches', group: null, mode: 'write',
     gate: 'actions/matches.ts voidMatch',
+    also: [
+      'actions/matches.ts boostMatchRating',
+      'actions/matches.ts updateRepeatChallengeSettings',
+    ],
+    merged:
+      'One authority over how much a confirmed challenge moves two ratings. Voiding takes the change back, '
+      + 'boosting scales it, and the repeat rules scale it before it lands; all three correct the same applied '
+      + 'delta, and a void still unwinds the other two. It sits here rather than behind a new capability because '
+      + 'the rule is meant to be an exec call and platform settings are admin-only.',
   },
   'matches.convert.write': {
     label: 'Convert a match to casual', area: 'matches', group: null, mode: 'write',
@@ -434,6 +443,14 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'tournaments.results.edit.write': {
     label: 'Edit a recorded result', area: 'tournaments', group: 'results', mode: 'write',
     gate: 'tournament-actions/results.ts editMatchResult',
+    also: [
+      'tournament-actions/team-category.ts approvePairCategoryRequestImpl',
+      'tournament-actions/team-category.ts declinePairCategoryRequestImpl',
+    ],
+    merged:
+      'Correcting a recorded result and settling a category change for a team that has played are one act: '
+      + 'both decide what head start a played match is judged by (00279). Declining the change is the same '
+      + 'decision answered no.',
   },
   'tournaments.results.entry.write': {
     label: 'Edit a match slot', area: 'tournaments', group: 'results', mode: 'write',
@@ -729,6 +746,27 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     gate: 'actions/settings.ts updatePlatformSettings',
   },
 
+  // ---- changelog ---------------------------------------------------------
+  // CLUB CHANGES (00286). The page lists the draft lines the settings and
+  // officer role triggers wrote; the post key covers everything that decides
+  // what members will be told.
+  'changelog.page': {
+    label: 'Open Club changes', area: 'changelog', group: null, mode: 'page',
+    gate: 'app/club-changes/page.tsx ClubChangesPage',
+  },
+  'changelog.post.write': {
+    label: 'Post club changes', area: 'changelog', group: null, mode: 'write',
+    gate: 'actions/club-changes.ts postClubChanges',
+    also: [
+      'actions/club-changes.ts addClubChangeLine',
+      'actions/club-changes.ts rewordClubChangeLine',
+      'actions/club-changes.ts deleteClubChangeLine',
+      'actions/club-changes.ts announceClubChangeEntry',
+    ],
+    merged:
+      'Adding, rewording and deleting a pending line, and sending a posted entry out as an announcement, are all deciding what the club tells its members, which is what posting is.',
+  },
+
   // ---- page --------------------------------------------------------------
   // THE KEYS TO SWITCHED-OFF FEATURES, and the first gates in this map that
   // stand in the MEMBERS' app rather than the console, hence the `player `
@@ -830,6 +868,12 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     gate: 'player app/guest-waiver/page.tsx FeatureGate',
     also: ['player actions/guest-waiver.ts signGuestWaiver'],
     merged: SWITCHED_OFF,
+  },
+  // No page to gate: the challenge screens and the profile each ask this one
+  // helper before reading a prediction.
+  'page.access.predictions': {
+    label: 'Match predictions while switched off', area: 'page', group: null, mode: 'read',
+    gate: 'player lib/predictions.ts predictionsVisible',
   },
 };
 

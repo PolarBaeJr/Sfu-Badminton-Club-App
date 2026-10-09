@@ -1,0 +1,74 @@
+# What the public export contains. Default-deny: a path ships only when the
+# LAST pattern here that matches it is a positive one. `!` excludes. Globs are
+# anchored to the repo root: `**` spans directories, `*` stays in one segment.
+#
+# A pattern that matches nothing fails the run, so this list cannot go stale
+# without someone noticing. The denylist in leak-rules.json overrides all of
+# it, and .github/ is never exported, so this configuration excludes itself.
+
+# Root
+package.json
+package-lock.json
+tsconfig.base.json
+turbo.json
+vitest.config.ts
+.npmrc
+.nvmrc
+.gitignore
+.dockerignore
+.env.example
+Dockerfile
+README.md
+
+# Apps
+apps/admin/**
+apps/player/**
+apps/bot/**
+apps/data-api/**
+!apps/data-api/docker-compose.example.yml
+# The Rust build of the same service. A cloner gets both and picks one; the
+# brand map rewrites its key-prefix test vector as it does the TypeScript one.
+apps/data-api-rs/**
+
+# Native apps (Kotlin/Compose, Swift). No package.json, so not an npm workspace
+# and outside --verify. The brand map's path rules rename the package and
+# target folders. The icon script draws the club's tile, and the assets README
+# points at it and at the unexported assets/brand.
+apps/mobile/**
+!apps/mobile/ios/scripts/render-app-icon.swift
+!apps/mobile/assets/README.md
+
+# Packages
+packages/**
+
+# Guards the club's own consent records against docs/legal, which is not
+# exported, so the test has nothing to read in a clone.
+!apps/admin/src/lib/__tests__/legal-doc-version-contract.test.ts
+
+# Database
+supabase/README.md
+supabase/migrations/**
+supabase/functions/**
+!supabase/functions/DEPLOY.md
+supabase/tests/**
+supabase/One Time Scripts/README.md
+supabase/One Time Scripts/00094-fee-ledger-data-migration.sql
+supabase/One Time Scripts/cleanup-orphan-challenges.sql
+
+# Integrations. No secrets: the Google Form script reads its URL and key from
+# Script Properties, and its examples are neutral.
+integrations/google-forms/**
+
+# Tooling
+scripts/README.md
+scripts/gen-db-types.mjs
+scripts/gen-db-types.profiles.example.json
+
+# Documentation
+docs/README.md
+docs/guides/**
+docs/design/**
+docs/project/README.md
+docs/project/0[1-4]-*.md
+docs/project/06-tech-stack.md
+docs/releases/**

@@ -6,12 +6,18 @@
 //   - participants.ts — singles participants, doubles pairs, check-in / no-show
 //   - seeding.ts      — manual seeds, auto-seed by Elo, clear seeds
 //   - brackets.ts     — bracket / round robin generation, draw lock
+//   - stages.ts       : drawing one stage of a staged event (00272)
+//   - team-category.ts: a team's category in a staged event, which its head
+//                       starts read, and the request to change it after
+//                       play (00279)
 //   - results.ts      — score entry, walkovers, void / restore / edit / undo
 //                       results, manual draw-slot repair
 //   - finalize.ts     — placement bonuses + event finalization
 //   - scheduling.ts   — running the Court Management tab at a live event: which
 //                       court a match is on, who is present for it, and putting
 //                       it on court ('live' had no writer at all before 00136)
+//   - courts.ts       : a tournament's own courts (00273): add, rename, order,
+//                       switch off, and import the courts already typed
 //   - _internal.ts    — private helpers (NOT 'use server' — revalidation,
 //                       notifications, Elo apply/reverse, standings)
 export {
@@ -19,6 +25,8 @@ export {
   updateTournamentEvent,
   deleteTournamentEvent,
   setEventStatus,
+  setEventWindows,
+  setEventWaitlist,
 } from './tournament-actions/events';
 
 export {
@@ -32,14 +40,19 @@ export {
   withdrawPair,
   disqualifyPair,
   addPairToEvent,
+  addExternalPairToEvent,
   removePairFromEvent,
   unpairEntry,
   withdrawPairMember,
   swapPairMember,
   checkInPair,
   markPairNoShow,
+  undoCheckIn,
+  undoNoShow,
   bulkCheckIn,
   autoPairWaitingEntrants,
+  promoteFromWaitlist,
+  removeFromWaitlist,
 } from './tournament-actions/participants';
 
 export {
@@ -60,6 +73,16 @@ export {
   unlockDraw,
 } from './tournament-actions/brackets';
 
+export { drawStage, redrawStage } from './tournament-actions/stages';
+
+export {
+  setPairCategory,
+  requestPairCategoryChange,
+  approvePairCategoryRequest,
+  declinePairCategoryRequest,
+  cancelPairCategoryRequest,
+} from './tournament-actions/team-category';
+
 export {
   enterMatchResult,
   enterWalkover,
@@ -70,8 +93,9 @@ export {
   editMatchResult,
   undoMatchResult,
   getMatchOutcomeSummary,
+  getCurrentHeadStarts,
 } from './tournament-actions/results';
-export type { MatchOutcomeSummary, EntryEventSummary } from './tournament-actions/results';
+export type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from './tournament-actions/results';
 
 export {
   applyPlacementBonuses,
@@ -83,3 +107,11 @@ export {
   setMatchReadyForPlayer,
   setMatchLive,
 } from './tournament-actions/scheduling';
+
+export {
+  addTournamentCourts,
+  renameTournamentCourt,
+  moveTournamentCourt,
+  setTournamentCourtActive,
+  importCourtsFromMatches,
+} from './tournament-actions/courts';

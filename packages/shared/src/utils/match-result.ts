@@ -1,4 +1,5 @@
-import { isLegalGameCount, isLegalGameScore } from './constants';
+import { isLegalGameCount, pointsCap } from './constants';
+import { isLegalGame } from './game-rules';
 
 // Who won, derived from the game scores.
 //
@@ -101,11 +102,13 @@ export type GamesValidation = { ok: true } | { ok: false; message: string };
 /**
  * Judges a whole scoreline against the match's own rules: every game a legal
  * finish for its target and cap, no game played after someone clinched, and
- * the winner on exactly the clinching number of games.
+ * the winner on exactly the clinching number of games. `starts` is a head
+ * start each side begins every game on; scores include it.
  */
 export function validateGamesForRules(
   games: readonly GameScore[],
   rules: { bestOf: number; target: number; cap: number },
+  starts: { a: number; b: number } = { a: 0, b: 0 },
 ): GamesValidation {
   const { bestOf, target, cap } = rules;
   const needed = gamesNeededToWin(bestOf);
@@ -122,7 +125,14 @@ export function validateGamesForRules(
     const a = toScore(game.side_a_score);
     const b = toScore(game.side_b_score);
     if (aWon === needed || bWon === needed) return { ok: false, message: stopsAt };
-    if (!isLegalGameScore(a, b, 'single_21', bestOf, target)) {
+    if (a < starts.a) return { ok: false, message: `Game ${i + 1}: Side A starts at ${starts.a}, so their score cannot be below ${starts.a}.` };
+    if (b < starts.b) return { ok: false, message: `Game ${i + 1}: Side B starts at ${starts.b}, so their score cannot be below ${starts.b}.` };
+    // The cap judged is pointsCap(target), as before; rules.cap only words the message.
+    const legal = isLegalGame(
+      { a, b },
+      { target, winByTwo: true, cap: pointsCap(target), startA: starts.a, startB: starts.b },
+    );
+    if (!legal) {
       return {
         ok: false,
         message: `Game ${i + 1}: ${a}-${b} is not a finished game. Win by two, or at ${cap}.`,

@@ -77,16 +77,27 @@ export const RATINGS_SECTIONS: RatingsSectionDef[] = [
     reference: true,
   },
   {
+    id: 'repeat-challenges',
+    label: 'Repeat challenges',
+    fields: [
+      { key: 'rating_defaults', field: 'repeat_decay_pct' },
+      { key: 'rating_defaults', field: 'repeat_window_days' },
+      { key: 'rating_defaults', field: 'repeat_min_factor' },
+    ],
+  },
+  {
     id: 'tournament-bonuses',
     label: 'Tournament bonuses',
     fields: [
       { key: 'tournament_bonuses', field: 'enabled' },
       { key: 'tournament_bonuses', field: 'singles_champion' },
       { key: 'tournament_bonuses', field: 'singles_finalist' },
+      { key: 'tournament_bonuses', field: 'singles_thirdplace' },
       { key: 'tournament_bonuses', field: 'singles_semifinalist' },
       { key: 'tournament_bonuses', field: 'singles_quarterfinalist' },
       { key: 'tournament_bonuses', field: 'doubles_champion' },
       { key: 'tournament_bonuses', field: 'doubles_finalist' },
+      { key: 'tournament_bonuses', field: 'doubles_thirdplace' },
       { key: 'tournament_bonuses', field: 'doubles_semifinalist' },
       { key: 'tournament_bonuses', field: 'doubles_quarterfinalist' },
     ],

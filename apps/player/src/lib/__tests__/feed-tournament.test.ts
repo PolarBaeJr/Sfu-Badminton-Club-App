@@ -189,4 +189,15 @@ describe('underWayEyebrow — two states, because they ask for different things'
     // a single combined label would cause.
     expect(underWayEyebrow([ev('checkin')])).toBe('CHECK-IN OPEN');
   });
+
+  it('follows the check-in window while nothing is drawn', () => {
+    const at = (checkin_window: 'open' | 'not_open_yet' | 'closed') => ({ ...ev('checkin'), checkin_window });
+    expect(underWayEyebrow([at('not_open_yet')])).toBe('CHECK-IN SOON');
+    expect(underWayEyebrow([at('closed')])).toBe('CHECK-IN CLOSED');
+    expect(underWayEyebrow([at('closed'), at('not_open_yet')])).toBe('CHECK-IN SOON');
+    // Open wins, because somebody can act on it.
+    expect(underWayEyebrow([at('closed'), at('open')])).toBe('CHECK-IN OPEN');
+    // A drawn event still wins over every window.
+    expect(underWayEyebrow([at('closed'), ev('live')])).toBe('UNDER WAY');
+  });
 });

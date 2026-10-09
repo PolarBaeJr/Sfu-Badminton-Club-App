@@ -16,9 +16,11 @@ interface Props {
   registration: { id: string; status: string } | null;
   playerName: string;
   tournamentSuspended: boolean;
+  /** The check-in window (00276) while it is shut; null while it is open. */
+  checkinNotice?: string | null;
 }
 
-export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registration, playerName, tournamentSuspended }: Props) {
+export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registration, playerName, tournamentSuspended, checkinNotice }: Props) {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const { toast } = useToast();
@@ -109,7 +111,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
     );
   }
 
-  if (eventStatus !== 'checkin') {
+  if (eventStatus !== 'checkin' || checkinNotice) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
         <div className="w-20 h-20 rounded-full bg-[color-mix(in_oklab,var(--color-accent)_15%,transparent)] flex items-center justify-center">
@@ -117,7 +119,9 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
         </div>
         <div>
           <h1 className="display-md">Check-in Not Available</h1>
-          <p className="text-[var(--text-muted)] text-sm mt-2">Check-in is not currently open for this event.</p>
+          <p className="text-[var(--text-muted)] text-sm mt-2">
+            {eventStatus === 'checkin' && checkinNotice ? `${checkinNotice}.` : 'Check-in is not currently open for this event.'}
+          </p>
         </div>
         <Link
           href={backLink}

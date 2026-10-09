@@ -4,10 +4,8 @@ import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient, createServiceRoleClient } from '../supabase-server';
 import {
-  sendChallengeReceivedEmail,
   sendChallengeAcceptedEmail,
   sendChallengeRejectedEmail,
-  describeMatchShape,
   challengeCreateSchema,
   parseOrThrow,
   ExpectedError,
@@ -15,6 +13,7 @@ import {
 } from '@badminton/shared';
 import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
 import { assertFeatureOn } from '../feature-gate';
+import { createChallengeCore } from '../challenges-core';
 
 export async function createChallenge(input: ChallengeCreateInput): Promise<ActionResult<string>> {
   return runAction(() => createChallengeImpl(input));
@@ -27,93 +26,12 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);
 
-  // ONE STATEMENT, and it is the fix for F-014. This used to be a validate
-  // call, an insert of the challenge, and an insert of the participants with a
-  // second client — three round trips. A failure at the third left a 'proposed'
-  // challenge with NO participants, which nothing can ever accept, reject or
-  // cancel (all three look the actor up in the participant list) and which
-  // counts against max_active_challenges for good. Three of those and the
-  // member cannot challenge anybody again.
-  //
-  // The cap check moved inside for the same reason: it used to be a read
-  // milliseconds before the insert, so two tabs submitted together both passed
-  // a cap of 3 at 2. 00183 holds an advisory lock on the creator across both.
-  //
-  // The member's own client, not the service role: 00183 takes no player id and
-  // resolves the creator from auth.uid(), so there is nothing here to
-  // impersonate with (00126).
-  const { data: created, error } = await supabase.rpc('create_challenge_atomic', {
-    p_type: input.type,
-    p_rated_flag: input.rated_flag,
-    p_format: input.format,
-    p_opponent_id: input.opponent_id,
-    p_partner_id: input.partner_id || null,
-    p_opponent_partner_id: input.opponent_partner_id || null,
-    // Null unless the player chose a custom shape; submit_match_result and
-    // trigger_set_match_weights fall back to the preset when these are null.
-    p_games_per_match: input.games_per_match ?? null,
-    p_points_per_game: input.points_per_game ?? null,
-    p_session_id: input.session_id || null,
-    p_scheduled_date: input.scheduled_date || null,
-    p_scheduled_time: input.scheduled_time || null,
-    p_note: input.note || null,
-  });
-
-  // Fail closed: an RPC error or a null result must block creation. Before
-  // 00126-era hardening the error was discarded and a falsy validation skipped
-  // the guard entirely, letting a caller bypass every check.
-  if (error) throw new Error(error.message);
-  if (!created) throw new Error('Could not create this challenge — please try again.');
-  if (!created.valid) {
-    // The club's own rules saying no (self-challenge, suspended opponent, too
-    // many open challenges, same opponent too soon). The rules working is not a
-    // fault — only `error` above is.
-    const errors = (created.errors ?? ['Challenge is not allowed']) as string[];
-    throw new ExpectedError(errors.join(', '));
-  }
-  const challengeId = created.challenge_id as string;
-
-  await notifyPlayers(
-    [{
-      player_id: input.opponent_id,
-      type: 'challenge_received',
-      title: 'New Challenge',
-      body: `${player.full_name} has challenged you!`,
-      metadata: { challenge_id: challengeId },
-    }],
-    {
-      title: 'New Challenge',
-      body: `${player.full_name} has challenged you!`,
-      url: `/challenges/${challengeId}`,
-    },
-    'challenges'
+  // The body is shared with /challenge send in Discord (challenges-core.ts).
+  // The member's own client calls the member function, so the creator is
+  // auth.uid() and nothing here can impersonate anybody.
+  const challengeId = await createChallengeCore(player, input, (params) =>
+    supabase.rpc('create_challenge_atomic', params),
   );
-
-  const { data: opponent } = await createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').eq('id', input.opponent_id).single();
-  if (opponent?.email) {
-    const formatLabel = describeMatchShape({ match_format: input.format, games_per_match: input.games_per_match, points_per_game: input.points_per_game });
-    sendChallengeReceivedEmail(opponent.email, player.full_name, formatLabel, input.type, challengeId).catch((err) => {
-      Sentry.captureException(err, { extra: { email: 'challenge_received', challengeId } });
-    });
-  }
-
-  // Service-role, not the user's client: 00126 revokes EXECUTE on this
-  // SECURITY DEFINER function from anon and authenticated. It takes the player
-  // id as a parameter and checks nothing internally, so while it was reachable
-  // over PostgREST any caller could inflate anyone's reliability counter. The
-  // counter is server-derived bookkeeping, never something the browser asks
-  // for, so moving the one call site to the trusted key is the fix — the
-  // alternative was rewriting a SECURITY DEFINER body, which 00049 warns about.
-  // `player.id` comes from requirePlayer() above, i.e. the verified session.
-  await createServiceRoleClient().rpc('increment_challenges_issued', { p_player_id: player.id });
-
-  trackServerEvent(player.id, 'challenge_created', {
-    ...getPlayerProps(player),
-    challenge_id: challengeId,
-    challenge_type: input.type,
-    format: input.format,
-    rated: input.rated_flag,
-  });
 
   revalidatePath('/challenges');
   revalidatePath('/feed');

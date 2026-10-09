@@ -5,8 +5,14 @@ import { loadConfig } from './config.js';
 import {
   DEFERRED_COMMANDS,
   LINKED_ACCOUNT_PICKERS,
+  OPEN_CHALLENGE_PICKERS,
+  OWN_FEE_PICKERS,
   dispatch,
+  handleChallengeAutocomplete,
+  handleReceiptAutocomplete,
   handleLinkedAccountAutocomplete,
+  handleSignupInteraction,
+  isSignupInteraction,
   handleProfileAutocomplete,
   handleAnnounceModal,
   handleReportModal,
@@ -30,6 +36,7 @@ import {
   isSessionPageButton,
   isTournamentListModal,
   isTournamentPageButton,
+  type BotResponse,
   type CommandOption,
   type ModalComponent,
   type ResolvedAttachment,
@@ -72,6 +79,42 @@ function send(res: ServerResponse, status: number, body: unknown) {
     'content-length': Buffer.byteLength(payload),
   });
   res.end(payload);
+}
+
+/**
+ * /signup's buttons and modals: write the acknowledgement, then run the step
+ * and write its answer over the message. Not awaited past the acknowledgement,
+ * like the deferred commands. finish() catches its own failures; the catch
+ * here is the second net.
+ */
+function answerSignup(
+  res: ServerResponse,
+  response: BotResponse,
+  appId: string | undefined,
+  interactionToken: string | undefined
+) {
+  const { finish, ...ack } = response;
+  send(res, 200, ack);
+  if (!finish) return;
+  void (async () => {
+    try {
+      const final = await finish();
+      if (!appId || !interactionToken) {
+        console.error('[bot] signup step finished but had no interaction token');
+        return;
+      }
+      await editDeferredReply(appId, interactionToken, final.data ?? {});
+    } catch (error) {
+      console.error('[bot] signup step failed:', error instanceof Error ? error.message : 'unknown');
+      if (appId && interactionToken) {
+        await editDeferredReply(appId, interactionToken, {
+          content: 'Something went wrong. Run /signup again.',
+          components: [],
+          embeds: [],
+        });
+      }
+    }
+  })();
 }
 
 // The signature covers the RAW body, so it has to be kept as-received. Parsing
@@ -212,13 +255,13 @@ async function runMemberSync(req: IncomingMessage, res: ServerResponse) {
 let gateway: GatewayHandle | null = null;
 
 const server = createServer(async (req, res) => {
-  // Health: a real GET, not a bare TCP accept. proxy-manager falls back to a TCP
-  // dial when no proxy.health label is set, and a dial cannot tell "process is
-  // up" from "process cannot reach the app API" — so the label is set and this
-  // endpoint exists to give it something meaningful to ask.
+  // Health: a real GET, not a bare TCP accept. A reverse proxy without a health
+  // path falls back to a TCP dial, and a dial cannot tell "process is up" from
+  // "process cannot reach the app API", so this endpoint exists to give the
+  // proxy something meaningful to ask.
   if (req.method === 'GET' && req.url === '/health') {
-    // ok is deliberately not conditioned on the gateway. proxy.health points
-    // here, so reporting a gateway blip as unhealthy would pull a perfectly
+    // ok is deliberately not conditioned on the gateway. The proxy's health
+    // check points here, so reporting a gateway blip as unhealthy would pull a perfectly
     // good interactions endpoint out of the pool -- the gateway only decides
     // whether Discord draws us green, and interactions do not travel over it.
     // Surface the state in the body so it is diagnosable without doing that.
@@ -646,6 +689,15 @@ const server = createServer(async (req, res) => {
       permissions: interaction.member?.permissions ?? null,
     };
 
+    if (isSignupInteraction(customId)) {
+      return answerSignup(
+        res,
+        handleSignupInteraction(customId as string, interaction.data.components, modalContext),
+        interaction.application_id,
+        interaction.token
+      );
+    }
+
     if (isAnnounceModal(customId)) {
       try {
         const response = await handleAnnounceModal(
@@ -779,6 +831,20 @@ const server = createServer(async (req, res) => {
   if (interaction.type === 3 && interaction.data) {
     const customId = interaction.data.custom_id;
 
+    // /signup. Every button but "Enter code" is acknowledged with type 6 and
+    // the same ephemeral message is edited; see handleSignupInteraction.
+    if (isSignupInteraction(customId)) {
+      return answerSignup(
+        res,
+        handleSignupInteraction(customId as string, undefined, {
+          discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
+          guildId: interaction.guild_id ?? null,
+        }),
+        interaction.application_id,
+        interaction.token
+      );
+    }
+
     if (isSelfRoleButton(customId)) {
       const context = {
         discordUserId: interaction.member?.user?.id ?? interaction.user?.id ?? null,
@@ -897,10 +963,17 @@ const server = createServer(async (req, res) => {
       guildId: interaction.guild_id ?? null,
     };
     try {
+      // /challenge report lists the caller's own open challenges, and /receipt
+      // the caller's own unpaid fees, so each is told who is asking, as the
+      // linked-account picker is.
       const answered = await Promise.race([
-        LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
-          ? handleLinkedAccountAutocomplete(options, context)
-          : handleProfileAutocomplete(options),
+        OPEN_CHALLENGE_PICKERS.has(interaction.data.name)
+          ? handleChallengeAutocomplete(options, context)
+          : OWN_FEE_PICKERS.has(interaction.data.name)
+            ? handleReceiptAutocomplete(options, context)
+            : LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
+            ? handleLinkedAccountAutocomplete(options, context)
+            : handleProfileAutocomplete(options),
         new Promise<{ type: number; data: { choices: [] } }>((resolve) =>
           setTimeout(() => resolve({ type: 8, data: { choices: [] } }), AUTOCOMPLETE_BUDGET_MS)
         ),

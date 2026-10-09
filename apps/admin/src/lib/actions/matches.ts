@@ -19,6 +19,7 @@ import {
 import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 import { MATCH_ADMIN_NOTE_TABLE, isMissingNoteTableError } from '../match-note';
+import { REASON_MIN } from '../audit-reason';
 
 // ============================================================
 // Match Management
@@ -181,6 +182,163 @@ async function convertMatchToCasualImpl(matchId: string, reason: string) {
 
   revalidatePath('/matches');
   return { noteRecorded: true };
+}
+
+// ============================================================
+// Repeat challenges (00268)
+// ============================================================
+
+/** True for a number with at most two decimals. 1.15 * 100 is not 115. */
+function isTwoDecimals(value: number): boolean {
+  return Number(value.toFixed(2)) === value;
+}
+
+/**
+ * Scale the rating change one confirmed match already applied, by more than 1
+ * and at most 2. boost_match_rating does the whole thing in one transaction,
+ * audit row included, so this reads and writes nothing of its own: the same
+ * shape as voidMatch, and the same capability, because both correct one
+ * applied delta and a later void unwinds the boost with it.
+ *
+ * Every parameter is a POST field, so each is checked for its type here and
+ * again by the SQL.
+ */
+export async function boostMatchRating(
+  matchId: string,
+  boost: number,
+  reason: string,
+): Promise<ActionResult<{ alreadyBoosted: boolean }>> {
+  return runAction(() => boostMatchRatingImpl(matchId, boost, reason));
+}
+
+async function boostMatchRatingImpl(matchId: string, boost: number, reason: string) {
+  const admin = await requireCapability('matches.void.write');
+
+  if (typeof matchId !== 'string' || matchId.length === 0) {
+    throw new ExpectedError('No match was given.');
+  }
+  if (typeof boost !== 'number' || !Number.isFinite(boost) || boost <= 1 || boost > 2 || !isTwoDecimals(boost)) {
+    throw new ExpectedError('A boost must be above 1 and at most 2, to two decimals.');
+  }
+  const why = typeof reason === 'string' ? reason.trim() : '';
+  if (why.length < REASON_MIN) {
+    throw new ExpectedError(`Boosting a match needs a reason of at least ${REASON_MIN} characters.`);
+  }
+
+  const adminClient = createAdminClient();
+  const { data, error } = await adminClient.rpc('boost_match_rating', {
+    p_match_id: matchId,
+    p_actor_id: admin.id,
+    p_boost: boost,
+    p_reason: why,
+  });
+  if (error) {
+    Sentry.getCurrentScope().setExtras({ matchId, boost, action: 'boost_match_rating' });
+    throw new Error(error.message);
+  }
+
+  revalidatePath('/matches');
+  const result = (data ?? {}) as { already_boosted?: boolean };
+  return { alreadyBoosted: result.already_boosted === true };
+}
+
+export interface RepeatChallengeSettings {
+  decayPct: number;
+  windowDays: number;
+  minFactor: number;
+}
+
+/**
+ * The exec's door to three keys of rating_defaults, and only those three.
+ *
+ * updatePlatformSettings is the general writer and stays admin-only
+ * (platform.settings.write). The repeat rule is meant to be an exec call, so
+ * this action takes typed values rather than a blob, overlays them on the
+ * stored row, and cannot touch any other key: a hand-rolled POST can move the
+ * decay, the window and the floor, and nothing else.
+ *
+ * COMPARE-AND-SWAP ON updated_at. The write replaces the whole JSONB value, so
+ * a /ratings save landing between the read and the write here would be
+ * silently reverted. The update only matches the row as it was read; if it
+ * matches nothing, the officer is asked to reload.
+ */
+export async function updateRepeatChallengeSettings(
+  input: RepeatChallengeSettings,
+  reason: string,
+): Promise<ActionResult<RepeatChallengeSettings>> {
+  return runAction(() => updateRepeatChallengeSettingsImpl(input, reason));
+}
+
+async function updateRepeatChallengeSettingsImpl(input: RepeatChallengeSettings, reason: string) {
+  const admin = await requireCapability('matches.void.write');
+
+  const decayPct: unknown = input?.decayPct;
+  const windowDays: unknown = input?.windowDays;
+  const minFactor: unknown = input?.minFactor;
+  if (typeof decayPct !== 'number' || !Number.isInteger(decayPct) || decayPct < 0 || decayPct > 90) {
+    throw new ExpectedError('The reduction must be a whole percentage from 0 to 90.');
+  }
+  if (typeof windowDays !== 'number' || !Number.isInteger(windowDays) || windowDays < 1 || windowDays > 365) {
+    throw new ExpectedError('The window must be a whole number of days from 1 to 365.');
+  }
+  if (
+    typeof minFactor !== 'number' || !Number.isFinite(minFactor)
+    || minFactor < 0 || minFactor > 1 || !isTwoDecimals(minFactor)
+  ) {
+    throw new ExpectedError('The floor must be from 0.00 to 1.00, to two decimals.');
+  }
+  const why = typeof reason === 'string' ? reason.trim() : '';
+  if (why.length < REASON_MIN) {
+    throw new ExpectedError(`Changing the repeat challenge rules needs a reason of at least ${REASON_MIN} characters.`);
+  }
+
+  const adminClient = createAdminClient();
+  const { data: row, error: readError } = await adminClient
+    .from('platform_settings')
+    .select('value, updated_at')
+    .eq('key', 'rating_defaults')
+    .single();
+  if (readError || !row) {
+    throw new Error(`Could not read the rating settings: ${readError?.message ?? 'no rating_defaults row'}`);
+  }
+
+  const stored = (row.value ?? {}) as Record<string, unknown>;
+  const next = {
+    ...stored,
+    repeat_decay_pct: decayPct,
+    repeat_window_days: windowDays,
+    repeat_min_factor: minFactor,
+  };
+
+  const { data: written, error: writeError } = await adminClient
+    .from('platform_settings')
+    // Club changes (00286) draft a line only from a write that sets updated_by
+    // and moves updated_at. Keep both.
+    .update({ value: next, updated_by: admin.id, updated_at: new Date().toISOString() })
+    .eq('key', 'rating_defaults')
+    .eq('updated_at', row.updated_at)
+    .select('key');
+  if (writeError) throw new Error(`Failed to update rating_defaults: ${writeError.message}`);
+  if (!written || written.length === 0) {
+    throw new ExpectedError('The rating settings changed since this page loaded. Reload the page and try again.');
+  }
+
+  // The same action and the same reason shape as updatePlatformSettings, so
+  // /ratings finds this change when it reads back the last one. Its
+  // splitAuditReason splits on a spaced em dash, written as an escape here.
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'platform_setting_updated',
+    target_type: 'platform_setting',
+    target_id: null,
+    old_value: stored,
+    new_value: next,
+    reason: `rating_defaults \u2014 ${why}`,
+  });
+
+  revalidatePath('/matches');
+  revalidatePath('/ratings');
+  return { decayPct, windowDays, minFactor };
 }
 
 // ============================================================

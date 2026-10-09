@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
-const FIELD_TABLES = ['tournament_participants', 'tournament_pairs'];
+const FIELD_TABLES = ['tournament_participants', 'tournament_pairs', 'tournament_event_waitlist'];
 
 /**
  * Columns an application write may set on a field table without a fence, and
@@ -65,16 +65,37 @@ const FIELD_TABLES = ['tournament_participants', 'tournament_pairs'];
  *                   so these writes are checked by the step that consumes
  *                   them. They are not free-standing edits the way seeding.ts's
  *                   were.
+ *   stages.ts     - seed_number only, and only when stage 1 is drawn from the
+ *                   field (a later stage cannot be). The same shape as
+ *                   brackets.ts: the generation ends in publish_stage_draw,
+ *                   which at stage 1 re-reads the field under the lock and
+ *                   refuses on 00202's digest, seed included (00272).
  *   finalize.ts   — final_position and points, written from an event that is
  *                   already over. Nothing downstream draws from them, and the
  *                   flip to completed is itself fenced (00209).
+ *   team_category - a staged team's category (00272), which only sets the
+ *                   head starts of its matches. It moves nobody in or out of
+ *                   the field and is not in 00202's digest. participants.ts
+ *                   writes it once, on the pair it has just created;
+ *                   team-category.ts writes it on one pair and re-snapshots
+ *                   that pair's unplayed matches, until the pair has played
+ *                   with head starts. After that a change is a request, and
+ *                   approve_pair_category_request (00279) writes it under
+ *                   the event field key, not this file.
  *
  * A write of one of these columns from ANY OTHER file fails, because the
  * reasoning above is about those two flows and does not transfer.
  */
 const UNFENCED_COLUMNS = new Map<string, readonly string[]>([
-  ['seed_number', ['apps/admin/src/lib/tournament-actions/brackets.ts']],
+  ['seed_number', [
+    'apps/admin/src/lib/tournament-actions/brackets.ts',
+    'apps/admin/src/lib/tournament-actions/stages.ts',
+  ]],
   ['group_number', ['apps/admin/src/lib/tournament-actions/brackets.ts']],
+  ['team_category', [
+    'apps/admin/src/lib/tournament-actions/participants.ts',
+    'apps/admin/src/lib/tournament-actions/team-category.ts',
+  ]],
   // final_position and points USED TO BE CLASSIFIED HERE, for finalize.ts's
   // writePlacements. 00215 was the last of the four fences and it removed that
   // function: finalisation writes through complete_event_under_field_lock and

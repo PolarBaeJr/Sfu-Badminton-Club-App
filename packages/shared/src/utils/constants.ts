@@ -1,4 +1,5 @@
 import type { MatchFormat, PlayerStatus, EventType, TournamentEventType, TournamentMatchFormat, TournamentEventStatus } from '../types/database';
+import { isLegalGame, legacyGameRules } from './game-rules';
 
 export const PLAYER_STATUS_LABELS: Record<PlayerStatus, string> = {
   competitive: 'Competitive',
@@ -132,14 +133,12 @@ export const DISCORD_LINK_TOKEN_TTL_MINUTES = 30;
 // Name of the Supabase auth cookie, pinned rather than derived.
 //
 // supabase-js builds it as `sb-<first hostname label>-auth-token` from
-// NEXT_PUBLIC_SUPABASE_URL, so the session is silently tied to the domain: the
-// current badminton.polardev.org yields "sb-badminton-auth-token", while
-// sfubadminton.com would yield "sb-sfubadminton-auth-token". Changing that URL
-// would therefore make every existing cookie unreadable and sign everyone out,
-// re-triggering passkey verification with it.
+// NEXT_PUBLIC_SUPABASE_URL, so the session is silently tied to the domain.
+// Changing that URL would therefore make every existing cookie unreadable and
+// sign everyone out, re-triggering passkey verification with it.
 //
-// This value is exactly what the library derives today, so pinning it changes
-// nothing now — and means the pending move off polardev.org becomes a plain
+// This value is what the library derived for the domain the app first ran on,
+// so pinning it changed nothing then, and a later domain move became a plain
 // config edit that sessions survive. Do not "tidy" the badminton- prefix: the
 // string must keep matching cookies already in browsers.
 export const AUTH_COOKIE_NAME = 'sb-badminton-auth-token';
@@ -160,7 +159,7 @@ export const AUTH_COOKIE_NAME = 'sb-badminton-auth-token';
 // to avoid, so the two halves must read the same value.
 //
 // Consequence: this is baked at BUILD time (Dockerfile ARG -> compose/CI build
-// arg). Adding it to the Pi's runtime .env alone does nothing.
+// arg). Adding it to a runtime .env alone does nothing.
 //
 // Unset is also the correct default for local dev: a `domain` of ".localhost"
 // is rejected by some browsers, which would drop the cookie entirely.
@@ -453,6 +452,17 @@ export const TOURNAMENT_EVENT_STATUS_LABELS: Record<TournamentEventStatus, strin
   completed: 'Completed',
 };
 
+// A staged event (00272) walks the default path, but its first draw is a stage,
+// not a bracket, and later stages are drawn while it is live.
+const STAGED_STATUS_LABELS: Partial<Record<TournamentEventStatus, string>> = {
+  bracket_generated: 'Stage 1 Drawn',
+};
+
+/** The status in words, for this event's format. */
+export function eventStatusLabel(format: string | null | undefined, status: TournamentEventStatus): string {
+  return (format === 'staged' ? STAGED_STATUS_LABELS[status] : undefined) ?? TOURNAMENT_EVENT_STATUS_LABELS[status];
+}
+
 // The pool pair borrow the colours of the knockout pair they mirror, so the
 // stepper reads as two passes of the same shape rather than as seven unrelated
 // states. Both are lightened a step so the two halves are still tellable apart.
@@ -591,11 +601,12 @@ export function pointsCap(target: number): number {
   return target + 9;
 }
 
-// A game is played to at most 21. The deuce cap is target + 9, so no game ever
-// runs past 30 (21 caps at 30, 15 at 24, 11 at 20).
+// A game is played to at most 30, the same 5..30 the points_per_game CHECKs in
+// 00031/00046/00108 allow. The deuce cap is target + 9 (21 caps at 30, 15 at
+// 24, 11 at 20, 30 at 39).
 export const CUSTOM_FORMAT_BOUNDS = {
   minGames: 1, maxGames: 7,   // best-of must be odd so a majority exists
-  minPoints: 5, maxPoints: 21,
+  minPoints: 5, maxPoints: 30,
 } as const;
 
 /**
@@ -750,15 +761,8 @@ export function isLegalGameScore(
   timeExceeded?: boolean,
 ): boolean {
   if (timeExceeded) return isLegalTimeExceededScore(a, b, format, gamesPerMatch, pointsPerGame);
-  const { target, cap } = getRulesFor(format, gamesPerMatch, pointsPerGame);
-  const winner = Math.max(a, b);
-  const loser = Math.min(a, b);
-  if (a === b) return false;                       // a game must be won
-  if (loser < 0 || winner > cap) return false;
-  if (winner === target) return loser <= target - 2;
-  if (winner > target && winner < cap) return winner - loser === 2;
-  if (winner === cap) return loser >= cap - 2;
-  return false;                                    // winner never reached target
+  const { target } = getRulesFor(format, gamesPerMatch, pointsPerGame);
+  return isLegalGame({ a, b }, legacyGameRules({ target }));
 }
 
 /**

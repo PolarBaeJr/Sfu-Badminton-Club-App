@@ -1,0 +1,14 @@
+{
+  "production": {
+    "sshHost": "your-ssh-host",
+    "container": "your-db-container",
+    "database": "postgres",
+    "label": "production"
+  },
+  "staging": {
+    "sshHost": "your-ssh-host",
+    "container": "your-staging-db-container",
+    "database": "postgres",
+    "label": "staging"
+  }
+}

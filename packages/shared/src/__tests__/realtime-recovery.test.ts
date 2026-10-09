@@ -237,7 +237,7 @@ describe('realtimeRebuildDelayMs', () => {
   it('doubles and then caps', () => {
     expect(realtimeRebuildDelayMs(0, () => 0)).toBe(REALTIME_REBUILD_BASE_MS);
     expect(realtimeRebuildDelayMs(1, () => 0)).toBe(REALTIME_REBUILD_BASE_MS * 2);
-    // A tab left open through a genuinely long outage must not hammer the Pi.
+    // A tab left open through a genuinely long outage must not hammer the server.
     expect(realtimeRebuildDelayMs(9, () => 0)).toBe(REALTIME_REBUILD_MAX_MS);
   });
 

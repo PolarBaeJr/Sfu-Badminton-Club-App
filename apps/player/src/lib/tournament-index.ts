@@ -9,7 +9,7 @@
 // hoped for.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isDoublesEvent, doublesDrawSlots, scopeToActiveSeason, type TournamentEventType } from '@badminton/shared';
+import { isDoublesEvent, doublesDrawSlots, scopeToActiveSeason, type TournamentEventType, type WindowState } from '@badminton/shared';
 
 /**
  * The tournament calendar read behind /tournaments, as a builder so
@@ -48,6 +48,11 @@ export type IndexEvent = {
   event_type: TournamentEventType;
   status: string;
   max_participants: number | null;
+  /**
+   * Where now falls in the event's effective registration window (00276),
+   * resolved by the page from its own window read. Absent reads as open.
+   */
+  registration_window?: WindowState;
 };
 
 export type IndexTournament = {
@@ -66,7 +71,7 @@ export type IndexTournament = {
  *  `registration` is the only status registerForEventImpl accepts (see
  *  tournament-actions.ts:81) — every other status makes the button a lie. */
 export function isOpenForEntry(event: IndexEvent): boolean {
-  return event.status === 'registration';
+  return event.status === 'registration' && (event.registration_window ?? 'open') === 'open';
 }
 
 /**
@@ -121,19 +126,26 @@ export function occupiesAPlace(status: string): boolean {
  */
 export function countEnteredPlayers(
   participants: Array<{ player_id: string; status: string }>,
-  pairs: Array<{ player1_id: string; player2_id: string; status: string }>,
+  pairs: Array<{ player1_id: string | null; player2_id: string | null; status: string }>,
 ): number {
   const players = new Set<string>();
+  // An external team (00269) has no ids to key on, and its two people are never in
+  // another entry as members, so each one simply counts as two.
+  let externals = 0;
   for (const p of participants) {
     if (occupiesAPlace(p.status)) players.add(p.player_id);
   }
   for (const p of pairs) {
     if (occupiesAPlace(p.status)) {
+      if (p.player1_id == null || p.player2_id == null) {
+        externals += 2;
+        continue;
+      }
       players.add(p.player1_id);
       players.add(p.player2_id);
     }
   }
-  return players.size;
+  return players.size + externals;
 }
 
 /**

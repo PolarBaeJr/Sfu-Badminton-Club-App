@@ -43,7 +43,7 @@ const COLOR_SURVEY = 0xf1c40f;
 // The bot downloads whatever url the route hands it, and the route stores
 // whatever the modal sent. Without this list, anything holding the service
 // secret could make the bot issue a GET to an arbitrary address from inside the
-// Pi's network and mirror the response into a Discord channel — an SSRF with a
+// host's network and mirror the response into a Discord channel: an SSRF with a
 // readback channel. A real screenshot always comes from one of these two.
 const DISCORD_IMAGE_HOSTS = ['cdn.discordapp.com', 'media.discordapp.net'];
 

@@ -5,13 +5,14 @@ import { Button, Dialog, useConfirm } from '@badminton/ui';
 import { EventWaiverConsent } from '../../EventWaiverConsent';
 import { SoloEntryConsent } from '../../SoloEntryConsent';
 import { eventHasDraw, isOutOfEvent } from '@badminton/shared';
-import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
+import { registerForEvent, withdrawFromEvent, selfCheckIn, joinEventWaitlist, leaveEventWaitlist } from '@/lib/tournament-actions';
+import type { MyWaitlistState } from '@/lib/event-waitlist';
 import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
 import { StandingNote } from '@/components/standing-notice';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { UserPlus, UserMinus, CheckCircle } from 'lucide-react';
+import { UserPlus, UserMinus, CheckCircle, Clock } from 'lucide-react';
 
 interface Props {
   eventId: string;
@@ -34,9 +35,20 @@ interface Props {
    * Replaces the way IN only; an existing entry keeps its controls.
    */
   membershipBlocked?: { message: string; receiptPending: boolean; payHref: string | null } | null;
+  /**
+   * The registration and check-in windows (00276), as the sentence to show
+   * instead of the button while the window is shut. null while it is open.
+   */
+  registrationNotice?: string | null;
+  checkinNotice?: string | null;
+  /**
+   * The event's waitlist (00278) and where this member stands in it. null when
+   * the database has none or the member is already in the event.
+   */
+  waitlist?: MyWaitlistState | null;
 }
 
-export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked }: Props) {
+export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice, waitlist }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
@@ -44,6 +56,9 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   // things are being agreed to and a tournament may require either, both or
   // neither.
   const [soloAccepted, setSoloAccepted] = useState(false);
+  // The same dialog collects the same consents for joining the waitlist,
+  // because a promotion later enters the member without asking again.
+  const [dialogFor, setDialogFor] = useState<'enter' | 'waitlist'>('enter');
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
@@ -98,6 +113,47 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
     setLoading(false);
   }
 
+  async function handleJoinWaitlist(opts?: { eventWaiverAccepted?: boolean; soloEntryAcknowledged?: boolean }) {
+    setLoading(true);
+    try {
+      const res = await joinEventWaitlist(eventId, opts);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
+      toast(
+        res.data.entered
+          ? 'A place was free, so you have been entered'
+          : `You are on the waitlist${res.data.position ? `, number ${res.data.position}` : ''}`,
+        'success',
+      );
+      setWaiverOpen(false);
+      router.refresh();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to join the waitlist', 'error');
+    }
+    setLoading(false);
+  }
+
+  async function handleLeaveWaitlist() {
+    if (!(await confirm({ title: 'Leave the waitlist?', message: 'You will lose your place in the queue. Joining again puts you at the back.', confirmLabel: 'Leave', danger: true }))) return;
+    setLoading(true);
+    try {
+      const res = await leaveEventWaitlist(eventId);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
+      toast('You have left the waitlist', 'success');
+      router.refresh();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to leave the waitlist', 'error');
+    }
+    setLoading(false);
+  }
+
   async function handleWithdraw() {
     if (!(await confirm({ title: 'Withdraw from event?', message: 'Are you sure you want to withdraw from this event?', confirmLabel: 'Withdraw', danger: true }))) return;
     setLoading(true);
@@ -144,6 +200,39 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
     ...(isDoubles ? { soloEntryAcknowledged: true } : {}),
   };
 
+  // ON THE WAITLIST. Their place in the queue and the way off it, whatever the
+  // event's status: once the draw is made nobody is promoted, and they are
+  // told so rather than left waiting for a place that cannot open.
+  if (!playerRegistration && waitlist?.myPosition) {
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="chip" role="status">
+          <Clock className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
+          <span className="sr-only">Waitlist position: </span>Waitlist #{waitlist.myPosition}
+        </span>
+        <Button
+          onClick={handleLeaveWaitlist}
+          loading={loading}
+          size="sm"
+          variant="ghost"
+          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+        >
+          <UserMinus className="w-3.5 h-3.5 mr-1.5" />
+          Leave waitlist
+        </Button>
+        <p className="text-xs text-[var(--text-secondary)] w-full">
+          {eventHasDraw(eventStatus)
+            ? 'The draw has been made, so no more places will open up in this event.'
+            : eventStatus === 'checkin'
+              ? 'Check-in has started. Places can still open up until the draw is made.'
+              : waitlist.autoPromote
+                ? 'If a place opens up you will be entered automatically, in queue order, and notified.'
+                : 'If a place opens up the tournament admins choose who goes in, and you will be notified.'}
+        </p>
+      </div>
+    );
+  }
+
   // Registration status chips (below) still render; only the live controls go.
   if (!standing.ok && !playerRegistration) {
     return eventStatus === 'registration'
@@ -168,22 +257,53 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           </div>
         );
       }
-      if (needsDialog) {
+      if (registrationNotice) {
+        return <p className="text-xs text-[var(--text-secondary)]" role="status">{registrationNotice}</p>;
+      }
+      // A full event, or one with people already queueing: the way in is the
+      // waitlist, because enter_tournament_event refuses a queue jump.
+      const joinWaitlist = Boolean(waitlist?.enabled && (waitlist.full || waitlist.waitingCount > 0));
+      if (joinWaitlist && !needsDialog) {
         return (
-          <>
+          <div className="space-y-1">
             <Button
-              onClick={() => { setWaiverAccepted(false); setSoloAccepted(false); setWaiverOpen(true); }}
+              onClick={() => handleJoinWaitlist()}
               loading={loading}
               size="sm"
               className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
             >
-              <UserPlus className="w-3.5 h-3.5 mr-1.5" />
-              {isDoubles ? 'Enter on your own' : 'Register'}
+              <Clock className="w-3.5 h-3.5 mr-1.5" />
+              Join waitlist
             </Button>
+            <p className="text-xs text-[var(--text-secondary)]">
+              {waitlist!.full ? 'This event is full.' : 'Others are already waiting for this event.'}
+              {waitlist!.waitingCount > 0 ? ` ${waitlist!.waitingCount} on the waitlist.` : ''}
+            </p>
+          </div>
+        );
+      }
+      if (needsDialog) {
+        return (
+          <>
+            <Button
+              onClick={() => { setWaiverAccepted(false); setSoloAccepted(false); setDialogFor(joinWaitlist ? 'waitlist' : 'enter'); setWaiverOpen(true); }}
+              loading={loading}
+              size="sm"
+              className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+            >
+              {joinWaitlist ? <Clock className="w-3.5 h-3.5 mr-1.5" /> : <UserPlus className="w-3.5 h-3.5 mr-1.5" />}
+              {joinWaitlist ? 'Join waitlist' : isDoubles ? 'Enter on your own' : 'Register'}
+            </Button>
+            {joinWaitlist && (
+              <p className="text-xs text-[var(--text-secondary)]">
+                {waitlist!.full ? 'This event is full.' : 'Others are already waiting for this event.'}
+                {waitlist!.waitingCount > 0 ? ` ${waitlist!.waitingCount} on the waitlist.` : ''}
+              </p>
+            )}
             <Dialog
               open={waiverOpen}
               onClose={() => setWaiverOpen(false)}
-              title={isDoubles ? 'Enter without a partner' : 'Event waiver'}
+              title={dialogFor === 'waitlist' ? 'Join the waitlist' : isDoubles ? 'Enter without a partner' : 'Event waiver'}
             >
               <div className="space-y-4">
                 {isDoubles && (
@@ -198,8 +318,12 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
                 )}
                 <div className="flex items-center justify-between">
                   <Button variant="ghost" type="button" onClick={() => setWaiverOpen(false)}>Cancel</Button>
-                  <Button loading={loading} disabled={!canSubmit} onClick={() => handleRegister(enterOpts)}>
-                    Enter
+                  <Button
+                    loading={loading}
+                    disabled={!canSubmit}
+                    onClick={() => (dialogFor === 'waitlist' ? handleJoinWaitlist(enterOpts) : handleRegister(enterOpts))}
+                  >
+                    {dialogFor === 'waitlist' ? 'Join waitlist' : 'Enter'}
                   </Button>
                 </div>
               </div>
@@ -241,7 +365,10 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           <span className="sr-only">Registration status: </span>Waiting for a partner
         </span>
       )}
-      {!isDoubles && regStatus === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && (
+      {!isDoubles && regStatus === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && checkinNotice && (
+        <p className="text-xs text-[var(--text-secondary)]" role="status">{checkinNotice}</p>
+      )}
+      {!isDoubles && regStatus === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && !checkinNotice && (
         <Button
           onClick={handleCheckIn}
           loading={loading}

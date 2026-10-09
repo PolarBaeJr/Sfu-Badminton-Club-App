@@ -11,7 +11,8 @@ Consumer-facing documentation is served by the service itself at
 `GET /documentations` (for example `https://api.sfubadminton.com/documentations`):
 one self-contained HTML page, no key, from `src/docs-page.ts`. Tests fail when
 a route, scope, query parameter or error code in `src/server.ts` or
-`src/params.ts` is missing from it or from `API.md`.
+`src/params.ts` is missing from it or from `API.md`. `GET /changelog` is the
+keyless list of what changed in each version, from `src/changelog-page.ts`.
 
 The routes live in one table, `ROUTES` in `src/server.ts`: template, scope,
 accepted parameters, and whether unknown parameters are refused. Parameter
@@ -41,11 +42,14 @@ key. It calls these functions and nothing else:
 | `data_api_season_standings` | 00265 | `/v1/seasons/:id/standings` |
 | `data_api_season_header` | 00267 | the standings 404 check, without the totals scan |
 | `data_api_tournaments` | 00266 | `/v1/tournaments`, `/v1/tournaments/:id` |
-| `data_api_tournament_events` | 00266 | tournament detail, and the event route's ownership check |
-| `data_api_tournament_entrants` | 00266 | tournament detail |
-| `data_api_tournament_draw` | 00266 | `/v1/tournaments/:id/events/:event_id` |
+| `data_api_tournament_events` | 00266, 00270 | tournament detail, and the event route's ownership check |
+| `data_api_tournament_entrants` | 00266, 00270 | tournament detail |
+| `data_api_tournament_draw` | 00266, 00270 | `/v1/tournaments/:id/events/:event_id` |
 | `data_api_sessions` | 00266 | `/v1/sessions` |
 | `data_api_club_events` | 00266 | `/v1/events` |
+| `data_api_write_predictions` | 00282, 00283 | `POST /v1/predictions` |
+| `data_api_delete_predictions` | 00282, 00283 | `DELETE /v1/predictions` |
+| `data_api_import_registration` | 00283, 00284, 00287 | `POST /v1/registrations` (00287: the key check, then the shared `registration_import_apply`) |
 
 Every match-reading function goes through ONE internal gate,
 `data_api_match_rows()`, which unions club and tournament matches and keeps a
@@ -110,11 +114,10 @@ A test key is minted the way the console mints one: generate `sfubad_` plus 43
 base64url characters of 32 random bytes, and store only its sha256 hex. Use the
 `/accounts` panel of the local console, or insert the rows by hand as postgres.
 
-## Minting `DATA_API_DB_JWT` (owner step)
+## Minting `DATA_API_DB_JWT`
 
-A credential, so it is the owner's to mint, once per environment: staging and
-production have DIFFERENT JWT secrets, so a staging token does not work on
-production and the reverse. Sign HS256 with the project's JWT secret used as a
+A credential, minted once per environment: each environment has its own JWT
+secret, so a token minted for one does not work on another. Sign HS256 with the project's JWT secret used as a
 raw string (not base64-decoded). Put the secret in `JWT_SECRET` in your own
 shell first; the recipe reads it from there and prints only the token:
 
@@ -125,37 +128,6 @@ node -e 'const c=require("crypto");const b=o=>Buffer.from(JSON.stringify(o)).toS
 The example expiry is one year. When it lapses every request answers `503`
 (PostgREST rejects the token), so diarise the renewal. Rotating the project's JWT
 secret invalidates this token along with every other.
-
-## Staging deploy: owner checklist
-
-Staging runs on the Pi. The dashboard MCP defaults to the Mac, so every
-dashboard call below needs `host: dashboard.polardev.org`, and the secrets go in
-the Pi's own secrets directory (the two hosts keep different ones).
-
-1. **00241 must be present on staging.** It is currently wiped from staging
-   every night until production has it, and without it every authenticated
-   request answers `503`.
-2. **Merge to `deploy/docker-staging`.** CI builds
-   `ghcr.io/polarbaejr/badminton-data-api-staging` (arm64) and moves `:latest`
-   together with the other three staging images. Images are built only in CI.
-3. **Mint the staging reader JWT** with the recipe above and staging's JWT
-   secret. Add it and staging's anon key to the staging host's dashboard secrets
-   file as `DATA_API_DB_JWT` and `SUPABASE_ANON_KEY`.
-4. **Onboard the service through the proxy dashboard** with env given as
-   references, never literals:
-   `SUPABASE_URL` (staging's Kong, reachable from the container; staging's
-   Kong is on host port `64321`, so `http://host.docker.internal:64321` with a
-   host-gateway entry, confirm on the host),
-   `SUPABASE_ANON_KEY: ref:SUPABASE_ANON_KEY`,
-   `DATA_API_DB_JWT: ref:DATA_API_DB_JWT`, `PORT: 8080`. Labels as in
-   [`docker-compose.example.yml`](./docker-compose.example.yml), including
-   `proxy.health: /health`. `ref:` is a dashboard feature only: compose does
-   not resolve it.
-5. **Verify.** `curl https://api.polardev.org/health` answers
-   `{"ok":true,"version":...}`; `/v1/players` with no key answers `401`; with a
-   key minted in the staging console's `/accounts` panel it answers `200`.
-   Read the image revision off the image label
-   `org.opencontainers.image.revision`.
 
 ## Behaviour worth knowing
 
@@ -183,8 +155,14 @@ the Pi's own secrets directory (the two hosts keep different ones).
 - **Paging** asks the database for `limit + 1` rows and sets `next_offset` only
   when the extra row came back, so there is never a count query.
 - **Check order** is route, method, key, rate, scope, query parameters (400),
-  path format (404), database. A malformed ref or id never reaches the
-  database.
+  path format (404), then for a write the body (415, 413, 400), database. A
+  malformed ref or id never reaches the database.
+- **Writes** (`/v1/predictions`, scope `predictions:write`) bypass the read
+  cache and send the key HASH, not the consumer id: the write and delete
+  functions re-check the key, its scope, revocation and expiry themselves,
+  because the verification cache may be up to 30 seconds stale. A `key`
+  refusal from the database is answered `401`. A batch is one request against
+  the rate limit.
 
 ## Known gaps
 

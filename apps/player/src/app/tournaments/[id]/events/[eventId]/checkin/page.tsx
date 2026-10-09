@@ -1,6 +1,8 @@
 import { createServerSupabaseClient, getViewer } from '@/lib/supabase-server';
 import { notFound, redirect } from 'next/navigation';
 import { SelfCheckInClient } from './SelfCheckInClient';
+import { checkinWindowNotice } from '@badminton/shared';
+import { loadEntryWindows, windowsFor } from '@/lib/tournament-windows';
 
 export default async function CheckInPage({
   params,
@@ -28,6 +30,17 @@ export default async function CheckInPage({
   const { player } = await getViewer();
   if (!player) redirect('/login');
 
+  // The check-in window (00276), on its own read so a database without it
+  // shows no window rather than no page.
+  const checkinNotice = checkinWindowNotice(
+    windowsFor(
+      await loadEntryWindows(supabase, { eventIds: [eventId], tournamentIds: [tournamentId] }),
+      eventId,
+      tournamentId,
+    ).checkin,
+    new Date(),
+  );
+
   const { data: registration } = await supabase
     .from('tournament_participants')
     .select('id, status')
@@ -43,6 +56,7 @@ export default async function CheckInPage({
       registration={registration ? { id: registration.id, status: registration.status } : null}
       playerName={player.full_name}
       tournamentSuspended={!!tournament?.suspended_at}
+      checkinNotice={checkinNotice}
     />
   );
 }

@@ -107,12 +107,12 @@ describe('filterPlayerOptions by handle', () => {
     { id: 'p1', name: 'Akierabayashi Sato', handle: 'sato' },
     { id: 'p2', name: 'Kiera Watanabe', handle: 'kiera' },
     { id: 'p3', name: 'Erin Park', handle: null },
-    { id: 'p4', name: 'Matthew Cheng', handle: 'matthew_43', meta: 'm@example.com' },
+    { id: 'p4', name: 'Jordan Avery', handle: 'jordan_43', meta: 'm@example.com' },
   ];
   const found = (q: string) => filterPlayerOptions(people, q).map((p) => p.id);
 
   it('finds a member by their handle', () => {
-    expect(found('matthew_43')).toEqual(['p4']);
+    expect(found('jordan_43')).toEqual(['p4']);
   });
 
   it('treats @kiera and kiera as the same search', () => {

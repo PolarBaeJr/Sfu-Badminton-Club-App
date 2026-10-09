@@ -32,11 +32,11 @@ Access is enforced in **three independent layers**, so a gap in one doesn't expo
 - **Public data is hand-picked.** The public pages (leaderboard, exec roster, active season) are served through a small set of **purpose-built, read-only functions** that expose only specific, safe columns — never raw table access.
   - *Protects against:* accidental data leaks. Even though the public leaderboard is open, there is no path from it to private data (emails, fees, personal records).
 
-## 4. The self-hosting security fix (a real hole we closed)
+## 4. The demo-key fix (a real hole we closed)
 
 Early on, the app used a development database setup that shipped with **publicly-known demo security keys**. That meant the master "service" key — which can read and write *everything* and bypass all protections — was effectively public knowledge. **This was a critical vulnerability.**
 
-We migrated to a **properly self-hosted database with unique, private keys** generated for this club alone. The old public keys no longer work.
+We moved to a **database with unique, private keys** generated for this club alone. The old public keys no longer work.
 - *Protects against:* the most serious class of breach — full database access via a known key.
 
 ## 5. Server-only master key
@@ -51,9 +51,9 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 
 ## 7. Automated checks on every change
 
-- **Every code change must pass the automated test suite before it can be merged.** A pull request against the deployable branch runs type checking, linting and the full test suite, and a failure blocks the merge.
+- **Every code change is held to the automated test suite.** Type checking, linting and the full test suite run on each change before it is released, and a failure blocks the release.
   - *Protects against:* regressions and broken builds reaching members.
-  - *Does **not** protect against:* a new vulnerability that the tests do not happen to cover. There is **no automated security scanner** in CI. Security here comes from review and from the specific controls listed elsewhere on this page, not from a tool that inspects each change.
+  - *Does **not** protect against:* a new vulnerability that the tests do not happen to cover. There is **no automated security scanner** among those checks. Security here comes from review and from the specific controls listed elsewhere on this page, not from a tool that inspects each change.
 
 ## 8. Input validation
 
@@ -62,21 +62,9 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 
 ## 9. Backups (data safety)
 
-- The database is **backed up nightly**, kept for a rolling 14-day window, and copied **off-site** two ways: to cloud storage, and to a second machine.
-  - *Protects against:* hardware failure, ransomware, or accidental deletion — the club can recover its data.
-  - **Both off-site copies are encrypted at rest.** The cloud copy is encrypted before it leaves the Pi, so the storage provider only ever holds ciphertext. The second-machine copy is encrypted on arrival, and only the *public* key is meant to live on that machine, so it can write the backup and cannot read it back. A stolen or seized laptop then yields ciphertext.
-  - *The write-only property depends on one habit:* the private key belongs in the password manager and nowhere on that disk. Encrypting to a key stored beside the ciphertext protects against nothing, so the nightly job checks for a private key on the machine and prints a warning instead of reporting success. **If that warning is firing, treat this copy as unencrypted for scoping purposes.**
-  - *Closed 2026-09-22:* the second-machine copy was plaintext until that date. Those dumps held every member's name, email, phone and waiver, and anyone with access to the machine had the member database without needing a key. Any incident dated before 2026-09-22 should be scoped on that basis.
+- The database is **backed up nightly**, kept for a rolling 14-day window, and copied **off-site**. The off-site copies are **encrypted at rest**.
+  - *Protects against:* hardware failure, ransomware, or accidental deletion: the club can recover its data.
   - **Encryption does not extend the retention clock.** A backup the club can still decrypt is still the club holding that member's data, so the 14-day sweep applies to the encrypted copies unchanged.
-
-## 10. Staging holds real member data
-
-- The staging site (`badminton.polardev.org`) is refreshed from production every night at 04:00. The copy itself is faithful, so what arrives is real names, emails, phone numbers, officer notes and fee records.
-  - **A scrub now runs at the end of that refresh**, replacing every member's name, email, phone, bio and avatar with values derived from their own row id, blanking officer notes and audit-log diffs, and deleting the bearer tokens, passkeys, push endpoints and bounce records. Ratings, matches and row counts survive, so staging stays realistic. The refresh **fails** if any real identifier is left behind, because a scrub that matched nothing looks identical to one that worked.
-  - *Closed 2026-09-22:* the scrub is live on the Pi and the first end-to-end run finished clean, with all seven checks at zero. Before that date there were two full copies of the membership on the public internet rather than one, behind the same login and nothing more, and any breach was scoped to both. Staging now holds derived values instead.
-  - *Standing caveat:* the snapshot script runs from a plain checkout (`~/ssd/Deploy/badminton-staging`, tracking `deploy/docker-staging`) that nothing auto-updates, so a **fix** to the scrub does not take effect until someone pulls there. Pull, confirm the pull landed, then run. A refresh against an un-pulled checkout repeats the previous failure and looks like the fix did not work.
-  - *Genuinely isolated either way:* staging's outbound mail goes to a local mailpit and never leaves the Pi, so a real address in the staging database cannot be emailed by accident. That covers the mail path and nothing else.
-  - *Accepted residual:* announcement bodies are not scrubbed. They are exec-authored broadcasts already shown to the whole membership and are a real rendering surface, but they can name a member. See `docs/STAGING.md`.
 
 ---
 
@@ -90,16 +78,15 @@ We migrated to a **properly self-hosted database with unique, private keys** gen
 | Tiered roles | Wrong people touching money/personal data |
 | Database Row-Level Security | Anonymous or cross-user data access |
 | Hand-picked public functions | Leaks through the public pages |
-| Unique private keys (self-host fix) | Full-database breach via known keys |
+| Unique private keys (demo-key fix) | Full-database breach via known keys |
 | Server-only master key | Key theft from devices |
 | Fail-closed automated jobs | Outsiders triggering privileged actions |
 | Tests and type checks on every change | Regressions reaching members (not: new vulnerabilities — there is no security scanner) |
 | Input validation | Malicious/malformed data |
-| Nightly off-site backups, both copies encrypted at rest | Data loss, ransomware, and a stolen backup device (see 9) |
+| Nightly off-site backups, encrypted at rest | Data loss, ransomware, and a stolen backup device (see 9) |
 
 | Known risk | Why it is listed |
 |---------|------------------|
-| No automated security scanning in CI | Tests catch regressions, not new vulnerabilities (see 7) |
-| Announcement bodies are not scrubbed on staging | An exec-authored broadcast can name a member (see 10) |
+| No automated security scanning | Tests catch regressions, not new vulnerabilities (see 7) |
 
-➡️ Continue to **[05-tech-and-ops.md](05-tech-and-ops.md)** for hosting, deployment, and cost.
+Continue to **[06-tech-stack.md](06-tech-stack.md)** for the tools and technologies the app is built on.

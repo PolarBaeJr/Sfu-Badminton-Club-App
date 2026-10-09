@@ -14,6 +14,7 @@ import {
   STORED_WEIGHT_DECIMALS,
   FORMAT_WEIGHTS,
   EVENT_MULTIPLIERS,
+  repeatChallengeFactor,
 } from '../engine';
 import type { RatingSettings } from '../engine';
 import { derivedFormatWeight } from '../../utils/constants';
@@ -900,5 +901,40 @@ describe('storedWeight', () => {
     expect(storedWeight(0.125)).toBe(0.13);
     expect(storedWeight(-0.125)).toBe(-0.13);
     expect(storedWeight(0)).toBe(0);
+  });
+});
+
+// The console's mirror of the repeat factor apply_match_result applies (00268).
+// The SQL side is proven against a real database in
+// supabase/tests/00268_repeat_and_boost.sql; this pins the arithmetic the
+// settings card quotes back to an officer.
+describe('repeatChallengeFactor', () => {
+  it('runs the default 25 percent sequence down to the floor', () => {
+    expect([0, 1, 2, 3, 8, 9, 20].map((n) => repeatChallengeFactor(n))).toEqual([
+      1, 0.75, 0.5625, 0.4219, 0.1001, 0.1, 0.1,
+    ]);
+  });
+
+  it('turns off at a decay of 0, which is a value and not a missing one', () => {
+    expect(repeatChallengeFactor(5, { repeat_decay_pct: 0 })).toBe(1);
+  });
+
+  it('falls to the floor at a decay of 100, and a floor of 0 is honoured', () => {
+    expect(repeatChallengeFactor(1, { repeat_decay_pct: 100 })).toBe(0.1);
+    expect(repeatChallengeFactor(1, { repeat_decay_pct: 100, repeat_min_factor: 0 })).toBe(0);
+    expect(repeatChallengeFactor(0, { repeat_decay_pct: 100, repeat_min_factor: 0 })).toBe(1);
+  });
+
+  it('clamps out-of-range settings the way the SQL does', () => {
+    expect(repeatChallengeFactor(1, { repeat_decay_pct: 250 })).toBe(0.1);
+    expect(repeatChallengeFactor(1, { repeat_decay_pct: -10 })).toBe(1);
+    expect(repeatChallengeFactor(1, { repeat_decay_pct: 50, repeat_min_factor: 3 })).toBe(1);
+    expect(repeatChallengeFactor(3, { repeat_decay_pct: 50, repeat_min_factor: -1 })).toBe(0.125);
+  });
+
+  it('falls back to the defaults for a missing or malformed value', () => {
+    expect(repeatChallengeFactor(1, null)).toBe(0.75);
+    expect(repeatChallengeFactor(1, { repeat_decay_pct: null })).toBe(0.75);
+    expect(repeatChallengeFactor(1, { repeat_decay_pct: Number.NaN })).toBe(0.75);
   });
 });

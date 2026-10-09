@@ -4,7 +4,6 @@ import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient, createServiceRoleClient } from '../supabase-server';
 import {
-  sendResultPendingEmail,
   sendDisputeOpenedEmail,
   sendWalkoverReportedEmail,
   sendMatchConfirmedEmail,
@@ -14,13 +13,12 @@ import {
   parseOrThrow,
   ExpectedError,
   dbError,
-  getRulesFor,
-  validateGamesForRules,
   type MatchResultInput,
   type WalkoverReportInput,
 } from '@badminton/shared';
 import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, runAction, type ActionResult } from './_shared';
 import { assertFeatureOn } from '../feature-gate';
+import { submitMatchResultCore } from '../challenges-core';
 
 export async function submitMatchResult(challengeId: string, input: MatchResultInput): Promise<ActionResult<string>> {
   return runAction(() => submitMatchResultImpl(challengeId, input));
@@ -36,101 +34,12 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
   await assertFeatureOn('challenges', player);
   const supabase = await createServerSupabaseClient();
 
-  // No players embed: 00032 revoked blanket SELECT on players and granted a
-  // safe column subset, so `players(*)` is refused outright — and because the
-  // error used to be discarded, that surfaced as "Challenge not found" on a
-  // challenge that plainly existed. Nothing below this ever read the embedded
-  // player or its ratings; submit_match_result derives participants itself.
-  const { data: challenge, error: challengeError } = await supabase
-    .from('challenges')
-    .select('id, status, format, games_per_match, points_per_game, challenge_participants(player_id)')
-    .eq('id', challengeId)
-    .single();
-
-  // PGRST116 is genuinely "no rows"; anything else (a permission error, say) is
-  // a real fault and must not be flattened into a misleading "not found".
-  if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  // Plain Error, not ExpectedError: under RLS an invisible row looks exactly
-  // like a deleted one, so keeping this reportable is what surfaces a
-  // row-visibility regression (see expected-error.ts).
-  if (!challenge) throw new Error('Challenge not found');
-  // A challenge that has moved on, or that this player isn't on, is a stale
-  // page, not a fault.
-  if (challenge.status !== 'accepted') throw new ExpectedError('Challenge not accepted');
-
-  const isParticipant = (challenge.challenge_participants as { player_id: string }[] | null)?.some(
-    (cp) => cp.player_id === player.id
+  // The body is shared with /challenge report in Discord (challenges-core.ts).
+  // The member's own client reads the challenge under RLS and calls the member
+  // function, whose actor is auth.uid().
+  const { matchId } = await submitMatchResultCore(supabase, player, challengeId, input, (params) =>
+    supabase.rpc('submit_match_result', params),
   );
-  if (!isParticipant) throw new ExpectedError('Not a participant');
-
-  // The DB still decides (00236), but judged here against the challenge's own
-  // target and best-of, a bad score reads as a sentence, not a raw RAISE.
-  const check = validateGamesForRules(
-    input.games,
-    getRulesFor(challenge.format, challenge.games_per_match, challenge.points_per_game),
-  );
-  if (!check.ok) throw new ExpectedError(check.message);
-
-  // One RPC replaces what used to be three separate writes (match ->
-  // participants -> games). Those were non-atomic: a crash between the match
-  // insert and the compensating delete wedged the challenge permanently, since
-  // matches_challenge_id_unique blocks any resubmit. Just as importantly, the
-  // participant rows used to be built client-side, so a submitter could enrol
-  // any player they liked; the function derives them from challenge_participants
-  // instead. `authenticated` no longer holds INSERT on these tables (00027), so
-  // this is also the only way in.
-  const { data: newMatchId, error: submitError } = await supabase.rpc('submit_match_result', {
-    p_challenge_id: challengeId,
-    p_games: input.games.map((g) => ({ side_a_score: g.side_a_score, side_b_score: g.side_b_score })),
-    p_completed: input.completed,
-  });
-  if (submitError) throw dbError(submitError);
-  const matchId = newMatchId as string;
-
-  // Notify other participants — batch insert + parallel email lookup.
-  const otherPlayers = (challenge.challenge_participants as Record<string, unknown>[]).filter(
-    (cp) => cp.player_id !== player.id
-  );
-  const otherPlayerIds = otherPlayers.map((cp) => cp.player_id as string);
-
-  if (otherPlayerIds.length > 0) {
-    await notifyPlayers(
-      otherPlayerIds.map((pid) => ({
-        player_id: pid,
-        type: 'result_pending',
-        title: 'Confirm Match Result',
-        body: `${player.full_name} submitted a result. Please confirm.`,
-        metadata: { match_id: matchId, challenge_id: challengeId },
-      })),
-      {
-        title: 'Confirm Match Result',
-        body: `${player.full_name} submitted a result. Please confirm.`,
-        url: `/challenges/${challengeId}`,
-      },
-      'matches'
-    );
-
-    const { data: emails } = await createServiceRoleClient() /* 00032 */
-      .from('players')
-      .select('id, email')
-      .in('id', otherPlayerIds);
-    const score = input.games.map((g) => `${g.side_a_score}-${g.side_b_score}`).join(', ');
-    for (const row of emails ?? []) {
-      if (row.email) {
-        sendResultPendingEmail(row.email, player.full_name, score, matchId).catch((err) => {
-          Sentry.captureException(err, { extra: { email: 'result_pending', matchId: matchId } });
-        });
-      }
-    }
-  }
-
-  trackServerEvent(player.id, 'match_result_submitted', {
-    ...getPlayerProps(player),
-    match_id: matchId,
-    challenge_id: challengeId,
-    format: challenge.format,
-    winner_side: input.winner_side,
-  });
 
   revalidatePath('/challenges');
   revalidatePath(`/challenges/${challengeId}`);

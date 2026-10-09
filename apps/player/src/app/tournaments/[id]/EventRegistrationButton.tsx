@@ -8,7 +8,8 @@ import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tourname
 import type { ActionResult } from '@/lib/actions/_shared';
 import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 interface Props {
   eventId: string;
@@ -30,9 +31,15 @@ interface Props {
    * entry keeps its Withdraw and Check In.
    */
   membershipBlocked?: string | null;
+  /**
+   * The registration and check-in windows (00276), as the sentence to show
+   * instead of the button while the window is shut. null while it is open.
+   */
+  registrationNotice?: string | null;
+  checkinNotice?: string | null;
 }
 
-export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended, eventWaiverText, membershipBlocked }: Props) {
+export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended, eventWaiverText, membershipBlocked, registrationNotice, checkinNotice }: Props) {
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
@@ -40,6 +47,10 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   // `waiverAccepted`, because they are two different things being agreed to and
   // a tournament may require one, the other, both or neither.
   const [soloAccepted, setSoloAccepted] = useState(false);
+  // Set when an entry is refused because others are queueing (00278): the
+  // waitlist lives on the event's own page, so this row points there.
+  const [waitlistLink, setWaitlistLink] = useState(false);
+  const { id: tournamentId } = useParams<{ id: string }>();
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
@@ -77,6 +88,10 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
       const res = await fn();
       if (!res.ok) {
         toast(res.error, 'error');
+        if (res.error.includes('join the waitlist')) {
+          setWaiverOpen(false);
+          setWaitlistLink(true);
+        }
         setLoading(false);
         return;
       }
@@ -96,10 +111,25 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   const canSubmit = (!waiverText || waiverAccepted) && (!isDoubles || soloAccepted);
 
   if (!registration) {
+    if (waitlistLink && tournamentId) {
+      return (
+        <Link
+          href={`/tournaments/${tournamentId}/events/${eventId}`}
+          className="text-xs font-medium text-[var(--color-accent)]"
+        >
+          Join the waitlist
+        </Link>
+      );
+    }
     if (eventStatus === 'registration' && !suspended && standing.ok) {
       if (membershipBlocked) {
         return (
           <span className="text-[10px] text-[var(--text-muted)]" role="status">{membershipBlocked}</span>
+        );
+      }
+      if (registrationNotice) {
+        return (
+          <span className="text-[10px] text-[var(--text-muted)]" role="status">{registrationNotice}</span>
         );
       }
       if (needsDialog) {
@@ -180,7 +210,10 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
           <span className="sr-only">Registration status: </span>Waiting for a partner
         </span>
       )}
-      {!waitingForPartner && s === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && (
+      {!waitingForPartner && s === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && checkinNotice && (
+        <span className="text-[10px] text-[var(--text-muted)]" role="status">{checkinNotice}</span>
+      )}
+      {!waitingForPartner && s === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && !checkinNotice && (
         <Button
           size="sm"
           loading={loading}

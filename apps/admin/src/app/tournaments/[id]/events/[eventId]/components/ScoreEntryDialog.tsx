@@ -2,13 +2,16 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
-import { getEventRules, tallyGames, isLegalGameScore, isLegalGameCount, resolveMatchShape, describeMatchShape, eventRatingLine } from '@badminton/shared';
+import {
+  getEventRules, tallyGames, isLegalGameScore, isLegalGameCount, resolveMatchShape, describeMatchShape, eventRatingLine,
+  parseFormatConfig, stagedMatchRules, stagedMatchRated, isLegalGame, isLegalCutShortGame, validateMatch,
+} from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
-  editMatchResult, getMatchOutcomeSummary,
+  editMatchResult, getMatchOutcomeSummary, getCurrentHeadStarts,
 } from '@/lib/tournament-actions';
-import type { MatchOutcomeSummary, EntryEventSummary } from '@/lib/tournament-actions';
+import type { MatchOutcomeSummary, EntryEventSummary, CurrentHeadStarts } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
@@ -56,7 +59,36 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   const matchFormat = shape.match_format as TournamentMatchFormat;
   // The typed shape wins over the enum, so a round shortened to one game to 15
   // offers one score row rather than three.
-  const maxGames = getEventRules(shape).bestOf;
+  //
+  // A match in a staged event is judged by its stage's rules instead, the same
+  // stagedMatchRules call enterMatchResultImpl makes. Null on a staged row means
+  // the stored config no longer reads, and the server refuses that match too.
+  const isStaged = match.stage != null;
+  // "Apply the current head start" (00279), on the correction view only: the
+  // starts the two teams' categories give today, used in place of the ones
+  // recorded on the row once the exec has switched it on and the server has
+  // said they differ.
+  const [headStarts, setHeadStarts] = useState<CurrentHeadStarts | null>(null);
+  const [applyHeadStart, setApplyHeadStart] = useState(false);
+  const [headStartNote, setHeadStartNote] = useState<string | null>(null);
+  const [headStartLoading, setHeadStartLoading] = useState(false);
+  const recordedRules = isStaged ? stagedMatchRules(parseFormatConfig(event.format_config), match) : null;
+  const stagedRules = recordedRules && applyHeadStart && headStarts?.current
+    ? { ...recordedRules, startA: headStarts.current.a, startB: headStarts.current.b }
+    : recordedRules;
+  const maxGames = stagedRules?.bestOf ?? getEventRules(shape).bestOf;
+  // Scores are entered as totals including the head start, so an empty game
+  // starts on each side's start rather than blank.
+  // Whether this match moves ratings at all: an external event never does, and
+  // a staged event can switch rating off for itself or for one stage (00272).
+  const rated = event.external_event !== true && stagedMatchRated(event, match.stage);
+  const startA = stagedRules?.startA ?? 0;
+  const startB = stagedRules?.startB ?? 0;
+  const emptyGame = () => ({ a: startA > 0 ? String(startA) : '', b: startB > 0 ? String(startB) : '' });
+  const isUnplayed = (g: { a: string; b: string }) => {
+    const e = emptyGame();
+    return g.a === e.a && g.b === e.b;
+  };
   // Named on screen, because a round that is NOT played to the event's shape is
   // otherwise indistinguishable from one that is — and the exec typing the
   // score is the person who needs to know which.
@@ -87,7 +119,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   const [games, setGames] = useState<Array<{ a: string; b: string }>>(
     recorded.length > 0
       ? recorded.map((g) => ({ a: String(g.a), b: String(g.b) }))
-      : Array.from({ length: maxGames === 1 ? 1 : 2 }, () => ({ a: '', b: '' }))
+      : Array.from({ length: maxGames === 1 ? 1 : 2 }, emptyGame)
   );
   const [loading, setLoading] = useState(false);
   // The gym slot ends before the game does often enough that this needs to be
@@ -111,7 +143,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   // accepts "e", "E" and "+" as scientific notation, and parseInt(x) || 0 below
   // would turn that into a recorded score of ZERO — type "e" instead of "8" and
   // the match is saved wrong, silently, with no error anywhere.
-  const filled = games.filter((g) => g.a !== '' || g.b !== '');
+  const filled = games.filter((g) => (g.a !== '' || g.b !== '') && !isUnplayed(g));
   const scoresAreIntegers = filled.every(
     (g) => /^\d+$/.test(g.a.trim()) && /^\d+$/.test(g.b.trim()),
   );
@@ -120,13 +152,21 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   // an event played to 30. The dialog then showed "Winner: X" in green for a
   // scoreline the server correctly refuses, and the rejection toast was the only
   // hint. Judge each game against THIS event's target before claiming a winner.
-  const gamesAreLegal = scoresAreIntegers && filled.every((g) =>
-    isLegalGameScore(
+  //
+  // The correction view judges a staged match by the clock flag already on the
+  // row, because that is what editMatchResultImpl checks it against.
+  const cutShort = view === 'correct' ? match.time_exceeded === true : timeExceeded;
+  const parsedGames = filled.map((g) => ({ a: parseInt(g.a, 10), b: parseInt(g.b, 10) }));
+  const stagedCheck = stagedRules && scoresAreIntegers && parsedGames.length > 0
+    ? validateMatch(parsedGames, stagedRules, { cutShort, sideNames: { a: nameA, b: nameB } })
+    : null;
+  const gamesAreLegal = scoresAreIntegers && (isStaged
+    ? stagedRules != null && parsedGames.every((g) => (cutShort ? isLegalCutShortGame(g, stagedRules) : isLegalGame(g, stagedRules)))
+    : filled.every((g) => isLegalGameScore(
       parseInt(g.a, 10), parseInt(g.b, 10),
       matchFormat as unknown as MatchFormat,
       shape.games_per_match, shape.points_per_game, timeExceeded,
-    ),
-  );
+    )));
 
   // ...AND the match has to be over. tallyGames only asks who won MORE games,
   // so a best-of-3 sitting at 1-0 named a winner: the dialog went green, Submit
@@ -141,8 +181,9 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   // consulted here (it governs how a GAME may end, not whether a MATCH has).
   const aGamesWon = filled.filter((g) => parseInt(g.a, 10) > parseInt(g.b, 10)).length;
   const bGamesWon = filled.filter((g) => parseInt(g.b, 10) > parseInt(g.a, 10)).length;
-  const matchIsDecided =
-    scoresAreIntegers &&
+  const matchIsDecided = isStaged
+    ? stagedCheck?.ok === true
+    : scoresAreIntegers &&
     isLegalGameCount(
       Math.max(aGamesWon, bGamesWon),
       Math.min(aGamesWon, bGamesWon),
@@ -153,6 +194,13 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   // Only a legal, fully-numeric, FINISHED scoreline names a winner. Everything
   // downstream — the green highlight, the Elo preview, submit — keys off this.
   const autoWinner = scoresAreIntegers && gamesAreLegal && matchIsDecided ? tallyWinner : null;
+  // Submit is disabled without a winner, so a staged scoreline says why on the
+  // status line rather than in a toast nobody can reach.
+  const stagedReason = isStaged && !autoWinner && filled.length > 0
+    ? stagedRules
+      ? (stagedCheck && !stagedCheck.ok ? stagedCheck.error : null)
+      : 'This stage\'s rules could not be read. Reload the page and try again.'
+    : null;
 
   // The dialog holds a snapshot of the match row, so any mutation invalidates
   // what it is displaying — close and let the refreshed bracket re-open it.
@@ -188,7 +236,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
 
   function addGame() {
     if (games.length < maxGames) {
-      setGames([...games, { a: '', b: '' }]);
+      setGames([...games, emptyGame()]);
     }
   }
 
@@ -196,6 +244,8 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     // Say WHICH problem it is. "Cannot determine winner" for a 21-15 game in an
     // event to 30 sends an exec looking for the wrong mistake.
     if (!scoresAreIntegers) { toast('Scores must be whole numbers', 'error'); return; }
+    if (isStaged && !stagedRules) { toast('This stage\'s rules could not be read. Reload the page and try again.', 'error'); return; }
+    if (stagedCheck && !stagedCheck.ok) { toast(stagedCheck.error, 'error'); return; }
     if (!gamesAreLegal) {
       toast(`That scoreline cannot end a game to ${getEventRules(shape).target}`, 'error');
       return;
@@ -215,7 +265,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     setLoading(true);
     try {
       const scores = games
-        .filter(g => g.a || g.b)
+        .filter(g => (g.a || g.b) && !isUnplayed(g))
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
       const res = await enterMatchResult(match.id, scores, autoWinner, timeExceeded);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
@@ -248,19 +298,49 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     setLoading(true);
     try {
       const scores = games
-        .filter(g => g.a || g.b)
+        .filter(g => (g.a || g.b) && !isUnplayed(g))
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
-      const res = await editMatchResult(match.id, scores, winner, walkoverReason);
+      const res = await editMatchResult(
+        match.id, scores, winner, walkoverReason,
+        applyHeadStart ? { applyCurrentHeadStart: true } : undefined,
+      );
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       if (scores.length > 0) {
-        await showSummary('Result changed — ratings have been re-applied');
+        await showSummary(rated ? 'Result changed, ratings re-applied' : 'Result changed');
       } else {
-        done('Walkover re-awarded — ratings have been re-applied');
+        done(rated ? 'Walkover re-awarded, ratings re-applied' : 'Walkover re-awarded');
       }
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setLoading(false);
+  }
+
+  // The switch asks the server first, and stays off with the reason shown when
+  // there is nothing to apply: a stage without head starts, a side that cannot
+  // be read, or starts that already match the teams' categories.
+  async function toggleHeadStart(on: boolean) {
+    setHeadStartNote(null);
+    if (!on) { setApplyHeadStart(false); return; }
+    setHeadStartLoading(true);
+    const res = await getCurrentHeadStarts(match.id);
+    setHeadStartLoading(false);
+    if (!res.ok) { toast(res.error, 'error'); return; }
+    const info = res.data;
+    if (!info.current) {
+      setHeadStartNote('This match has no current head start to apply: its stage is played without head starts, or one of its sides cannot be read.');
+      return;
+    }
+    if (!info.applicable) {
+      setHeadStartNote('Only a played match with a recorded score can take the current head start.');
+      return;
+    }
+    if (info.current.a === info.recorded.a && info.current.b === info.recorded.b) {
+      setHeadStartNote(`The current head start is the one already recorded (${nameA} ${info.recorded.a}, ${nameB} ${info.recorded.b}), so there is nothing to apply.`);
+      return;
+    }
+    setHeadStarts(info);
+    setApplyHeadStart(true);
   }
 
   async function handleWalkover(winner: 'a' | 'b') {
@@ -416,7 +496,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   if (view === 'summary' && summary) {
     return (
       <Dialog open={true} onClose={onClose} title={title}>
-        <OutcomeSummary summary={summary} onClose={onClose} />
+        <OutcomeSummary summary={summary} unrated={!rated} external={event.external_event === true} onClose={onClose} />
       </Dialog>
     );
   }
@@ -456,7 +536,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
           <>
             <p className="text-sm text-[var(--text-muted)]">
               This match was voided{match.notes ? `: “${match.notes}”` : ''}. Restoring puts it back in
-              play with no result. Any Elo the voided result applied is reversed, so replaying it counts once.
+              play with no result.{rated && ' Any Elo the voided result applied is reversed, so replaying it counts once.'}
             </p>
             <Input
               label="Reason"
@@ -517,8 +597,9 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
                 Currently recorded: {recordedWinnerId ? (nameMap[recordedWinnerId] ?? 'Unknown') : 'no winner'} — {recordedSummary}
               </p>
               <p className="text-xs text-[var(--text-muted)]">
-                Saving reverses the Elo, statistics and streak this result applied, then re-applies them from
-                the corrected one. The match is never counted twice, and the change is recorded in the audit
+                {rated
+                  ? 'Saving reverses the Elo, statistics and streak this result applied, then re-applies them from the corrected one.'
+                  : 'This match is unrated, so saving moves nobody\u2019s rating.'} The match is never counted twice, and the change is recorded in the audit
                 log with both the old and the new result.
               </p>
             </div>
@@ -534,9 +615,39 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
                 there is no editor for final_position or points. */}
             {event.status === 'completed' && (
               <p className="text-xs text-[var(--color-warning)]">
-                This event is already finalised. The correction fixes the ratings and the match record, and
+                This event is already finalised. The correction fixes {rated ? 'the ratings and ' : ''}the match record, and
                 the final placings and points are recalculated automatically. Placement bonuses are not —
                 if this changes who finished where and bonuses were already paid, you will be told so.
+              </p>
+            )}
+
+            {isDoubles && isStaged && match.status === 'completed' && recorded.length > 0 && (
+              <div className="rounded-lg bg-[var(--bg-elevated)] px-3">
+                <Switch
+                  checked={applyHeadStart}
+                  onChange={toggleHeadStart}
+                  disabled={headStartLoading}
+                  label="Apply the current head start"
+                  description="Recompute this match's head start from the teams' current categories and check the corrected score against it."
+                />
+                {headStartNote && (
+                  <p className="pb-3 text-xs text-[var(--text-muted)]" role="status">{headStartNote}</p>
+                )}
+                {applyHeadStart && headStarts?.current && (
+                  <p className="pb-3 text-xs text-[var(--text-primary)]" role="status">
+                    Recorded: {nameA} {headStarts.recorded.a}, {nameB} {headStarts.recorded.b}.
+                    {' '}Current: {nameA} {headStarts.current.a}, {nameB} {headStarts.current.b}.
+                    {' '}Every corrected game total must include the new head start.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {(startA > 0 || startB > 0) && (
+              <p className="text-xs text-[var(--text-muted)]">
+                {startA > 0 && <>{nameA} starts at {startA}. </>}
+                {startB > 0 && <>{nameB} starts at {startB}. </>}
+                Enter each game&apos;s total including the head start.
               </p>
             )}
 
@@ -591,6 +702,9 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
                   New winner: {autoWinner === 'a' ? nameA : nameB}
                 </span>
               )}
+              {stagedReason && (
+                <span className="text-[var(--text-muted)]">{stagedReason}</span>
+              )}
             </div>
 
             <Input
@@ -640,6 +754,14 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
         {/* Game scores */}
         {view === 'score' && (
           <>
+            {(startA > 0 || startB > 0) && (
+              <p className="text-xs text-[var(--text-muted)]">
+                {startA > 0 && <>{nameA} starts at {startA}. </>}
+                {startB > 0 && <>{nameB} starts at {startB}. </>}
+                Enter each game&apos;s total including the head start.
+              </p>
+            )}
+
             {games.map((g, i) => (
               <div key={i} className="flex items-center gap-3">
                 <span className="text-xs text-[var(--text-muted)] w-16">Game {i + 1}</span>
@@ -693,6 +815,9 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
                 <span className="text-[var(--color-success)] font-medium">
                   Winner: {autoWinner === 'a' ? nameA : nameB}
                 </span>
+              )}
+              {stagedReason && (
+                <span className="text-[var(--text-muted)]">{stagedReason}</span>
               )}
             </div>
 
@@ -755,7 +880,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
               </>
             )}
             <p className="text-xs text-[var(--text-muted)]">
-              Voiding erases the match: any Elo it applied is reversed and its winner is taken back out
+              Voiding erases the match: {rated ? 'any Elo it applied is reversed and ' : ''}its winner is taken back out
               of the next round. It can be restored later.
             </p>
             {/* Gated on the event, because this panel is reached on a live event
@@ -800,7 +925,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
 // a scoreline typed into the wrong card shows up here as the wrong name in
 // green — which is the check that used to require closing the dialog and
 // finding the card again.
-function OutcomeSummary({ summary, onClose }: { summary: MatchOutcomeSummary; onClose: () => void }) {
+function OutcomeSummary({ summary, unrated, external, onClose }: { summary: MatchOutcomeSummary; unrated: boolean; external: boolean; onClose: () => void }) {
   const scoreline = summary.scores && summary.scores.length > 0
     ? summary.scores.map((g) => `${g.a}-${g.b}`).join(', ')
     : null;
@@ -826,7 +951,11 @@ function OutcomeSummary({ summary, onClose }: { summary: MatchOutcomeSummary; on
           movement from a doubles match goes to the two players' own ladders and
           there is no pair row for it to land on — so the panel names the gap
           rather than showing an empty rating line that reads as "no change". */}
-      {summary.doubles && (
+      {unrated ? (
+        <p className="text-xs text-[var(--text-muted)]">
+          {external ? 'External event: ' : 'Unrated match: '}this result moves nobody&rsquo;s rating.
+        </p>
+      ) : summary.doubles && (
         <p className="text-xs text-[var(--text-muted)]">
           Rating movement is not tracked per pair: a doubles result moves each player&rsquo;s own doubles
           rating, which is on their player page rather than on this event&rsquo;s entry.

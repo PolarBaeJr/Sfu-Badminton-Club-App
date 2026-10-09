@@ -60,7 +60,7 @@ Not yet done for this app. The owner's steps, against staging first
 
 1. The debug keystore's SHA-256:
    `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android`
-2. On the staging player service, through the dashboard: set
+2. In the staging player service's environment, set
    `PASSKEY_ANDROID_CERT_SHA256` to that fingerprint (colon hex is fine), and check
    `PASSKEY_COOKIE_SECRET` exists, or every options call is a 503 and the button
    hides.

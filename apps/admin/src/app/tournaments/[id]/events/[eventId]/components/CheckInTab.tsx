@@ -8,12 +8,14 @@ import {
   checkInPair,
   markPairNoShow,
   bulkCheckIn,
+  undoCheckIn,
+  undoNoShow,
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
-import { CheckCircle, XCircle, Clock, Users, UserCheck } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Users, UserCheck, Undo2 } from 'lucide-react';
 import { getName } from './entry-name';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
-import type { EventWaiverStatus } from '@badminton/shared';
+import { CLUB_TIMEZONE, type EventWaiverStatus } from '@badminton/shared';
 import { WaiverState, blocksCheckIn } from './WaiverState';
 
 interface Props {
@@ -28,7 +30,9 @@ interface Props {
 /** Whose signature this entry needs — one person, or both halves of a pair. */
 function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDoubles: boolean): string[] {
   return isDoubles
+    // An external team (00269) has no member ids and nobody to ask for a waiver.
     ? [(entry as PairWithPlayers).player1_id, (entry as PairWithPlayers).player2_id]
+      .filter((id): id is string => id != null)
     : [(entry as ParticipantWithPlayer).player_id];
 }
 
@@ -92,6 +96,22 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
     setLoading(null);
   }
 
+  // Back to waiting, for a check-in or a no-show pressed on the wrong row.
+  async function handleUndo(id: string, kind: 'checkin' | 'noshow') {
+    setLoading(`undo-${id}`);
+    try {
+      const result = kind === 'checkin' ? await undoCheckIn(id, isDoubles) : await undoNoShow(id, isDoubles);
+      if (!result.ok) {
+        toast(result.error, 'error');
+      } else {
+        toast(kind === 'checkin' ? 'Check-in undone' : 'No-show undone', 'success');
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setLoading(null);
+  }
+
   async function handleBulkCheckIn() {
     setBulkLoading(true);
     try {
@@ -119,6 +139,8 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
   }
 
   const canCheckIn = event.status === 'checkin' || event.status === 'registration';
+  // Undo only while check-in is open. The draw fixes the field once published.
+  const canUndo = event.status === 'checkin';
 
   return (
     <div className="space-y-6">
@@ -227,11 +249,18 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
                 waiverStates={waiverStates}
                 checked
                 actions={
-                  entry.checked_in_at && (
-                    <span className="text-[10px] text-[var(--text-muted)] font-mono">
-                      {new Date(entry.checked_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  )
+                  <div className="flex items-center gap-1.5">
+                    {entry.checked_in_at && (
+                      <span className="text-[10px] text-[var(--text-muted)] font-mono">
+                        {/* Pinned locale and zone: the server renders in UTC, so the default
+                            showed the wrong hour and failed hydration. */}
+                        {new Date(entry.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: CLUB_TIMEZONE })}
+                      </span>
+                    )}
+                    {canUndo && entry.status === 'checked_in' && (
+                      <UndoButton label="Undo check-in" loading={loading === `undo-${entry.id}`} onClick={() => handleUndo(entry.id, 'checkin')} />
+                    )}
+                  </div>
                 }
               />
             ))}
@@ -248,12 +277,36 @@ export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates
           </h3>
           <div className="space-y-2">
             {noShows.map((entry) => (
-              <EntryCard key={entry.id} entry={entry} isDoubles={isDoubles} dimmed />
+              <EntryCard
+                key={entry.id}
+                entry={entry}
+                isDoubles={isDoubles}
+                dimmed
+                actions={canUndo ? (
+                  <UndoButton label="Undo no-show" loading={loading === `undo-${entry.id}`} onClick={() => handleUndo(entry.id, 'noshow')} />
+                ) : null}
+              />
             ))}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+function UndoButton({ label, loading, onClick }: { label: string; loading: boolean; onClick: () => void }) {
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={onClick}
+      loading={loading}
+      aria-label={label}
+      title={label}
+      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+    >
+      <Undo2 className="w-3.5 h-3.5 mr-1" /> Undo
+    </Button>
   );
 }
 
@@ -280,11 +333,12 @@ function EntryCard({
         checked
           ? 'bg-[color-mix(in_oklab,var(--color-success)_5%,transparent)] border-[color-mix(in_oklab,var(--color-success)_20%,transparent)]'
           : dimmed
-          ? 'bg-[var(--bg-elevated)] border-[var(--border)] opacity-50'
+          ? 'bg-[var(--bg-elevated)] border-[var(--border)]'
           : 'bg-[var(--bg-elevated)] border-[var(--border)] hover:border-[var(--border-hover)]'
       }`}
     >
-      <div className="flex items-center gap-2.5">
+      {/* Only the name fades on a no-show, so its Undo still reads as live. */}
+      <div className={`flex items-center gap-2.5 ${dimmed ? 'opacity-50' : ''}`}>
         {entry.seed_number && (
           <span className="text-xs font-mono text-[var(--text-muted)] w-6 text-center">#{entry.seed_number}</span>
         )}

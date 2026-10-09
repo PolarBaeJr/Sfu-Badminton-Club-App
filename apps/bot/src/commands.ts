@@ -28,6 +28,16 @@ import {
   writeDiscordSettings,
   submitAnnouncement,
   setMembership,
+  createChallenge,
+  fetchOpenChallenges,
+  reportChallenge,
+  signupStep,
+  submitReceipt,
+  fetchOwnFees,
+  type ChallengeRefusal,
+  type ReceiptReply,
+  type SignupReply,
+  type SignupScreen,
   type CardFile,
   type FeedbackKind,
   type ProfilePayload,
@@ -55,7 +65,7 @@ import {
   validateValue,
 } from './settings.js';
 
-// SFU red, the app's single accent (--red: #c00). Keeps Discord output visually
+// The accent red, the app's single accent (--red: #c00). Keeps Discord output visually
 // part of the same product rather than Discord-default blurple.
 const CLUB_RED = 0xcc0000;
 
@@ -241,10 +251,10 @@ export const COMMAND_DEFINITIONS = [
     // truncates in the client at the width of the input — people write one
     // sentence into it and stop. A paragraph box gets a reproduction.
     //
-    // The screenshot has to stay a command option, and that is a Discord
-    // limitation rather than a choice: A MODAL CANNOT TAKE A FILE. Text inputs
-    // are the only component a modal accepts, so the attachment is picked here,
-    // on the interaction before the modal, and carried across.
+    // The screenshot is a command option, picked on the interaction before
+    // the modal and carried across. When this was written a modal could only
+    // hold text inputs; Discord has since added a file upload component, so
+    // moving the picture into the modal is now possible, just not done.
     options: [
       {
         type: 11, // ATTACHMENT
@@ -257,7 +267,7 @@ export const COMMAND_DEFINITIONS = [
   {
     name: 'feedback',
     description: 'Tell the club what you think',
-    // Same shape as /bug: the words come from the modal, the picture cannot.
+    // Same shape as /bug: the words come from the modal, the picture from an option.
     // `about` stays a command option rather than moving into the modal, because
     // a modal's only component is a text input — there is no way to offer three
     // choices in one, and a free-text "what is this about" would be a fourth
@@ -805,6 +815,154 @@ export const COMMAND_DEFINITIONS = [
     // member can already copy from the website's footer, not as a QR code for
     // a poster.
   },
+  {
+    name: 'challenge',
+    description: 'Send a challenge or report a result',
+    // UNGATED, and that is safe for the reason /announce's gate is not needed:
+    // the app acts as the member who typed it, resolved from their own linked
+    // Discord account, and runs the same standing, feature and waiver checks
+    // the website does. There is nothing here a member could not already do on
+    // the web as themselves.
+    options: [
+      {
+        type: 1, // SUB_COMMAND
+        name: 'send',
+        description: 'Challenge a member to a match',
+        // Required first: Discord refuses a definition with an optional option
+        // ahead of a required one.
+        options: [
+          { type: 6, name: 'opponent', description: 'Who you are challenging', required: true },
+          {
+            type: 3, // STRING
+            name: 'type',
+            description: 'Singles or doubles (defaults to singles)',
+            required: false,
+            choices: [
+              { name: 'Singles', value: 'singles' },
+              { name: 'Doubles', value: 'doubles' },
+            ],
+          },
+          {
+            type: 5, // BOOLEAN
+            name: 'rated',
+            // The web form starts with Rated ticked, so leaving this out is rated.
+            description: 'Counts toward ratings (defaults to yes)',
+            required: false,
+          },
+          {
+            type: 4, // INTEGER
+            name: 'best_of',
+            description: 'Games in the match (defaults to 3)',
+            required: false,
+            // Odd only, like the web: an even best-of can end level.
+            choices: [
+              { name: '1 game', value: 1 },
+              { name: 'Best of 3', value: 3 },
+              { name: 'Best of 5', value: 5 },
+              { name: 'Best of 7', value: 7 },
+            ],
+          },
+          {
+            type: 4,
+            name: 'points',
+            description: 'Points to win a game (defaults to 21)',
+            required: false,
+            min_value: 5,
+            max_value: 30,
+          },
+          { type: 6, name: 'partner', description: 'Your partner, for doubles', required: false },
+          {
+            type: 6,
+            name: 'opponent_partner',
+            description: "Your opponent's partner, for doubles",
+            required: false,
+          },
+          {
+            type: 3,
+            name: 'note',
+            description: 'A note for your opponent',
+            required: false,
+            // challengeCreateSchema's own limit.
+            max_length: 500,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'report',
+        description: 'Report the result of an accepted challenge',
+        options: [
+          {
+            type: 3,
+            name: 'challenge',
+            description: 'Which challenge',
+            required: true,
+            autocomplete: true,
+          },
+          {
+            type: 3,
+            name: 'score',
+            description: 'Your points first in each game, e.g. 21-15 18-21 21-19',
+            required: true,
+            max_length: 100,
+          },
+          {
+            type: 4,
+            name: 'duration',
+            description: 'How long the match took, in minutes',
+            required: true,
+            min_value: 1,
+            max_value: 300,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    name: 'signup',
+    description: 'Join the club without leaving Discord',
+    options: [],
+    // UNGATED: it is for people who are not members yet. The app refuses an
+    // account that is already linked, and nothing is created until the email
+    // code comes back. NOT deferred: its first answer is a modal, which a
+    // deferred interaction cannot open.
+  },
+  {
+    name: 'receipt',
+    description: 'Send the receipt for a club fee you have paid',
+    // UNGATED, on /challenge's reasoning: the app acts as the member who typed
+    // it, resolved from their own linked Discord account, and runs the checks
+    // the Membership page runs. An unlinked caller is told to link first.
+    //
+    // ONE SLASH COMMAND, NOT A MODAL. Storing the screenshot takes the app
+    // longer than Discord's three seconds, so this is deferred, and a deferred
+    // interaction cannot open a modal. Every value fits an option: the fee is a
+    // picker of the caller's own unpaid fees, the reference is one short line.
+    options: [
+      {
+        type: 3, // STRING
+        name: 'fee',
+        description: 'Which fee you paid',
+        required: true,
+        autocomplete: true,
+      },
+      {
+        type: 11, // ATTACHMENT
+        name: 'screenshot',
+        description: 'A screenshot of the e-Transfer or SFU Rec receipt (JPEG, PNG or WebP, up to 8 MB)',
+        required: true,
+      },
+      {
+        type: 3,
+        name: 'reference',
+        description: 'The reference or receipt number on it',
+        required: true,
+        // The website's own bounds (feeSubmissionSchema).
+        min_length: 4,
+        max_length: 32,
+      },
+    ],
+  },
 ];
 
 /**
@@ -845,6 +1003,12 @@ export const DEFERRED_COMMANDS = new Set([
   'forcelink',
   'forceunlink',
   'forceupdate',
+  // Opens no modal and answers ephemerally. Sending a challenge also sends an
+  // email and a push, and either can take the app past three seconds.
+  'challenge',
+  // Opens no modal and answers ephemerally. The app downloads and stores the
+  // screenshot before it answers.
+  'receipt',
 ]);
 
 /**
@@ -863,6 +1027,17 @@ export const DEFERRED_COMMANDS = new Set([
  * command.
  */
 export const LINKED_ACCOUNT_PICKERS = new Set(['forceunlink', 'forceupdate']);
+
+/**
+ * Which commands' pickers list the CALLER'S OWN open challenges. On
+ * LINKED_ACCOUNT_PICKERS' pattern, so index.ts routes on a set this file owns.
+ */
+export const OPEN_CHALLENGE_PICKERS = new Set(['challenge']);
+
+/**
+ * Which commands' pickers list the CALLER'S OWN unpaid fees. Same pattern.
+ */
+export const OWN_FEE_PICKERS = new Set(['receipt']);
 
 /**
  * Who ran the command, and where.
@@ -4753,6 +4928,711 @@ export async function handleGuideButton(customId: string, context: InteractionCo
   }
 }
 
+// ---------------------------------------------------------------------------
+// /challenge
+// ---------------------------------------------------------------------------
+//
+// Both subcommands act AS THE CALLER, and the caller is read off the
+// interaction (context.discordUserId), never from an option. Every other
+// person is a USER option, which is a Discord id the app resolves through its
+// link table; the bot never sees or sends a club player id.
+//
+// NOTHING IS POSTED IN A CHANNEL. The opponent hears about a challenge, and the
+// other side about a result, the way the website tells them: in-app, push and
+// email. Every reply here is ephemeral.
+
+const MAX_GAMES = 7;
+const MAX_GAME_POINTS = 39;
+
+/**
+ * "21-15 18-21 21-19" into games, the caller's points first. Games are split
+ * on spaces or commas; each is two whole numbers joined by a hyphen or colon.
+ * Only the shape is checked here. Whether 21-20 can end a game is the app's
+ * call, against the challenge's own target.
+ */
+export function parseChallengeScore(
+  raw: string
+): { ok: true; games: { mine: number; theirs: number }[] } | { ok: false; message: string } {
+  const parts = raw.split(/[\s,]+/).filter(Boolean);
+  if (parts.length === 0) return { ok: false, message: 'Enter at least one game, like `21-15`.' };
+  if (parts.length > MAX_GAMES) return { ok: false, message: `A match has at most ${MAX_GAMES} games.` };
+  const games: { mine: number; theirs: number }[] = [];
+  for (const part of parts) {
+    const match = /^(\d{1,2})[-:](\d{1,2})$/.exec(part);
+    if (!match) {
+      return { ok: false, message: `\`${part.slice(0, 20)}\` is not a game score. Write each game like \`21-15\`, your points first.` };
+    }
+    const mine = Number(match[1]);
+    const theirs = Number(match[2]);
+    if (mine > MAX_GAME_POINTS || theirs > MAX_GAME_POINTS) {
+      return { ok: false, message: `No game goes past ${MAX_GAME_POINTS} points.` };
+    }
+    if (mine === theirs) return { ok: false, message: 'A game cannot end level.' };
+    games.push({ mine, theirs });
+  }
+  return { ok: true, games };
+}
+
+/** The reply for a deferred command: plain content, only the caller sees it. */
+function challengeReply(content: string): BotResponse {
+  // allowed_mentions empty: a refusal can name a member as <@id>, and an
+  // ephemeral message should render that name without notifying them.
+  return { type: 4, data: { content, flags: 64, allowed_mentions: { parse: [] } } };
+}
+
+// An abort can fire after the app has written the challenge or the result,
+// so this never says nothing happened.
+const CHALLENGE_UNKNOWN =
+  "Couldn't get an answer from the club app, so I can't tell whether that went through. " +
+  'Check Challenges on the website before you try again.';
+
+/** Turn a refusal code into this file's own sentence. */
+function challengeRefusalText(
+  refusal: ChallengeRefusal,
+  message: string | undefined,
+  people: { opponent: string | null; partner: string | null; opponentPartner: string | null }
+): string {
+  const notLinked = (id: string | null) =>
+    `${id ? `<@${id}>` : 'That member'} hasn't connected Discord to a club account, so they can't be ` +
+    'named here. Challenge them on the website instead.';
+  // The three codes that carry a sentence carry the app's own words about the
+  // club's rules or the score, and nothing else. Capped so a long one cannot
+  // break the reply.
+  const passed = (fallback: string) => (message ? message.slice(0, 300) : fallback);
+  switch (refusal) {
+    case 'not_linked':
+      return 'Link your account first with `/link`.';
+    case 'lapsed':
+      return 'Your membership was paused for inactivity. Open the club website once to switch it back on, then try again.';
+    case 'standing':
+      return "Your account can't send or report challenges right now. The club website says why.";
+    case 'feature_off':
+      return 'Challenges are switched off in the club right now.';
+    case 'waiver':
+      return "Accept the club's current legal documents on the website first, then try again.";
+    case 'opponent_not_linked':
+      return notLinked(people.opponent);
+    case 'partner_not_linked':
+      return notLinked(people.partner);
+    case 'opponent_partner_not_linked':
+      return notLinked(people.opponentPartner);
+    case 'not_participant':
+      return "That isn't one of your accepted challenges. Pick one from the list.";
+    case 'not_accepted':
+      return "That challenge isn't accepted yet, or it has already finished.";
+    case 'invalid_duration':
+      return 'The duration has to be a whole number of minutes from 1 to 300.';
+    case 'invalid':
+      return passed('That challenge is not valid.');
+    case 'invalid_score':
+      return passed('That score is not valid.');
+    case 'rule':
+      return passed('The club rules do not allow that.');
+    default:
+      return "The club app said no, and this version of the bot doesn't know why. Try the website.";
+  }
+}
+
+export async function handleChallenge(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  if (!context.discordUserId) return challengeReply("I couldn't tell who ran that. Try again.");
+  const chosen = subcommand(options);
+  if (chosen.name === 'send') return handleChallengeSend(chosen.options, context.discordUserId);
+  if (chosen.name === 'report') return handleChallengeReport(chosen.options, context.discordUserId);
+  return challengeReply('Unknown subcommand.');
+}
+
+async function handleChallengeSend(
+  options: CommandOption[] | undefined,
+  callerId: string
+): Promise<BotResponse> {
+  const userOption = (name: string) => {
+    const value = option(options, name);
+    return typeof value === 'string' && value ? value : null;
+  };
+  const opponent = userOption('opponent');
+  const partner = userOption('partner');
+  const opponentPartner = userOption('opponent_partner');
+  const type = option(options, 'type') === 'doubles' ? 'doubles' : 'singles';
+  const rated = option(options, 'rated') !== false;
+  const bestOfValue = option(options, 'best_of');
+  const pointsValue = option(options, 'points');
+  const bestOf = typeof bestOfValue === 'number' ? bestOfValue : 3;
+  const points = typeof pointsValue === 'number' ? pointsValue : 21;
+  const noteValue = option(options, 'note');
+  const note = typeof noteValue === 'string' && noteValue.trim() ? noteValue.trim() : null;
+
+  if (!opponent) return challengeReply('Pick who you are challenging.');
+  if (type === 'singles' && (partner || opponentPartner)) {
+    return challengeReply('A singles challenge takes no partners. Set `type` to Doubles to add them.');
+  }
+  if (type === 'doubles' && (!partner || !opponentPartner)) {
+    return challengeReply("A doubles challenge needs both `partner` and `opponent_partner`.");
+  }
+  const people = [callerId, opponent, ...(type === 'doubles' ? [partner, opponentPartner] : [])];
+  if (new Set(people).size !== people.length) {
+    return challengeReply('Everybody in a match has to be a different person, and that includes you.');
+  }
+
+  let result: Awaited<ReturnType<typeof createChallenge>>;
+  try {
+    result = await createChallenge({
+      discordUserId: callerId,
+      opponentDiscordId: opponent,
+      type,
+      rated,
+      bestOf,
+      points,
+      partnerDiscordId: type === 'doubles' ? partner : null,
+      opponentPartnerDiscordId: type === 'doubles' ? opponentPartner : null,
+      note,
+    });
+  } catch (error) {
+    console.error('[bot] challenge send failed:', error);
+    return challengeReply(CHALLENGE_UNKNOWN);
+  }
+
+  if (!result.ok) {
+    return challengeReply(
+      challengeRefusalText(result.refusal, result.message, { opponent, partner, opponentPartner })
+    );
+  }
+  return challengeReply(
+    `**Challenge sent** to <@${opponent}>. They hear about it in the club app and by email, ` +
+      'and they accept it on the website.'
+  );
+}
+
+async function handleChallengeReport(
+  options: CommandOption[] | undefined,
+  callerId: string
+): Promise<BotResponse> {
+  const challengeValue = option(options, 'challenge');
+  const scoreValue = option(options, 'score');
+  const durationValue = option(options, 'duration');
+  const challengeId = typeof challengeValue === 'string' ? challengeValue.trim() : '';
+  if (!challengeId) return challengeReply('Pick the challenge you are reporting.');
+
+  const score = parseChallengeScore(typeof scoreValue === 'string' ? scoreValue : '');
+  if (!score.ok) return challengeReply(score.message);
+  if (typeof durationValue !== 'number' || !Number.isInteger(durationValue) || durationValue < 1 || durationValue > 300) {
+    return challengeReply('The duration has to be a whole number of minutes from 1 to 300.');
+  }
+
+  let result: Awaited<ReturnType<typeof reportChallenge>>;
+  try {
+    result = await reportChallenge({
+      discordUserId: callerId,
+      challengeId,
+      games: score.games,
+      durationMinutes: durationValue,
+    });
+  } catch (error) {
+    console.error('[bot] challenge report failed:', error);
+    return challengeReply(CHALLENGE_UNKNOWN);
+  }
+
+  if (!result.ok) {
+    return challengeReply(
+      challengeRefusalText(result.refusal, result.message, { opponent: null, partner: null, opponentPartner: null })
+    );
+  }
+  // A report is never a confirmation, and the reply says who has to act.
+  return challengeReply(
+    `**Reported.** ${result.opponents.slice(0, 200)} must confirm it on the website before it counts.`
+  );
+}
+
+/**
+ * The /challenge report picker: the caller's accepted, unreported challenges.
+ * The focused option sits one level down, under the subcommand.
+ */
+export async function handleChallengeAutocomplete(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const empty = { type: 8, data: { choices: [] as { name: string; value: string }[] } };
+  if (!context.discordUserId) return empty;
+  const chosen = subcommand(options);
+  const focused = chosen.options?.find((o) => o.focused);
+  if (chosen.name !== 'report' || focused?.name !== 'challenge') return empty;
+
+  try {
+    const typed = String(focused.value ?? '').trim().toLowerCase();
+    const open = await fetchOpenChallenges(context.discordUserId);
+    return {
+      type: 8,
+      data: {
+        choices: open
+          .filter((challenge) => !typed || challenge.label.toLowerCase().includes(typed))
+          .slice(0, 25)
+          .map((challenge) => ({ name: challenge.label.slice(0, 100), value: challenge.id })),
+      },
+    };
+  } catch (error) {
+    console.error('[bot] challenge autocomplete failed:', error);
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// /receipt
+// ---------------------------------------------------------------------------
+//
+// A member sends the receipt for a club fee: the fee from a picker of their
+// own unpaid ones, the screenshot as an attachment, the reference as text. The
+// app does the rest exactly as the Membership page does (one pending receipt
+// per fee, the method and reference rules, the e-transfer address, the fees
+// switch), and it downloads the screenshot itself, from Discord's CDN only.
+//
+// THE CALLER IS THE MEMBER, read off the interaction, resolved by the app
+// through the link table. An unlinked caller is told to link; nothing is ever
+// matched by name or email.
+//
+// NOTHING IS POSTED IN A CHANNEL, and no reply repeats the amount, the
+// reference or the picture. Every reply is ephemeral (the deferral fixed it).
+
+const RECEIPT_MAX_BYTES = 8 * 1024 * 1024;
+const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+// An abort can fire after the app has stored the receipt, so this never says
+// nothing happened.
+const RECEIPT_UNKNOWN =
+  "Couldn't get an answer from the club app, so I can't tell whether your receipt went through. " +
+  'Check Membership on the club website before you send it again.';
+
+const RECEIPT_NOT_LINKED =
+  "Your Discord account isn't linked to a club account yet, so I can't tell whose receipt this is. " +
+  'Run `/link`, open the link it gives you and sign in on the club website, then send the receipt again.';
+
+/** The reply for a deferred command: plain content, only the caller sees it. */
+function receiptReply(content: string): BotResponse {
+  return { type: 4, data: { content, flags: 64, allowed_mentions: { parse: [] } } };
+}
+
+/** Turn a refusal into this file's own sentence. */
+export function receiptRefusalText(result: Exclude<ReceiptReply, { ok: true }>): string {
+  const passed = (fallback: string) => (result.message ? result.message.slice(0, 300) : fallback);
+  switch (result.refusal) {
+    case 'not_linked':
+      return RECEIPT_NOT_LINKED;
+    case 'lapsed':
+      return 'Your membership was paused for inactivity. Open the club website once to switch it back on, then try again.';
+    case 'standing':
+      return "Your account can't send receipts right now. The club website says why.";
+    case 'feature_off':
+      return 'Receipts are switched off in the club right now.';
+    case 'waiver':
+      return "Accept the club's current legal documents on the website first, then try again.";
+    case 'no_login':
+      return 'Your club account has no website sign-in yet. Sign in on the club website once, then try again.';
+    case 'invalid':
+      return passed('Pick the fee from the list.');
+    case 'rule':
+      return passed('The club app did not accept that receipt.');
+    case 'file':
+      switch (result.file) {
+        case 'too_large':
+          return 'That image is over 8 MB. Try a screenshot of just the confirmation.';
+        case 'not_image':
+          return 'That file is not a JPEG, PNG or WebP image.';
+        default:
+          return "I couldn't read that attachment. Attach the screenshot again and resend.";
+      }
+    default:
+      return "The club app said no, and this version of the bot doesn't know why. Try the Membership page on the website.";
+  }
+}
+
+export async function handleReceipt(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  if (!context.discordUserId) return receiptReply("I couldn't tell who ran that. Try again.");
+
+  const feeValue = option(options, 'fee');
+  const referenceValue = option(options, 'reference');
+  const attachmentId = option(options, 'screenshot');
+  const fee = typeof feeValue === 'string' ? feeValue.trim() : '';
+  const reference = typeof referenceValue === 'string' ? referenceValue.trim() : '';
+  if (!fee) return receiptReply('Pick the fee you paid from the list.');
+  if (!reference) return receiptReply('Enter the reference or receipt number.');
+
+  // The attachment's VALUE is an id; the file is in the resolved side table.
+  // These checks only make the common mistakes a friendly sentence. The app
+  // downloads the file and checks it again from its own bytes, so neither the
+  // type nor the size Discord reports here is trusted, and the filename is
+  // never read at all.
+  const file = attachmentId ? context.attachments?.[String(attachmentId)] : undefined;
+  if (!file?.url) return receiptReply('Attach a screenshot of your receipt.');
+  const declaredType = (file.content_type ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  if (declaredType && !RECEIPT_TYPES.includes(declaredType)) {
+    return receiptReply('That file is not a JPEG, PNG or WebP image.');
+  }
+  if ((file.size ?? 0) > RECEIPT_MAX_BYTES) {
+    return receiptReply('That image is over 8 MB. Try a screenshot of just the confirmation.');
+  }
+
+  let result: ReceiptReply;
+  try {
+    result = await submitReceipt({
+      discordUserId: context.discordUserId,
+      fee,
+      reference,
+      attachmentUrl: file.url,
+    });
+  } catch (error) {
+    if (error instanceof RateLimitedError) {
+      return receiptReply("You've sent several receipts in the last hour. Try again later.");
+    }
+    console.error('[bot] receipt failed:', error);
+    return receiptReply(RECEIPT_UNKNOWN);
+  }
+
+  if (!result.ok) return receiptReply(receiptRefusalText(result));
+  return receiptReply(
+    '**Receipt sent.** An exec checks it, and the Membership page on the club website shows when it is confirmed.'
+  );
+}
+
+/** The /receipt picker: the caller's own unpaid dues and club event fees. */
+export async function handleReceiptAutocomplete(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const empty = { type: 8, data: { choices: [] as { name: string; value: string }[] } };
+  if (!context.discordUserId) return empty;
+  const focused = options?.find((o) => o.focused);
+  if (focused?.name !== 'fee') return empty;
+
+  try {
+    const typed = String(focused.value ?? '').trim().toLowerCase();
+    const fees = await fetchOwnFees(context.discordUserId);
+    return {
+      type: 8,
+      data: {
+        choices: fees
+          .filter((fee) => !typed || fee.label.toLowerCase().includes(typed))
+          .slice(0, 25)
+          .map((fee) => ({ name: fee.label.slice(0, 100), value: fee.id.slice(0, 100) })),
+      },
+    };
+  } catch (error) {
+    console.error('[bot] receipt autocomplete failed:', error);
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// /signup
+// ---------------------------------------------------------------------------
+//
+// A new member joins from Discord. The command opens a modal for the details,
+// and every screen after it is ONE ephemeral message, edited in place: a
+// question with buttons, a legal document a page at a time, then the email
+// code. The app holds the answers in a draft (00281) and decides what is asked
+// next; this file only draws it.
+//
+// WHICH ACKNOWLEDGEMENT, AND WHY. The details modal comes from the slash
+// command, so its submit has no message yet: it is answered type 5, ephemeral,
+// and the reply is written over the "thinking..." placeholder. Every button,
+// and the code modal (opened from a button), comes from that message: those
+// are answered type 6 and the same message is edited. "Enter code" is the one
+// click that answers at once, with type 9, because a modal cannot follow a
+// deferral.
+//
+// NEVER LOG what the member typed: the email, names and phone go to the app
+// and nowhere else.
+
+export const SIGNUP_PREFIX = 'signup:';
+const SIGNUP_DETAILS_MODAL = 'signup:details';
+const SIGNUP_VERIFY_MODAL = 'signup:verify';
+const SIGNUP_CANCEL = { type: 2, style: 4, label: 'Cancel sign-up', custom_id: 'signup:cancel' };
+const DISCORD_CONTENT_MAX = 2000;
+const DISCORD_EMBED_DESCRIPTION_MAX = 4096;
+
+/** True for every /signup button and modal. */
+export function isSignupInteraction(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(SIGNUP_PREFIX);
+}
+
+/** /signup: the details modal, straight away. */
+export function openSignupModal(): BotResponse {
+  const input = (
+    customId: string,
+    label: string,
+    required: boolean,
+    limits: { min_length?: number; max_length: number },
+    placeholder?: string
+  ) => ({
+    type: 1,
+    components: [
+      {
+        type: 4, // TEXT_INPUT
+        custom_id: customId,
+        label,
+        style: 1, // SHORT
+        required,
+        ...limits,
+        ...(placeholder ? { placeholder } : {}),
+      },
+    ],
+  });
+  return {
+    type: 9, // MODAL
+    data: {
+      custom_id: SIGNUP_DETAILS_MODAL,
+      title: 'Join the club',
+      components: [
+        input('email', 'Email', true, { min_length: 3, max_length: 254 }, 'Use your SFU email if you have one. We email you a code.'),
+        input('first_name', 'First name', true, { min_length: 1, max_length: 40 }),
+        input('last_name', 'Last name', true, { min_length: 1, max_length: 40 }),
+        // No min_length on an optional box: the app checks 2 to 40 when it is filled.
+        input('display_name', 'Display name (optional)', false, { max_length: 40 }),
+        input('phone', 'Phone (optional)', false, { max_length: 20 }),
+      ],
+    },
+  };
+}
+
+function signupCodeModal(): BotResponse {
+  return {
+    type: 9,
+    data: {
+      custom_id: SIGNUP_VERIFY_MODAL,
+      title: 'Enter your code',
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: 'code',
+              label: 'The code from the email',
+              style: 1,
+              required: true,
+              min_length: 6,
+              max_length: 10,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function rows(buttons: Record<string, unknown>[]): Record<string, unknown>[] {
+  const result: Record<string, unknown>[] = [];
+  for (let start = 0; start < buttons.length; start += BUTTONS_PER_ROW) {
+    result.push({ type: 1, components: buttons.slice(start, start + BUTTONS_PER_ROW) });
+  }
+  return result;
+}
+
+/** A message body for the edit. Every one clears what the last screen drew. */
+function signupMessage(
+  content: string,
+  buttons: Record<string, unknown>[] = [],
+  embeds: Record<string, unknown>[] = []
+): Record<string, unknown> {
+  return {
+    content: content.slice(0, DISCORD_CONTENT_MAX),
+    embeds,
+    components: rows(buttons),
+    flags: 64,
+    allowed_mentions: { parse: [] },
+  };
+}
+
+const SIGNUP_RETRY = { type: 2, style: 1, label: 'Try again', custom_id: 'signup:resume' };
+
+/** Draw a screen the app sent. Exported for the tests. */
+export function renderSignupScreen(screen: SignupScreen): Record<string, unknown> {
+  switch (screen.kind) {
+    case 'choice': {
+      const buttons = screen.choices.map((choice) => ({
+        type: 2,
+        style: screen.step === 'consent' && choice.value === 'no' ? 2 : 1,
+        label: choice.label.slice(0, 80),
+        custom_id: `signup:${screen.step}:${choice.value}`.slice(0, 100),
+      }));
+      const content = `${screen.notice ? `${screen.notice}\n\n` : ''}${screen.prompt}`;
+      return signupMessage(content, [...buttons, SIGNUP_CANCEL]);
+    }
+    case 'document': {
+      const last = screen.page >= screen.pageCount - 1;
+      const buttons: Record<string, unknown>[] = [];
+      if (screen.page > 0) {
+        buttons.push({ type: 2, style: 2, label: 'Previous', custom_id: `signup:page:${screen.document}:${screen.page - 1}` });
+      }
+      if (!last) {
+        buttons.push({ type: 2, style: 2, label: 'Next', custom_id: `signup:page:${screen.document}:${screen.page + 1}` });
+      }
+      // Accept only once the member has reached the end.
+      if (last) {
+        buttons.push({ type: 2, style: 3, label: 'I accept', custom_id: `signup:accept:${screen.document}:${screen.versionTag}` });
+      }
+      buttons.push(SIGNUP_CANCEL);
+      const content =
+        screen.notice ??
+        (last ? 'Press **I accept** to continue.' : 'Read to the end to accept it.');
+      return signupMessage(content, buttons, [
+        {
+          title: `${screen.title} (version ${screen.version})`.slice(0, 256),
+          description: screen.text.slice(0, DISCORD_EMBED_DESCRIPTION_MAX),
+          footer: { text: `Page ${screen.page + 1} of ${screen.pageCount}` },
+        },
+      ]);
+    }
+    case 'code_sent':
+      return signupMessage(
+        '**Check your email.** We sent a code to the address you gave. Press **Enter code** and type it in. ' +
+          'No email after a minute? Check spam, then press **Resend**.',
+        [
+          { type: 2, style: 1, label: 'Enter code', custom_id: 'signup:code' },
+          { type: 2, style: 2, label: 'Resend', custom_id: 'signup:resend' },
+        ]
+      );
+    case 'done':
+      return signupMessage(
+        (screen.approved
+          ? '**Welcome to the club!** Your account is ready.'
+          : '**Account created.** An exec will approve it soon, and the website will tell you when.') +
+          (screen.linked
+            ? ' Your Discord account is connected to it.'
+            : ' Sign in on the website and run `/link` to connect Discord.') +
+          ' Sign in on the website to add a passkey, which Discord cannot set up.'
+      );
+    case 'cancelled':
+      return signupMessage(
+        screen.codeSent
+          ? 'Sign-up cancelled and your answers deleted. Ignore the code we emailed.'
+          : 'Sign-up cancelled, nothing was saved.'
+      );
+    default:
+      return signupMessage('This version of the bot cannot show that step. Try signing up on the website.');
+  }
+}
+
+function signupRefusalMessage(refusal: SignupReply & { ok: false }): Record<string, unknown> {
+  const passed = (fallback: string) => (refusal.message ? refusal.message.slice(0, 300) : fallback);
+  switch (refusal.refusal) {
+    case 'already_linked':
+      return signupMessage('This Discord account is already linked to a club account. Sign in on the website.');
+    case 'timed_out':
+      return signupMessage('Sign-up timed out, run /signup again.');
+    case 'incomplete':
+      return signupMessage('Your sign-up is missing your name. Run /signup again.');
+    case 'invalid':
+      return signupMessage(`${passed('Something you entered is not valid.')} Run /signup again to fix it.`);
+    case 'rate_limited':
+      return signupMessage(passed('Too many tries just now. Wait a few minutes.'), [SIGNUP_RETRY]);
+    case 'send_failed':
+      return signupMessage("Couldn't send the email just now.", [
+        { type: 2, style: 1, label: 'Resend', custom_id: 'signup:resend' },
+        SIGNUP_CANCEL,
+      ]);
+    case 'wrong_code':
+      return signupMessage('That code is wrong or has expired.', [
+        { type: 2, style: 1, label: 'Enter code', custom_id: 'signup:code' },
+        { type: 2, style: 2, label: 'Resend', custom_id: 'signup:resend' },
+      ]);
+    case 'too_many_attempts':
+      return signupMessage('Too many wrong codes. Sign-up cancelled; run /signup again later.');
+    case 'in_progress':
+      return signupMessage('Your account is already being created. Give it a moment.', [SIGNUP_RETRY]);
+    case 'existing_account':
+      return signupMessage('This email already has an account. Sign in on the website and use /link.');
+    default:
+      return signupMessage("The club app said no, and this version of the bot doesn't know why. Try the website.");
+  }
+}
+
+/** The custom_id and the typed values, as the step the app expects. */
+function signupRequest(
+  customId: string,
+  components: ModalComponent[] | undefined
+): Record<string, unknown> | null {
+  if (customId === SIGNUP_DETAILS_MODAL) {
+    return {
+      action: 'details',
+      email: modalValue(components, 'email'),
+      firstName: modalValue(components, 'first_name'),
+      lastName: modalValue(components, 'last_name'),
+      displayName: modalValue(components, 'display_name'),
+      phone: modalValue(components, 'phone'),
+    };
+  }
+  if (customId === SIGNUP_VERIFY_MODAL) return { action: 'verify', code: modalValue(components, 'code') };
+
+  const [, action, first, second] = customId.split(':');
+  switch (action) {
+    case 'events':
+      return { action, answer: first };
+    case 'tier':
+      return { action, tier: first };
+    case 'page':
+      return { action, document: first, page: Number(second) };
+    case 'accept':
+      return { action, document: first, versionTag: second };
+    case 'age':
+      return { action };
+    case 'consent':
+      return { action, consent: first === 'yes' };
+    case 'cancel':
+    case 'resend':
+    case 'resume':
+      return { action };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Any /signup button or modal submit. Returns the acknowledgement, and for
+ * everything but "Enter code" a `finish` that index.ts runs and writes over
+ * the message.
+ */
+export function handleSignupInteraction(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+): BotResponse {
+  if (customId === 'signup:code') return signupCodeModal();
+
+  const fromCommand = customId === SIGNUP_DETAILS_MODAL;
+  const ack: BotResponse = fromCommand ? { type: 5, data: { flags: 64 } } : { type: 6 };
+  const callerId = context.discordUserId;
+  const request = signupRequest(customId, components);
+
+  return {
+    ...ack,
+    finish: async () => {
+      if (!callerId) return { type: 4, data: signupMessage("I couldn't tell who pressed that. Run /signup again.") };
+      if (!request) return { type: 4, data: signupMessage('That button is from an older version. Run /signup again.') };
+      try {
+        const result = await signupStep({ discordUserId: callerId, ...request } as { discordUserId: string; action: string });
+        return { type: 4, data: result.ok ? renderSignupScreen(result.screen) : signupRefusalMessage(result) };
+      } catch (error) {
+        // The action only: what the member typed stays out of the log.
+        console.error(`[bot] signup ${String(request.action)} failed:`, error instanceof Error ? error.message : 'unknown');
+        return {
+          type: 4,
+          data: signupMessage(
+            request.action === 'verify'
+              ? "Couldn't get an answer from the club app, so I can't tell whether your account was made. " +
+                  'Press Try again. If it says the sign-up timed out, try signing in on the website.'
+              : "Couldn't reach the club app just now.",
+            [SIGNUP_RETRY, SIGNUP_CANCEL]
+          ),
+        };
+      }
+    },
+  };
+}
+
 /**
  * What a handler answers Discord with.
  *
@@ -4823,6 +5703,12 @@ export async function dispatch(
         return await handleSetup(options, context);
       case 'config':
         return await handleConfig(options, context);
+      case 'challenge':
+        return await handleChallenge(options, context);
+      case 'signup':
+        return openSignupModal();
+      case 'receipt':
+        return await handleReceipt(options, context);
       default:
         return ephemeral('Unknown command.');
     }

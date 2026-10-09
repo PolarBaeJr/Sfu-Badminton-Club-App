@@ -83,6 +83,27 @@ export type PairWithPlayers = TournamentPairRow & {
   player2: PlayerSummary | null;
 };
 
+// One member waiting for a place in a full event (00278), in queue order.
+export type WaitlistEntry = {
+  id: string;
+  player_id: string;
+  joined_at: string;
+  player: PlayerSummary | null;
+};
+
+// A waiting change to a played team's category (00279). A null category is
+// Unset.
+export type CategoryRequest = {
+  id: string;
+  pair_id: string;
+  from_category: string | null;
+  to_category: string | null;
+  reason: string;
+  requested_by: string | null;
+  requested_at: string;
+  requester: { full_name: string } | null;
+};
+
 // A tab entry is a pair (doubles events) or a participant (singles events).
 export type TournamentEntry = ParticipantWithPlayer | PairWithPlayers;
 

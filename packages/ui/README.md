@@ -1,6 +1,6 @@
 # `@badminton/ui`
 
-The component library both apps share — 31 components plus a few React-free
+The component library both apps share: 31 components plus a few React-free
 helpers. Consumed **as TypeScript source** (`main`/`types` point at
 `src/index.ts`, and both apps list the package in `transpilePackages`), so there
 is no build step and no `dist/`.
@@ -10,8 +10,9 @@ npm run type-check -w @badminton/ui
 ```
 
 There is no test script here. The testable parts were deliberately extracted
-into React-free modules (`player-search.ts`, `player-selection.ts`) and are
-covered from the apps.
+into React-free modules (`player-search.ts`, `player-selection.ts`,
+`multi-select.ts`) and are covered from the admin app's
+`src/lib/__tests__/`.
 
 ---
 
@@ -21,10 +22,12 @@ covered from the apps.
 src/
   components/     Button, Card, Dialog, DataTable, ResponsiveTable, Select,
                   Input, Textarea, Switch, Tabs, Toast, Badge, StatCard,
-                  PlayerPicker, DatePicker, EmptyState, PageHeader,
-                  RouteError, RouteLoading, StaleBuildBanner, …
+                  PlayerPicker, MultiSelect, DatePicker, EmptyState,
+                  PageHeader, LegalMarkdown, RouteError, RouteLoading,
+                  StaleBuildBanner, ...
   player-search.ts      Pure matching/filtering, lifted out of PlayerPicker.
   player-selection.ts   Pure selection-state helpers.
+  multi-select.ts       Pure option matching and toggling for MultiSelect.
   use-live-channel.ts   The one Supabase Realtime subscription hook.
   utils.ts              cn() — clsx + tailwind-merge.
 ```
@@ -65,13 +68,15 @@ Tailwind. The apps own their `tailwind.config.ts` and scan
 `packages/ui/src/**` for classes — a class that only ever appears in a runtime
 string here will be purged.
 
-Two things that look like bugs and aren't:
+Two things worth knowing:
 
-**Square corners are intentional.** Both app configs zero the entire
-`borderRadius` scale, so every `rounded-*` class flattens app-wide. `full` is
-kept for avatars and pill dots, and dialogs opt back in with literal
-`rounded-[16px]` / `rounded-[8px]`, which bypass the scale. This is the
-reference design, not drift — do not "fix" it with a sweep.
+**The two app configs carry the same `borderRadius` scale on purpose.** A
+component here is compiled by whichever app renders it, so if the scales drifted
+the same component would round differently in each app. The scale was once
+zeroed for a sharp-cornered design and now carries real values again (`md` is
+8px, `xl` is 16px), which is why some components still spell a corner as a
+literal such as `rounded-[16px]`. `rounded-none` is the way to keep a corner
+square.
 
 **Opacity shorthand on a CSS variable compiles to nothing.** Tailwind's
 `bg-[var(--x)]/20` cannot compute an alpha for a value it can't parse, and it
