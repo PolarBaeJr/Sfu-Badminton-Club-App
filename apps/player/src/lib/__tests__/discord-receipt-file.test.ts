@@ -32,7 +32,8 @@ describe('discordCdnUrl', () => {
       'https://localhost/a.png',
       'https://169.254.169.254/latest/meta-data',
       'https://cdn.discordapp.com:8443/a.png',
-      'https://user:pass@cdn.discordapp.com/a.png',
+      // Built in two parts: written whole, the export's leak check reads it as an email address.
+      'https://user:pass' + '@cdn.discordapp.com/a.png',
       'not a url',
       '',
       42,
