@@ -71,7 +71,8 @@ node .github/export/export.mjs --out /tmp/club-export --worktree
   always passes it.
 - `--tree-hash` prints the git tree hash of the output.
 - `--verify` runs `npm ci` and the turbo type-check, lint and test inside the
-  output. It is slow; CI does it for you.
+  output, leaving out apps/data-api-rs as ci.yml does (Rust, checked on arm64
+  by data-api-rs.yml). It is slow; CI does it for you.
 
 ## Adding a file to the export
 

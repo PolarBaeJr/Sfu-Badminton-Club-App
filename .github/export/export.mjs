@@ -150,7 +150,8 @@ function runVerify(dir) {
   delete env.EXPORT_LEAK_PATTERNS;
   for (const cmd of [
     ['npm', ['ci']],
-    ['npx', ['turbo', 'run', 'type-check', 'lint', 'test', '--continue']],
+    // apps/data-api-rs (Rust, arm64) is checked by its own workflow, as in ci.yml.
+    ['npx', ['turbo', 'run', 'type-check', 'lint', 'test', '--continue', '--filter=!data-api-rs']],
   ]) {
     console.log(`\n== verify: ${cmd[0]} ${cmd[1].join(' ')}`);
     const res = spawnSync(cmd[0], cmd[1], { cwd: dir, env, stdio: 'inherit' });

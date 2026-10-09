@@ -26,6 +26,9 @@ apps/player/**
 apps/bot/**
 apps/data-api/**
 !apps/data-api/docker-compose.example.yml
+# The Rust build of the same service. A cloner gets both and picks one; the
+# brand map rewrites its key-prefix test vector as it does the TypeScript one.
+apps/data-api-rs/**
 
 # Native apps (Kotlin/Compose, Swift). No package.json, so not an npm workspace
 # and outside --verify. The brand map's path rules rename the package and

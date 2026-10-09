@@ -1,0 +1,93 @@
+name: Data API (Rust)
+
+# Builds, lints and tests apps/data-api-rs, the Rust build of the data API
+# (1.1.0b), then runs the parity check against the TypeScript service it ports.
+# arm64 only: the binary ships for arm64 and nothing else, so it is never built
+# or tested on an amd64 runner. ci.yml leaves this package out for that reason.
+#
+# This workflow builds no image and publishes nothing. Publishing the Rust
+# image is an owner step (apps/data-api-rs/README.md).
+on:
+  pull_request:
+    paths:
+      - apps/data-api-rs/**
+      - apps/data-api/**
+      - packages/shared/src/utils/data-api-key.ts
+      - supabase/migrations/**
+      - .github/workflows/data-api-rs.yml
+  push:
+    branches:
+      - deploy/docker-prod
+      - release/**
+    paths:
+      - apps/data-api-rs/**
+      - apps/data-api/**
+      - packages/shared/src/utils/data-api-key.ts
+      - supabase/migrations/**
+      - .github/workflows/data-api-rs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: data-api-rs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The parity check runs the TypeScript service beside the binary, and
+      # turbo comes from the workspace.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # With no argument, `rustup toolchain install` reads the package's
+      # rust-toolchain.toml, so the pinned version and its clippy and rustfmt
+      # are what every step below runs, never the runner's default. rustup is
+      # installed first only if the runner image lacks it.
+      - name: Install the pinned Rust toolchain
+        working-directory: apps/data-api-rs
+        run: |
+          if ! command -v rustup > /dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install
+          rustc --version
+
+      # The registry and the target dir together are most of a cold cargo run.
+      # Keyed on the toolchain and the lockfile: either changing makes the old
+      # target dir worthless.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/data-api-rs/target
+          key: data-api-rs-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/data-api-rs/rust-toolchain.toml', 'apps/data-api-rs/Cargo.lock') }}
+          restore-keys: |
+            data-api-rs-${{ runner.os }}-${{ runner.arch }}-
+
+      # cargo check, cargo fmt --check, clippy -D warnings, cargo test.
+      - name: type-check, lint, test
+        run: npx turbo run type-check lint test --continue --filter=data-api-rs
+
+      # The same request fixtures against both services and one mocked
+      # upstream; fails on any difference not listed as accepted in README.md.
+      - name: Parity with the TypeScript service
+        run: npm run parity -w data-api-rs

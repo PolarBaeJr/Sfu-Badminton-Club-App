@@ -81,5 +81,8 @@ jobs:
       # `type-check` dependsOn `build` in turbo.json, so this also builds both
       # Next apps and a broken build fails the job too. That is most of the wall
       # clock, and it is the reason `build` is not listed separately.
+      #
+      # apps/data-api-rs is Rust, built for arm64 only: data-api-rs.yml checks
+      # it on an arm64 runner with its pinned toolchain, so it is left out here.
       - name: type-check, lint, test
-        run: npx turbo run type-check lint test --continue
+        run: npx turbo run type-check lint test --continue --filter=!data-api-rs

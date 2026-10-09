@@ -89,12 +89,14 @@ jobs:
 
       # The same checks ci.yml runs, inside the exported tree, so what a
       # cloner gets is known to install, build, type-check, lint and test.
+      # Like ci.yml it leaves out apps/data-api-rs, which is Rust for arm64
+      # and is checked by data-api-rs.yml on an arm64 runner.
       - name: Verify the export
         if: steps.compare.outputs.changed == 'true'
         run: |
           cd "$RUNNER_TEMP/export"
           npm ci
-          npx turbo run type-check lint test --continue
+          npx turbo run type-check lint test --continue --filter=!data-api-rs
 
   publish:
     needs: export
