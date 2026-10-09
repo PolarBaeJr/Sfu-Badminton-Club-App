@@ -34,6 +34,50 @@ export function applyBrandMap(rules, path, text, counts = new Map()) {
   return out;
 }
 
+/**
+ * Renames a path with the rules flagged `"path": true`, by the same literal,
+ * longest-first replacement as the contents, so a Kotlin package directory or
+ * an Xcode target folder moves in step with the `package` lines and project
+ * files that name it. `paths` and `exclude` are matched against the source
+ * path. Hits are counted per rule in `counts`.
+ */
+export function rewritePath(rules, path, counts = new Map()) {
+  let out = path;
+  for (const rule of rules) {
+    if (!rule.path) continue;
+    if (rule.only && !rule.only.some((re) => re.test(path))) continue;
+    if (rule.skip.some((re) => re.test(path))) continue;
+    const parts = out.split(rule.from);
+    if (parts.length > 1) {
+      counts.set(rule.from, (counts.get(rule.from) ?? 0) + parts.length - 1);
+      out = parts.join(rule.to);
+    }
+  }
+  return out;
+}
+
+/**
+ * Applies rewritePath to every key of `files` (source path -> file). Returns
+ * the renamed map, a map from exported path back to source path, and every
+ * exported path that two source paths would both land on, which the caller
+ * fails rather than letting one file silently overwrite another.
+ */
+export function rewritePaths(rules, files, counts = new Map()) {
+  const renamed = new Map();
+  const sourceOf = new Map();
+  const collisions = [];
+  for (const [path, file] of files) {
+    const target = rewritePath(rules, path, counts);
+    if (renamed.has(target)) {
+      collisions.push(target);
+      continue;
+    }
+    renamed.set(target, file);
+    sourceOf.set(target, path);
+  }
+  return { files: renamed, sourceOf, collisions };
+}
+
 export const REDACTED = '-- (redacted in export)';
 
 /**

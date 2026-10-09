@@ -15,6 +15,11 @@ export function compileRules(config, personalPatterns = []) {
     category: r.category,
     level: r.level,
     re: new RegExp(r.pattern, r.flags ?? ''),
+    // `paths` limits a rule to those globs, `exclude` keeps it out of them.
+    // A fail rule scoped to supabase/migrations/** is how a word that only
+    // warns elsewhere still gets a migration comment redacted.
+    only: r.paths ? r.paths.map(globToRegExp) : null,
+    skip: (r.exclude ?? []).map(globToRegExp),
   }));
   personalPatterns.forEach((p, i) => {
     rules.push({
@@ -55,6 +60,8 @@ export function lineHits(compiled, path, line) {
   const hits = [];
   const lower = line.toLowerCase();
   for (const rule of compiled.rules) {
+    if (rule.only && !rule.only.some((re) => re.test(path))) continue;
+    if (rule.skip?.some((re) => re.test(path))) continue;
     const fired = rule.literal !== undefined ? lower.includes(rule.literal) : rule.re.test(line);
     if (fired && !excepted(compiled, path, rule.id, line)) hits.push(rule);
   }

@@ -35,7 +35,13 @@ import { compileRules, formatFinding, parsePatterns, scan } from './lib/leaks.mj
 import { checkLinks } from './lib/links.mjs';
 import { computeManifest, formatManifest, MIGRATIONS_DIR } from './lib/manifest.mjs';
 import { listSource, readInclude, selectPaths, globToRegExp } from './lib/select.mjs';
-import { applyBrandMap, compileBrandMap, redactMigration, transformGitignore } from './lib/transform.mjs';
+import {
+  applyBrandMap,
+  compileBrandMap,
+  redactMigration,
+  rewritePaths,
+  transformGitignore,
+} from './lib/transform.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -204,6 +210,21 @@ export function main(argv = process.argv.slice(2)) {
     file.text = applyBrandMap(brandRules, path, file.text, counts);
   }
 
+  // 2b. path rules: the same brand rules, flagged `"path": true`, rename paths
+  // so a Kotlin package directory or an Xcode target folder moves with the
+  // contents that name it. Everything below sees EXPORTED paths: leak-rules
+  // exceptions and binaryAllow match them, include.txt and the brand map's own
+  // `paths`/`exclude` match source paths.
+  const pathCounts = new Map();
+  const renamed = rewritePaths(brandRules, files, pathCounts);
+  for (const target of renamed.collisions) fail(`${target}:0: [select] rule path-collision`);
+  files.clear();
+  for (const [path, file] of renamed.files) {
+    files.set(path, file);
+    const sourcePath = renamed.sourceOf.get(path);
+    if (sourcePath !== path) modes.set(path, modes.get(sourcePath));
+  }
+
   // 3. transforms
   const compiled = compileRules(leakConfig, patterns);
   let redacted = 0;
@@ -220,7 +241,18 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   // 4. generated assets
-  for (const [path, buf] of generatedAssets()) files.set(path, { binary: true, buf, generated: true });
+  // Replace-only: every generated asset must overwrite an exported file, so a
+  // renamed or dropped icon fails the run instead of shipping beside the club's.
+  // A generated text asset (an Android vector) stays text, so it is scanned.
+  let replacedAssets = 0;
+  for (const [path, buf] of generatedAssets()) {
+    if (!files.has(path)) {
+      fail(`${path}:0: [select] rule generated-asset-has-no-source`);
+      continue;
+    }
+    files.set(path, isBinary(buf) ? { binary: true, buf, generated: true } : { text: buf.toString('utf8'), generated: true });
+    replacedAssets++;
+  }
 
   // 5. manifest, last, over the final migration bytes
   const manifestPath = `${MIGRATIONS_DIR}.manifest.json`;
@@ -248,12 +280,20 @@ export function main(argv = process.argv.slice(2)) {
   const fails = findings.filter((f) => f.level === 'fail');
   const warns = findings.filter((f) => f.level !== 'fail');
 
-  console.log(`\n== export: ${files.size} files, ${redacted} migration comment lines redacted`);
+  console.log(
+    `\n== export: ${files.size} files, ${redacted} migration comment lines redacted, ` +
+      `${renamed.sourceOf.size - [...renamed.sourceOf].filter(([to, from]) => to === from).length} paths renamed, ` +
+      `${replacedAssets} generated assets`,
+  );
   console.log('\n== brand map hits');
   for (const rule of brandConfig.rules) {
     const n = counts.get(rule.from) ?? 0;
-    console.log(`${String(n).padStart(6)}  ${JSON.stringify(rule.from)}`);
+    const pathHits = rule.path ? `  (+${pathCounts.get(rule.from) ?? 0} in paths)` : '';
+    console.log(`${String(n).padStart(6)}  ${JSON.stringify(rule.from)}${pathHits}`);
     if (n === 0) console.log(`::warning::brand rule matched nothing: ${JSON.stringify(rule.from)}`);
+    if (rule.path && !pathCounts.get(rule.from)) {
+      console.log(`::warning::brand path rule renamed nothing: ${JSON.stringify(rule.from)}`);
+    }
   }
 
   const tally = (list) => {

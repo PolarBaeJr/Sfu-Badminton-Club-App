@@ -17,14 +17,24 @@ anything but an earlier export commit.
 2. **Replaces branding** with the literal rules in
    [`brand-map.json`](brand-map.json): case-sensitive, longest first, optionally
    scoped with `paths` or `exclude`. Every rule's hit count is printed, and a
-   rule that matched nothing warns.
+   rule that matched nothing warns. A rule marked `"path": true` also renames
+   the exported paths it matches, so the mobile app's Kotlin package
+   directories and Xcode target folders move with the `package` lines and
+   project files naming them; two sources landing on one path fail. From here
+   on paths are the exported ones: leak-rule exceptions and `binaryAllow` name
+   them, while `include.txt` and the brand map's own scopes name source paths.
 3. **Redacts migration comments.** Migrations are immutable in source, so a
    whole-line `--` comment that still trips a failing leak rule becomes
    `-- (redacted in export)`. SQL, string literals and line count are untouched.
+   A leak rule can be scoped with `paths` or `exclude` like a brand rule, so a
+   word that only warns elsewhere (the hosts' names) has a failing twin scoped
+   to `supabase/migrations/**` that gets such comments redacted.
    `supabase/migrations/.manifest.json` is then regenerated over the exported
    bytes, so the manifest test passes in the export.
 4. **Cleans `.gitignore`**: comments go, as do negations naming nothing exported.
-5. **Replaces the icons** with a generated neutral mark (`lib/icons.mjs`).
+5. **Replaces the icons** with a generated neutral mark (`lib/icons.mjs`): the
+   web apps' icons, and the native apps' Android launcher layers and iOS app
+   icon. Each generated path must already be in the export, or the run fails.
 6. **Checks links.** Every relative link in an exported markdown file must
    resolve to an exported path.
 7. **Checks for leaks** in every file's contents and path:

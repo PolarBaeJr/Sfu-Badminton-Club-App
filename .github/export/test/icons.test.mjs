@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { inflateSync } from 'node:zlib';
 
-import { crc32, generatedAssets, renderIco, renderPng } from '../lib/icons.mjs';
+import {
+  androidLauncherBackground,
+  androidLauncherForeground,
+  crc32,
+  generatedAssets,
+  renderIco,
+  renderPng,
+} from '../lib/icons.mjs';
 
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -55,4 +62,27 @@ test('every club icon path is replaced', () => {
     }
   }
   assert.ok(assets.has('apps/player/public/qr/discord.png'));
+});
+
+test('the native apps get the mark, at their exported paths', () => {
+  const assets = generatedAssets();
+  const icon = assets.get('apps/mobile/ios/ClubLadder/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png');
+  assert.ok(icon);
+  const ihdr = chunks(icon)[0].data;
+  assert.equal(ihdr.readUInt32BE(0), 1024);
+  assert.equal(ihdr[9], 2, 'opaque RGB, as the App Store requires');
+  for (const name of ['ic_launcher_background.xml', 'ic_launcher_foreground.xml']) {
+    const xml = assets.get(`apps/mobile/android/app/src/main/res/drawable/${name}`).toString('utf8');
+    assert.match(xml, /^<\?xml/);
+    assert.match(xml, /android:viewportWidth="108"/);
+    const pathData = /android:pathData="([^"]+)"/.exec(xml)[1];
+    assert.match(pathData, /^[MLz0-9., ]+$/, 'only M, L and z');
+  }
+});
+
+test('the launcher foreground stays inside the adaptive icon safe zone', () => {
+  const xml = androidLauncherForeground();
+  const numbers = /android:pathData="([^"]+)"/.exec(xml)[1].match(/[\d.]+/g).map(Number);
+  for (const n of numbers) assert.ok(n >= 21 && n <= 87, String(n));
+  assert.match(androidLauncherBackground(), /#FF0A0A0A/);
 });

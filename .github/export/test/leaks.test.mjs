@@ -16,6 +16,35 @@ test('every shipped rule compiles, has an id, and is never global', () => {
   for (const e of config.exceptions) assert.ok(e.path && e.rule && e.reason);
 });
 
+test('a rule scoped by paths or exclude fires only where it applies', () => {
+  const compiled = compileRules({
+    rules: [
+      { id: 'w', category: 'infra', level: 'warn', pattern: 'the box', exclude: ['db/**'] },
+      { id: 'f', category: 'infra', level: 'fail', pattern: 'the box', paths: ['db/**'] },
+    ],
+  });
+  assert.deepEqual(lineHits(compiled, 'docs/a.md', 'on the box').map((h) => h.id), ['w']);
+  assert.deepEqual(lineHits(compiled, 'db/1.sql', 'on the box').map((h) => h.id), ['f']);
+});
+
+test('the Pi and the Mac mini fail in migrations and only warn elsewhere', () => {
+  const compiled = compileRules(config);
+  for (const line of ['-- runs on the Pi nightly', "-- the Pi's disk", '-- copied to the Mac mini']) {
+    const inMigration = lineHits(compiled, 'supabase/migrations/00001_x.sql', line);
+    assert.ok(inMigration.some((h) => h.level === 'fail'), line);
+    const inDocs = lineHits(compiled, 'docs/releases/1.0.0.md', line);
+    assert.ok(inDocs.length > 0 && inDocs.every((h) => h.level === 'warn'), line);
+  }
+});
+
+test('the iOS Info.plist is excused from the launchd plist rule, nothing else is', () => {
+  const compiled = compileRules(config);
+  const infoPlist = 'apps/mobile/ios/ClubLadder/Info.plist';
+  assert.deepEqual(lineHits(compiled, infoPlist, infoPlist), []);
+  assert.ok(lineHits(compiled, 'apps/mobile/ios/README.md', 'load com.example.job.plist').some((h) => h.id === 'plist'));
+  assert.ok(lineHits(compiled, 'scripts/a.sh', 'cp Info.plist x').some((h) => h.id === 'plist'));
+});
+
 test('infrastructure names and key shapes fail', () => {
   const compiled = compileRules(config);
   assert.ok(lineHits(compiled, 'a.ts', 'see https://app.polardev.org').some((h) => h.id === 'polardev'));

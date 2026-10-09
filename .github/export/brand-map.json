@@ -1,5 +1,5 @@
 {
-  "//": "Export-time brand replacement. Literal, case-sensitive, longest `from` first. `paths` limits a rule to those globs, `exclude` keeps it out of them. Never map DB identifiers (sfu_rec, sfss_purchase_url), the auth cookie name or package.json name fields. Prefer rewording a comment in source over adding a rule here.",
+  "//": "Export-time brand replacement. Literal, case-sensitive, longest `from` first. `paths` limits a rule to those globs, `exclude` keeps it out of them. Never map DB identifiers (sfu_rec, sfss_purchase_url), the auth cookie name or package.json name fields. Prefer rewording a comment in source over adding a rule here. `\"path\": true` also renames every exported path the rule matches (a Kotlin package directory, an Xcode target folder), so a file's location changes in step with the contents naming it.",
   "skip": [
     "package-lock.json",
     "apps/player/public/tesseract/**",
@@ -17,7 +17,9 @@
     {"from": "sfu-badminton", "to": "club-ladder", "note": "storage keys, file names"},
     {"from": "sfu_badmintonclub", "to": "clubladder", "note": "Instagram handle"},
     {"from": "sfubadminton.com", "to": "example.com", "note": "domain and every subdomain"},
-    {"from": "sfubadminton", "to": "clubladder", "note": "bare handle"},
+    {"from": "sfubadminton", "to": "clubladder", "note": "bare handle; the mobile application id com.sfubadminton.app, its Kotlin package directories and the app URL scheme", "path": true},
+    {"from": "SFUBadminton", "to": "ClubLadder", "note": "iOS XcodeGen project, target, Swift module and folder names", "path": true},
+    {"from": "SfuBadminton", "to": "ClubLadder", "note": "Android theme name"},
     {"from": "@sfu.ca", "to": "@example.org", "note": "fixture and placeholder addresses. Kept out of migrations so a real address in a comment is redacted, not laundered", "exclude": ["supabase/migrations/**"]},
     {"from": "https://athleticsandrecreation.its.sfu.ca/Program/GetProgramDetails?courseId=b20a05ca-2754-4f11-ba1a-4a2ced47446c", "to": "https://recreation.example.org/membership", "note": "default membership purchase link", "paths": ["packages/shared/src/utils/membership-settings.ts", "packages/shared/src/utils/__tests__/membership-settings.test.ts"]},
     {"from": "\\bsfu\\s*rec(?:reation)?\\b", "to": "\\bcampus\\s*rec(?:reation)?\\b", "note": "OCR classifier, so mapped receipt fixtures still classify", "paths": ["packages/shared/src/utils/receipt-method.ts"]},
@@ -36,6 +38,7 @@
     {"from": "@SFU.CA", "to": "@EXAMPLE.ORG", "note": "upper-case fixture address", "exclude": ["supabase/migrations/**"]},
     {"from": "@sfu", "to": "@example", "note": "partial-address search fixtures, applied after the full forms", "exclude": ["supabase/migrations/**"]},
     {"from": "your SFU email", "to": "your school email", "note": "landing copy"},
+    {"from": "an SFU email", "to": "a school email", "note": "release note on the sign-up placeholder"},
     {"from": "Burnaby Lake Sports Complex", "to": "Example Sports Complex", "note": "location placeholder"},
     {"from": "SFU alumni", "to": "Club alumni", "note": "role label fixture"},
     {"from": "SFU Gym", "to": "Example Gym", "note": "calendar fixture"},

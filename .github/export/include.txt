@@ -27,6 +27,14 @@ apps/bot/**
 apps/data-api/**
 !apps/data-api/docker-compose.example.yml
 
+# Native apps (Kotlin/Compose, Swift). No package.json, so not an npm workspace
+# and outside --verify. The brand map's path rules rename the package and
+# target folders. The icon script draws the club's tile, and the assets README
+# points at it and at the unexported assets/brand.
+apps/mobile/**
+!apps/mobile/ios/scripts/render-app-icon.swift
+!apps/mobile/assets/README.md
+
 # Packages
 packages/**
 
@@ -56,3 +64,4 @@ docs/design/**
 docs/project/README.md
 docs/project/0[1-4]-*.md
 docs/project/06-tech-stack.md
+docs/releases/**

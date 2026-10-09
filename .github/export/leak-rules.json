@@ -10,7 +10,15 @@
     "**/CLAUDE.md",
     "**/docker-compose*.yml",
     ".github/**",
-    "scripts/gen-db-types.profiles.json"
+    "scripts/gen-db-types.profiles.json",
+    "**/local.properties",
+    "**/Local.xcconfig",
+    "**/*.jks",
+    "**/*.keystore",
+    "**/*.p12",
+    "**/*.mobileprovision",
+    "**/GoogleService-Info*.plist",
+    "**/google-services.json"
   ],
   "denyAllow": [
     "**/.env.example"
@@ -44,8 +52,10 @@
     {"id": "resend-key", "category": "secret", "level": "fail", "pattern": "\\bre_[A-Za-z0-9]{8,}_[A-Za-z0-9]{12,}"},
     {"id": "jwt", "category": "secret", "level": "fail", "pattern": "\\beyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}"},
     {"id": "discord-token", "category": "secret", "level": "fail", "pattern": "\\b[MNO][A-Za-z\\d_-]{23,25}\\.[A-Za-z\\d_-]{6}\\.[A-Za-z\\d_-]{27,}\\b"},
-    {"id": "the-pi", "category": "infra", "level": "warn", "pattern": "\\bthe Pi\\b|\\bPi's\\b"},
-    {"id": "mac-mini", "category": "infra", "level": "warn", "pattern": "Mac mini", "flags": "i"},
+    {"id": "the-pi", "category": "infra", "level": "warn", "pattern": "\\bthe Pi\\b|\\bPi's\\b", "exclude": ["supabase/migrations/**"]},
+    {"id": "mac-mini", "category": "infra", "level": "warn", "pattern": "Mac mini", "flags": "i", "exclude": ["supabase/migrations/**"]},
+    {"id": "the-pi-migration", "category": "infra", "level": "fail", "pattern": "\\bthe Pi\\b|\\bPi's\\b", "paths": ["supabase/migrations/**"], "//": "fails in migrations only, so a whole-line comment naming the host is redacted; anywhere else the-pi warns"},
+    {"id": "mac-mini-migration", "category": "infra", "level": "fail", "pattern": "Mac mini", "flags": "i", "paths": ["supabase/migrations/**"], "//": "as the-pi-migration"},
     {"id": "cloudflare", "category": "infra", "level": "warn", "pattern": "cloudflare", "flags": "i"},
     {"id": "crontab", "category": "infra", "level": "warn", "pattern": "crontab", "flags": "i"},
     {"id": "brand-name", "category": "brand", "level": "fail", "pattern": "sfu[\\s_-]*badminton", "flags": "i"},
@@ -66,7 +76,9 @@
   ],
   "binaryAllow": [
     "apps/*/src/fonts/**",
-    "apps/player/public/tesseract/**"
+    "apps/player/public/tesseract/**",
+    "apps/mobile/android/app/src/main/res/font/*.ttf",
+    "apps/mobile/android/gradle/wrapper/gradle-wrapper.jar"
   ],
   "exceptions": [
     {"path": "apps/player/public/tesseract/**", "rule": "home-dir", "reason": "vendored Emscripten build output; the paths are the upstream build machine's, not ours"},
@@ -75,6 +87,7 @@
     {"path": "packages/shared/src/utils/member-identity.ts", "rule": "brand-word", "match": "^\\s*'sfu',\\s*$", "reason": "a reserved handle; it must match the v_reserved arrays in the migrations"},
     {"path": "supabase/migrations/00092_member_handle_and_number.sql", "rule": "brand-word", "match": "v_reserved TEXT\\[\\] := ARRAY\\[", "reason": "a reserved handle, mirrored in member-identity.ts"},
     {"path": "supabase/migrations/00235_backfill_handles_for_members_without_one.sql", "rule": "brand-word", "match": "v_reserved TEXT\\[\\] := ARRAY\\[", "reason": "a reserved handle, mirrored in member-identity.ts"},
+    {"path": "apps/mobile/**", "rule": "plist", "match": "\\bInfo\\.plist\\b", "reason": "the iOS app's own Info.plist and the lines naming it; the rule is for launchd job plists"},
     {"path": "package-lock.json", "rule": "email-domain", "reason": "third-party package author metadata written by npm"},
     {"path": "apps/*/src/lib/__tests__/auth-telemetry.test.ts", "rule": "email-domain", "reason": "a synthetic one-letter address the scrubber must redact"},
     {"path": "packages/shared/src/email/__tests__/unsubscribe.test.ts", "rule": "email-domain", "reason": "a synthetic one-letter address used as token input"},

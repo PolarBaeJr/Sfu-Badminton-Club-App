@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { compileRules } from '../lib/leaks.mjs';
@@ -62,4 +63,12 @@ test('the manifest matches the migration-manifest test algorithm', () => {
   const rollup = createHash('sha256').update(`00001 ${sha(a)}\n00002 ${sha(b)}\n`).digest('hex');
   assert.deepEqual(m, { count: 2, latest: '00002', rollup });
   assert.ok(formatManifest(m).endsWith('}\n'));
+});
+
+test('with the shipped rules, a migration comment naming the Pi is redacted', () => {
+  const shipped = compileRules(JSON.parse(readFileSync(new URL('../leak-rules.json', import.meta.url), 'utf8')));
+  const sql = 'SELECT 1;\n-- the cron runs on the Pi\n-- the Mac mini standby\n-- a plain note\n';
+  const { text, redacted } = redactMigration(shipped, PATH, sql);
+  assert.equal(redacted, 2);
+  assert.equal(text, `SELECT 1;\n${REDACTED}\n${REDACTED}\n-- a plain note\n`);
 });
