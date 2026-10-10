@@ -17,6 +17,11 @@ use crate::{base64, url};
 pub const READER_ROLE: &str = "data_api_reader";
 pub const DEFAULT_PORT: u16 = 8080;
 
+/// How many PostgREST calls may be in flight at once (upstream.rs).
+pub const UPSTREAM_CONCURRENCY_ENV: &str = "DATA_API_UPSTREAM_CONCURRENCY";
+pub const DEFAULT_UPSTREAM_CONCURRENCY: usize = 16;
+pub const MAX_UPSTREAM_CONCURRENCY: usize = 1024;
+
 #[derive(Clone)]
 pub struct Config {
     /// SUPABASE_URL, trimmed, trailing slashes removed.
@@ -24,6 +29,7 @@ pub struct Config {
     pub anon_key: String,
     pub db_jwt: String,
     pub port: u16,
+    pub upstream_concurrency: usize,
 }
 
 impl std::fmt::Debug for Config {
@@ -31,6 +37,7 @@ impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
             .field("port", &self.port)
+            .field("upstream_concurrency", &self.upstream_concurrency)
             .finish_non_exhaustive()
     }
 }
@@ -185,13 +192,30 @@ pub fn load(env: &dyn Fn(&str) -> Option<String>) -> Result<Config, String> {
     }
 
     let port = port_from(env("PORT").as_deref())?;
+    let upstream_concurrency = upstream_concurrency_from(env(UPSTREAM_CONCURRENCY_ENV).as_deref())?;
 
     Ok(Config {
         supabase_url: raw_url.trim_end_matches('/').to_string(),
         anon_key: js_trim(&env("SUPABASE_ANON_KEY").unwrap_or_default()).to_string(),
         db_jwt,
         port,
+        upstream_concurrency,
     })
+}
+
+/// `raw?.trim() ? Number(raw) : 16`, then an integer from 1 to 1024.
+pub fn upstream_concurrency_from(raw: Option<&str>) -> Result<usize, String> {
+    let n = match raw {
+        Some(v) if !js_trim(v).is_empty() => js_to_number(v),
+        _ => DEFAULT_UPSTREAM_CONCURRENCY as f64,
+    };
+    if n.fract() == 0.0 && (1.0..=MAX_UPSTREAM_CONCURRENCY as f64).contains(&n) {
+        Ok(n as usize)
+    } else {
+        Err(format!(
+            "{UPSTREAM_CONCURRENCY_ENV} must be an integer between 1 and {MAX_UPSTREAM_CONCURRENCY}"
+        ))
+    }
 }
 
 /// `env.PORT?.trim() ? Number(env.PORT) : 8080`, then an integer in range.

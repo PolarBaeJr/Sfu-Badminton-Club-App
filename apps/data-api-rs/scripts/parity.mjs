@@ -29,7 +29,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildCases } from './parity-cases.mjs';
+import { PARITY_UPSTREAM_CONCURRENCY, buildCases } from './parity-cases.mjs';
 import { rpcAnswers } from './parity-fixtures.mjs';
 
 const rustRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -80,11 +80,30 @@ class FakeUpstream {
     this.keys = new Map();
     this.answers = rpcAnswers();
     this.overrides = {};
+    // fn -> { promise, release }: a call to a held function is recorded, then
+    // waits for the release before it is answered (the concurrent cases).
+    this.holds = new Map();
+    this.inFlight = 0;
+    this.maxInFlight = 0;
   }
 
   reset(overrides = {}) {
     this.calls = [];
     this.overrides = overrides;
+    this.maxInFlight = this.inFlight;
+  }
+
+  hold(fn) {
+    let release;
+    const promise = new Promise((resolve) => {
+      release = resolve;
+    });
+    this.holds.set(fn, { promise, release });
+  }
+
+  releaseAll() {
+    for (const { release } of this.holds.values()) release();
+    this.holds.clear();
   }
 
   grant(key, row) {
@@ -102,11 +121,20 @@ class FakeUpstream {
     this.port = this.server.address().port;
   }
 
-  answer(req, res, raw) {
+  async answer(req, res, raw) {
     const fn = (req.url ?? '').split('/rest/v1/rpc/')[1] ?? '';
     const headers = UPSTREAM_HEADERS.map((h) => `${h}: ${req.headers[h] ?? '(none)'}`).join('\n');
     this.calls.push(`${req.method} ${fn} ${raw}\n${headers}`);
+    // In flight until the answer is written or the service gives up on it.
+    this.inFlight += 1;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    res.once('close', () => {
+      this.inFlight -= 1;
+    });
+    const held = this.holds.get(fn);
+    if (held) await held.promise;
     const reply = (status, text) => {
+      if (res.destroyed || res.writableEnded) return;
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(text);
     };
@@ -174,6 +202,8 @@ class Service {
         SUPABASE_ANON_KEY: 'parity-anon-key',
         DATA_API_DB_JWT: READER_JWT,
         PORT: String(this.port),
+        // A small cap, so the concurrent cases can fill it with a few requests.
+        DATA_API_UPSTREAM_CONCURRENCY: String(PARITY_UPSTREAM_CONCURRENCY),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -226,7 +256,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---- raw HTTP ----
 
-function rawRequest(port, bytes) {
+function rawRequest(port, bytes, timeoutMs = 5000) {
   return new Promise((resolve) => {
     const socket = net.connect(port, '127.0.0.1');
     const chunks = [];
@@ -238,7 +268,7 @@ function rawRequest(port, bytes) {
       socket.destroy();
       resolve({ raw: Buffer.concat(chunks), note });
     };
-    const timer = setTimeout(() => finish('timeout'), 5000);
+    const timer = setTimeout(() => finish('timeout'), timeoutMs);
     socket.on('data', (c) => chunks.push(c));
     socket.on('end', () => finish('closed'));
     socket.on('error', (e) => finish(`error ${e.code}`));
@@ -398,7 +428,7 @@ function requestBytes(step, ctx) {
 
 async function runStep(service, fake, step, bytes) {
   fake.reset(step.upstream);
-  const response = await rawRequest(service.port, bytes);
+  const response = await rawRequest(service.port, bytes, step.clientTimeoutMs);
   const parsed = parseResponse(response.raw, step.method ?? 'GET');
   parsed.note = response.note;
   const logs = await service.drainLogs();
@@ -423,6 +453,71 @@ async function runBurst(service, fake, steps, bytesList) {
   return { outs, tail: { logs: logs.map(normaliseLog).join('\n'), calls: fake.calls.join('\n\n') } };
 }
 
+/**
+ * A concurrent case: the `warm` steps one after another, then the fake holds
+ * the `hold` functions, the `requests` go out together (each `at` ms after the
+ * start), and the holds are released `release` ms after the start (or once
+ * every request has answered). Per request it keeps the response and the
+ * wall-clock time it took; the log lines and upstream calls are compared once
+ * for the whole run, sorted, since concurrent requests finish in any order.
+ */
+async function runConcurrent(service, fake, kase, warmBytes, requestBytesList) {
+  fake.reset(kase.upstream);
+  const warm = [];
+  for (const [index, step] of (kase.warm ?? []).entries()) {
+    const response = await rawRequest(service.port, warmBytes[index]);
+    const parsed = parseResponse(response.raw, step.method ?? 'GET');
+    parsed.note = response.note;
+    warm.push(outcome(parsed, [], [], step.normalise));
+  }
+  await service.drainLogs();
+  fake.reset(kase.upstream);
+  for (const fn of kase.hold ?? []) fake.hold(fn);
+  const started = Date.now();
+  const releaseTimer = kase.release === undefined ? undefined : setTimeout(() => fake.releaseAll(), kase.release);
+  const pending = kase.requests.map(async (step, index) => {
+    if (step.at) await sleep(step.at);
+    const sent = Date.now();
+    const response = await rawRequest(service.port, requestBytesList[index], kase.clientTimeoutMs ?? 5000);
+    const tookMs = Date.now() - sent;
+    const parsed = parseResponse(response.raw, step.method ?? 'GET');
+    parsed.note = response.note;
+    return { out: outcome(parsed, [], [], step.normalise), tookMs };
+  });
+  const answered = await Promise.all(pending);
+  clearTimeout(releaseTimer);
+  fake.releaseAll();
+  const logs = await service.drainLogs();
+  const calls = [...fake.calls].sort();
+  const callsTo = (fn) => calls.filter((c) => c.startsWith(`POST ${fn} `)).length;
+  return {
+    warm,
+    outs: answered.map((a) => a.out),
+    tail: { logs: logs.map(normaliseLog).sort().join('\n'), calls: calls.join('\n\n') },
+    seen: {
+      statuses: answered.map((a) => Number(a.out.status.split(' ')[1])),
+      bodies: answered.map((a) => a.out.body),
+      retryAfters: answered.map((a) => a.out.retryAfter),
+      tookMs: answered.map((a) => a.tookMs),
+      totalMs: Date.now() - started,
+      callsTo,
+      maxInFlight: fake.maxInFlight,
+      logs: logs.map((l) => JSON.parse(l)),
+    },
+  };
+}
+
+/** What a concurrent case observed that must not differ between the services. */
+function countsOf(seen, kase) {
+  const fns = [...new Set([...(kase.hold ?? []), ...(kase.countFns ?? [])])];
+  return JSON.stringify({ maxInFlight: seen.maxInFlight, calls: Object.fromEntries(fns.map((fn) => [fn, seen.callsTo(fn)])) });
+}
+
+/** Upstream calls in one step's comparable text, the key check left out. */
+function readCalls(calls) {
+  return [...calls.matchAll(/^POST (\S+) /gm)].map((m) => m[1]).filter((fn) => fn !== 'data_api_verify_key');
+}
+
 function newKey() {
   return `sfubad_${randomBytes(32).toString('base64url')}`;
 }
@@ -439,10 +534,17 @@ function contextFor(fakes, kase) {
     // public address from the right of X-Forwarded-For behind a private peer.
     address: `2001:db8::${caseCounter.toString(16)}`,
     newKey,
+    // A second consumer with its own key, for the cache isolation cases.
+    key2: newKey(),
+    consumer2: `dddddddd-0000-4000-8000-${caseCounter.toString(16).padStart(12, '0')}`,
+    keyId2: `22222222-2222-4333-8444-${caseCounter.toString(16).padStart(12, '0')}`,
   };
   const scopes = kase.scopes ?? ALL_SCOPES;
   if (scopes !== null) {
-    for (const fake of fakes) fake.grant(ctx.key, { consumer_id: ctx.consumer, key_id: ctx.keyId, scopes });
+    for (const fake of fakes) {
+      fake.grant(ctx.key, { consumer_id: ctx.consumer, key_id: ctx.keyId, scopes });
+      fake.grant(ctx.key2, { consumer_id: ctx.consumer2, key_id: ctx.keyId2, scopes });
+    }
   }
   return ctx;
 }
@@ -505,6 +607,41 @@ async function main() {
         if (verbose) console.log(`${caseFailed ? 'FAIL' : 'same'}  ${kase.name}`);
         continue;
       }
+      if (kase.concurrent) {
+        const warmBytes = (kase.warm ?? []).map((step) => requestBytes(step, ctx));
+        const bytesList = kase.requests.map((step) => requestBytes(step, ctx));
+        const runs = [];
+        for (const [service, fake] of [[ts, fakes[0]], [rs, fakes[1]]]) runs.push(await runConcurrent(service, fake, kase, warmBytes, bytesList));
+        requests += warmBytes.length + bytesList.length;
+        const [tsRun, rsRun] = runs;
+        for (const match of tsRun.tail.calls.matchAll(/^POST (\S+) /gm)) coverage.set(match[1], (coverage.get(match[1]) ?? 0) + 1);
+        const pairs = [...tsRun.warm.map((o, i) => [`warm ${i}`, o, rsRun.warm[i]]), ...tsRun.outs.map((o, i) => [i, o, rsRun.outs[i]])];
+        for (const [index, tsOut, rsOut] of pairs) {
+          const diff = differences(tsOut, rsOut);
+          if (diff.length > 0) {
+            caseFailed = { kase, index, diff, tsOut, rsOut };
+            break;
+          }
+        }
+        const tailDiff = ['logs', 'calls'].filter((f) => tsRun.tail[f] !== rsRun.tail[f]);
+        if (!caseFailed && tailDiff.length > 0) caseFailed = { kase, index: 'all', diff: tailDiff, tsOut: tsRun.tail, rsOut: rsRun.tail };
+        const [tsCounts, rsCounts] = [countsOf(tsRun.seen, kase), countsOf(rsRun.seen, kase)];
+        if (!caseFailed && tsCounts !== rsCounts) {
+          caseFailed = { kase, index: 'all', diff: [`counts differ: typescript ${tsCounts}, rust ${rsCounts}`], tsOut: {}, rsOut: {} };
+        }
+        // The case's claim has to hold on each service, or the comparison
+        // proved nothing about the cap or the single flight.
+        for (const [name, run] of [['typescript', tsRun], ['rust', rsRun]]) {
+          if (!caseFailed && !kase.expect(run.seen)) {
+            const { statuses, tookMs, maxInFlight } = run.seen;
+            caseFailed = { kase, index: 'all', diff: [`${name}: expected ${kase.expectText}; got statuses ${statuses.join(' ')}, took ${tookMs.join('/')} ms, ${countsOf(run.seen, kase)}, max in flight ${maxInFlight}`], tsOut: {}, rsOut: {} };
+          }
+        }
+        if (caseFailed) failed.push(caseFailed);
+        else same += 1;
+        if (verbose) console.log(`${caseFailed ? 'FAIL' : 'same'}  ${kase.name}`);
+        continue;
+      }
       for (const [index, step] of steps.entries()) {
         // Built once, so a body that reads the clock is the same for both.
         const bytes = requestBytes(step, ctx);
@@ -512,6 +649,15 @@ async function main() {
         const rsOut = await runStep(rs, fakes[1], step, bytes);
         requests += 1;
         for (const match of tsOut.calls.matchAll(/^POST (\S+) /gm)) coverage.set(match[1], (coverage.get(match[1]) ?? 0) + 1);
+        // A cache case names the reads each step must have sent (the key
+        // check aside), so a step served from the cache shows as none.
+        if (step.reads !== undefined) {
+          const got = readCalls(tsOut.calls);
+          if (JSON.stringify(got) !== JSON.stringify(step.reads)) {
+            caseFailed = { kase, index, diff: [`expected reads [${step.reads.join(', ')}], typescript sent [${got.join(', ')}]`], tsOut, rsOut };
+            break;
+          }
+        }
         const diff = differences(tsOut, rsOut);
         if (diff.length === 0) continue;
         const accept = [kase.accept, ...ALWAYS_ACCEPTED].find((a) => a && a.check(tsOut, rsOut, diff));

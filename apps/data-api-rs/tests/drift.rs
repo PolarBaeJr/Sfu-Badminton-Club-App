@@ -75,3 +75,71 @@ fn the_version_is_the_typescript_service_version() {
         serde_json::from_str(&common::read_repo_file("apps/data-api/package.json")).unwrap();
     assert_eq!(ts["version"].as_str(), Some(data_api_rs::VERSION.as_str()));
 }
+
+/// The `name: VALUE,` lines of one `{ ... }` block in a TypeScript file.
+fn ts_table(source: &str, opening: &str) -> Vec<(String, String)> {
+    let start = source.find(opening).expect(opening) + opening.len();
+    let end = start + source[start..].find("};").expect("table end");
+    source[start..end]
+        .lines()
+        .filter_map(|line| {
+            let (name, value) = line.trim().trim_end_matches(',').split_once(':')?;
+            Some((name.trim().to_string(), value.trim().to_string()))
+        })
+        .collect()
+}
+
+#[test]
+fn the_read_cache_ttls_and_invalidation_list_are_the_typescript_services() {
+    use data_api_rs::rpc_cache::{
+        LIVE_TTL_MS, REGISTRATION_READS, RPC_CACHE_MAX_BYTES, RPC_CACHE_MAX_ENTRIES, RPC_TTL_MS,
+        SETTLED_TTL_MS,
+    };
+    let ts = common::read_repo_file("apps/data-api/src/rpc-cache.ts");
+    let table = ts_table(&ts, "RPC_TTL_MS: Readonly<Record<string, number>> = {");
+    let named = |value: &str| match value {
+        "SETTLED_TTL_MS" => SETTLED_TTL_MS,
+        "LIVE_TTL_MS" => LIVE_TTL_MS,
+        other => panic!("unexpected TTL {other}"),
+    };
+    let ts_ttls: Vec<(String, i64)> = table.iter().map(|(n, v)| (n.clone(), named(v))).collect();
+    let rs_ttls: Vec<(String, i64)> = RPC_TTL_MS
+        .iter()
+        .map(|(n, v)| (n.to_string(), *v))
+        .collect();
+    assert_eq!(rs_ttls, ts_ttls);
+    assert!(ts.contains("export const SETTLED_TTL_MS = 60_000;"));
+    assert!(ts.contains("export const LIVE_TTL_MS = 30_000;"));
+    assert!(ts.contains(&format!(
+        "export const RPC_CACHE_MAX_ENTRIES = {};",
+        RPC_CACHE_MAX_ENTRIES
+    )));
+    assert_eq!(RPC_CACHE_MAX_BYTES, 32 * 1024 * 1024);
+    assert!(ts.contains("export const RPC_CACHE_MAX_BYTES = 32 * 1024 * 1024;"));
+    for read in REGISTRATION_READS {
+        assert!(ts.contains(&format!("'{read}'")), "{read}");
+    }
+    let list = ts
+        .split("REGISTRATION_READS: readonly string[] = [")
+        .nth(1)
+        .and_then(|s| s.split(']').next())
+        .unwrap();
+    assert_eq!(list.matches("'data_api_").count(), REGISTRATION_READS.len());
+}
+
+#[test]
+fn the_upstream_concurrency_variable_is_the_typescript_services() {
+    use data_api_rs::config::{
+        DEFAULT_UPSTREAM_CONCURRENCY, MAX_UPSTREAM_CONCURRENCY, UPSTREAM_CONCURRENCY_ENV,
+    };
+    let ts = common::read_repo_file("apps/data-api/src/config.ts");
+    assert!(ts.contains(&format!(
+        "UPSTREAM_CONCURRENCY_ENV = '{UPSTREAM_CONCURRENCY_ENV}'"
+    )));
+    assert!(ts.contains(&format!(
+        "DEFAULT_UPSTREAM_CONCURRENCY = {DEFAULT_UPSTREAM_CONCURRENCY};"
+    )));
+    assert!(ts.contains(&format!(
+        "MAX_UPSTREAM_CONCURRENCY = {MAX_UPSTREAM_CONCURRENCY};"
+    )));
+}

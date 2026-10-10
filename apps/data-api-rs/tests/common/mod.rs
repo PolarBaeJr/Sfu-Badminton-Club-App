@@ -62,6 +62,33 @@ pub struct Fake {
     pub fail_next: Option<u16>,
     pub fail_fn: Option<(String, u16)>,
     pub rpcs: HashMap<String, Rpc>,
+    /// Calls to these functions wait until the sender says true.
+    pub holds: HashMap<String, tokio::sync::watch::Receiver<bool>>,
+    pub in_flight: usize,
+    pub max_in_flight: usize,
+}
+
+/// A hold on one function of the fake: every call to it waits for release.
+pub struct Hold {
+    fn_name: String,
+    fake: Arc<Mutex<Fake>>,
+    tx: tokio::sync::watch::Sender<bool>,
+}
+
+impl Hold {
+    pub fn release(self) {
+        self.fake.lock().unwrap().holds.remove(&self.fn_name);
+        let _ = self.tx.send(true);
+    }
+}
+
+/// Counts a call in flight until it is dropped (answered, or abandoned).
+struct InFlight(Arc<Mutex<Fake>>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().in_flight -= 1;
+    }
 }
 
 fn reply(status: u16, body: String) -> Response<Full<Bytes>> {
@@ -94,12 +121,22 @@ async fn fake_postgrest(
         .unwrap_or_default();
     let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
 
-    let mut f = fake.lock().unwrap();
-    f.calls.push(Call {
-        fn_name: fn_name.clone(),
-        body: body.clone(),
-        headers,
-    });
+    let held = {
+        let mut f = fake.lock().unwrap();
+        f.calls.push(Call {
+            fn_name: fn_name.clone(),
+            body: body.clone(),
+            headers,
+        });
+        f.in_flight += 1;
+        f.max_in_flight = f.max_in_flight.max(f.in_flight);
+        f.holds.get(&fn_name).cloned()
+    };
+    let _in_flight = InFlight(Arc::clone(&fake));
+    if let Some(mut rx) = held {
+        let _ = rx.wait_for(|released| *released).await;
+    }
+    let f = fake.lock().unwrap();
     if let Some(status) = f.fail_next {
         return Ok(reply(
             status,
@@ -181,6 +218,11 @@ impl Drop for Harness {
 }
 
 pub async fn start() -> Harness {
+    start_with(data_api_rs::upstream::TIMEOUT, 16).await
+}
+
+/// The harness with this upstream timeout and concurrency cap.
+pub async fn start_with(timeout: std::time::Duration, concurrency: usize) -> Harness {
     let fake = Arc::new(Mutex::new(Fake::default()));
     fake.lock().unwrap().rpcs.insert(
         "data_api_active_season".into(),
@@ -210,10 +252,12 @@ pub async fn start() -> Harness {
     let clock = Arc::new(AtomicI64::new(START));
     let logs = Arc::new(Mutex::new(Vec::new()));
     let deps = Deps {
-        upstream: Arc::new(Upstream::new(
+        upstream: Arc::new(Upstream::with_options(
             &format!("http://{fake_addr}"),
             "anon-key-value",
             "reader-jwt-value",
+            timeout,
+            concurrency,
         )),
         version: "0.1.0".to_string(),
         now: {
@@ -329,6 +373,39 @@ impl Harness {
 
     pub fn fail_fn(&self, failing: Option<(&str, u16)>) {
         self.fake.lock().unwrap().fail_fn = failing.map(|(f, s)| (f.to_string(), s));
+    }
+
+    /// Holds every call to `fn_name` (recorded first) until the hold is released.
+    pub fn hold(&self, fn_name: &str) -> Hold {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        self.fake
+            .lock()
+            .unwrap()
+            .holds
+            .insert(fn_name.to_string(), rx);
+        Hold {
+            fn_name: fn_name.to_string(),
+            fake: Arc::clone(&self.fake),
+            tx,
+        }
+    }
+
+    pub fn max_in_flight(&self) -> usize {
+        self.fake.lock().unwrap().max_in_flight
+    }
+
+    /// A GET on its own task, for requests that must be in flight together.
+    pub fn spawn_get(&self, path: &str, key: &str) -> JoinHandle<u16> {
+        let client = self.client();
+        let uri = format!("{}{path}", self.base);
+        let auth = format!("Bearer {key}");
+        tokio::spawn(async move {
+            let req = Request::get(uri)
+                .header("authorization", auth)
+                .body(Full::new(Bytes::new()))
+                .unwrap();
+            client.request(req).await.unwrap().status().as_u16()
+        })
     }
 
     pub fn calls(&self) -> Vec<Call> {

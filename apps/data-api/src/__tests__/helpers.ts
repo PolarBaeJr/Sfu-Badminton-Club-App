@@ -47,6 +47,8 @@ export interface Harness {
   rpcs: Record<string, (body: Record<string, unknown>) => unknown>;
   /** Makes only this function fail, leaving the others answering. */
   failFn: { fn: string; status: number } | null;
+  /** Holds every call to `fn` until release() (the call is recorded first). */
+  hold(fn: string): { release(): void };
   close(): Promise<void>;
 }
 
@@ -66,12 +68,28 @@ export async function startHarness(): Promise<Harness> {
     failNext: null as { status: number } | null,
     rpcs: { data_api_active_season: () => [] } as Harness['rpcs'],
     failFn: null as Harness['failFn'],
+    holds: new Map<string, Promise<void>>(),
+    hold(fn: string) {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      this.holds.set(fn, held);
+      return {
+        release: () => {
+          this.holds.delete(fn);
+          release();
+        },
+      };
+    },
   };
 
   const mockFetch: FetchLike = async (input, init) => {
     const fn = input.split('/rest/v1/rpc/')[1] ?? '';
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     h.calls.push({ fn, body, headers: init.headers as Record<string, string> });
+    const held = h.holds.get(fn);
+    if (held) await held;
     if (h.failNext) {
       const { status } = h.failNext;
       return new Response(JSON.stringify({ message: 'boom', details: body }), { status });

@@ -68,6 +68,7 @@ TypeScript service, minted the same way (`apps/data-api/README.md`, "Minting
 | `SUPABASE_ANON_KEY` | sent as the `apikey` header Kong requires |
 | `DATA_API_DB_JWT` | a long-lived JWT with `role: data_api_reader` |
 | `PORT` | optional, default `8080` |
+| `DATA_API_UPSTREAM_CONCURRENCY` | optional, default `16`: the most PostgREST calls in flight at once, 1 to 1024 |
 
 It refuses to start if any of the first three is missing, or if
 `DATA_API_DB_JWT` does not decode to `role: data_api_reader`.
@@ -153,8 +154,32 @@ of the accepted ones below, if a write function was never reached (a fixture
 refused before the upstream would compare equal and prove nothing), or if the
 generated pages are stale.
 
-**Result, 2026-10-09:** 1383 cases (1690 requests to each service), 1339
-identical, 44 accepted differences in 13 kinds, 0 failures. The cases cover
+Both services run with `DATA_API_UPSTREAM_CONCURRENCY=2`, so a few requests
+fill the cap. Two more kinds of case test the read cache and the cap:
+
+- **Cache steps** name the upstream reads each step must have caused
+  (`reads`), so a step answered from the cache shows none: the same request
+  spelled differently, two consumers on one route, a registration (also a
+  failed one) dropping that consumer's entrant and signup entries and nothing
+  else, and a prediction write dropping nothing.
+- **Concurrent cases** send their requests together while the fake PostgREST
+  holds one function, then release it. The answers are compared in order and
+  the log lines and upstream calls sorted; the calls per function and the most
+  calls in flight at once must match too, and the case's own claim must hold
+  on each service: never more than the cap in flight; a request queued behind
+  two that hold the slots until their deadline answers `503 unavailable`
+  (status 0 in the log, no Retry-After) about 5 seconds after it was sent, not
+  5 seconds after it got a slot; one key check for eight concurrent requests
+  on a new key, and one shared failure that is not kept; one read for eight
+  concurrent identical misses.
+
+**Result, 2026-10-09 (0.3.1):** 1393 cases (1744 requests to each service),
+1349 identical, 44 accepted differences in 12 kinds, 0 failures, run in a Node
+26 container. Under Node 24.19 one target case, `//xn--abc/health`, fails:
+that release's URL parser refuses the label (the TypeScript answers `503`)
+where the Node 24 that made `tests/vectors/targets.json` and the Rust both
+route it to `/health`. release/1.1.0 before 0.3.1 fails the same case the same
+way under Node 24.19; it does not involve the cache or the cap. The cases cover
 every route under every method; every keyed route with no key, an unknown key,
 a missing scope, the bare scope and no scopes; 17 odd `Authorization`
 headers; every query parameter with valid and invalid values; every path
@@ -249,12 +274,24 @@ machine; they are not a capacity figure for any host.
 As `apps/data-api/README.md`, "Behaviour worth knowing", with these
 implementation notes:
 
-- **Upstream connections are pooled without a cap** and closed after 4 idle
+- **Upstream connections are pooled without an idle cap** and closed after 4 idle
   seconds. A cap of 4 idle connections per host made every request beyond the
   fourth open and close its own connection; under load the sockets in
   TIME_WAIT ran the host out of ports and requests failed `503`.
+- **The concurrency cap** (`DATA_API_UPSTREAM_CONCURRENCY`) is a fair tokio
+  semaphore around every call, the key check included, acquired under the same
+  5 second deadline as the call itself and held until its body has been read.
+  The pool above keeps the connections; the semaphore bounds how many are busy.
+- **Single flight** in both caches is a `watch` channel per key: the first
+  request spawns the call on its own task (so a client that disconnects does
+  not cancel it for the others), the rest wait on the channel.
 - **One thread.** The runtime is tokio's current-thread scheduler, like Node's
-  one event loop, so ordering inside the caches and rate limits matches.
+  one event loop, so ordering inside the caches and rate limits matches. The
+  multi-thread scheduler is a small change (every piece of shared state is
+  already behind a lock, as `tokio::spawn` requires), and was measured for
+  0.3.1 with the benchmark below: median latency three to eight times worse in
+  every scenario (cached read 0.28 to 1.67 ms, uncached 1.08 to 8.22 ms, write
+  0.57 to 2.61 ms) and throughput down by as much, so it was not adopted.
 - **JSON nesting.** A write body nested deeper than 64 levels is still parsed
   to the end (so `400 body` and shape answers match `JSON.parse`), but the
   containers below that depth are kept empty; no shape check reads that deep.

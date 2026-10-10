@@ -114,3 +114,23 @@ fn jwt_role_reads_the_role_claim_without_verifying() {
     assert_eq!(config::jwt_role("a.b"), None);
     assert_eq!(config::jwt_role("a.!!!.c"), None);
 }
+
+#[test]
+fn takes_the_upstream_concurrency_cap_from_the_environment_and_defaults_it_to_16() {
+    let cap = |raw: Option<&str>| {
+        load(&base(), &[("DATA_API_UPSTREAM_CONCURRENCY", raw)]).map(|c| c.upstream_concurrency)
+    };
+    assert_eq!(cap(None), Ok(16));
+    assert_eq!(cap(Some("  ")), Ok(16));
+    assert_eq!(cap(Some("4")), Ok(4));
+    assert_eq!(cap(Some(" 1024 ")), Ok(1024));
+    // Number('0x10') is 16, as the TypeScript service reads it.
+    assert_eq!(cap(Some("0x10")), Ok(16));
+    for bad in ["0", "-1", "1025", "2.5", "many", "1e9"] {
+        assert_eq!(
+            cap(Some(bad)),
+            Err("DATA_API_UPSTREAM_CONCURRENCY must be an integer between 1 and 1024".to_string()),
+            "{bad}"
+        );
+    }
+}

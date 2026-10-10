@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use data_api_rs::json::Out;
-use data_api_rs::{Deps, VERSION, config, healthcheck, serve, upstream::Upstream};
+use data_api_rs::upstream::{self, Upstream};
+use data_api_rs::{Deps, VERSION, config, healthcheck, serve};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -37,7 +38,10 @@ fn main() -> ExitCode {
     };
 
     // One thread: the work is waiting on PostgREST, and every extra worker is
-    // memory. Blocking work is limited to the resolver's getaddrinfo.
+    // memory. Blocking work is limited to the resolver's getaddrinfo. The
+    // multi-thread scheduler was measured in 0.3.1 (scripts/bench.mjs, 16 in
+    // flight): three to eight times slower at the median on every scenario,
+    // so it stays on one.
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .max_blocking_threads(2)
@@ -82,10 +86,12 @@ fn main() -> ExitCode {
         };
 
         let deps = Deps {
-            upstream: Arc::new(Upstream::new(
+            upstream: Arc::new(Upstream::with_options(
                 &config.supabase_url,
                 &config.anon_key,
                 &config.db_jwt,
+                upstream::TIMEOUT,
+                config.upstream_concurrency,
             )),
             version,
             now: Arc::new(now_ms),

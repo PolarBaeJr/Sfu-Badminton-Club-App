@@ -136,7 +136,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <h3 id="health">GET /health</h3>
 <p>No key. For uptime checks. <code>version</code> is the service's release version.</p>
 <pre><code>curl -s https://api.sfubadminton.com/health</code></pre>
-<pre><code>{ "ok": true, "version": "0.3.0" }</code></pre>
+<pre><code>{ "ok": true, "version": "0.3.1" }</code></pre>
 
 <h3 id="players">GET /v1/players</h3>
 <p>Requires <code>players:read</code>. Every player on the roster, one object each, with their <strong>lifetime</strong> ratings and counters.</p>
@@ -388,7 +388,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <li><strong>A matchup is two unordered sides.</strong> Sending A and B against C and D is the same matchup as D and C against B and A. A prediction for a matchup you already predicted replaces the earlier one, and <code>probability</code> is always the chance of the side you sent as <code>side_a</code>, so swap it to <code>1 - p</code> if you swap the sides.</li>
 <li><strong>Only published players.</strong> Every ref must name a member who passes the history test above. A member who later opts out or asks for deletion disappears from every prediction at once, and their predictions are erased when their account is.</li>
 <li><strong>Predictions never change ratings.</strong> Nothing that rates a match or builds a statistic reads them. A member may be shown a prediction in the club app only for a challenge they play in, labelled as a prediction, with the <code>model</code> name and <code>made_at</code>, but never which consumer made it. When two consumers predict the same matchup, members see the newer one.</li>
-<li><strong>One request, whatever the batch.</strong> A batch of 100 spends one unit of the key's rate budget. Writes are never served from the 15-second cache.</li>
+<li><strong>One request, whatever the batch.</strong> A batch of 100 spends one unit of the key's rate budget. Writes are never served from the read cache.</li>
 <li>Every write and delete is recorded against the key, with counts and no players.</li>
 </ul>
 
@@ -428,7 +428,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 <li>The limits are enforced per server process, and the club's network edge applies its own limits in front of them. Do not rely on the exact figures; honour <code>Retry-After</code>.</li>
 </ul>
 <p>The data changes slowly. Pull the roster on a schedule measured in hours, and keep match history in sync with <code>updated_since</code> rather than re-reading it.</p>
-<p>Responses may be up to 15 seconds old: the server reuses a recent answer to the same request rather than asking the database again. <code>generated_at</code> is when the response was sent, not when the data was read.</p>
+<p>Responses may be up to 60 seconds old: the server reuses a recent answer to the same request from the same consumer rather than asking the database again. The roster, matches, ratings and seasons may be up to 60 seconds old; tournaments, sessions and club events up to 30 seconds. A registration import refreshes that consumer's tournament entrant lists and event signups at once. A member's opt-out or deletion request reaches the feed within the same 60 seconds. <code>generated_at</code> is when the response was sent, not when the data was read.</p>
 
 <h2 id="versioning">Versioning and stability</h2>
 <p>The <code>/v1</code> prefix is the contract. Within it, new fields and new routes may be added, and existing fields will not be removed or change meaning. Ignore fields you do not recognise. A breaking change becomes <code>/v2</code>. <code>/health</code> reports the running version. See the <a href="/changelog">changelog</a> for what changed in each version.</p>
