@@ -8,6 +8,17 @@ import { PAGE_STYLE } from './docs-page.js';
 
 const VERSIONS: { version: string; date: string; title: string; items: string[] }[] = [
   {
+    version: '0.3.1',
+    date: '2026-10-09',
+    title: 'Freshness',
+    items: [
+      'Responses may now be up to 60 seconds old, up from 15: the roster, matches, ratings and seasons up to 60 seconds, tournaments, sessions and club events up to 30. A member\'s opt-out or deletion request reaches the feed within the same 60 seconds.',
+      'A recent answer is reused only for the same consumer, and the same request written differently (an upper-case id, a timestamp with or without seconds) counts as the same request.',
+      'A registration import refreshes your tournament entrant lists and event signups at once. A prediction write changes nothing you read.',
+      'Under heavy load a request may wait briefly for the database; one that cannot be answered within 5 seconds is a <code>503</code> as before.',
+    ],
+  },
+  {
     version: '0.3.0',
     date: '2026-10-09',
     title: 'Registrations',

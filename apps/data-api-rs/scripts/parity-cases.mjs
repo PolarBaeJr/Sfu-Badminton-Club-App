@@ -15,6 +15,17 @@
 // upstream calls once for the whole run, and `expect` must hold for the
 // TypeScript statuses, so a rate-limit case cannot pass without the limiter
 // having fired.
+// A step may name `reads`, the functions it must have called upstream beyond
+// the key check ([] for an answer from the read cache).
+// A `concurrent` case runs its `warm` steps, holds the `hold` functions in the
+// fake, sends its `requests` together (each `at` ms in), releases the holds at
+// `release` ms (or once all have answered), and `expect` must hold on BOTH
+// services: statuses, bodies, per-request time, calls per function, the most
+// calls the fake saw in flight at once. Each service runs with
+// DATA_API_UPSTREAM_CONCURRENCY=PARITY_UPSTREAM_CONCURRENCY.
+
+/** The cap both services run with in the parity check, small enough to fill. */
+export const PARITY_UPSTREAM_CONCURRENCY = 2;
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -645,6 +656,118 @@ export function buildCases() {
   add('parser: an absolute-form target', { raw: rawHead('GET http://elsewhere/health HTTP/1.1') });
   add('parser: an asterisk target', { raw: rawHead('OPTIONS * HTTP/1.1') });
   add('parser: lower-case method', { raw: rawHead('get /health HTTP/1.1'), accept: ACCEPT.parser('unknown-method', [400, 405]) });
+
+  // The read cache, step by step: `reads` is what each step must have sent
+  // upstream beyond the key check, so a step served from the cache shows [].
+  const schedule = (target, extra = {}) => ({ target, key: true, normalise: SCHEDULE_TIMES, ...extra });
+  const asSecond = { key: (ctx) => ctx.key2 };
+  add('cache: a repeat read spelled differently is one entry', {
+    steps: [
+      { target: `/v1/matches?season=${SEASON}&since=2026-09-01T00:00Z`, key: true, reads: ['data_api_matches'] },
+      { target: `/v1/matches?since=2026-09-01T00:00:00.000Z&season=${SEASON.toUpperCase()}`, key: true, reads: [] },
+      { target: `/v1/matches?season=${SEASON}&since=2026-09-01T00:00Z&limit=5`, key: true, reads: ['data_api_matches'] },
+    ],
+  });
+  add('cache: two consumers never share an entry', {
+    steps: [
+      { target: '/v1/players', key: true, reads: ['data_api_players', 'data_api_active_season'] },
+      { target: '/v1/players', ...asSecond, reads: ['data_api_players', 'data_api_active_season'] },
+      { target: '/v1/players', key: true, reads: [] },
+    ],
+  });
+  add('cache: a registration drops that consumer\'s entrant and signup reads', {
+    steps: [
+      schedule('/v1/events?from=2027-01-15T00:00:00Z', { reads: ['data_api_club_events'] }),
+      schedule('/v1/sessions?from=2027-01-15T00:00:00Z', { reads: ['data_api_sessions'] }),
+      schedule('/v1/events?from=2027-01-15T00:00:00Z', { ...asSecond, reads: ['data_api_club_events'] }),
+      { target: `/v1/tournaments/${TOURNAMENT}`, key: true, reads: ['data_api_tournaments', 'data_api_tournament_events_v2', 'data_api_tournament_entrants_v2'] },
+      { ...reg(registration()), reads: ['data_api_import_registration'] },
+      schedule('/v1/events?from=2027-01-15T00:00:00Z', { reads: ['data_api_club_events'] }),
+      schedule('/v1/sessions?from=2027-01-15T00:00:00Z', { reads: [] }),
+      schedule('/v1/events?from=2027-01-15T00:00:00Z', { ...asSecond, reads: [] }),
+      { target: `/v1/tournaments/${TOURNAMENT}`, key: true, reads: ['data_api_tournament_entrants_v2'] },
+    ],
+  });
+  add('cache: a failed registration still drops them', {
+    steps: [
+      schedule('/v1/events?from=2027-01-15T00:00:00Z', { reads: ['data_api_club_events'] }),
+      { ...reg(registration()), upstream: { data_api_import_registration: { status: 500 } }, reads: ['data_api_import_registration'] },
+      schedule('/v1/events?from=2027-01-15T00:00:00Z', { reads: ['data_api_club_events'] }),
+    ],
+  });
+  add('cache: a prediction write drops nothing', {
+    steps: [
+      { target: '/v1/players', key: true, reads: ['data_api_players', 'data_api_active_season'] },
+      { ...post({ predictions: [prediction()] }), reads: ['data_api_write_predictions'] },
+      { target: '/v1/players', key: true, reads: [] },
+    ],
+  });
+
+  // Concurrent: the requests go out together while the fake holds a function
+  // (see runConcurrent in parity.mjs), and `expect` must hold on each service.
+  const cap = PARITY_UPSTREAM_CONCURRENCY;
+  const warmKey = [{ target: '/v1/seasons', key: true }];
+  const every = (list, value) => list.every((x) => x === value);
+  const unavailable = '{"error":"unavailable"}';
+  add('cap: never more than the cap in flight', {
+    concurrent: true,
+    warm: warmKey,
+    hold: ['data_api_matches'],
+    release: 500,
+    requests: Array.from({ length: 6 }, (_, i) => ({ target: `/v1/matches?offset=${i + 1}`, key: true })),
+    expectText: `six 200s, six calls, at most ${cap} in flight`,
+    expect: (seen) => every(seen.statuses, 200) && seen.callsTo('data_api_matches') === 6 && seen.maxInFlight === cap,
+  });
+  add('cap: time in the queue counts against the 5 second timeout', {
+    // The first two hold both slots until their own deadline; the third waits
+    // 2.5 s of its budget in the queue and gets the rest, so it answers about
+    // 5 s after it was sent, not 7.5.
+    concurrent: true,
+    warm: warmKey,
+    hold: ['data_api_matches'],
+    clientTimeoutMs: 9000,
+    requests: [
+      { target: '/v1/matches?offset=1', key: true },
+      { target: '/v1/matches?offset=2', key: true },
+      { target: '/v1/matches?offset=3', key: true, at: 2500 },
+    ],
+    expectText: 'three 503 unavailable with no Retry-After, logged as status 0, the queued one inside its own 5 s',
+    expect: (seen) =>
+      every(seen.statuses, 503) &&
+      every(seen.bodies, unavailable) &&
+      seen.retryAfters.every((r) => r === undefined) &&
+      seen.tookMs[2] >= 4000 &&
+      seen.tookMs[2] < 6500 &&
+      seen.logs.filter((l) => l.msg === 'upstream_failed' && l.fn === 'data_api_matches' && l.upstream_status === 0).length === 3 &&
+      seen.maxInFlight === cap,
+  });
+  add('single flight: one key check for many concurrent requests', {
+    concurrent: true,
+    hold: ['data_api_verify_key'],
+    countFns: ['data_api_players'],
+    release: 300,
+    requests: Array.from({ length: 8 }, () => ({ target: '/v1/players', key: true })),
+    expectText: 'eight 200s from one key check and one read',
+    expect: (seen) => every(seen.statuses, 200) && seen.callsTo('data_api_verify_key') === 1 && seen.callsTo('data_api_players') === 1,
+  });
+  add('single flight: a failed key check is shared and not kept', {
+    concurrent: true,
+    hold: ['data_api_verify_key'],
+    upstream: { data_api_verify_key: { status: 500 } },
+    release: 300,
+    requests: Array.from({ length: 5 }, () => ({ target: '/v1/players', key: true })),
+    expectText: 'five 503s from one key check',
+    expect: (seen) => every(seen.statuses, 503) && every(seen.bodies, unavailable) && seen.callsTo('data_api_verify_key') === 1,
+  });
+  add('single flight: concurrent identical misses make one call', {
+    concurrent: true,
+    warm: warmKey,
+    hold: ['data_api_players'],
+    release: 300,
+    requests: Array.from({ length: 8 }, () => ({ target: '/v1/players', key: true })),
+    expectText: 'eight 200s from one read',
+    expect: (seen) => every(seen.statuses, 200) && seen.callsTo('data_api_players') === 1,
+  });
 
   // Last: a v2 reader the database does not know yet falls back to v1, and the
   // fallback is remembered, so nothing after these may read a v2.

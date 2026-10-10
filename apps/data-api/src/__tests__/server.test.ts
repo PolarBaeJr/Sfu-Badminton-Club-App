@@ -6,7 +6,10 @@ import { get, grant, newKey, playerRow, startHarness, type Harness } from './hel
 // test that imported the constant would follow it wherever it was changed to.
 const POSITIVE_TTL_MS = 30_000;
 const NEGATIVE_TTL_MS = 5_000;
-const READ_CACHE_TTL_MS = 15_000;
+// The roster, results and ratings live 60 seconds; tournaments and the
+// schedule 30 (rpc-cache.ts).
+const READ_CACHE_TTL_MS = 60_000;
+const LIVE_CACHE_TTL_MS = 30_000;
 
 const REF_A = 'a'.repeat(64);
 const REF_B = 'b'.repeat(64);
@@ -384,6 +387,40 @@ describe('verification cache', () => {
   });
 });
 
+describe('verification single flight', () => {
+  const verifies = () => h.calls.filter((c) => c.fn === 'data_api_verify_key');
+
+  it('sends one key check for many concurrent requests on an uncached key', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    const held = h.hold('data_api_verify_key');
+    const pending = Array.from({ length: 10 }, () => get(h, '/v1/players', key).then((r) => r.status));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(verifies()).toHaveLength(1);
+    held.release();
+    expect(await Promise.all(pending)).toEqual(Array(10).fill(200));
+    expect(verifies()).toHaveLength(1);
+    // The shared answer filled the cache.
+    expect((await get(h, '/v1/players', key)).status).toBe(200);
+    expect(verifies()).toHaveLength(1);
+  });
+
+  it('shares a failure with the waiting requests and keeps nothing', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    h.failFn = { fn: 'data_api_verify_key', status: 500 };
+    const held = h.hold('data_api_verify_key');
+    const pending = Array.from({ length: 5 }, () => get(h, '/v1/players', key).then((r) => r.status));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    held.release();
+    expect(await Promise.all(pending)).toEqual(Array(5).fill(503));
+    expect(verifies()).toHaveLength(1);
+    h.failFn = null;
+    expect((await get(h, '/v1/players', key)).status).toBe(200);
+    expect(verifies()).toHaveLength(2);
+  });
+});
+
 describe('upstream failure', () => {
   it.each([500, 502, 404, 401])('maps a PostgREST %i to 503 and logs only the status', async (status) => {
     const key = newKey();
@@ -400,17 +437,18 @@ describe('upstream failure', () => {
     const key = newKey();
     grant(h, key, ['players:read']);
     await get(h, '/v1/players', key);
-    // Past the read cache, inside the key's.
+    // Past the read cache; the key is checked again and passes.
     h.clock.t += READ_CACHE_TTL_MS + 1;
-    h.failNext = { status: 503 };
+    h.failFn = { fn: 'data_api_players', status: 503 };
     expect((await get(h, '/v1/players', key)).status).toBe(503);
+    expect(h.logs.some((l) => l.includes('"fn":"data_api_players"'))).toBe(true);
   });
 });
 
 describe('read cache', () => {
   const reads = () => h.calls.filter((c) => c.fn === 'data_api_players');
 
-  it('answers a repeat read from the cache for 15 seconds, then asks again', async () => {
+  it('answers a repeat read from the cache for 60 seconds, then asks again', async () => {
     const key = newKey();
     grant(h, key, ['players:read']);
     expect((await get(h, '/v1/players', key)).status).toBe(200);
@@ -456,6 +494,111 @@ describe('read cache', () => {
     h.failFn = null;
     expect((await get(h, '/v1/players', key)).status).toBe(200);
     expect(reads()).toHaveLength(3);
+  });
+
+  it('keeps tournaments and the schedule for 30 seconds', async () => {
+    const key = newKey();
+    grant(h, key, ['tournaments:read']);
+    h.rpcs.data_api_tournaments = () => [];
+    const tournamentReads = () => h.calls.filter((c) => c.fn === 'data_api_tournaments');
+    expect((await get(h, '/v1/tournaments', key)).status).toBe(200);
+    h.clock.t += LIVE_CACHE_TTL_MS - 1;
+    await get(h, '/v1/tournaments', key);
+    expect(tournamentReads()).toHaveLength(1);
+    h.clock.t += 1;
+    await get(h, '/v1/tournaments', key);
+    expect(tournamentReads()).toHaveLength(2);
+  });
+
+  it('keys on the parameters after normalising them', async () => {
+    const key = newKey();
+    grant(h, key, ['matches:read']);
+    h.rpcs.data_api_matches = () => [];
+    const season = 'abcdef01-2345-4678-89ab-cdef01234567';
+    const matchReads = () => h.calls.filter((c) => c.fn === 'data_api_matches');
+    await get(h, `/v1/matches?season=${season}&since=2026-09-01T00:00Z`, key);
+    // The same request spelled differently: an upper-case uuid, seconds and
+    // milliseconds on the timestamp, the parameters in another order.
+    await get(h, `/v1/matches?since=2026-09-01T00:00:00.000Z&season=${season.toUpperCase()}`, key);
+    expect(matchReads()).toHaveLength(1);
+    await get(h, `/v1/matches?season=${season}&since=2026-09-01T00:00Z&limit=5`, key);
+    expect(matchReads()).toHaveLength(2);
+  });
+
+  it('drops the consumer\'s entrant and signup reads after a registration, and nothing after a prediction', async () => {
+    const key = newKey();
+    grant(h, key, ['schedule:read', 'players:read', 'registrations:write', 'predictions:write']);
+    const other = newKey();
+    grant(h, other, ['schedule:read'], '99999999-2222-3333-4444-555555555555').consumer_id =
+      'bbbbbbbb-0000-0000-0000-000000000002';
+    h.rpcs.data_api_club_events = () => [];
+    h.rpcs.data_api_sessions = () => [];
+    h.rpcs.data_api_import_registration = () => [{ item: 1, event_id: null, status: 'entered', reason: null, replayed: false }];
+    h.rpcs.data_api_write_predictions = () => [{ item: 1, status: 'created' }];
+    const count = (fn: string) => h.calls.filter((c) => c.fn === fn).length;
+    const window = '?from=2027-01-15T00:00:00Z';
+    for (const k of [key, other]) {
+      await get(h, `/v1/events${window}`, k);
+      await get(h, `/v1/sessions${window}`, k);
+    }
+    await get(h, '/v1/players', key);
+    expect([count('data_api_club_events'), count('data_api_sessions'), count('data_api_players')]).toEqual([2, 2, 1]);
+
+    const imported = await get(h, '/v1/registrations', key, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ form_id: 'form-1', response_id: 'response-1', email: 'guest@example.org', name: 'Guest', entries: [] }),
+    });
+    expect(imported.status).toBe(200);
+    for (const k of [key, other]) {
+      await get(h, `/v1/events${window}`, k);
+      await get(h, `/v1/sessions${window}`, k);
+    }
+    // Only this consumer's club events were asked again.
+    expect([count('data_api_club_events'), count('data_api_sessions')]).toEqual([3, 2]);
+
+    const predicted = await get(h, '/v1/predictions', key, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        predictions: [
+          { format: 'singles', side_a: [REF_A], side_b: [REF_B], probability: 0.5, model: 'm', made_at: '2026-09-15T08:00:00Z' },
+        ],
+      }),
+    });
+    expect(predicted.status).toBe(200);
+    await get(h, '/v1/players', key);
+    expect(count('data_api_players')).toBe(1);
+  });
+
+  it('drops them after a failed registration too, which may still have committed', async () => {
+    const key = newKey();
+    grant(h, key, ['schedule:read', 'registrations:write']);
+    h.rpcs.data_api_club_events = () => [];
+    h.failFn = { fn: 'data_api_import_registration', status: 500 };
+    const count = (fn: string) => h.calls.filter((c) => c.fn === fn).length;
+    await get(h, '/v1/events?from=2027-01-15T00:00:00Z', key);
+    const imported = await get(h, '/v1/registrations', key, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ form_id: 'form-1', response_id: 'response-1', email: 'guest@example.org', name: 'Guest', entries: [] }),
+    });
+    expect(imported.status).toBe(503);
+    await get(h, '/v1/events?from=2027-01-15T00:00:00Z', key);
+    expect(count('data_api_club_events')).toBe(2);
+  });
+
+  it('shares one call between concurrent identical misses', async () => {
+    const key = newKey();
+    grant(h, key, ['players:read']);
+    await get(h, '/v1/seasons', key).catch(() => undefined);
+    const held = h.hold('data_api_players');
+    const pending = Array.from({ length: 8 }, () => get(h, '/v1/players', key).then((r) => r.status));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(reads()).toHaveLength(1);
+    held.release();
+    expect(await Promise.all(pending)).toEqual(Array(8).fill(200));
+    expect(reads()).toHaveLength(1);
   });
 
   it('does not cache key verification beyond its own contract', async () => {

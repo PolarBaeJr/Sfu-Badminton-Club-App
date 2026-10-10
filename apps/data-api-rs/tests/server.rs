@@ -12,7 +12,10 @@ use sha2::{Digest, Sha256};
 // test that imported the constant would follow it wherever it was changed to.
 const POSITIVE_TTL_MS: i64 = 30_000;
 const NEGATIVE_TTL_MS: i64 = 5_000;
-const READ_CACHE_TTL_MS: i64 = 15_000;
+// The roster, results and ratings live 60 seconds; tournaments and the
+// schedule 30 (rpc_cache.rs).
+const READ_CACHE_TTL_MS: i64 = 60_000;
+const LIVE_CACHE_TTL_MS: i64 = 30_000;
 
 fn ref_a() -> String {
     "a".repeat(64)
@@ -606,14 +609,15 @@ async fn upstream_failure_maps_a_failed_feed_read_to_503() {
     let key = new_key();
     h.grant(&key, &["players:read"]);
     h.get("/v1/players", Some(&key)).await;
-    // Past the read cache, inside the key's.
+    // Past the read cache; the key is checked again and passes.
     h.advance(READ_CACHE_TTL_MS + 1);
-    h.fail_next(Some(503));
+    h.fail_fn(Some(("data_api_players", 503)));
     assert_eq!(h.get("/v1/players", Some(&key)).await.status, 503);
+    assert!(h.log_text().contains(r#""fn":"data_api_players""#));
 }
 
 #[tokio::test]
-async fn read_cache_answers_a_repeat_read_for_15_seconds_then_asks_again() {
+async fn read_cache_answers_a_repeat_read_for_60_seconds_then_asks_again() {
     let h = harness().await;
     let key = new_key();
     h.grant(&key, &["players:read"]);
@@ -692,6 +696,292 @@ async fn read_cache_does_not_keep_a_failure() {
     h.fail_fn(None);
     assert_eq!(h.get("/v1/players", Some(&key)).await.status, 200);
     assert_eq!(count(&h, "data_api_players"), 3);
+}
+
+#[tokio::test]
+async fn read_cache_keeps_tournaments_and_the_schedule_for_30_seconds() {
+    let h = harness().await;
+    let key = new_key();
+    h.grant(&key, &["tournaments:read"]);
+    h.set_rpc("data_api_tournaments", |_| json!([]));
+    assert_eq!(h.get("/v1/tournaments", Some(&key)).await.status, 200);
+    h.advance(LIVE_CACHE_TTL_MS - 1);
+    h.get("/v1/tournaments", Some(&key)).await;
+    assert_eq!(count(&h, "data_api_tournaments"), 1);
+    h.advance(1);
+    h.get("/v1/tournaments", Some(&key)).await;
+    assert_eq!(count(&h, "data_api_tournaments"), 2);
+}
+
+#[tokio::test]
+async fn read_cache_keys_on_the_parameters_after_normalising_them() {
+    let h = harness().await;
+    let key = new_key();
+    h.grant(&key, &["matches:read"]);
+    h.set_rpc("data_api_matches", |_| json!([]));
+    let season = "abcdef01-2345-4678-89ab-cdef01234567";
+    h.get(
+        &format!("/v1/matches?season={season}&since=2026-09-01T00:00Z"),
+        Some(&key),
+    )
+    .await;
+    // The same request spelled differently: an upper-case uuid, seconds and
+    // milliseconds on the timestamp, the parameters in another order.
+    h.get(
+        &format!(
+            "/v1/matches?since=2026-09-01T00:00:00.000Z&season={}",
+            season.to_uppercase()
+        ),
+        Some(&key),
+    )
+    .await;
+    assert_eq!(count(&h, "data_api_matches"), 1);
+    h.get(
+        &format!("/v1/matches?season={season}&since=2026-09-01T00:00Z&limit=5"),
+        Some(&key),
+    )
+    .await;
+    assert_eq!(count(&h, "data_api_matches"), 2);
+}
+
+#[tokio::test]
+async fn read_cache_drops_entrant_and_signup_reads_after_a_registration_not_after_a_prediction() {
+    let h = harness().await;
+    let key = new_key();
+    h.grant(
+        &key,
+        &[
+            "schedule:read",
+            "players:read",
+            "registrations:write",
+            "predictions:write",
+        ],
+    );
+    let other = new_key();
+    h.grant_as(
+        &other,
+        &["schedule:read"],
+        "99999999-2222-3333-4444-555555555555",
+        "bbbbbbbb-0000-0000-0000-000000000002",
+    );
+    h.set_rpc("data_api_club_events", |_| json!([]));
+    h.set_rpc("data_api_sessions", |_| json!([]));
+    h.set_rpc("data_api_import_registration", |_| {
+        json!([{"item": 1, "event_id": null, "status": "entered", "reason": null, "replayed": false}])
+    });
+    h.set_rpc(
+        "data_api_write_predictions",
+        |_| json!([{"item": 1, "status": "created"}]),
+    );
+    let window = "?from=2027-01-15T00:00:00Z";
+    for k in [&key, &other] {
+        h.get(&format!("/v1/events{window}"), Some(k)).await;
+        h.get(&format!("/v1/sessions{window}"), Some(k)).await;
+    }
+    h.get("/v1/players", Some(&key)).await;
+    assert_eq!(
+        (
+            count(&h, "data_api_club_events"),
+            count(&h, "data_api_sessions"),
+            count(&h, "data_api_players")
+        ),
+        (2, 2, 1)
+    );
+
+    let json_type = [("content-type", "application/json")];
+    let imported = h
+        .send(
+            Method::POST,
+            "/v1/registrations",
+            Some(&key),
+            &json_type,
+            json!({
+                "form_id": "1FAIpQLSexampleForm",
+                "response_id": "ACYDBNj-example",
+                "submitted_at": "2026-10-08T10:00:00Z",
+                "email": "guest@example.org",
+                "name": "Guest Person",
+                "entries": [{"event_id": "aaaaaaaa-1111-4222-8333-444444444444", "partner_name": null}],
+            })
+            .to_string(),
+        )
+        .await;
+    assert_eq!(imported.status, 200);
+    for k in [&key, &other] {
+        h.get(&format!("/v1/events{window}"), Some(k)).await;
+        h.get(&format!("/v1/sessions{window}"), Some(k)).await;
+    }
+    // Only this consumer's club events were asked again.
+    assert_eq!(
+        (
+            count(&h, "data_api_club_events"),
+            count(&h, "data_api_sessions")
+        ),
+        (3, 2)
+    );
+
+    let prediction = json!({"predictions": [{
+        "format": "singles", "side_a": [ref_a()], "side_b": [ref_b()],
+        "probability": 0.5, "model": "m", "made_at": "2027-01-15T08:00:00Z"
+    }]});
+    let predicted = h
+        .send(
+            Method::POST,
+            "/v1/predictions",
+            Some(&key),
+            &json_type,
+            prediction.to_string(),
+        )
+        .await;
+    assert_eq!(predicted.status, 200);
+    h.get("/v1/players", Some(&key)).await;
+    assert_eq!(count(&h, "data_api_players"), 1);
+}
+
+#[tokio::test]
+async fn read_cache_drops_them_after_a_failed_registration_too_which_may_still_have_committed() {
+    let h = harness().await;
+    let key = new_key();
+    h.grant(&key, &["schedule:read", "registrations:write"]);
+    h.set_rpc("data_api_club_events", |_| json!([]));
+    h.fail_fn(Some(("data_api_import_registration", 500)));
+    let window = "/v1/events?from=2027-01-15T00:00:00Z";
+    h.get(window, Some(&key)).await;
+    let imported = h
+        .send(
+            Method::POST,
+            "/v1/registrations",
+            Some(&key),
+            &[("content-type", "application/json")],
+            json!({
+                "form_id": "1FAIpQLSexampleForm",
+                "response_id": "ACYDBNj-example",
+                "submitted_at": "2026-10-08T10:00:00Z",
+                "email": "guest@example.org",
+                "name": "Guest Person",
+                "entries": [{"event_id": "aaaaaaaa-1111-4222-8333-444444444444", "partner_name": null}],
+            })
+            .to_string(),
+        )
+        .await;
+    assert_eq!(imported.status, 503);
+    h.get(window, Some(&key)).await;
+    assert_eq!(count(&h, "data_api_club_events"), 2);
+}
+
+#[tokio::test]
+async fn read_cache_shares_one_call_between_concurrent_identical_misses() {
+    let h = harness().await;
+    let key = new_key();
+    h.grant(&key, &["players:read"]);
+    h.get("/v1/seasons", Some(&key)).await;
+    let held = h.hold("data_api_players");
+    let tasks: Vec<_> = (0..8).map(|_| h.spawn_get("/v1/players", &key)).collect();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(count(&h, "data_api_players"), 1);
+    held.release();
+    for t in tasks {
+        assert_eq!(t.await.unwrap(), 200);
+    }
+    assert_eq!(count(&h, "data_api_players"), 1);
+}
+
+#[tokio::test]
+async fn verification_single_flight_sends_one_key_check_for_many_concurrent_requests() {
+    let h = harness().await;
+    let key = new_key();
+    h.grant(&key, &["players:read"]);
+    let held = h.hold("data_api_verify_key");
+    let tasks: Vec<_> = (0..10).map(|_| h.spawn_get("/v1/players", &key)).collect();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(count(&h, "data_api_verify_key"), 1);
+    held.release();
+    for t in tasks {
+        assert_eq!(t.await.unwrap(), 200);
+    }
+    assert_eq!(count(&h, "data_api_verify_key"), 1);
+    // The shared answer filled the cache.
+    assert_eq!(h.get("/v1/players", Some(&key)).await.status, 200);
+    assert_eq!(count(&h, "data_api_verify_key"), 1);
+}
+
+#[tokio::test]
+async fn verification_single_flight_shares_a_failure_and_keeps_nothing() {
+    let h = harness().await;
+    let key = new_key();
+    h.grant(&key, &["players:read"]);
+    h.fail_fn(Some(("data_api_verify_key", 500)));
+    let held = h.hold("data_api_verify_key");
+    let tasks: Vec<_> = (0..5).map(|_| h.spawn_get("/v1/players", &key)).collect();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    held.release();
+    for t in tasks {
+        assert_eq!(t.await.unwrap(), 503);
+    }
+    assert_eq!(count(&h, "data_api_verify_key"), 1);
+    h.fail_fn(None);
+    assert_eq!(h.get("/v1/players", Some(&key)).await.status, 200);
+    assert_eq!(count(&h, "data_api_verify_key"), 2);
+}
+
+#[tokio::test]
+async fn upstream_cap_keeps_at_most_the_cap_in_flight_and_queues_the_rest() {
+    let h = start_with(std::time::Duration::from_millis(5000), 3).await;
+    let key = new_key();
+    h.grant(&key, &["matches:read"]);
+    h.set_rpc("data_api_matches", |_| json!([]));
+    h.get("/v1/matches", Some(&key)).await;
+    let held = h.hold("data_api_matches");
+    let tasks: Vec<_> = (1..=7)
+        .map(|i| h.spawn_get(&format!("/v1/matches?offset={i}"), &key))
+        .collect();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // The warm-up call and three held ones.
+    assert_eq!(count(&h, "data_api_matches"), 4);
+    held.release();
+    for t in tasks {
+        assert_eq!(t.await.unwrap(), 200);
+    }
+    assert_eq!(count(&h, "data_api_matches"), 8);
+    assert_eq!(h.max_in_flight(), 3);
+}
+
+#[tokio::test]
+async fn upstream_cap_counts_time_queued_against_the_timeout_and_fails_as_any_timeout_does() {
+    // One slot, a 400 ms budget. The first call holds the slot until its own
+    // deadline; the second waits 200 ms of its budget in the queue, so it has
+    // 200 left once it gets the slot, not a fresh 400.
+    let h = start_with(std::time::Duration::from_millis(400), 1).await;
+    let key = new_key();
+    h.grant(&key, &["matches:read"]);
+    h.set_rpc("data_api_matches", |_| json!([]));
+    h.get("/v1/matches", Some(&key)).await;
+    let held = h.hold("data_api_matches");
+    let first = h.spawn_get("/v1/matches?offset=1", &key);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let started = std::time::Instant::now();
+    let queued = h.spawn_get("/v1/matches?offset=2", &key);
+    assert_eq!(first.await.unwrap(), 503);
+    assert_eq!(queued.await.unwrap(), 503);
+    let waited = started.elapsed();
+    assert!(
+        waited >= std::time::Duration::from_millis(350),
+        "{waited:?}"
+    );
+    assert!(waited < std::time::Duration::from_millis(550), "{waited:?}");
+    held.release();
+    let failures: Vec<Value> = h
+        .log_lines()
+        .into_iter()
+        .filter(|l| l["msg"] == "upstream_failed")
+        .collect();
+    assert_eq!(
+        failures,
+        vec![
+            json!({"level": "error", "msg": "upstream_failed", "fn": "data_api_matches", "upstream_status": 0});
+            2
+        ]
+    );
 }
 
 #[tokio::test]

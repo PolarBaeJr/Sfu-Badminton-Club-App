@@ -30,7 +30,7 @@ use crate::params::{self, BadParam, DEFAULT_LIMIT, ParamValue, Params, is_ref, i
 use crate::predictions::{BadBody, MAX_BODY_BYTES, parse_matchups, parse_predictions};
 use crate::rate_limit::{Clock, TokenBuckets};
 use crate::registrations::parse_registration;
-use crate::rpc_cache::RpcCache;
+use crate::rpc_cache::{REGISTRATION_READS, RpcCache};
 use crate::shape::{self, Shaped};
 use crate::upstream::{Rows, Upstream, UpstreamError};
 use crate::{js_parse, time, url};
@@ -686,9 +686,10 @@ impl Handler {
     }
 
     // Reads only. The verifier talks to the upstream directly, uncached here.
-    async fn rpc(&self, fn_name: &str, a: Out) -> Result<Rows, UpstreamError> {
+    // Every read function takes the consumer first, and the cache keys on it.
+    async fn rpc(&self, consumer: &str, fn_name: &str, a: Out) -> Result<Rows, UpstreamError> {
         self.cache
-            .get(&self.deps.upstream, fn_name, a.to_json())
+            .get(&self.deps.upstream, consumer, fn_name, a.to_json())
             .await
     }
 
@@ -696,7 +697,13 @@ impl Handler {
     // images update before migrations run. Until PostgREST knows the v2 (404,
     // PGRST202) the v1 answers, without the newer fields. Any other failure of
     // the v2 is a failure, never a reason to read v1.
-    async fn rpc_prefer(&self, v2: &str, v1: &str, a: Out) -> Result<Rows, UpstreamError> {
+    async fn rpc_prefer(
+        &self,
+        consumer: &str,
+        v2: &str,
+        v1: &str,
+        a: Out,
+    ) -> Result<Rows, UpstreamError> {
         let until = self
             .v2_missing_until
             .lock()
@@ -704,7 +711,7 @@ impl Handler {
             .get(v2)
             .copied();
         if until.is_none_or(|u| u <= self.now()) {
-            match self.rpc(v2, a.clone()).await {
+            match self.rpc(consumer, v2, a.clone()).await {
                 Ok(rows) => return Ok(rows),
                 Err(e) if e.fn_name == v2 && e.status == 404 => {
                     self.v2_missing_until
@@ -721,7 +728,7 @@ impl Handler {
                 Err(e) => return Err(e),
             }
         }
-        self.rpc(v1, a).await
+        self.rpc(consumer, v1, a).await
     }
 
     /// The verified key and its hash (the writes send the hash), or the reply.
@@ -756,6 +763,7 @@ impl Handler {
     async fn published(&self, consumer: &str, r: &str) -> Result<bool, UpstreamError> {
         let rows = self
             .rpc(
+                consumer,
                 "data_api_player_published",
                 Out::obj([
                     ("p_consumer_id", Out::str(consumer)),
@@ -773,6 +781,7 @@ impl Handler {
     async fn active_season(&self, consumer: &str) -> Result<Out, Failure> {
         match self
             .rpc(
+                consumer,
                 "data_api_active_season",
                 Out::obj([("p_consumer_id", Out::str(consumer))]),
             )
@@ -936,6 +945,7 @@ impl Handler {
         &self,
         req: &RequestInfo,
         key_hash: &str,
+        consumer: &str,
     ) -> Result<Reply, Failure> {
         let body = match self.read_body(req).await? {
             Ok(body) => body,
@@ -949,11 +959,16 @@ impl Handler {
             kv("p_key_hash", Out::str(key_hash)),
             kv("p_payload", payload),
         ]);
-        let rows = self
+        let imported = self
             .deps
             .upstream
             .rpc("data_api_import_registration", args.to_json())
-            .await?;
+            .await;
+        // The import can change entrant lists and signup counts. This consumer's
+        // next read of either asks the database, whatever the import answered,
+        // and also when it failed: a timeout can still have committed.
+        self.cache.invalidate(consumer, REGISTRATION_READS);
+        let rows = imported?;
         let whole = find(&rows, |r| {
             Ok(num_f64(get(r, "item")?) == 0.0 && is_str(get(r, "status")?, "refused"))
         })?;
@@ -1028,7 +1043,7 @@ impl Handler {
 
         match name {
             RouteName::Players => {
-                let rows = self.rpc("data_api_players", args(c())).await?;
+                let rows = self.rpc(consumer, "data_api_players", args(c())).await?;
                 let players = shape::map_rows(&rows, shape::shape_player)?;
                 let season = self.active_season(consumer).await?;
                 Ok(ok(Out::Obj(vec![
@@ -1042,7 +1057,9 @@ impl Handler {
             RouteName::Player => {
                 let mut a = c();
                 a.push(kv("p_player_ref", Out::str(var("ref"))));
-                let rows = self.rpc("data_api_player_by_ref", args(a)).await?;
+                let rows = self
+                    .rpc(consumer, "data_api_player_by_ref", args(a))
+                    .await?;
                 match rows.first() {
                     Some(row) if truthy(Some(row)) => Ok(ok(shape::shape_player(row)?)),
                     _ => Ok(not_found()),
@@ -1063,7 +1080,7 @@ impl Handler {
                 }
                 a.push(kv("p_limit", Out::Num((limit + 1) as f64)));
                 a.push(kv("p_offset", Out::Num(offset as f64)));
-                let rows = self.rpc("data_api_matches", args(a)).await?;
+                let rows = self.rpc(consumer, "data_api_matches", args(a)).await?;
                 let (kept, envelope) = paged(&rows, limit, offset);
                 let mut body = vec![ga()];
                 if own {
@@ -1077,7 +1094,7 @@ impl Handler {
             RouteName::Match => {
                 let mut a = c();
                 a.push(kv("p_match_ref", Out::str(var("match_ref"))));
-                let rows = self.rpc("data_api_match_by_ref", args(a)).await?;
+                let rows = self.rpc(consumer, "data_api_match_by_ref", args(a)).await?;
                 match rows.first() {
                     Some(row) if truthy(Some(row)) => Ok(ok(Out::Obj(vec![
                         ga(),
@@ -1103,7 +1120,7 @@ impl Handler {
                 for (k, val) in filters.clone() {
                     set_field(&mut a, &k, val);
                 }
-                let totals = self.rpc("data_api_head_to_head", args(a)).await?;
+                let totals = self.rpc(consumer, "data_api_head_to_head", args(a)).await?;
                 let pick = |relation: &str, discipline: &str| {
                     find(&totals, |row| {
                         Ok(is_str(get(row, "relation")?, relation)
@@ -1115,7 +1132,7 @@ impl Handler {
                 set_field(&mut a, "p_player_ref", Out::str(r.clone()));
                 set_field(&mut a, "p_opponent_ref", Out::str(other.clone()));
                 a.push(kv("p_limit", Out::Num(VS_RECENT as f64)));
-                let recent = self.rpc("data_api_matches", args(a)).await?;
+                let recent = self.rpc(consumer, "data_api_matches", args(a)).await?;
                 let opp_singles = shape::win_loss(pick("opponents", "singles")?);
                 let opp_doubles = shape::win_loss(pick("opponents", "doubles")?);
                 let partners = shape::win_loss(pick("partners", "doubles")?);
@@ -1141,7 +1158,9 @@ impl Handler {
                 }
                 let mut a = c();
                 a.push(kv("p_player_ref", Out::str(r.clone())));
-                let rows = self.rpc("data_api_player_seasons", args(a)).await?;
+                let rows = self
+                    .rpc(consumer, "data_api_player_seasons", args(a))
+                    .await?;
                 // One row per (season, discipline) played, plus one with a null
                 // discipline for a season with only a final rating. Grouped here.
                 let mut order: Vec<String> = Vec::new();
@@ -1227,7 +1246,9 @@ impl Handler {
                 }
                 a.push(kv("p_limit", Out::Num((limit + 1) as f64)));
                 a.push(kv("p_offset", Out::Num(offset as f64)));
-                let rows = self.rpc("data_api_rating_history", args(a)).await?;
+                let rows = self
+                    .rpc(consumer, "data_api_rating_history", args(a))
+                    .await?;
                 let (kept, envelope) = paged(&rows, limit, offset);
                 let mut body = vec![ga(), kv("player_ref", Out::str(r))];
                 body.extend(envelope);
@@ -1236,7 +1257,7 @@ impl Handler {
             }
 
             RouteName::Seasons => {
-                let rows = self.rpc("data_api_seasons", args(c())).await?;
+                let rows = self.rpc(consumer, "data_api_seasons", args(c())).await?;
                 Ok(ok(Out::Obj(vec![
                     ga(),
                     kv("count", Out::Num(rows.len() as f64)),
@@ -1247,7 +1268,7 @@ impl Handler {
             RouteName::Season => {
                 let mut a = c();
                 a.push(kv("p_season_id", Out::str(var("id"))));
-                let rows = self.rpc("data_api_seasons", args(a)).await?;
+                let rows = self.rpc(consumer, "data_api_seasons", args(a)).await?;
                 match rows.first() {
                     Some(row) if truthy(Some(row)) => Ok(ok(Out::Obj(vec![
                         ga(),
@@ -1262,12 +1283,16 @@ impl Handler {
                 // for totals this route does not print (00267).
                 let mut a = c();
                 a.push(kv("p_season_id", Out::str(var("id"))));
-                let seasons = self.rpc("data_api_season_header", args(a.clone())).await?;
+                let seasons = self
+                    .rpc(consumer, "data_api_season_header", args(a.clone()))
+                    .await?;
                 let season = match seasons.first() {
                     Some(s) if truthy(Some(s)) => s,
                     _ => return Ok(not_found()),
                 };
-                let rows = self.rpc("data_api_season_standings", args(a)).await?;
+                let rows = self
+                    .rpc(consumer, "data_api_season_standings", args(a))
+                    .await?;
                 let mut standings = Vec::new();
                 for row in rows.iter() {
                     standings.push(Out::obj([
@@ -1310,7 +1335,7 @@ impl Handler {
             RouteName::Tournaments => {
                 let mut a = c();
                 a.extend(filter_args(params, &[("season", "p_season")]));
-                let rows = self.rpc("data_api_tournaments", args(a)).await?;
+                let rows = self.rpc(consumer, "data_api_tournaments", args(a)).await?;
                 Ok(ok(Out::Obj(vec![
                     ga(),
                     kv("count", Out::Num(rows.len() as f64)),
@@ -1324,13 +1349,16 @@ impl Handler {
             RouteName::Tournament => {
                 let mut a = c();
                 a.push(kv("p_tournament_id", Out::str(var("id"))));
-                let rows = self.rpc("data_api_tournaments", args(a.clone())).await?;
+                let rows = self
+                    .rpc(consumer, "data_api_tournaments", args(a.clone()))
+                    .await?;
                 let row = match rows.first() {
                     Some(r) if truthy(Some(r)) => r,
                     _ => return Ok(not_found()),
                 };
                 let events = self
                     .rpc_prefer(
+                        consumer,
                         "data_api_tournament_events_v2",
                         "data_api_tournament_events",
                         args(a.clone()),
@@ -1338,6 +1366,7 @@ impl Handler {
                     .await?;
                 let entrants = self
                     .rpc_prefer(
+                        consumer,
                         "data_api_tournament_entrants_v2",
                         "data_api_tournament_entrants",
                         args(a),
@@ -1375,6 +1404,7 @@ impl Handler {
                 a.push(kv("p_tournament_id", Out::str(var("id"))));
                 let events = self
                     .rpc_prefer(
+                        consumer,
                         "data_api_tournament_events_v2",
                         "data_api_tournament_events",
                         args(a),
@@ -1390,6 +1420,7 @@ impl Handler {
                 a.push(kv("p_event_id", Out::str(event_id)));
                 let draw = self
                     .rpc_prefer(
+                        consumer,
                         "data_api_tournament_draw_v2",
                         "data_api_tournament_draw",
                         args(a),
@@ -1413,6 +1444,7 @@ impl Handler {
                 a.push(kv("p_to", Out::str(to.clone())));
                 let rows = self
                     .rpc(
+                        consumer,
                         if sessions {
                             "data_api_sessions"
                         } else {
@@ -1557,7 +1589,11 @@ impl Handler {
 
         match def.name {
             RouteName::Predictions => return self.write(req, &key_hash).await,
-            RouteName::Registrations => return self.import_registration(req, &key_hash).await,
+            RouteName::Registrations => {
+                return self
+                    .import_registration(req, &key_hash, &auth.consumer_id)
+                    .await;
+            }
             _ => {}
         }
 

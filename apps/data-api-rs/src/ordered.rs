@@ -56,10 +56,33 @@ impl<V> OrderedMap<V> {
 
     /// Removes the oldest entry.
     pub fn delete_oldest(&mut self) -> bool {
-        let Some((_, key)) = self.order.pop_first() else {
-            return false;
+        self.pop_oldest().is_some()
+    }
+
+    /// Removes the oldest entry and hands it back.
+    pub fn pop_oldest(&mut self) -> Option<V> {
+        let (_, key) = self.order.pop_first()?;
+        self.entries.remove(&key).map(|(_, v)| v)
+    }
+
+    /// Moves an existing key to the back, as `map.delete(k); map.set(k, v)`.
+    pub fn touch(&mut self, key: &str) {
+        let Some((seq, _)) = self.entries.get_mut(key) else {
+            return;
         };
-        self.entries.remove(&key);
-        true
+        let old = *seq;
+        let new = self.next;
+        self.next += 1;
+        *seq = new;
+        if let Some(k) = self.order.remove(&old) {
+            self.order.insert(new, k);
+        }
+    }
+
+    /// Entries oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
+        self.order
+            .values()
+            .filter_map(|k| self.entries.get(k).map(|(_, v)| (k.as_str(), v)))
     }
 }

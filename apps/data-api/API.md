@@ -386,8 +386,9 @@ appear in a match while `/v1/players/:ref` answers `404`.
 
 The club's public leaderboard applies the first three roster conditions. It
 does **not** apply the fourth, because a deletion request is not a leaderboard
-setting. This feed applies the deletion request everywhere, from the moment it
-is made rather than when the club's purge next runs, because the purge
+setting. This feed applies the deletion request everywhere, within 60 seconds
+of it being made (the read cache, see "Rate limits and etiquette") rather than
+when the club's purge next runs, because the purge
 anonymises the record rather than erasing it and the ratings survive it.
 
 **One gate for every match.** A club or tournament match is published only when
@@ -573,9 +574,14 @@ polling every few minutes buys nothing. Pull `/v1/players` on a schedule
 measured in hours and cache it, and keep match history in sync with
 `updated_since` rather than re-reading it.
 
-Responses may be up to 15 seconds old: the service reuses a recent answer to
-the same request rather than asking the database again. `generated_at` is the
-time the response was sent, not the time the data was read.
+Responses may be up to 60 seconds old: the service reuses a recent answer to
+the same request from the same consumer rather than asking the database again.
+The roster, matches, ratings and seasons may be up to 60 seconds old;
+tournaments, sessions and club events up to 30 seconds. A registration import
+refreshes that consumer's tournament entrant lists and event signups at once.
+A member's opt-out or deletion request reaches the feed within the same 60
+seconds. `generated_at` is the time the response was sent, not the time the
+data was read.
 
 ---
 

@@ -15,7 +15,7 @@ import {
 import { BadBody, MAX_BODY_BYTES, parseMatchups, parsePredictions } from './predictions.js';
 import { parseRegistration } from './registrations.js';
 import { TokenBuckets } from './rate-limit.js';
-import { RpcCache } from './rpc-cache.js';
+import { REGISTRATION_READS, RpcCache } from './rpc-cache.js';
 import type { DataApiScope } from './scopes.js';
 import { UpstreamError, type Upstream } from './upstream.js';
 
@@ -682,15 +682,20 @@ export function createHandler(deps: HandlerDeps) {
   const failBuckets = new TokenBuckets(FAILED_AUTH_RATE.capacity, FAILED_AUTH_RATE.windowMs, 10_000, now);
   const cache = new RpcCache(now);
   // Reads only. The verifier above talks to deps.upstream directly, uncached here.
-  const rpc = (fn: string, args: Record<string, unknown>) =>
-    cache.get(fn, args, () => deps.upstream.rpc(fn, args)) as Promise<Row[]>;
+  // Every read function takes the consumer first, and the cache keys on it.
+  const rpc = (fn: string, args: { p_consumer_id: string } & Record<string, unknown>) =>
+    cache.get(args.p_consumer_id, fn, args, () => deps.upstream.rpcSized(fn, args)) as Promise<Row[]>;
 
   // A v2 reader is newer than the image that calls it only during a rollout:
   // images update before migrations run. Until PostgREST knows the v2 (404,
   // PGRST202) the v1 answers, without the newer fields. Any other failure of
   // the v2 is a failure, never a reason to read v1.
   const v2MissingUntil = new Map<string, number>();
-  async function rpcPrefer(v2: string, v1: string, args: Record<string, unknown>): Promise<Row[]> {
+  async function rpcPrefer(
+    v2: string,
+    v1: string,
+    args: { p_consumer_id: string } & Record<string, unknown>,
+  ): Promise<Row[]> {
     const until = v2MissingUntil.get(v2);
     if (until === undefined || until <= now()) {
       try {
@@ -854,6 +859,7 @@ export function createHandler(deps: HandlerDeps) {
     req: IncomingMessage,
     res: ServerResponse,
     keyHash: string,
+    consumerId: string,
   ): Promise<number> {
     const body = await readBody(req, res);
     if (typeof body === 'number') return body;
@@ -865,10 +871,18 @@ export function createHandler(deps: HandlerDeps) {
       send(res, 400, { error: 'bad_request', field: err.field });
       return 400;
     }
-    const rows = (await deps.upstream.rpc('data_api_import_registration', {
-      p_key_hash: keyHash,
-      p_payload: payload,
-    })) as Row[];
+    // The import can change entrant lists and signup counts. This consumer's
+    // next read of either asks the database, whatever the import answered,
+    // and also when it failed: a timeout can still have committed.
+    let rows: Row[];
+    try {
+      rows = (await deps.upstream.rpc('data_api_import_registration', {
+        p_key_hash: keyHash,
+        p_payload: payload,
+      })) as Row[];
+    } finally {
+      cache.invalidate(consumerId, REGISTRATION_READS);
+    }
     const whole = rows.find((r) => num(r.item) === 0 && r.status === 'refused');
     if (whole?.reason === 'key') return unauthorized(res);
     if (whole?.reason === 'not_found') {
@@ -1251,7 +1265,7 @@ export function createHandler(deps: HandlerDeps) {
     }
 
     if (def.name === 'predictions') return write(req, res, auth.hash);
-    if (def.name === 'registrations') return importRegistration(req, res, auth.hash);
+    if (def.name === 'registrations') return importRegistration(req, res, auth.hash, auth.consumerId);
 
     const generatedAt = isoSeconds(new Date(now()).toISOString());
     return serve(res, def.name, vars, params, auth.consumerId, generatedAt);

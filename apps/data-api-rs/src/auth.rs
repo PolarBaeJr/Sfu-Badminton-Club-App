@@ -6,10 +6,17 @@
 // a guesser repeating one wrong key does not become one database read per
 // request. An upstream FAILURE is never cached: a database blip must surface as
 // a 503, not as five seconds of 401s for keys that are perfectly valid.
+//
+// SINGLE FLIGHT: concurrent requests on one uncached key share one
+// data_api_verify_key call, and its result fills the cache once. A failure is
+// shared by the requests that were waiting on it and kept by nobody. The call
+// runs on its own task, so it settles whoever is still waiting.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
+use tokio::sync::watch;
 
 use crate::json;
 use crate::key::{hash_key, is_key};
@@ -41,8 +48,11 @@ struct Entry {
     expires: i64,
 }
 
+type Verified = Option<Result<Option<VerifiedKey>, UpstreamError>>;
+
 pub struct KeyVerifier {
-    cache: Mutex<OrderedMap<Entry>>,
+    cache: Arc<Mutex<OrderedMap<Entry>>>,
+    in_flight: Arc<Mutex<HashMap<String, watch::Receiver<Verified>>>>,
     upstream: Arc<Upstream>,
     now: Clock,
 }
@@ -58,7 +68,8 @@ fn bearer_key(header: Option<&str>) -> Option<&str> {
 impl KeyVerifier {
     pub fn new(upstream: Arc<Upstream>, now: Clock) -> Self {
         Self {
-            cache: Mutex::new(OrderedMap::default()),
+            cache: Arc::new(Mutex::new(OrderedMap::default())),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
             upstream,
             now,
         }
@@ -85,53 +96,92 @@ impl KeyVerifier {
         }
     }
 
-    /// Asks the database. An UpstreamError on failure, uncached.
+    /// Asks the database, or joins the call already asking. An UpstreamError
+    /// on failure, uncached.
     pub async fn verify(&self, hash: &str) -> Result<Option<VerifiedKey>, UpstreamError> {
-        let mut args = String::new();
-        json::write_out(
-            &mut args,
-            &json::Out::obj([("p_key_hash", json::Out::str(hash))]),
-        );
-        let rows = self.upstream.rpc("data_api_verify_key", args).await?;
-        let value = match rows.first() {
-            Some(Value::Object(row)) => {
-                match (row.get("consumer_id"), row.get("key_id"), row.get("scopes")) {
-                    (
-                        Some(Value::String(c)),
-                        Some(Value::String(k)),
-                        Some(Value::Array(scopes)),
-                    ) => Some(VerifiedKey {
+        let mut rx = {
+            let mut in_flight = self.in_flight.lock().expect("key in-flight lock");
+            match in_flight.get(hash) {
+                Some(rx) => rx.clone(),
+                None => {
+                    let (tx, rx) = watch::channel::<Verified>(None);
+                    in_flight.insert(hash.to_string(), rx.clone());
+                    let upstream = Arc::clone(&self.upstream);
+                    let cache = Arc::clone(&self.cache);
+                    let in_flight = Arc::clone(&self.in_flight);
+                    let now = Arc::clone(&self.now);
+                    let hash = hash.to_string();
+                    tokio::spawn(async move {
+                        let result = lookup(&upstream, &cache, &now, &hash).await;
+                        // Cached (by lookup) before it leaves the in-flight map, so a
+                        // newcomer finds one or the other.
+                        in_flight.lock().expect("key in-flight lock").remove(&hash);
+                        let _ = tx.send(Some(result));
+                    });
+                    rx
+                }
+            }
+        };
+        let settled = rx.wait_for(Option::is_some).await;
+        match settled {
+            Ok(v) => v.clone().expect("settled"),
+            // The task ended without settling: it panicked.
+            Err(_) => Err(UpstreamError {
+                fn_name: "data_api_verify_key".to_string(),
+                status: 0,
+            }),
+        }
+    }
+}
+
+async fn lookup(
+    upstream: &Upstream,
+    cache: &Mutex<OrderedMap<Entry>>,
+    now: &Clock,
+    hash: &str,
+) -> Result<Option<VerifiedKey>, UpstreamError> {
+    let mut args = String::new();
+    json::write_out(
+        &mut args,
+        &json::Out::obj([("p_key_hash", json::Out::str(hash))]),
+    );
+    let rows = upstream.rpc("data_api_verify_key", args).await?;
+    let value = match rows.first() {
+        Some(Value::Object(row)) => {
+            match (row.get("consumer_id"), row.get("key_id"), row.get("scopes")) {
+                (Some(Value::String(c)), Some(Value::String(k)), Some(Value::Array(scopes))) => {
+                    Some(VerifiedKey {
                         consumer_id: c.clone(),
                         key_id: k.clone(),
                         scopes: scopes
                             .iter()
                             .filter_map(|s| s.as_str().map(str::to_string))
                             .collect(),
-                    }),
-                    _ => None,
+                    })
                 }
-            }
-            _ => None,
-        };
-        let mut cache = self.cache.lock().expect("key cache lock");
-        let ttl = if value.is_some() {
-            POSITIVE_TTL_MS
-        } else {
-            NEGATIVE_TTL_MS
-        };
-        // `map.set` on an existing hash keeps its place, as in Node.
-        cache.set(
-            hash,
-            Entry {
-                value: value.clone(),
-                expires: (self.now)() + ttl,
-            },
-        );
-        while cache.len() > CACHE_MAX_ENTRIES {
-            if !cache.delete_oldest() {
-                break;
+                _ => None,
             }
         }
-        Ok(value)
+        _ => None,
+    };
+    let mut cache = cache.lock().expect("key cache lock");
+    let ttl = if value.is_some() {
+        POSITIVE_TTL_MS
+    } else {
+        NEGATIVE_TTL_MS
+    };
+    // `map.set` on an existing hash keeps its place, as in Node.
+    cache.set(
+        hash,
+        Entry {
+            value: value.clone(),
+            expires: now() + ttl,
+        },
+    );
+    while cache.len() > CACHE_MAX_ENTRIES {
+        if !cache.delete_oldest() {
+            break;
+        }
     }
+    Ok(value)
 }
