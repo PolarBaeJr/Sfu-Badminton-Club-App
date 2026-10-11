@@ -41,7 +41,46 @@ vi.mock('@/lib/actions/club-events', () => ({
   deleteClubEvent: (...a: unknown[]) => record('deleteClubEvent', a),
 }));
 
+// The tournament actions. The six that return nothing and throw their refusals
+// are recorded with `thrown` so the wrapping can be seen to turn a throw into
+// an ActionResult.
+let thrown: Error | null = null;
+async function recordVoid(name: string, args: unknown[]) {
+  await record(name, args);
+  if (thrown) throw thrown;
+}
+vi.mock('@/lib/tournament-actions/participants', () => ({
+  checkInParticipant: (...a: unknown[]) => record('checkInParticipant', a),
+  checkInPair: (...a: unknown[]) => record('checkInPair', a),
+  undoCheckIn: (...a: unknown[]) => record('undoCheckIn', a),
+  markParticipantNoShow: (...a: unknown[]) => recordVoid('markParticipantNoShow', a),
+  markPairNoShow: (...a: unknown[]) => recordVoid('markPairNoShow', a),
+}));
+vi.mock('@/lib/tournament-actions/results', () => ({
+  enterMatchResult: (...a: unknown[]) => record('enterMatchResult', a),
+  enterWalkover: (...a: unknown[]) => record('enterWalkover', a),
+}));
+vi.mock('@/lib/tournament-actions/scheduling', () => ({
+  setMatchCourt: (...a: unknown[]) => record('setMatchCourt', a),
+  setMatchLive: (...a: unknown[]) => record('setMatchLive', a),
+}));
+vi.mock('@/lib/actions/tournaments', () => ({
+  updateTournamentStatus: (...a: unknown[]) => record('updateTournamentStatus', a),
+  suspendTournament: (...a: unknown[]) => recordVoid('suspendTournament', a),
+  resumeTournament: (...a: unknown[]) => recordVoid('resumeTournament', a),
+}));
+vi.mock('@/lib/actions/tournament-fees', () => ({
+  markTournamentFeePaid: (...a: unknown[]) => recordVoid('markTournamentFeePaid', a),
+  markTournamentFeeUnpaid: (...a: unknown[]) => recordVoid('markTournamentFeeUnpaid', a),
+}));
+vi.mock('@/lib/actions/tournament-checkin', () => ({
+  getOrCreateTournamentCheckinToken: (...a: unknown[]) => record('getOrCreateTournamentCheckinToken', a),
+  rotateTournamentCheckinToken: (...a: unknown[]) => record('rotateTournamentCheckinToken', a),
+}));
+vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
+
 const { POST } = await import('../[name]/route');
+const { ExpectedError } = await import('@badminton/shared');
 
 const SECRET = 'test-service-secret';
 const ID = '11111111-2222-4333-8444-555555555555';
@@ -63,6 +102,7 @@ beforeEach(() => {
   process.env.DISCORD_SERVICE_SECRET = SECRET;
   calls.length = 0;
   answer = { ok: true, data: undefined };
+  thrown = null;
   resolveDiscordActor.mockReset();
   resolveDiscordActor.mockResolvedValue({ playerId: 'exec-1' });
 });
@@ -144,5 +184,83 @@ describe('POST /api/discord/actions/[name]', () => {
     const res = await call('createSession', { discordUserId: DISCORD_ID, args: [input] });
     expect(res.status).toBe(200);
     expect(calls[0]!.args).toEqual([input]);
+  });
+});
+
+describe('POST /api/discord/actions/[name]: tournaments', () => {
+  const OTHER = '22222222-3333-4444-8555-666666666666';
+
+  it.each([
+    ['checkInParticipant', [ID]],
+    ['checkInPair', [ID]],
+    ['undoCheckIn', [ID, true]],
+    ['markParticipantNoShow', [ID]],
+    ['markPairNoShow', [ID]],
+    ['enterWalkover', [ID, 'a', 'Did not turn up']],
+    ['setMatchCourt', [ID, '2']],
+    ['setMatchLive', [ID, false]],
+    ['updateTournamentStatus', [ID, 'completed']],
+    ['suspendTournament', [ID, 'Fire alarm']],
+    ['resumeTournament', [ID]],
+    ['markTournamentFeePaid', [{ tournament_id: ID, player_id: OTHER, method: 'cash' }]],
+    ['markTournamentFeeUnpaid', [ID, OTHER]],
+    ['getOrCreateTournamentCheckinToken', [ID]],
+    ['rotateTournamentCheckinToken', [ID]],
+  ])('runs %s with its arguments as the linked exec', async (name, args) => {
+    const res = await call(name, { discordUserId: DISCORD_ID, args });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, data: undefined });
+    expect(calls).toEqual([{ name, args, actorId: 'exec-1' }]);
+  });
+
+  it.each([
+    ['undoCheckIn', [ID, 'yes']],
+    ['enterWalkover', [ID, 'c', 'x']],
+    ['setMatchCourt', [ID, 'x'.repeat(41)]],
+    ['updateTournamentStatus', [ID, 'suspended']],
+    ['suspendTournament', [ID, 'x']],
+    // An amount would re-price the ledger row; only a method may be named.
+    ['markTournamentFeePaid', [{ tournament_id: ID, player_id: OTHER, amount_cents: 0 }]],
+    ['markTournamentFeeUnpaid', [ID]],
+    ['enterMatchResultFromScores', [ID, []]],
+    ['enterMatchResultFromScores', [ID, [{ a: 21, b: 100 }]]],
+    ['enterMatchResultFromScores', [ID, Array.from({ length: 8 }, () => ({ a: 21, b: 10 }))]],
+    ['enterMatchResultFromScores', [ID, [{ a: 21, b: 10, winner: 'a' }]]],
+  ])('is a 400 for bad arguments to %s', async (name, args) => {
+    const res = await call(name, { discordUserId: DISCORD_ID, args });
+    expect(res.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('turns a thrown refusal from a void action into an ActionResult', async () => {
+    thrown = new ExpectedError('Tournament is not suspended');
+    const res = await call('resumeTournament', { discordUserId: DISCORD_ID, args: [ID] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: false, error: 'Tournament is not suspended' });
+  });
+
+  it('turns a thrown passkey refusal from a void action into passkey_required', async () => {
+    thrown = new ExpectedError('x', 'AUTH-105');
+    const res = await call('markPairNoShow', { discordUserId: DISCORD_ID, args: [ID] });
+    expect(await res.json()).toEqual({ ok: false, refusal: 'passkey_required' });
+  });
+
+  it('derives the winner from the games, side A first', async () => {
+    const scores = [
+      { a: 15, b: 21 },
+      { a: 21, b: 18 },
+      { a: 19, b: 21 },
+    ];
+    await call('enterMatchResultFromScores', { discordUserId: DISCORD_ID, args: [ID, scores] });
+    expect(calls).toEqual([{ name: 'enterMatchResult', args: [ID, scores, 'b', false], actorId: 'exec-1' }]);
+  });
+
+  it('refuses a score that decides nothing, and runs nothing', async () => {
+    const res = await call('enterMatchResultFromScores', {
+      discordUserId: DISCORD_ID,
+      args: [ID, [{ a: 21, b: 15 }, { a: 15, b: 21 }]],
+    });
+    expect(await res.json()).toEqual({ ok: false, error: 'No game winner' });
+    expect(calls).toHaveLength(0);
   });
 });

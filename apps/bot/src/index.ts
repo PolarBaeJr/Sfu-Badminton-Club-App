@@ -9,10 +9,14 @@ import {
   OWN_FEE_PICKERS,
   SESSION_PICKERS,
   EVENT_PICKERS,
+  MEMBER_TOURNAMENT_PICKERS,
+  TOURNEY_PICKERS,
   dispatch,
   handleConsoleModal,
   handleEventAutocomplete,
   handleSessionAutocomplete,
+  handleTournamentAutocomplete,
+  handleTourneyAutocomplete,
   isConsoleModal,
   handleChallengeAutocomplete,
   handleReceiptAutocomplete,
@@ -1026,6 +1030,10 @@ const server = createServer(async (req, res) => {
             ? handleSessionAutocomplete(options, context)
             : EVENT_PICKERS.has(interaction.data.name)
             ? handleEventAutocomplete(options, context)
+            : MEMBER_TOURNAMENT_PICKERS.has(interaction.data.name)
+            ? handleTournamentAutocomplete(options)
+            : TOURNEY_PICKERS.has(interaction.data.name)
+            ? handleTourneyAutocomplete(options, context)
             : LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
             ? handleLinkedAccountAutocomplete(options, context)
             : handleProfileAutocomplete(options),

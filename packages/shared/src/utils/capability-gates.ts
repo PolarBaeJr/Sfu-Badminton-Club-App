@@ -285,6 +285,12 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'tournaments.page': {
     label: 'Open Tournaments', area: 'tournaments', group: null, mode: 'page',
     gate: 'app/tournaments/[id]/page.tsx TournamentDetailPage',
+    also: [
+      'app/api/discord/reads/[name]/route.ts tournaments',
+      'app/api/discord/reads/[name]/route.ts tournament-entries',
+      'app/api/discord/reads/[name]/route.ts tournament-matches',
+    ],
+    merged: READ_FROM_DISCORD,
   },
   'tournaments.manage.create.write': {
     label: 'Create a tournament', area: 'tournaments', group: 'manage', mode: 'write',
@@ -484,6 +490,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'tournaments.fees.read': {
     label: 'Tournament entry fees', area: 'tournaments', group: 'fees', mode: 'read',
     gate: 'app/tournaments/[id]/fees/page.tsx TournamentFeesPage',
+    also: ['app/api/discord/reads/[name]/route.ts tournament-fees'],
+    merged: READ_FROM_DISCORD,
   },
   'tournaments.fees.tier.create.write': {
     label: 'Create a fee tier', area: 'tournaments', group: 'fees', mode: 'write',

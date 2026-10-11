@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { deriveWinnerSide } from '@badminton/shared';
+import { runAction } from '@/lib/action-result';
 import { createAdminClient } from '@/lib/supabase-server';
 import { discordActorStore, resolveDiscordActor } from '@/lib/discord-actor';
 import { isAuthorizedDiscordService, discordServiceUnauthorized } from '@/lib/discord-service-auth';
@@ -17,6 +19,21 @@ import {
   deleteClubEvent,
   updateClubEvent,
 } from '@/lib/actions/club-events';
+import {
+  checkInPair,
+  checkInParticipant,
+  markPairNoShow,
+  markParticipantNoShow,
+  undoCheckIn,
+} from '@/lib/tournament-actions/participants';
+import { enterMatchResult, enterWalkover } from '@/lib/tournament-actions/results';
+import { setMatchCourt, setMatchLive } from '@/lib/tournament-actions/scheduling';
+import { resumeTournament, suspendTournament, updateTournamentStatus } from '@/lib/actions/tournaments';
+import { markTournamentFeePaid, markTournamentFeeUnpaid } from '@/lib/actions/tournament-fees';
+import {
+  getOrCreateTournamentCheckinToken,
+  rotateTournamentCheckinToken,
+} from '@/lib/actions/tournament-checkin';
 
 // CONSOLE COMMANDS ON DISCORD: the writes.
 //
@@ -67,6 +84,32 @@ const sessionUpdateInput = z.object(sessionFields).strict();
 // own input with the shared schemas, so the call is typed loosely here.
 type AnyAction = (...args: unknown[]) => Promise<unknown>;
 
+// Some console actions return nothing and THROW their refusals. The route reads
+// an ActionResult, so those are run through runAction, as a console form's
+// client wrapper would.
+const wrap =
+  (fn: (...args: never[]) => Promise<unknown>): AnyAction =>
+  (...args: unknown[]) =>
+    runAction(() => (fn as AnyAction)(...args));
+
+const gameScores = z
+  .array(z.object({ a: z.number().int().min(0).max(99), b: z.number().int().min(0).max(99) }).strict())
+  .min(1)
+  .max(7);
+
+// /tourney result sends the games only. The winner is derived from them with
+// the console's own rule, so Discord cannot record a winner the score
+// contradicts; a score that decides nothing is refused before the action runs.
+async function enterMatchResultFromScores(matchId: string, scores: { a: number; b: number }[]) {
+  const winner = deriveWinnerSide(scores.map((g) => ({ side_a_score: g.a, side_b_score: g.b })));
+  if (!winner) return { ok: false, error: 'No game winner' };
+  return enterMatchResult(matchId, scores, winner, false);
+}
+
+const feePaidInput = z
+  .object({ tournament_id: uuid, player_id: uuid, method: z.string().max(40).optional() })
+  .strict();
+
 const ACTIONS: Record<string, { args: z.ZodTypeAny; run: AnyAction }> = {
   createSession: { args: z.tuple([sessionCreateInput]), run: createSession as AnyAction },
   updateSession: { args: z.tuple([uuid, sessionUpdateInput, reason]), run: updateSession as AnyAction },
@@ -79,6 +122,32 @@ const ACTIONS: Record<string, { args: z.ZodTypeAny; run: AnyAction }> = {
   updateClubEvent: { args: z.tuple([uuid, object]), run: updateClubEvent as AnyAction },
   cancelClubEvent: { args: z.tuple([uuid, reason]), run: cancelClubEvent as AnyAction },
   deleteClubEvent: { args: z.tuple([uuid]), run: deleteClubEvent as AnyAction },
+  checkInParticipant: { args: z.tuple([uuid]), run: checkInParticipant as AnyAction },
+  checkInPair: { args: z.tuple([uuid]), run: checkInPair as AnyAction },
+  undoCheckIn: { args: z.tuple([uuid, z.boolean()]), run: undoCheckIn as AnyAction },
+  markParticipantNoShow: { args: z.tuple([uuid]), run: wrap(markParticipantNoShow) },
+  markPairNoShow: { args: z.tuple([uuid]), run: wrap(markPairNoShow) },
+  enterMatchResultFromScores: {
+    args: z.tuple([uuid, gameScores]),
+    run: enterMatchResultFromScores as AnyAction,
+  },
+  enterWalkover: { args: z.tuple([uuid, z.enum(['a', 'b']), reason]), run: enterWalkover as AnyAction },
+  setMatchCourt: { args: z.tuple([uuid, z.string().max(40)]), run: setMatchCourt as AnyAction },
+  setMatchLive: { args: z.tuple([uuid, z.boolean()]), run: setMatchLive as AnyAction },
+  updateTournamentStatus: {
+    args: z.tuple([uuid, z.enum(['draft', 'active', 'completed', 'archived'])]),
+    run: updateTournamentStatus as AnyAction,
+  },
+  suspendTournament: { args: z.tuple([uuid, z.string().min(2).max(500)]), run: wrap(suspendTournament) },
+  resumeTournament: { args: z.tuple([uuid]), run: wrap(resumeTournament) },
+  // No amount: the ledger row's own price stands (markTournamentFeePaid).
+  markTournamentFeePaid: { args: z.tuple([feePaidInput]), run: wrap(markTournamentFeePaid) },
+  markTournamentFeeUnpaid: { args: z.tuple([uuid, uuid]), run: wrap(markTournamentFeeUnpaid) },
+  getOrCreateTournamentCheckinToken: {
+    args: z.tuple([uuid]),
+    run: getOrCreateTournamentCheckinToken as AnyAction,
+  },
+  rotateTournamentCheckinToken: { args: z.tuple([uuid]), run: rotateTournamentCheckinToken as AnyAction },
 };
 
 const body = z.object({

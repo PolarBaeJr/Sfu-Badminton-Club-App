@@ -11,6 +11,11 @@ import {
   fetchSelfRoles,
   fetchSessions,
   fetchTournaments,
+  fetchTournamentChoices,
+  fetchTournamentDraw,
+  fetchNextTournamentMatch,
+  fetchTournamentResults,
+  enterTournamentEvent,
   forceLinkDiscordAccount,
   forceSyncMember,
   forceUnlinkDiscordAccount,
@@ -51,6 +56,8 @@ import {
   type SessionSummary,
   type TournamentsPage,
   type TournamentSummary,
+  type TournamentDraw,
+  type TournamentEntryReply,
 } from './api.js';
 import { postAuditEntry, summaryFromOutcomes } from './audit.js';
 import { invalidateConfigCache, loadConfig } from './config.js';
@@ -166,6 +173,33 @@ const CLUB_EVENT_KIND_CHOICES = [
   { name: 'Other', value: 'other' },
 ];
 
+/** The tournament every /tourney subcommand starts from. */
+const TOURNEY_TOURNAMENT_OPTION = {
+  type: 3,
+  name: 'tournament',
+  description: 'The tournament',
+  required: true,
+  autocomplete: true,
+};
+
+/** A participant or a pair, read from the console once a tournament is picked. */
+const TOURNEY_ENTRY_OPTION = {
+  type: 3,
+  name: 'entry',
+  description: 'The player or pair',
+  required: true,
+  autocomplete: true,
+};
+
+/** A match, listed side A first so a score can be typed the same way round. */
+const TOURNEY_MATCH_OPTION = {
+  type: 3,
+  name: 'match',
+  description: 'The match (side A is named first)',
+  required: true,
+  autocomplete: true,
+};
+
 export const COMMAND_DEFINITIONS = [
   {
     name: 'leaderboard',
@@ -256,9 +290,40 @@ export const COMMAND_DEFINITIONS = [
     default_member_permissions: EXEC_ONLY,
   },
   {
+    // SUBCOMMANDS SINCE 1.1.1. A client still holding the old registration
+    // sends /tournaments with no subcommand, and that is the list.
     name: 'tournaments',
-    description: 'Upcoming club tournaments',
-    options: [],
+    description: 'Club tournaments: what is on, enter, draws and results',
+    options: [
+      { type: 1, name: 'list', description: 'Tournaments happening now and coming up', options: [] },
+      {
+        type: 1,
+        name: 'enter',
+        description: 'Enter a singles event as yourself',
+        options: [
+          { type: 3, name: 'tournament', description: 'The tournament', required: true, autocomplete: true },
+          { type: 3, name: 'event', description: 'The event (only ones taking entries)', required: true, autocomplete: true },
+        ],
+      },
+      {
+        type: 1,
+        name: 'draw',
+        description: "An event's draw",
+        options: [
+          { type: 3, name: 'tournament', description: 'The tournament', required: true, autocomplete: true },
+          { type: 3, name: 'event', description: 'The event', required: true, autocomplete: true },
+        ],
+      },
+      { type: 1, name: 'next', description: 'Your next tournament match', options: [] },
+      {
+        type: 1,
+        name: 'results',
+        description: 'On court now and the latest results',
+        options: [
+          { type: 3, name: 'tournament', description: 'The tournament', required: true, autocomplete: true },
+        ],
+      },
+    ],
   },
   {
     // NO default_member_permissions, deliberately. EXEC_ONLY is right there in
@@ -1158,6 +1223,178 @@ export const COMMAND_DEFINITIONS = [
       },
     ],
   },
+  {
+    // CONSOLE COMMANDS ON DISCORD for running a tournament on the day. Same two
+    // gates and the same acknowledgement as /session: suspend opens a modal, so
+    // this is not in DEFERRED_COMMANDS either.
+    name: 'tourney',
+    description: 'Run a tournament on the day (console)',
+    default_member_permissions: EXEC_ONLY,
+    dm_permission: false,
+    options: [
+      {
+        type: 1,
+        name: 'checkin',
+        description: 'Check an entry in',
+        options: [TOURNEY_TOURNAMENT_OPTION, TOURNEY_ENTRY_OPTION],
+      },
+      {
+        type: 1,
+        name: 'noshow',
+        description: 'Mark an entry as a no-show',
+        options: [TOURNEY_TOURNAMENT_OPTION, TOURNEY_ENTRY_OPTION],
+      },
+      {
+        type: 1,
+        name: 'undo-checkin',
+        description: 'Undo a check-in',
+        options: [TOURNEY_TOURNAMENT_OPTION, TOURNEY_ENTRY_OPTION],
+      },
+      {
+        type: 1,
+        name: 'result',
+        description: 'Enter a match result',
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          TOURNEY_MATCH_OPTION,
+          {
+            type: 3,
+            name: 'scores',
+            description: 'Each game like 21-15, side A first, as shown in the picker',
+            required: true,
+            max_length: 60,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'walkover',
+        description: 'Award a match as a walkover',
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          TOURNEY_MATCH_OPTION,
+          {
+            type: 3,
+            name: 'winner',
+            description: 'Which side wins, as shown in the picker',
+            required: true,
+            choices: [
+              { name: 'Side A', value: 'a' },
+              { name: 'Side B', value: 'b' },
+            ],
+          },
+          { type: 3, name: 'reason', description: 'Why (goes in the club audit log)', required: true, min_length: 5, max_length: 500 },
+        ],
+      },
+      {
+        type: 1,
+        name: 'court',
+        description: 'Put a match on a court',
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          TOURNEY_MATCH_OPTION,
+          { type: 3, name: 'court', description: 'The court, like 3', required: true, max_length: 40 },
+        ],
+      },
+      {
+        type: 1,
+        name: 'live',
+        description: 'Start or stop a match',
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          TOURNEY_MATCH_OPTION,
+          {
+            type: 3,
+            name: 'state',
+            description: 'Start or stop',
+            required: true,
+            choices: [
+              { name: 'Start', value: 'start' },
+              { name: 'Stop', value: 'stop' },
+            ],
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'status',
+        description: "Change a tournament's status",
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          {
+            type: 3,
+            name: 'status',
+            description: 'The new status',
+            required: true,
+            choices: [
+              { name: 'Draft', value: 'draft' },
+              { name: 'Active', value: 'active' },
+              { name: 'Completed', value: 'completed' },
+              { name: 'Archived', value: 'archived' },
+            ],
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'suspend',
+        description: 'Suspend play (asks for a reason members see)',
+        options: [TOURNEY_TOURNAMENT_OPTION],
+      },
+      { type: 1, name: 'resume', description: 'Resume a suspended tournament', options: [TOURNEY_TOURNAMENT_OPTION] },
+      {
+        type: 1,
+        name: 'fee',
+        description: "Mark a player's tournament fee paid or unpaid",
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          { type: 3, name: 'player', description: 'The player', required: true, autocomplete: true },
+          {
+            type: 3,
+            name: 'state',
+            description: 'Paid or unpaid',
+            required: true,
+            choices: [
+              { name: 'Paid', value: 'paid' },
+              { name: 'Unpaid', value: 'unpaid' },
+            ],
+          },
+          {
+            type: 3,
+            name: 'method',
+            description: 'How they paid',
+            required: false,
+            // PAYMENT_METHODS in packages/shared/src/utils/payment-methods.ts,
+            // without Custom (a free-text method is the console's).
+            choices: [
+              { name: 'E-transfer', value: 'e_transfer' },
+              { name: 'Cash', value: 'cash' },
+              { name: 'Online portal', value: 'online_portal' },
+              { name: 'SFU Rec website', value: 'sfu_rec' },
+            ],
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'checkin-link',
+        description: 'The self check-in link (only you see it)',
+        options: [
+          TOURNEY_TOURNAMENT_OPTION,
+          {
+            type: 3,
+            name: 'action',
+            description: 'Get the current link, or issue a new one',
+            required: true,
+            choices: [
+              { name: 'Get', value: 'get' },
+              { name: 'Rotate', value: 'rotate' },
+            ],
+          },
+        ],
+      },
+    ],
+  },
 ];
 
 /**
@@ -1207,6 +1444,9 @@ export const DEFERRED_COMMANDS = new Set([
   // Opens no modal, and the reply carries the member's own calendar feed link,
   // so ephemeral is what it must be anyway.
   'schedule',
+  // Opens no modal and every answer is ephemeral. `enter` writes an entry and
+  // `draw` reads a whole event, and either can take the app past three seconds.
+  'tournaments',
 ]);
 
 /**
@@ -1244,6 +1484,18 @@ export const OWN_FEE_PICKERS = new Set(['receipt']);
  */
 export const SESSION_PICKERS = new Set(['session']);
 export const EVENT_PICKERS = new Set(['event']);
+
+/**
+ * /tournaments' pickers: active tournaments and their events, read from the
+ * member app, the same for everybody. Same pattern as the sets above.
+ */
+export const MEMBER_TOURNAMENT_PICKERS = new Set(['tournaments']);
+
+/**
+ * /tourney's pickers: tournaments, entries, matches and fees, read from the
+ * console as the linked exec. Same pattern as SESSION_PICKERS.
+ */
+export const TOURNEY_PICKERS = new Set(['tourney']);
 
 /**
  * Who ran the command, and where.
@@ -2125,19 +2377,34 @@ function tournamentsBoard(data: TournamentsPage): RenderedList {
   const { page, totalPages, total } = data;
   const head = `${TOURNAMENT_PAGE_PREFIX}e`;
 
+  // Finished this week, under the first page only: the route sends it only
+  // when there is no search, and a later page repeating it would read as more
+  // results.
+  const finished = page === 1 ? (data.recentlyFinished ?? []) : [];
+  const sections = [
+    data.tournaments.length ? data.tournaments.map(formatTournament).join('\n\n') : TOURNAMENTS_EMPTY,
+    ...(finished.length
+      ? [
+          `**Finished this week**\n${finished
+            .map((t) => `${t.name} · ${formatTournamentDates(t)}`)
+            .join('\n')}\nResults: \`/tournaments results\``,
+        ]
+      : []),
+  ];
+
   return {
     embeds: [
       {
-        title: 'Upcoming tournaments',
+        title: 'Tournaments',
         color: CLUB_RED,
-        description: data.tournaments.length
-          ? clampDescription(data.tournaments.map(formatTournament).join('\n\n'))
-          : 'No tournaments are scheduled right now.',
+        description: clampDescription(sections.join('\n\n')),
         footer: {
           text: [
             `Page ${page} of ${totalPages}`,
-            `${total} upcoming`,
-            data.linked ? 'Enter on the website' : 'Run /link to see which of these you can enter.',
+            `${total} on or upcoming`,
+            data.linked
+              ? 'Enter with /tournaments enter or on the website'
+              : 'Run /link to see which of these you can enter.',
           ].join(' · '),
         },
       },
@@ -2578,7 +2845,7 @@ export async function handleSessionBoardModal(
  * committed to — the schema stores DATE, with no time of day at all. <t:unix:D>
  * shows the date alone, which is the whole of what is known.
  */
-function formatTournamentDates(t: TournamentSummary): string {
+function formatTournamentDates(t: { startDate: string; endDate: string | null }): string {
   // Noon UTC, not midnight: midnight on the club's date is the previous day in
   // every timezone west of it, so a reader in Vancouver would see a tournament
   // starting the day before the website says.
@@ -2588,8 +2855,11 @@ function formatTournamentDates(t: TournamentSummary): string {
   return `${start} – <t:${stamp(t.endDate)}:D>`;
 }
 
+const TOURNAMENTS_EMPTY = 'Nothing is on or coming up right now. Past tournaments are on the website.';
+
 function formatTournament(t: TournamentSummary): string {
   const parts = [formatTournamentDates(t)];
+  if (t.inProgress) parts.unshift('**Happening now**');
   if (t.events.length > 0) parts.push(`${t.events.length} event${t.events.length === 1 ? '' : 's'}`);
   if (t.registrationOpen) parts.push('entries open');
 
@@ -2613,11 +2883,30 @@ function formatTournament(t: TournamentSummary): string {
  * caller holds. That is nobody else's business, and it would arrive as a side
  * effect of running a command about tournaments.
  */
-export async function handleTournaments(context: InteractionContext) {
+export async function handleTournaments(context: InteractionContext, options?: CommandOption[]) {
+  const chosen = subcommand(options);
+  switch (chosen.name) {
+    // null: a client still holding the registration from before the
+    // subcommands, which sends none. That was the list.
+    case null:
+    case 'list':
+      break;
+    case 'enter':
+      return handleTournamentEnter(chosen.options, context);
+    case 'draw':
+      return handleTournamentDraw(chosen.options);
+    case 'next':
+      return handleTournamentNext(context);
+    case 'results':
+      return handleTournamentResults(chosen.options);
+    default:
+      return ephemeral('Unknown subcommand.');
+  }
+
   const data = await fetchTournaments(context.discordUserId, 1);
 
-  if (data.tournaments.length === 0) {
-    return ephemeral('No tournaments are scheduled right now.');
+  if (data.tournaments.length === 0 && (data.recentlyFinished ?? []).length === 0) {
+    return ephemeral(TOURNAMENTS_EMPTY);
   }
 
   return ephemeralBoard(tournamentsBoard(data));
@@ -2652,7 +2941,7 @@ export async function handleTournamentPageButton(
   const data = await fetchTournaments(context.discordUserId, targetPageFromButtonId(customId));
 
   if (data.tournaments.length === 0) {
-    return ephemeral('No tournaments are scheduled right now.');
+    return ephemeral(TOURNAMENTS_EMPTY);
   }
 
   return listResponse(originFromButtonId(customId), tournamentsBoard(data));
@@ -2670,7 +2959,7 @@ export async function handleTournamentListModal(
       pageFromModalValue(modalValue(components, 'page'))
     );
     if (data.tournaments.length === 0) {
-      return ephemeral('No tournaments are scheduled right now.');
+      return ephemeral(TOURNAMENTS_EMPTY);
     }
     return ephemeralBoard(tournamentsBoard(data));
   }
@@ -2685,8 +2974,255 @@ export async function handleTournamentListModal(
     q,
     lines: data.tournaments.map(formatTournament),
     total: data.total,
-    nothing: `No scheduled tournament matches "${q}".`,
+    nothing: `No tournament on or coming up matches "${q}".`,
   });
+}
+
+// ---------------------------------------------------------------------------
+// /tournaments enter, draw, next and results
+// ---------------------------------------------------------------------------
+//
+// In DEFERRED_COMMANDS, so each of these has fifteen minutes and its answer is
+// the edit of an ephemeral "thinking...". draw, next and results only read;
+// enter writes an entry AS THE CALLER, read off the interaction, never from an
+// option, through the app's own registerForEvent body.
+
+const TOURNAMENT_PICK_FIRST = 'Pick a tournament from the list.';
+const TOURNAMENT_PICK_EVENT = 'Pick an event from the list.';
+
+// An abort can fire after the app has written the entry, so this never says
+// nothing happened.
+const TOURNAMENT_ENTRY_UNKNOWN =
+  "Couldn't get an answer from the club app, so I can't tell whether you were entered. " +
+  'Check the tournament on the website before you try again.';
+
+// One message carries at most 10 embeds, 4096 characters in a description
+// and 6000 across every embed in it. The budgets sit under those with room
+// for the titles and the link line.
+const DRAW_EMBEDS_MAX = 10;
+const DRAW_DESCRIPTION_MAX = 4000;
+const DRAW_MESSAGE_MAX = 5800;
+
+function tournamentLine(content: string): BotResponse {
+  // allowed_mentions empty: a player's name is text a member typed.
+  return { type: 4, data: { content, flags: 64, allowed_mentions: { parse: [] } } };
+}
+
+function suspendedNote(suspended: { reason: string | null } | null): string | null {
+  if (!suspended) return null;
+  return suspended.reason ? `Play is suspended: ${suspended.reason.slice(0, 300)}` : 'Play is suspended.';
+}
+
+/** Turn an entry refusal into this file's own sentence. */
+function tournamentEntryRefusalText(reply: Extract<TournamentEntryReply, { ok: false }>): string {
+  switch (reply.refusal) {
+    case 'not_linked':
+      return 'Link your account first with `/link`.';
+    case 'lapsed':
+      return 'Your membership was paused for inactivity. Open the club website once to switch it back on, then try again.';
+    case 'standing':
+      return "Your account can't enter tournaments right now. The club website says why.";
+    case 'feature_off':
+      return 'Tournaments are switched off in the club right now.';
+    case 'waiver':
+      return "Accept the club's current legal documents on the website first, then try again.";
+    case 'not_found':
+      return "That event isn't open to entries. Pick one from the list.";
+    case 'website':
+      // An event waiver is a signed record and a doubles entry is a choice
+      // about a partner: both are the website's to ask.
+      return reply.url
+        ? `Enter this one on the website, where you can read and accept what it asks: ${reply.url}`
+        : 'Enter this one on the website, where you can read and accept what it asks.';
+    case 'rule':
+      return reply.message ? reply.message.slice(0, 300) : 'The club rules do not allow that entry.';
+    default:
+      return "The club app said no, and this version of the bot doesn't know why. Try the website.";
+  }
+}
+
+async function handleTournamentEnter(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  if (!context.discordUserId) return tournamentLine("I couldn't tell who ran that. Try again.");
+  const eventId = stringOption(options, 'event');
+  if (!eventId || !UUID_PATTERN.test(eventId)) return tournamentLine(TOURNAMENT_PICK_EVENT);
+
+  let reply: TournamentEntryReply;
+  try {
+    reply = await enterTournamentEvent({ discordUserId: context.discordUserId, eventId });
+  } catch (error) {
+    console.error('[bot] tournament entry failed:', error instanceof Error ? error.message : 'unknown');
+    return tournamentLine(TOURNAMENT_ENTRY_UNKNOWN);
+  }
+  if (!reply.ok) return tournamentLine(tournamentEntryRefusalText(reply));
+  return tournamentLine(
+    `You're entered in ${reply.event}. Any entry fee and your check-in are on the website.`
+  );
+}
+
+/**
+ * A draw as embeds: the sections in order, packed whole lines at a time under
+ * every Discord limit, with a "Full draw" link at the end. Whatever does not
+ * fit is left to the link, and the last line says so.
+ */
+export function drawEmbeds(draw: Extract<TournamentDraw, { found: true }>): Record<string, unknown>[] {
+  const title = `${draw.tournament.name} · ${draw.event.label}`.slice(0, 256);
+  const tail: string[] = [];
+  const suspended = suspendedNote(draw.suspended);
+  if (suspended) tail.push(suspended);
+  const link = draw.url ? `[Full draw](${draw.url})` : null;
+
+  const lines: string[] = [];
+  for (const section of draw.sections) {
+    if (section.lines.length === 0) continue;
+    lines.push(`**${section.title}**`, ...section.lines, '');
+  }
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  if (lines.length === 0) lines.push('No matches drawn yet.');
+
+  // The closing block goes on the last embed, so every description leaves room
+  // for it (with the cut note, in case it is needed), and the message total
+  // leaves room for it and the title.
+  const cutNote = 'More on the website.';
+  const closingRoom = [cutNote, ...tail, ...(link ? [link] : [])].join('\n').length + 2;
+  const perEmbed = DRAW_DESCRIPTION_MAX - closingRoom;
+  const messageRoom = DRAW_MESSAGE_MAX - closingRoom - title.length;
+
+  const descriptions: string[] = [];
+  let current = '';
+  let used = 0;
+  let cut = draw.truncated;
+  for (const raw of lines) {
+    const line = raw.slice(0, perEmbed);
+    const startsNew = current !== '' && current.length + 1 + line.length > perEmbed;
+    if (startsNew && descriptions.length + 1 >= DRAW_EMBEDS_MAX) {
+      cut = true;
+      break;
+    }
+    const cost = startsNew || current === '' ? line.length : line.length + 1;
+    if (used + cost > messageRoom) {
+      cut = true;
+      break;
+    }
+    if (startsNew) {
+      descriptions.push(current);
+      current = line;
+    } else {
+      current = current === '' ? line : `${current}\n${line}`;
+    }
+    used += cost;
+  }
+  if (current) descriptions.push(current);
+  if (descriptions.length === 0) descriptions.push('');
+
+  const closing = [...(cut ? [cutNote] : []), ...tail, ...(link ? [link] : [])];
+  if (closing.length > 0) {
+    const last = descriptions.length - 1;
+    descriptions[last] = descriptions[last] ? `${descriptions[last]}\n\n${closing.join('\n')}` : closing.join('\n');
+  }
+
+  return descriptions.map((description, index) => ({
+    ...(index === 0 ? { title } : {}),
+    color: CLUB_RED,
+    description,
+  }));
+}
+
+async function handleTournamentDraw(options: CommandOption[] | undefined): Promise<BotResponse> {
+  const eventId = stringOption(options, 'event');
+  if (!eventId || !UUID_PATTERN.test(eventId)) return tournamentLine(TOURNAMENT_PICK_EVENT);
+  const draw = await fetchTournamentDraw(eventId);
+  if (!draw.found) return tournamentLine("That event isn't showing a draw. Pick one from the list.");
+  return {
+    type: 4,
+    data: { embeds: drawEmbeds(draw), flags: 64, allowed_mentions: { parse: [] } },
+  };
+}
+
+const MATCH_STATUS_WORDS: Record<string, string> = {
+  live: 'On court now',
+  ready: 'Waiting to be called',
+  pending: 'Scheduled',
+};
+
+async function handleTournamentNext(context: InteractionContext): Promise<BotResponse> {
+  if (!context.discordUserId) return tournamentLine("I couldn't tell who ran that. Try again.");
+  const reply = await fetchNextTournamentMatch(context.discordUserId);
+  if (!reply.linked) return tournamentLine('Link your account first with `/link`.');
+  const next = reply.match;
+  if (!next) return tournamentLine('You have no tournament match coming up.');
+
+  const lines = [
+    `**${next.tournament}** · ${next.event}`,
+    next.round,
+    `Against: ${next.opponents}`,
+    [MATCH_STATUS_WORDS[next.status] ?? next.status, next.court ? `Court ${next.court}` : null, next.scheduledTime]
+      .filter(Boolean)
+      .join(' · '),
+  ];
+  const suspended = suspendedNote(next.suspended);
+  if (suspended) lines.push(suspended);
+  if (next.url) lines.push(next.url);
+  return tournamentLine(lines.join('\n').slice(0, 1900));
+}
+
+async function handleTournamentResults(options: CommandOption[] | undefined): Promise<BotResponse> {
+  const tournamentId = stringOption(options, 'tournament');
+  if (!tournamentId || !UUID_PATTERN.test(tournamentId)) return tournamentLine(TOURNAMENT_PICK_FIRST);
+  const results = await fetchTournamentResults(tournamentId);
+  if (!results.found) return tournamentLine("That tournament isn't showing results. Pick one from the list.");
+
+  const sections: string[] = [];
+  const suspended = suspendedNote(results.suspended);
+  if (suspended) sections.push(suspended);
+  sections.push(
+    results.live.length ? `**On court now**\n${results.live.join('\n')}` : 'Nothing is on court right now.'
+  );
+  if (results.recent.length) sections.push(`**Latest results**\n${results.recent.join('\n')}`);
+  if (results.url) sections.push(`[Full results](${results.url})`);
+  return {
+    type: 4,
+    data: {
+      embeds: [{ title: results.tournament.name.slice(0, 256), color: CLUB_RED, description: clampDescription(sections.join('\n\n')) }],
+      flags: 64,
+      allowed_mentions: { parse: [] },
+    },
+  };
+}
+
+/**
+ * The /tournaments pickers. The tournament slot lists active tournaments; the
+ * event slot lists the picked tournament's events, only those taking entries
+ * for `enter`. Until a tournament is picked the event slot is empty.
+ */
+export async function handleTournamentAutocomplete(options: CommandOption[] | undefined): Promise<BotResponse> {
+  const empty = { type: 8, data: { choices: [] as { name: string; value: string }[] } };
+  const chosen = subcommand(options);
+  const focused = chosen.options?.find((o) => o.focused);
+  const typed = String(focused?.value ?? '').trim().slice(0, 80);
+  try {
+    let choices: { id: string; label: string }[] = [];
+    if (focused?.name === 'tournament') {
+      choices = await fetchTournamentChoices({ q: typed });
+    } else if (focused?.name === 'event') {
+      const tournamentId = String(option(chosen.options, 'tournament') ?? '');
+      if (!UUID_PATTERN.test(tournamentId)) return empty;
+      choices = await fetchTournamentChoices({ q: typed, tournamentId, open: chosen.name === 'enter' });
+    } else {
+      return empty;
+    }
+    return {
+      type: 8,
+      data: {
+        choices: choices.slice(0, SELECT_OPTIONS_MAX).map((c) => ({ name: c.label.slice(0, 100), value: c.id })),
+      },
+    };
+  } catch (error) {
+    console.error('[bot] tournament picker failed:', error instanceof Error ? error.message : 'unknown');
+    return empty;
+  }
 }
 
 export async function handleLink(context: InteractionContext) {
@@ -5151,32 +5687,43 @@ const MAX_GAMES = 7;
 const MAX_GAME_POINTS = 39;
 
 /**
- * "21-15 18-21 21-19" into games, the caller's points first. Games are split
- * on spaces or commas; each is two whole numbers joined by a hyphen or colon.
- * Only the shape is checked here. Whether 21-20 can end a game is the app's
- * call, against the challenge's own target.
+ * "21-15 18-21 21-19" into games, the first number of each game first. Games
+ * are split on spaces or commas; each is two whole numbers joined by a hyphen
+ * or colon. Only the shape is checked here, and that no game ends level.
+ * Whether 21-20 can end a game is the app's call. `order` is the words for
+ * which side comes first, as the command's own help says it.
  */
-export function parseChallengeScore(
-  raw: string
-): { ok: true; games: { mine: number; theirs: number }[] } | { ok: false; message: string } {
+export function parseGameScores(
+  raw: string,
+  order: string
+): { ok: true; games: [number, number][] } | { ok: false; message: string } {
   const parts = raw.split(/[\s,]+/).filter(Boolean);
   if (parts.length === 0) return { ok: false, message: 'Enter at least one game, like `21-15`.' };
   if (parts.length > MAX_GAMES) return { ok: false, message: `A match has at most ${MAX_GAMES} games.` };
-  const games: { mine: number; theirs: number }[] = [];
+  const games: [number, number][] = [];
   for (const part of parts) {
     const match = /^(\d{1,2})[-:](\d{1,2})$/.exec(part);
     if (!match) {
-      return { ok: false, message: `\`${part.slice(0, 20)}\` is not a game score. Write each game like \`21-15\`, your points first.` };
+      return { ok: false, message: `\`${part.slice(0, 20)}\` is not a game score. Write each game like \`21-15\`, ${order}.` };
     }
-    const mine = Number(match[1]);
-    const theirs = Number(match[2]);
-    if (mine > MAX_GAME_POINTS || theirs > MAX_GAME_POINTS) {
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    if (first > MAX_GAME_POINTS || second > MAX_GAME_POINTS) {
       return { ok: false, message: `No game goes past ${MAX_GAME_POINTS} points.` };
     }
-    if (mine === theirs) return { ok: false, message: 'A game cannot end level.' };
-    games.push({ mine, theirs });
+    if (first === second) return { ok: false, message: 'A game cannot end level.' };
+    games.push([first, second]);
   }
   return { ok: true, games };
+}
+
+/** A challenge score: the caller's points first in every game. */
+export function parseChallengeScore(
+  raw: string
+): { ok: true; games: { mine: number; theirs: number }[] } | { ok: false; message: string } {
+  const parsed = parseGameScores(raw, 'your points first');
+  if (!parsed.ok) return parsed;
+  return { ok: true, games: parsed.games.map(([mine, theirs]) => ({ mine, theirs })) };
 }
 
 /** The reply for a deferred command: plain content, only the caller sees it. */
@@ -6336,7 +6883,7 @@ export function isConsoleModal(customId: string | undefined | null): boolean {
 }
 
 /**
- * A submitted /session or /event modal: `cadm:<action>:<uuid>`. Checked here
+ * A submitted /session, /event or /tourney modal: `cadm:<action>:<uuid>`. Checked here
  * without a network call, then acknowledged ephemerally and finished like the
  * subcommands, because the console write can outlast the submit's 3 seconds.
  */
@@ -6375,6 +6922,19 @@ export function handleConsoleModal(
         if (!reply.ok) return consoleRefusalText(reply);
         return 'Event cancelled. Everybody signed up has been told.';
       });
+    case 'tsuspend': {
+      if (reason.length < TOURNEY_SUSPEND_REASON_MIN) {
+        return consoleLine(`The reason needs at least ${TOURNEY_SUSPEND_REASON_MIN} characters.`);
+      }
+      return consoleFinish(async () => {
+        const reply = await adminSend<void>(actionPath('suspendTournament'), {
+          discordUserId: callerId,
+          args: [id, reason],
+        });
+        if (!reply.ok) return consoleRefusalText(reply);
+        return 'Play suspended. Members see the reason on the tournament page until you resume.';
+      });
+    }
     case 'edelete': {
       if (modalValue(components, 'confirm').trim().toUpperCase() !== 'DELETE') {
         return consoleLine('Nothing was deleted. Type DELETE to confirm.');
@@ -6484,6 +7044,267 @@ export async function handleEventAutocomplete(
   }
 }
 
+// ---------------------------------------------------------------------------
+// CONSOLE COMMANDS ON DISCORD: /tourney
+// ---------------------------------------------------------------------------
+//
+// Running a tournament on the day, as the linked exec, through the console's
+// own tournament actions. Acknowledged like /session: suspend opens a modal,
+// every other subcommand returns consoleFinish.
+//
+// THE PICKERS ARE CHAINED. Every subcommand picks the tournament first, and the
+// entry, match and player pickers read its value off the same interaction, so
+// a match from another tournament is never offered. A value that is not a uuid
+// (typed rather than picked) gets no choices.
+
+const TOURNEY_SCORE_ORDER = 'side A first, as shown in the picker';
+const TOURNEY_SUSPEND_REASON_MIN = 2;
+const TOURNEY_ENTRY_PATTERN =
+  /^(p|pr):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+interface TourneyMatch {
+  id: string;
+  label: string;
+  sideA: string;
+  sideB: string;
+  status: string;
+}
+
+const STATUS_WORDS: Record<string, string> = {
+  draft: 'a draft',
+  active: 'active',
+  completed: 'completed',
+  archived: 'archived',
+};
+
+/** One match of this tournament, any status, for the names in a reply. */
+async function tourneyMatch(
+  callerId: string,
+  tournamentId: string,
+  matchId: string
+): Promise<ConsoleReply<TourneyMatch | null>> {
+  const reply = await adminGet<{ matches: TourneyMatch[] }>(
+    `/api/discord/reads/tournament-matches?tournamentId=${tournamentId}&id=${matchId}`,
+    callerId
+  );
+  if (!reply.ok) return reply;
+  return { ok: true, data: reply.data.matches.find((m) => m.id === matchId) ?? null };
+}
+
+/** /tourney. See the section note above. */
+export function handleTourney(options: CommandOption[] | undefined, context: InteractionContext): BotResponse {
+  const callerId = context.discordUserId;
+  if (!callerId) return consoleLine("I couldn't tell who ran that. Try again.");
+  if (!process.env.ADMIN_API_URL) return consoleLine(CONSOLE_NOT_CONFIGURED);
+
+  const chosen = subcommand(options);
+  const tournamentId = stringOption(chosen.options, 'tournament');
+  if (!tournamentId || !UUID_PATTERN.test(tournamentId)) return consoleLine('Pick a tournament from the list.');
+
+  const send = (name: string, args: unknown[], done: string) =>
+    consoleFinish(async () => {
+      const reply = await adminSend<unknown>(actionPath(name), { discordUserId: callerId, args });
+      if (!reply.ok) return consoleRefusalText(reply);
+      return done;
+    });
+
+  switch (chosen.name) {
+    case 'checkin':
+    case 'noshow':
+    case 'undo-checkin': {
+      const entry = TOURNEY_ENTRY_PATTERN.exec(stringOption(chosen.options, 'entry') ?? '');
+      if (!entry) return consoleLine('Pick a player or pair from the list.');
+      const isPair = entry[1] === 'pr';
+      const entryId = entry[2];
+      if (chosen.name === 'checkin') {
+        return send(isPair ? 'checkInPair' : 'checkInParticipant', [entryId], 'Checked in.');
+      }
+      if (chosen.name === 'noshow') {
+        return send(isPair ? 'markPairNoShow' : 'markParticipantNoShow', [entryId], 'Marked as a no-show.');
+      }
+      return send('undoCheckIn', [entryId, isPair], 'Check-in undone.');
+    }
+    case 'result':
+    case 'walkover':
+    case 'court':
+    case 'live':
+      return tourneyMatchCommand(chosen.name, chosen.options, callerId, tournamentId);
+    case 'status': {
+      const status = stringOption(chosen.options, 'status') ?? '';
+      if (!STATUS_WORDS[status]) return consoleLine('Pick a status from the list.');
+      return send('updateTournamentStatus', [tournamentId, status], `The tournament is ${STATUS_WORDS[status]} now.`);
+    }
+    case 'suspend':
+      return textModal({
+        customId: `${CONSOLE_MODAL_PREFIX}tsuspend:${tournamentId}`,
+        title: 'Suspend play',
+        fieldId: 'reason',
+        label: 'Reason (members see it)',
+        placeholder: 'Members see this on the tournament page until you resume.',
+        minLength: TOURNEY_SUSPEND_REASON_MIN,
+        maxLength: 500,
+      });
+    case 'resume':
+      return send('resumeTournament', [tournamentId], 'Play resumed.');
+    case 'fee': {
+      const playerId = stringOption(chosen.options, 'player');
+      if (!playerId || !UUID_PATTERN.test(playerId)) return consoleLine('Pick a player from the list.');
+      if (stringOption(chosen.options, 'state') === 'unpaid') {
+        return send('markTournamentFeeUnpaid', [tournamentId, playerId], 'Fee marked unpaid.');
+      }
+      const method = stringOption(chosen.options, 'method');
+      return send(
+        'markTournamentFeePaid',
+        [{ tournament_id: tournamentId, player_id: playerId, ...(method ? { method } : {}) }],
+        'Fee marked paid.'
+      );
+    }
+    case 'checkin-link': {
+      const rotate = stringOption(chosen.options, 'action') === 'rotate';
+      return consoleFinish(async () => {
+        const reply = await adminSend<string>(
+          actionPath(rotate ? 'rotateTournamentCheckinToken' : 'getOrCreateTournamentCheckinToken'),
+          { discordUserId: callerId, args: [tournamentId] }
+        );
+        if (!reply.ok) return consoleRefusalText(reply);
+        const publicBase = process.env.APP_PUBLIC_URL;
+        if (!publicBase) return 'The check-in link exists, but APP_PUBLIC_URL is not set on this bot.';
+        // A CREDENTIAL. Only ever sent ephemerally, to the exec who asked, and
+        // never logged.
+        return (
+          `${rotate ? 'New check-in link (the old one no longer works):' : 'Check-in link:'}\n` +
+          `${publicBase.replace(/\/+$/, '')}/tournaments/checkin?token=${encodeURIComponent(reply.data)}\n` +
+          'Anyone with this link can check in. Show it as a QR at the desk; do not post it in a channel.'
+        );
+      });
+    }
+    default:
+      return consoleLine('Unknown subcommand.');
+  }
+}
+
+function tourneyMatchCommand(
+  name: 'result' | 'walkover' | 'court' | 'live',
+  options: CommandOption[] | undefined,
+  callerId: string,
+  tournamentId: string
+): BotResponse {
+  const matchId = stringOption(options, 'match');
+  if (!matchId || !UUID_PATTERN.test(matchId)) return consoleLine('Pick a match from the list.');
+
+  // Everything that can be refused without the console is refused here, so
+  // nothing is read for a reply that was always going to be no.
+  let args: unknown[];
+  let done: (match: TourneyMatch) => string;
+  if (name === 'result') {
+    const parsed = parseGameScores(stringOption(options, 'scores') ?? '', TOURNEY_SCORE_ORDER);
+    if (!parsed.ok) return consoleLine(parsed.message);
+    const wonA = parsed.games.filter(([a, b]) => a > b).length;
+    const wonB = parsed.games.length - wonA;
+    if (wonA === wonB) return consoleLine('Both sides won the same number of games. Enter every game played.');
+    args = [matchId, parsed.games.map(([a, b]) => ({ a, b }))];
+    const score = parsed.games.map(([a, b]) => `${a}-${b}`).join(' ');
+    done = (m) => `Recorded: ${m.sideA} ${score} ${m.sideB}`;
+  } else if (name === 'walkover') {
+    const winner = stringOption(options, 'winner');
+    const reason = stringOption(options, 'reason') ?? '';
+    if (winner !== 'a' && winner !== 'b') return consoleLine('Pick side A or side B.');
+    if (reason.length < REASON_MIN) return consoleLine(`The reason needs at least ${REASON_MIN} characters.`);
+    args = [matchId, winner, reason];
+    done = (m) => `Walkover recorded: ${winner === 'a' ? m.sideA : m.sideB} goes through.`;
+  } else if (name === 'court') {
+    const court = stringOption(options, 'court');
+    if (!court) return consoleLine('Say which court.');
+    args = [matchId, court];
+    done = (m) => `${m.sideA} v ${m.sideB}: Court ${court}.`;
+  } else {
+    const start = stringOption(options, 'state') === 'start';
+    args = [matchId, start];
+    done = (m) => `${m.sideA} v ${m.sideB}: ${start ? 'on court now' : 'no longer live'}.`;
+  }
+  const action = {
+    result: 'enterMatchResultFromScores',
+    walkover: 'enterWalkover',
+    court: 'setMatchCourt',
+    live: 'setMatchLive',
+  }[name];
+
+  return consoleFinish(async () => {
+    // Read first: it names the sides for the reply, and it is how a match from
+    // another tournament is refused before anything is written.
+    const match = await tourneyMatch(callerId, tournamentId, matchId);
+    if (!match.ok) return consoleRefusalText(match);
+    if (!match.data) return 'That match is not in this tournament. Pick one from the list.';
+    const reply = await adminSend<unknown>(actionPath(action), { discordUserId: callerId, args });
+    if (!reply.ok) return consoleRefusalText(reply);
+    return done(match.data);
+  });
+}
+
+/** The /tourney pickers, chained off the tournament already picked. */
+export async function handleTourneyAutocomplete(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const empty = { type: 8, data: { choices: [] as { name: string; value: string }[] } };
+  if (!context.discordUserId || !process.env.ADMIN_API_URL) return empty;
+  const chosen = subcommand(options);
+  const focused = chosen.options?.find((o) => o.focused);
+  const typed = encodeURIComponent(String(focused?.value ?? '').trim().slice(0, 80));
+  const tournamentId = String(option(chosen.options, 'tournament') ?? '');
+  const choicesFrom = (rows: { name: string; value: string }[]) => ({
+    type: 8,
+    data: {
+      choices: rows
+        .slice(0, SELECT_OPTIONS_MAX)
+        .map((r) => ({ name: r.name.slice(0, 100), value: r.value.slice(0, 100) })),
+    },
+  });
+  try {
+    if (focused?.name === 'tournament') {
+      const reply = await adminGet<{ tournaments: { id: string; label: string }[] }>(
+        `/api/discord/reads/tournaments?q=${typed}`,
+        context.discordUserId,
+        CONSOLE_PICKER_TIMEOUT_MS
+      );
+      if (!reply.ok) return empty;
+      return choicesFrom(reply.data.tournaments.map((t) => ({ name: t.label, value: t.id })));
+    }
+    if (!UUID_PATTERN.test(tournamentId)) return empty;
+    const scope = `tournamentId=${tournamentId}&q=${typed}`;
+    if (focused?.name === 'entry') {
+      const reply = await adminGet<{ entries: { value: string; label: string }[] }>(
+        `/api/discord/reads/tournament-entries?${scope}`,
+        context.discordUserId,
+        CONSOLE_PICKER_TIMEOUT_MS
+      );
+      if (!reply.ok) return empty;
+      return choicesFrom(reply.data.entries.map((e) => ({ name: e.label, value: e.value })));
+    }
+    if (focused?.name === 'match') {
+      const reply = await adminGet<{ matches: TourneyMatch[] }>(
+        `/api/discord/reads/tournament-matches?${scope}`,
+        context.discordUserId,
+        CONSOLE_PICKER_TIMEOUT_MS
+      );
+      if (!reply.ok) return empty;
+      return choicesFrom(reply.data.matches.map((m) => ({ name: m.label, value: m.id })));
+    }
+    if (focused?.name === 'player') {
+      const reply = await adminGet<{ fees: { playerId: string; label: string }[] }>(
+        `/api/discord/reads/tournament-fees?${scope}`,
+        context.discordUserId,
+        CONSOLE_PICKER_TIMEOUT_MS
+      );
+      if (!reply.ok) return empty;
+      return choicesFrom(reply.data.fees.map((f) => ({ name: f.label, value: f.playerId })));
+    }
+  } catch (error) {
+    console.error('[bot] tourney picker failed:', error instanceof Error ? error.message : 'unknown');
+  }
+  return empty;
+}
+
 export async function dispatch(
   name: string,
   options: CommandOption[] | undefined,
@@ -6500,7 +7321,7 @@ export async function dispatch(
       case 'sessionpost':
         return await handleSessionPost();
       case 'tournaments':
-        return await handleTournaments(context);
+        return await handleTournaments(context, options);
       case 'rolepicker':
         return await handleRolePicker(options, context);
       case 'guidepost':
@@ -6543,6 +7364,8 @@ export async function dispatch(
         return handleSessionAdmin(options, context);
       case 'event':
         return handleEventAdmin(options, context);
+      case 'tourney':
+        return handleTourney(options, context);
       default:
         return ephemeral('Unknown command.');
     }

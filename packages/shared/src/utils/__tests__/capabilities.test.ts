@@ -388,16 +388,23 @@ describe('CAPABILITY_GATES', () => {
   // (sessions, session-attendance, locations), `events.page` one (events) and
   // `events.signups.read` one (event-signups). The writes add no site: they
   // call the console's own actions, which were already counted.
-  it('names 207 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 207 BECAME 211 with tournaments on Discord (/tourney): four more reads on
+  // the same route. `tournaments.page` takes three (tournaments,
+  // tournament-entries, tournament-matches), the rows the tournament page
+  // shows, and `tournaments.fees.read` one (tournament-fees), the fees page's
+  // entrants and what they have paid. The /tourney writes add no site, for the
+  // same reason the /session ones did not.
+  it('names 211 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(207);
-    expect(new Set(sites).size).toBe(207);
-    expect(ENFORCEMENT_POINTS).toBe(207);
+    expect(sites.length).toBe(211);
+    expect(new Set(sites).size).toBe(211);
+    expect(ENFORCEMENT_POINTS).toBe(211);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
