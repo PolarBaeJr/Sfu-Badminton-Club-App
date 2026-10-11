@@ -65,6 +65,15 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Console commands from the Discord bot, for the same two reasons. The bot
+  // has no session cookie, and the catch at the bottom redirects to /login
+  // without consulting isPublicRoute. Each handler under /api/discord checks
+  // the service secret itself and resolves the linked exec; nothing here may
+  // import those handlers' actor store, which is Node-only.
+  if (request.nextUrl.pathname.startsWith('/api/discord/')) {
+    return NextResponse.next();
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   // See the identical block in the player middleware: expires host-only auth

@@ -381,16 +381,23 @@ describe('CAPABILITY_GATES', () => {
   // 196 BECAME 202 with Club changes (00286): the page, postClubChanges, and
   // the four actions merged into `changelog.post.write` (add, reword and
   // delete a pending line, and announce a posted entry).
-  it('names 202 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 202 BECAME 207 with console commands on Discord: five reads on the
+  // console's /api/discord/reads route, each merged into the capability of the
+  // console page that shows the same rows. `sessions.page` takes three
+  // (sessions, session-attendance, locations), `events.page` one (events) and
+  // `events.signups.read` one (event-signups). The writes add no site: they
+  // call the console's own actions, which were already counted.
+  it('names 207 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(202);
-    expect(new Set(sites).size).toBe(202);
-    expect(ENFORCEMENT_POINTS).toBe(202);
+    expect(sites.length).toBe(207);
+    expect(new Set(sites).size).toBe(207);
+    expect(ENFORCEMENT_POINTS).toBe(207);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

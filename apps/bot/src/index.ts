@@ -7,7 +7,13 @@ import {
   LINKED_ACCOUNT_PICKERS,
   OPEN_CHALLENGE_PICKERS,
   OWN_FEE_PICKERS,
+  SESSION_PICKERS,
+  EVENT_PICKERS,
   dispatch,
+  handleConsoleModal,
+  handleEventAutocomplete,
+  handleSessionAutocomplete,
+  isConsoleModal,
   handleChallengeAutocomplete,
   handleReceiptAutocomplete,
   handleLinkedAccountAutocomplete,
@@ -112,6 +118,38 @@ function answerSignup(
           components: [],
           embeds: [],
         });
+      }
+    }
+  })();
+}
+
+/**
+ * Send a handler's response, and when it carries `finish`, run that after the
+ * acknowledgement and write its answer over the message. answerSignup's shape
+ * with the failure line passed in, for the console command modals.
+ */
+function answerDeferred(
+  res: ServerResponse,
+  response: BotResponse,
+  appId: string | undefined,
+  interactionToken: string | undefined,
+  failureText: string
+) {
+  const { finish, ...ack } = response;
+  send(res, 200, ack);
+  if (!finish) return;
+  void (async () => {
+    try {
+      const final = await finish();
+      if (!appId || !interactionToken) {
+        console.error('[bot] deferred modal finished but had no interaction token');
+        return;
+      }
+      await editDeferredReply(appId, interactionToken, final.data ?? {});
+    } catch (error) {
+      console.error('[bot] deferred modal failed:', error instanceof Error ? error.message : 'unknown');
+      if (appId && interactionToken) {
+        await editDeferredReply(appId, interactionToken, { content: failureText });
       }
     }
   })();
@@ -698,6 +736,19 @@ const server = createServer(async (req, res) => {
       );
     }
 
+    // /session and /event modals: a reason or a confirmation, then a console
+    // write that can outlast this submit's three seconds, so the handler
+    // acknowledges ephemerally and finishes by editing that message.
+    if (isConsoleModal(customId)) {
+      return answerDeferred(
+        res,
+        handleConsoleModal(customId as string, interaction.data.components, modalContext),
+        interaction.application_id,
+        interaction.token,
+        "Something went wrong. Check the console before you try again, in case it went through."
+      );
+    }
+
     if (isAnnounceModal(customId)) {
       try {
         const response = await handleAnnounceModal(
@@ -971,6 +1022,10 @@ const server = createServer(async (req, res) => {
           ? handleChallengeAutocomplete(options, context)
           : OWN_FEE_PICKERS.has(interaction.data.name)
             ? handleReceiptAutocomplete(options, context)
+            : SESSION_PICKERS.has(interaction.data.name)
+            ? handleSessionAutocomplete(options, context)
+            : EVENT_PICKERS.has(interaction.data.name)
+            ? handleEventAutocomplete(options, context)
             : LINKED_ACCOUNT_PICKERS.has(interaction.data.name)
             ? handleLinkedAccountAutocomplete(options, context)
             : handleProfileAutocomplete(options),

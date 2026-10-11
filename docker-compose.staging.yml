@@ -173,6 +173,10 @@ services:
       # in their own browser. Staging's origin, so a staging link cannot walk
       # somebody into production.
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://badminton.polardev.org}
+      # The CONSOLE's base URL for /session and /event, including the console's
+      # path prefix. Optional: unset, those two commands say they are not
+      # configured and nothing else changes.
+      ADMIN_API_URL: ${ADMIN_API_URL:-}
     # No `ports:` here on purpose. The proxy reaches this container on the
     # `edge` network at 3002 (proxy.port below) and never through a host port,
     # so publishing one bought nothing -- and it cost the deploy pipeline. This

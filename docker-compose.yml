@@ -181,6 +181,10 @@ services:
       # goes into the /link button that a member opens in their own browser, so
       # http://player:3000 would be a dead link on their phone.
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://sfubadminton.com}
+      # The CONSOLE's base URL for /session and /event, including the console's
+      # path prefix. Optional: unset, those two commands say they are not
+      # configured and nothing else changes. Not derived from APP_API_URL.
+      ADMIN_API_URL: ${ADMIN_API_URL:-}
     restart: unless-stopped
     networks: [edge, default]
     labels:

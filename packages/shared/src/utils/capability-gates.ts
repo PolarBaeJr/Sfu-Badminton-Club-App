@@ -48,6 +48,7 @@ export type CapabilityGate = {
 const MINT_A_TOKEN = 'Getting the token and rotating it are one act — minting a check-in secret.';
 const MARK_OR_CLEAR = 'Marking and clearing an attendance mark are the same act in two directions.';
 const SWITCHED_OFF = 'Opening a switched-off feature and using it are one act: being let into something members are kept out of.';
+const READ_FROM_DISCORD = 'Opening the page in the console and listing the same rows from a Discord console command are one act: an officer reading what that page shows.';
 
 export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   // ---- players -----------------------------------------------------------
@@ -174,6 +175,12 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'sessions.page': {
     label: 'Open Sessions', area: 'sessions', group: null, mode: 'page',
     gate: 'route /sessions',
+    also: [
+      'app/api/discord/reads/[name]/route.ts sessions',
+      'app/api/discord/reads/[name]/route.ts session-attendance',
+      'app/api/discord/reads/[name]/route.ts locations',
+    ],
+    merged: READ_FROM_DISCORD,
   },
   'sessions.reminders.write': {
     label: 'Send session reminders', area: 'sessions', group: null, mode: 'write',
@@ -503,10 +510,14 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'events.page': {
     label: 'Open Club events', area: 'events', group: null, mode: 'page',
     gate: 'route /events',
+    also: ['app/api/discord/reads/[name]/route.ts events'],
+    merged: READ_FROM_DISCORD,
   },
   'events.signups.read': {
     label: 'See who signed up for a club event', area: 'events', group: null, mode: 'read',
     gate: 'app/events/[id]/page.tsx signups fetch',
+    also: ['app/api/discord/reads/[name]/route.ts event-signups'],
+    merged: READ_FROM_DISCORD,
   },
   'events.signups.remove.write': {
     label: 'Remove a member from a club event', area: 'events', group: null, mode: 'write',
