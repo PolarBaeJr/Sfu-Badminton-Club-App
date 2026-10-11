@@ -94,7 +94,9 @@ async function get<T>(path: string, callerId?: string | null, timeoutMs = TIMEOU
   if (!response.ok) {
     // The body may carry an error code, but it may also be an HTML error page
     // from something in front of the app. Never interpolate it into a Discord
-    // reply; log the status and keep the user-facing message generic.
+    // reply; log the status and keep the user-facing message generic. (The one
+    // exception anywhere in the bot is a console action's CODED error text; see
+    // CONSOLE COMMANDS at the end of this file.)
     throw new AppApiError(`GET ${path} -> ${response.status}`);
   }
 
@@ -1683,4 +1685,120 @@ export async function fetchCard(cardUrl: string, budgetMs: number): Promise<Card
   } catch {
     return null;
   }
+}
+
+// ---- SCHEDULE --------------------------------------------------------------
+
+export interface ScheduleDay {
+  /** "Tue, 14 Oct" or "Today, 14 Oct", already in club time. */
+  label: string;
+  /** One preformatted line per session, club event or tournament. */
+  items: string[];
+}
+
+export type SchedulePayload =
+  | { linked: false }
+  | {
+      linked: true;
+      days: ScheduleDay[];
+      /** Null when the member's standing does not allow a feed link. */
+      feed: { https: string; webcal: string } | null;
+      /** Null when the app has no public URL configured. */
+      calendarUrl: string | null;
+    };
+
+const SCHEDULE_TIMEOUT_MS = 10_000;
+
+/** The caller's next two weeks, read by the app; /schedule is deferred. */
+export function fetchSchedule(callerId: string): Promise<SchedulePayload> {
+  return get<SchedulePayload>('/api/discord/schedule', callerId, SCHEDULE_TIMEOUT_MS);
+}
+
+// ---- CONSOLE COMMANDS ------------------------------------------------------
+//
+// /session and /event run the CONSOLE's own server actions as the linked exec,
+// through the console's /api/discord/actions and /api/discord/reads routes. The
+// console is a different service from the member app and lives under a path
+// prefix, so it has its own base URL, ADMIN_API_URL, which includes that
+// prefix. It is NOT derived from APP_API_URL, and it has no default: unset
+// means the commands say they are not configured.
+//
+// THE URL IS BUILT BY CONCATENATION, not `new URL(path, base)`, because an
+// absolute path resolved against a base drops the base's own path: the console
+// prefix would vanish and every call would land on the member app.
+//
+// REDIRECTS ARE NOT FOLLOWED. A console that predates these routes answers a
+// sessionless request with a redirect to its login page, and fetch would follow
+// it and read the login page as a 200. A 3xx, a 404 or a body that is not JSON
+// all mean "this console does not have the command yet".
+//
+// THE ONE PLACE A RESPONSE BODY REACHES A DISCORD MESSAGE. A console action's
+// `error` is shown to the exec only when it carries a `code`: that is an
+// expected refusal the console already shows people in a toast (no permission,
+// account suspended). Uncoded errors can be raw database text and are replaced
+// with a generic line. The caller caps the length and sends no mentions.
+
+export class ConsoleNotConfiguredError extends Error {}
+export class ConsoleNotAvailableError extends Error {}
+
+export type ConsoleRefusal = 'not_linked' | 'passkey_required';
+
+export type ConsoleReply<T> =
+  | { ok: true; data: T }
+  | { ok: false; refusal: ConsoleRefusal }
+  | { ok: false; refusal?: undefined; error: string; code?: string; ref?: string };
+
+const ADMIN_ACTION_TIMEOUT_MS = 10_000;
+
+function adminUrl(path: string): string {
+  const base = process.env.ADMIN_API_URL;
+  if (!base) throw new ConsoleNotConfiguredError('ADMIN_API_URL is not set');
+  return base.replace(/\/+$/, '') + path;
+}
+
+async function consoleReply<T>(response: Response, label: string): Promise<ConsoleReply<T>> {
+  if (response.status === 404 || (response.status >= 300 && response.status < 400)) {
+    throw new ConsoleNotAvailableError(`${label} -> ${response.status}`);
+  }
+  if (!response.ok) throw new AppApiError(`${label} -> ${response.status}`);
+  if (!(response.headers.get('content-type') ?? '').includes('application/json')) {
+    throw new ConsoleNotAvailableError(`${label} -> not JSON`);
+  }
+  return (await response.json()) as ConsoleReply<T>;
+}
+
+/** Run one console action as the linked exec. */
+export async function adminSend<T>(
+  path: string,
+  body: { discordUserId: string; args: unknown[] },
+  timeoutMs = ADMIN_ACTION_TIMEOUT_MS
+): Promise<ConsoleReply<T>> {
+  const url = adminUrl(path);
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    redirect: 'manual',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  return consoleReply<T>(response, `POST ${path}`);
+}
+
+/** One console read as the linked exec. The caller travels as a header. */
+export async function adminGet<T>(
+  path: string,
+  callerId: string,
+  timeoutMs = ADMIN_ACTION_TIMEOUT_MS
+): Promise<ConsoleReply<T>> {
+  const url = adminUrl(path);
+  const secret = process.env.DISCORD_SERVICE_SECRET;
+  if (!secret) throw new AppApiError('DISCORD_SERVICE_SECRET is not set');
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${secret}`, 'x-discord-user-id': callerId },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  return consoleReply<T>(response, `GET ${path.split('?')[0]}`);
 }

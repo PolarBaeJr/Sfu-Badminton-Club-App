@@ -34,6 +34,12 @@ import {
   signupStep,
   submitReceipt,
   fetchOwnFees,
+  fetchSchedule,
+  adminGet,
+  adminSend,
+  ConsoleNotAvailableError,
+  ConsoleNotConfiguredError,
+  type ConsoleReply,
   type ChallengeRefusal,
   type ReceiptReply,
   type SignupReply,
@@ -144,6 +150,21 @@ const MANAGE_GUILD = '32';
  * outside the admins. The wrong people never get it by accident.
  */
 const EXEC_ONLY = '0';
+
+/**
+ * The club event kinds, as /event create offers them. A copy of
+ * CLUB_EVENT_KINDS in packages/shared/src/utils/club-events.ts: the bot does
+ * not import the shared package. The console's schema refuses anything else,
+ * so a drift shows up as a refusal rather than a wrong row.
+ */
+const CLUB_EVENT_KIND_CHOICES = [
+  { name: 'Social', value: 'social' },
+  { name: 'Workshop', value: 'workshop' },
+  { name: 'Clinic', value: 'clinic' },
+  { name: 'Outing', value: 'outing' },
+  { name: 'AGM', value: 'agm' },
+  { name: 'Other', value: 'other' },
+];
 
 export const COMMAND_DEFINITIONS = [
   {
@@ -963,6 +984,180 @@ export const COMMAND_DEFINITIONS = [
       },
     ],
   },
+  {
+    // The caller's own next two weeks: sessions on their track, published club
+    // events and tournaments, plus their calendar feed link. No permission flag:
+    // every linked member may ask. Deferred and therefore ephemeral, because the
+    // feed link is a personal credential.
+    name: 'schedule',
+    description: 'Your club schedule for the next two weeks',
+    options: [],
+  },
+  {
+    // CONSOLE COMMANDS ON DISCORD. Runs the console's own session actions as the
+    // linked exec, through the console's /api/discord routes.
+    //
+    // EXEC_ONLY IS GATE 1 ONLY, on the doctrine at the top of this file. The
+    // real boundary is the capability each console action asks for, resolved
+    // for the caller's own club account by the same gate the console uses.
+    //
+    // NOT IN DEFERRED_COMMANDS, and it cannot be: archive and delete open a
+    // modal, and a deferred interaction can no longer open one. The handler
+    // acknowledges for itself instead (type 5, ephemeral) on every other
+    // subcommand, the way /profile does.
+    name: 'session',
+    description: 'Create, edit and manage club sessions (console)',
+    default_member_permissions: EXEC_ONLY,
+    dm_permission: false,
+    options: [
+      {
+        type: 1,
+        name: 'create',
+        description: 'Create a session, or a weekly series',
+        options: [
+          { type: 3, name: 'date', description: 'Date, YYYY-MM-DD', required: true, min_length: 10, max_length: 10 },
+          { type: 3, name: 'start', description: 'Start time, 24-hour HH:MM', required: true, max_length: 5 },
+          { type: 3, name: 'end', description: 'End time, 24-hour HH:MM', required: true, max_length: 5 },
+          { type: 3, name: 'location', description: 'Where', required: true, autocomplete: true, max_length: 200 },
+          {
+            type: 3,
+            name: 'track',
+            description: 'Who it is for',
+            required: true,
+            choices: [
+              { name: 'Everyone', value: 'all' },
+              { name: 'Competitive', value: 'competitive' },
+              { name: 'Recreational', value: 'recreational' },
+            ],
+          },
+          { type: 3, name: 'name', description: 'Name (defaults to Practice Session)', required: false, max_length: 100 },
+          { type: 3, name: 'notes', description: 'Notes members see', required: false, max_length: 500 },
+          {
+            type: 3,
+            name: 'repeat_weekly_until',
+            description: 'Repeat every week up to this date, YYYY-MM-DD',
+            required: false,
+            min_length: 10,
+            max_length: 10,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: 'edit',
+        description: 'Change a session. Only the options you fill in change.',
+        options: [
+          { type: 3, name: 'session', description: 'The session', required: true, autocomplete: true },
+          // REQUIRED, unlike the fields: the console refuses a session edit
+          // with no reason, and required options must come first.
+          { type: 3, name: 'reason', description: 'Why (goes in the club audit log)', required: true, min_length: 5, max_length: 500 },
+          { type: 3, name: 'date', description: 'New date, YYYY-MM-DD', required: false, min_length: 10, max_length: 10 },
+          { type: 3, name: 'start', description: 'New start time, 24-hour HH:MM', required: false, max_length: 5 },
+          { type: 3, name: 'end', description: 'New end time, 24-hour HH:MM', required: false, max_length: 5 },
+          { type: 3, name: 'location', description: 'New location', required: false, autocomplete: true, max_length: 200 },
+          {
+            type: 3,
+            name: 'track',
+            description: 'Who it is for',
+            required: false,
+            choices: [
+              { name: 'Everyone', value: 'all' },
+              { name: 'Competitive', value: 'competitive' },
+              { name: 'Recreational', value: 'recreational' },
+            ],
+          },
+          { type: 3, name: 'name', description: 'New name', required: false, max_length: 100 },
+          { type: 3, name: 'notes', description: 'New notes', required: false, max_length: 500 },
+        ],
+      },
+      {
+        type: 1,
+        name: 'archive',
+        description: 'Close a session (asks for a reason)',
+        options: [{ type: 3, name: 'session', description: 'The session', required: true, autocomplete: true }],
+      },
+      {
+        type: 1,
+        name: 'delete',
+        description: 'Delete a session and its RSVPs and attendance (asks for a reason)',
+        options: [{ type: 3, name: 'session', description: 'The session', required: true, autocomplete: true }],
+      },
+      { type: 1, name: 'list', description: 'Upcoming open sessions', options: [] },
+      {
+        type: 1,
+        name: 'attendance',
+        description: 'Who is going and who has checked in',
+        options: [{ type: 3, name: 'session', description: 'The session', required: true, autocomplete: true }],
+      },
+      {
+        type: 1,
+        name: 'checkin',
+        description: 'The check-in link for a session (only you see it)',
+        options: [
+          { type: 3, name: 'session', description: 'The session', required: true, autocomplete: true },
+          { type: 5, name: 'rotate', description: 'Issue a new link and retire the old one', required: false },
+        ],
+      },
+    ],
+  },
+  {
+    // CONSOLE COMMANDS ON DISCORD for club events (not tournaments). Same two
+    // gates and the same acknowledgement as /session: cancel and delete open a
+    // modal, so this is not in DEFERRED_COMMANDS either.
+    name: 'event',
+    description: 'Create and manage club events (console)',
+    default_member_permissions: EXEC_ONLY,
+    dm_permission: false,
+    options: [
+      {
+        type: 1,
+        name: 'create',
+        description: 'Create a club event (a draft unless you publish it)',
+        options: [
+          { type: 3, name: 'title', description: 'Title', required: true, max_length: 120 },
+          {
+            type: 3,
+            name: 'kind',
+            description: 'What sort of event',
+            required: true,
+            choices: CLUB_EVENT_KIND_CHOICES,
+          },
+          { type: 3, name: 'starts', description: 'Start, YYYY-MM-DD HH:MM (24-hour, club time)', required: true, min_length: 16, max_length: 16 },
+          { type: 3, name: 'ends', description: 'End, YYYY-MM-DD HH:MM', required: false, min_length: 16, max_length: 16 },
+          { type: 3, name: 'location', description: 'Where', required: false, max_length: 200 },
+          { type: 4, name: 'capacity', description: 'How many places (no limit if left out)', required: false, min_value: 1 },
+          { type: 10, name: 'cost', description: 'Cost in dollars, for display only', required: false, min_value: 0, max_value: 1000 },
+          { type: 5, name: 'publish', description: 'Publish it now (default: save as a draft)', required: false },
+          { type: 3, name: 'description', description: 'Description members see', required: false, max_length: 1000 },
+        ],
+      },
+      {
+        type: 1,
+        name: 'publish',
+        description: 'Publish a draft event',
+        options: [{ type: 3, name: 'event', description: 'The event', required: true, autocomplete: true }],
+      },
+      {
+        type: 1,
+        name: 'cancel',
+        description: 'Cancel an event and tell the people signed up (asks for a reason)',
+        options: [{ type: 3, name: 'event', description: 'The event', required: true, autocomplete: true }],
+      },
+      {
+        type: 1,
+        name: 'delete',
+        description: 'Delete an event nobody has signed up for (asks you to confirm)',
+        options: [{ type: 3, name: 'event', description: 'The event', required: true, autocomplete: true }],
+      },
+      { type: 1, name: 'list', description: 'Upcoming drafts and published events', options: [] },
+      {
+        type: 1,
+        name: 'signups',
+        description: 'Who has signed up',
+        options: [{ type: 3, name: 'event', description: 'The event', required: true, autocomplete: true }],
+      },
+    ],
+  },
 ];
 
 /**
@@ -1009,6 +1204,9 @@ export const DEFERRED_COMMANDS = new Set([
   // Opens no modal and answers ephemerally. The app downloads and stores the
   // screenshot before it answers.
   'receipt',
+  // Opens no modal, and the reply carries the member's own calendar feed link,
+  // so ephemeral is what it must be anyway.
+  'schedule',
 ]);
 
 /**
@@ -1038,6 +1236,14 @@ export const OPEN_CHALLENGE_PICKERS = new Set(['challenge']);
  * Which commands' pickers list the CALLER'S OWN unpaid fees. Same pattern.
  */
 export const OWN_FEE_PICKERS = new Set(['receipt']);
+
+/**
+ * The console commands' pickers: sessions and locations for /session, club
+ * events for /event. Read from the console as the linked exec, behind the same
+ * capability the console page asks for. Same pattern as the sets above.
+ */
+export const SESSION_PICKERS = new Set(['session']);
+export const EVENT_PICKERS = new Set(['event']);
 
 /**
  * Who ran the command, and where.
@@ -5656,6 +5862,628 @@ export interface BotResponse {
   finish?: () => Promise<BotResponse>;
 }
 
+// ---------------------------------------------------------------------------
+// /schedule
+// ---------------------------------------------------------------------------
+//
+// The caller's own next two weeks, decided and formatted by the app. Deferred
+// (see DEFERRED_COMMANDS), so the reply is ephemeral: it carries the member's
+// personal calendar feed link.
+
+const SCHEDULE_NOT_LINKED =
+  "You haven't linked your Discord account to the club yet. Run `/link` first, then try `/schedule` again.";
+
+export async function handleSchedule(context: InteractionContext): Promise<BotResponse> {
+  if (!context.discordUserId) return ephemeral("I couldn't tell who ran that. Try again.");
+  const schedule = await fetchSchedule(context.discordUserId);
+  if (!schedule.linked) return ephemeral(SCHEDULE_NOT_LINKED);
+
+  const days = schedule.days.map(
+    (day) => `**${day.label}**\n${day.items.map((line) => `- ${line}`).join('\n')}`
+  );
+  const body = days.length > 0 ? days.join('\n\n') : 'Nothing on your schedule in the next two weeks.';
+  const links = schedule.calendarUrl ? [`[Open the calendar](${schedule.calendarUrl})`] : [];
+  if (schedule.feed) {
+    links.push(`Add it to your phone's calendar: <${schedule.feed.webcal}>`);
+    links.push(`Or subscribe by URL: <${schedule.feed.https}>`);
+  }
+  return {
+    type: 4,
+    data: {
+      flags: 64,
+      allowed_mentions: { parse: [] },
+      embeds: [
+        {
+          title: 'Your next two weeks',
+          color: CLUB_RED,
+          description: clampDescription([body, links.join('\n')].filter(Boolean).join('\n\n')),
+        },
+      ],
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// CONSOLE COMMANDS ON DISCORD: /session and /event
+// ---------------------------------------------------------------------------
+//
+// Each subcommand calls ONE console action (or read) through adminSend /
+// adminGet, as the linked exec. Every rule about what is allowed lives in the
+// console; what is here is option plumbing and the words.
+//
+// ACKNOWLEDGED BY THE HANDLER, NOT BY DEFERRED_COMMANDS. archive, delete and
+// cancel open a modal, which a deferred interaction can no longer do. Every
+// other subcommand returns { type: 5, flags: 64, finish } and does no network
+// work before it, so index.ts writes the ephemeral "thinking..." inside the
+// three seconds and PATCHes the answer in afterwards.
+
+export const CONSOLE_NOT_CONFIGURED = 'Console commands are not configured on this bot.';
+export const CONSOLE_NOT_AVAILABLE = 'This command is not available yet.';
+export const CONSOLE_NOT_LINKED =
+  'Run `/link` on your own account first. This command acts as your club account.';
+export const CONSOLE_PASSKEY_REQUIRED =
+  "Add a console passkey in the console's Settings first. Discord console commands need one on your account.";
+const CONSOLE_UNREACHABLE =
+  "Couldn't get an answer from the console. Check the console before you try again, in case it went through.";
+const CONSOLE_ERROR_MAX = 300;
+const CONSOLE_PICKER_TIMEOUT_MS = 900;
+const CONSOLE_MODAL_PREFIX = 'cadm:';
+const REASON_MIN = 5;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_PATTERN = /^(\d{1,2}):(\d{2})$/;
+const WALL_CLOCK_PATTERN = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/;
+
+/** An ephemeral line that can never ping anybody, whatever the text holds. */
+function consoleLine(content: string): BotResponse {
+  return { type: 4, data: { content, flags: 64, allowed_mentions: { parse: [] } } };
+}
+
+/**
+ * The words for a console answer that was not a success.
+ *
+ * The action's own `error` is shown ONLY when it carries a `code`: that is an
+ * expected refusal the console already shows people (no permission, account
+ * suspended). Anything uncoded may be raw database text, so it becomes a
+ * generic line. Capped, and sent with no mentions by consoleLine.
+ */
+export function consoleRefusalText(reply: Exclude<ConsoleReply<unknown>, { ok: true }>): string {
+  if (reply.refusal === 'not_linked') return CONSOLE_NOT_LINKED;
+  if (reply.refusal === 'passkey_required') return CONSOLE_PASSKEY_REQUIRED;
+  if ('code' in reply && reply.code) {
+    const text = String(reply.error ?? '').slice(0, CONSOLE_ERROR_MAX);
+    return reply.ref ? `${text} (${reply.code}.${reply.ref})` : text;
+  }
+  const ref = 'ref' in reply && reply.ref ? ` (ref ${reply.ref})` : '';
+  return `Something went wrong running that in the console${ref}.`;
+}
+
+/** finish() for a console subcommand: never throws, always answers. */
+function consoleFinish(work: () => Promise<string>): BotResponse {
+  return {
+    type: 5,
+    data: { flags: 64 },
+    finish: async () => {
+      try {
+        return consoleLine(await work());
+      } catch (error) {
+        if (error instanceof ConsoleNotConfiguredError) return consoleLine(CONSOLE_NOT_CONFIGURED);
+        if (error instanceof ConsoleNotAvailableError) return consoleLine(CONSOLE_NOT_AVAILABLE);
+        console.error('[bot] console command failed:', error);
+        return consoleLine(CONSOLE_UNREACHABLE);
+      }
+    },
+  };
+}
+
+function stringOption(options: CommandOption[] | undefined, name: string): string | null {
+  const value = option(options, name);
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+/** "7:00" or "19:00" as "07:00"/"19:00", or null when it is not a time. */
+function clockTime(value: string): string | null {
+  const m = TIME_PATTERN.exec(value);
+  if (!m) return null;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour > 23 || minute > 59) return null;
+  return `${String(hour).padStart(2, '0')}:${m[2]}`;
+}
+
+function textModal(input: {
+  customId: string;
+  title: string;
+  fieldId: string;
+  label: string;
+  placeholder: string;
+  minLength: number;
+  maxLength: number;
+}): BotResponse {
+  return {
+    type: 9,
+    data: {
+      custom_id: input.customId,
+      title: input.title.slice(0, 45),
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: input.fieldId,
+              label: input.label.slice(0, 45),
+              placeholder: input.placeholder.slice(0, 100),
+              style: 2,
+              min_length: input.minLength,
+              max_length: input.maxLength,
+              required: true,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface ConsoleSession {
+  id: string;
+  label: string;
+  status: string;
+  track: string;
+  editInput: Record<string, unknown>;
+}
+
+interface ConsoleEvent {
+  id: string;
+  label: string;
+  status: string;
+  editInput: Record<string, unknown>;
+}
+
+function actionPath(name: string): string {
+  return `/api/discord/actions/${name}`;
+}
+
+/** /session. See the section note above for how it acknowledges. */
+export function handleSessionAdmin(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): BotResponse {
+  const callerId = context.discordUserId;
+  if (!callerId) return consoleLine("I couldn't tell who ran that. Try again.");
+  if (!process.env.ADMIN_API_URL) return consoleLine(CONSOLE_NOT_CONFIGURED);
+
+  const chosen = subcommand(options);
+  const sessionId = stringOption(chosen.options, 'session');
+  if (chosen.name !== 'create' && chosen.name !== 'list' && (!sessionId || !UUID_PATTERN.test(sessionId))) {
+    return consoleLine('Pick a session from the list.');
+  }
+
+  switch (chosen.name) {
+    case 'archive':
+      return textModal({
+        customId: `${CONSOLE_MODAL_PREFIX}sarchive:${sessionId}`,
+        title: 'Archive this session',
+        fieldId: 'reason',
+        label: 'Reason (goes in the club audit log)',
+        placeholder: 'Archiving closes the session and ends check-in for it.',
+        minLength: REASON_MIN,
+        maxLength: 500,
+      });
+    case 'delete':
+      return textModal({
+        customId: `${CONSOLE_MODAL_PREFIX}sdelete:${sessionId}`,
+        title: 'Delete this session',
+        fieldId: 'reason',
+        label: 'Reason (goes in the club audit log)',
+        placeholder: 'This also deletes every RSVP, attendance mark and check-in link for it.',
+        minLength: REASON_MIN,
+        maxLength: 500,
+      });
+    case 'create':
+      return sessionCreate(chosen.options, callerId);
+    case 'edit':
+      return sessionEdit(chosen.options, callerId, sessionId as string);
+    case 'list':
+      return consoleFinish(async () => {
+        const reply = await adminGet<{ sessions: ConsoleSession[] }>('/api/discord/reads/sessions', callerId);
+        if (!reply.ok) return consoleRefusalText(reply);
+        if (reply.data.sessions.length === 0) return 'No open sessions coming up.';
+        return `**Upcoming open sessions**\n${reply.data.sessions.map((s) => `- ${s.label}`).join('\n')}`;
+      });
+    case 'attendance':
+      return consoleFinish(async () => {
+        const reply = await adminGet<{
+          session: { id: string; label: string } | null;
+          going?: number;
+          checkedIn?: string[];
+        }>(`/api/discord/reads/session-attendance?id=${sessionId}`, callerId);
+        if (!reply.ok) return consoleRefusalText(reply);
+        if (!reply.data.session) return 'That session no longer exists.';
+        const names = reply.data.checkedIn ?? [];
+        return (
+          `**${reply.data.session.label}**\n` +
+          `Going: ${reply.data.going ?? 0}\n` +
+          `Checked in: ${names.length}${names.length > 0 ? `\n${names.map((n) => `- ${n}`).join('\n')}` : ''}`
+        ).slice(0, 1900);
+      });
+    case 'checkin': {
+      const rotate = option(chosen.options, 'rotate') === true;
+      return consoleFinish(async () => {
+        const reply = await adminSend<string>(
+          actionPath(rotate ? 'rotateSessionCheckinToken' : 'getOrCreateSessionCheckinToken'),
+          { discordUserId: callerId, args: [sessionId] }
+        );
+        if (!reply.ok) return consoleRefusalText(reply);
+        const publicBase = process.env.APP_PUBLIC_URL;
+        if (!publicBase) return 'The check-in link exists, but APP_PUBLIC_URL is not set on this bot.';
+        // A CREDENTIAL. Only ever sent ephemerally, to the exec who asked.
+        return (
+          `${rotate ? 'New check-in link (the old one no longer works):' : 'Check-in link:'}\n` +
+          `${publicBase.replace(/\/+$/, '')}/checkin/${reply.data}\n` +
+          'Anyone with this link can check in. Show it as a QR at the door; do not post it in a channel.'
+        );
+      });
+    }
+    default:
+      return consoleLine('Unknown subcommand.');
+  }
+}
+
+function sessionCreate(options: CommandOption[] | undefined, callerId: string): BotResponse {
+  const date = stringOption(options, 'date');
+  const start = clockTime(stringOption(options, 'start') ?? '');
+  const end = clockTime(stringOption(options, 'end') ?? '');
+  const location = stringOption(options, 'location');
+  const track = stringOption(options, 'track');
+  const repeatUntil = stringOption(options, 'repeat_weekly_until');
+  if (!date || !DATE_PATTERN.test(date)) return consoleLine('The date has to be YYYY-MM-DD.');
+  if (!start || !end) return consoleLine('Start and end have to be 24-hour times, like 19:00.');
+  if (!location) return consoleLine('Say where the session is.');
+  if (repeatUntil && !DATE_PATTERN.test(repeatUntil)) {
+    return consoleLine('repeat_weekly_until has to be YYYY-MM-DD.');
+  }
+  const notes = stringOption(options, 'notes');
+  const input = {
+    name: stringOption(options, 'name') ?? 'Practice Session',
+    date,
+    time: start,
+    end_time: end,
+    location,
+    ...(notes ? { notes } : {}),
+    track: track ?? 'all',
+    ...(repeatUntil ? { repeat_until: repeatUntil, repeat_frequency: 'weekly' } : {}),
+  };
+  return consoleFinish(async () => {
+    const reply = await adminSend<{ sessions: { id: string; date: string }[]; count: number }>(
+      actionPath('createSession'),
+      { discordUserId: callerId, args: [input] }
+    );
+    if (!reply.ok) return consoleRefusalText(reply);
+    const dates = reply.data.sessions.map((s) => s.date).join(', ');
+    return `Created ${reply.data.count} session${reply.data.count === 1 ? '' : 's'}: ${dates}`.slice(0, 1900);
+  });
+}
+
+function sessionEdit(options: CommandOption[] | undefined, callerId: string, sessionId: string): BotResponse {
+  const reason = stringOption(options, 'reason') ?? '';
+  if (reason.length < REASON_MIN) return consoleLine(`The reason needs at least ${REASON_MIN} characters.`);
+  const date = stringOption(options, 'date');
+  const startText = stringOption(options, 'start');
+  const endText = stringOption(options, 'end');
+  const start = startText ? clockTime(startText) : null;
+  const end = endText ? clockTime(endText) : null;
+  if (date && !DATE_PATTERN.test(date)) return consoleLine('The date has to be YYYY-MM-DD.');
+  if ((startText && !start) || (endText && !end)) {
+    return consoleLine('Start and end have to be 24-hour times, like 19:00.');
+  }
+  const overlay: Record<string, string> = {};
+  if (date) overlay.date = date;
+  if (start) overlay.time = start;
+  if (end) overlay.end_time = end;
+  for (const name of ['location', 'track', 'name', 'notes']) {
+    const value = stringOption(options, name);
+    if (value) overlay[name] = value;
+  }
+  if (Object.keys(overlay).length === 0) return consoleLine('Fill in at least one thing to change.');
+
+  return consoleFinish(async () => {
+    // The console hands back the session as the exact input updateSession
+    // takes, so only what the exec typed is overlaid; nothing is blanked.
+    const current = await adminGet<{ sessions: ConsoleSession[] }>(
+      `/api/discord/reads/sessions?id=${sessionId}`,
+      callerId
+    );
+    if (!current.ok) return consoleRefusalText(current);
+    const row = current.data.sessions[0];
+    if (!row) return 'That session no longer exists.';
+    const reply = await adminSend<void>(actionPath('updateSession'), {
+      discordUserId: callerId,
+      args: [sessionId, { ...row.editInput, ...overlay }, reason],
+    });
+    if (!reply.ok) return consoleRefusalText(reply);
+    return `Updated: ${row.label}`;
+  });
+}
+
+/** /event. Same shape as /session. */
+export function handleEventAdmin(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): BotResponse {
+  const callerId = context.discordUserId;
+  if (!callerId) return consoleLine("I couldn't tell who ran that. Try again.");
+  if (!process.env.ADMIN_API_URL) return consoleLine(CONSOLE_NOT_CONFIGURED);
+
+  const chosen = subcommand(options);
+  const eventId = stringOption(chosen.options, 'event');
+  if (chosen.name !== 'create' && chosen.name !== 'list' && (!eventId || !UUID_PATTERN.test(eventId))) {
+    return consoleLine('Pick an event from the list.');
+  }
+
+  switch (chosen.name) {
+    case 'cancel':
+      return textModal({
+        customId: `${CONSOLE_MODAL_PREFIX}ecancel:${eventId}`,
+        title: 'Cancel this event',
+        fieldId: 'reason',
+        label: 'Reason (the people signed up see it)',
+        placeholder: 'Everybody signed up is told it is cancelled.',
+        minLength: 1,
+        maxLength: 500,
+      });
+    case 'delete':
+      return textModal({
+        customId: `${CONSOLE_MODAL_PREFIX}edelete:${eventId}`,
+        title: 'Delete this event',
+        fieldId: 'confirm',
+        label: 'Type DELETE to confirm',
+        placeholder: 'Only an event nobody has signed up for can be deleted.',
+        minLength: 6,
+        maxLength: 6,
+      });
+    case 'create':
+      return eventCreate(chosen.options, callerId);
+    case 'publish':
+      return consoleFinish(async () => {
+        const current = await adminGet<{ events: ConsoleEvent[] }>(
+          `/api/discord/reads/events?id=${eventId}`,
+          callerId
+        );
+        if (!current.ok) return consoleRefusalText(current);
+        const row = current.data.events[0];
+        if (!row) return 'That event no longer exists.';
+        if (row.status === 'published') return `Already published: ${row.label}`;
+        if (row.status === 'cancelled') return 'A cancelled event cannot be published.';
+        const reply = await adminSend<void>(actionPath('updateClubEvent'), {
+          discordUserId: callerId,
+          args: [eventId, { ...row.editInput, publish: true }],
+        });
+        if (!reply.ok) return consoleRefusalText(reply);
+        return `Published: ${row.label}`;
+      });
+    case 'list':
+      return consoleFinish(async () => {
+        const reply = await adminGet<{ events: ConsoleEvent[] }>('/api/discord/reads/events', callerId);
+        if (!reply.ok) return consoleRefusalText(reply);
+        if (reply.data.events.length === 0) return 'No club events coming up.';
+        return `**Upcoming club events**\n${reply.data.events.map((e) => `- ${e.label}`).join('\n')}`;
+      });
+    case 'signups':
+      return consoleFinish(async () => {
+        const reply = await adminGet<{
+          event: { id: string; label: string; capacity: number | null } | null;
+          signups?: string[];
+        }>(`/api/discord/reads/event-signups?id=${eventId}`, callerId);
+        if (!reply.ok) return consoleRefusalText(reply);
+        if (!reply.data.event) return 'That event no longer exists.';
+        const names = reply.data.signups ?? [];
+        const cap = reply.data.event.capacity;
+        return (
+          `**${reply.data.event.label}**\n` +
+          `Signed up: ${names.length}${cap ? ` of ${cap}` : ''}` +
+          (names.length > 0 ? `\n${names.map((n) => `- ${n}`).join('\n')}` : '')
+        ).slice(0, 1900);
+      });
+    default:
+      return consoleLine('Unknown subcommand.');
+  }
+}
+
+function eventCreate(options: CommandOption[] | undefined, callerId: string): BotResponse {
+  const title = stringOption(options, 'title');
+  const kind = stringOption(options, 'kind');
+  const starts = WALL_CLOCK_PATTERN.exec(stringOption(options, 'starts') ?? '');
+  const endsText = stringOption(options, 'ends');
+  const ends = endsText ? WALL_CLOCK_PATTERN.exec(endsText) : null;
+  if (!title || !kind) return consoleLine('An event needs a title and a kind.');
+  if (!starts) return consoleLine('starts has to be YYYY-MM-DD HH:MM, in club time.');
+  if (endsText && !ends) return consoleLine('ends has to be YYYY-MM-DD HH:MM, in club time.');
+  const capacity = option(options, 'capacity');
+  const cost = option(options, 'cost');
+  const publish = option(options, 'publish') === true;
+  // clubEventSchema is strict and every field is present: an absent optional
+  // is an explicit null, never a missing key.
+  const input = {
+    title,
+    kind,
+    description: stringOption(options, 'description'),
+    location: stringOption(options, 'location'),
+    starts_at: `${starts[1]}T${starts[2]}`,
+    ends_at: ends ? `${ends[1]}T${ends[2]}` : null,
+    signup_opens_at: null,
+    signup_closes_at: null,
+    capacity: typeof capacity === 'number' ? capacity : null,
+    cost_dollars: typeof cost === 'number' ? cost : null,
+    publish,
+  };
+  return consoleFinish(async () => {
+    const reply = await adminSend<{ id: string }>(actionPath('createClubEvent'), {
+      discordUserId: callerId,
+      args: [input],
+    });
+    if (!reply.ok) return consoleRefusalText(reply);
+    return publish
+      ? `Published: ${title}. Members can sign up now.`
+      : `Saved as a draft: ${title}. Publish it with /event publish when it is ready.`;
+  });
+}
+
+export function isConsoleModal(customId: string | undefined | null): boolean {
+  return typeof customId === 'string' && customId.startsWith(CONSOLE_MODAL_PREFIX);
+}
+
+/**
+ * A submitted /session or /event modal: `cadm:<action>:<uuid>`. Checked here
+ * without a network call, then acknowledged ephemerally and finished like the
+ * subcommands, because the console write can outlast the submit's 3 seconds.
+ */
+export function handleConsoleModal(
+  customId: string,
+  components: ModalComponent[] | undefined,
+  context: InteractionContext
+): BotResponse {
+  const callerId = context.discordUserId;
+  if (!callerId) return consoleLine("I couldn't tell who sent that. Try again.");
+  if (!process.env.ADMIN_API_URL) return consoleLine(CONSOLE_NOT_CONFIGURED);
+  const [, action, id] = customId.split(':');
+  if (!id || !UUID_PATTERN.test(id)) return consoleLine('That form is from an older version. Run the command again.');
+  const reason = modalValue(components, 'reason').trim();
+
+  switch (action) {
+    case 'sarchive':
+    case 'sdelete': {
+      if (reason.length < REASON_MIN) return consoleLine(`The reason needs at least ${REASON_MIN} characters.`);
+      const archiving = action === 'sarchive';
+      return consoleFinish(async () => {
+        const reply = await adminSend<void>(actionPath(archiving ? 'archiveSession' : 'deleteSession'), {
+          discordUserId: callerId,
+          args: [id, reason],
+        });
+        if (!reply.ok) return consoleRefusalText(reply);
+        return archiving ? 'Session archived.' : 'Session deleted, with its RSVPs and attendance.';
+      });
+    }
+    case 'ecancel':
+      return consoleFinish(async () => {
+        const reply = await adminSend<void>(actionPath('cancelClubEvent'), {
+          discordUserId: callerId,
+          args: [id, reason],
+        });
+        if (!reply.ok) return consoleRefusalText(reply);
+        return 'Event cancelled. Everybody signed up has been told.';
+      });
+    case 'edelete': {
+      if (modalValue(components, 'confirm').trim().toUpperCase() !== 'DELETE') {
+        return consoleLine('Nothing was deleted. Type DELETE to confirm.');
+      }
+      return consoleFinish(async () => {
+        // Said in words before the console refuses it without a code: an event
+        // with sign-ups is cancelled, never deleted.
+        const signups = await adminGet<{ event: unknown; signups?: string[] }>(
+          `/api/discord/reads/event-signups?id=${id}`,
+          callerId
+        );
+        if (!signups.ok) return consoleRefusalText(signups);
+        if ((signups.data.signups ?? []).length > 0) {
+          return 'People have signed up for this event, so it cannot be deleted. Use `/event cancel` so they are told.';
+        }
+        const reply = await adminSend<void>(actionPath('deleteClubEvent'), {
+          discordUserId: callerId,
+          args: [id],
+        });
+        if (!reply.ok) return consoleRefusalText(reply);
+        return 'Event deleted.';
+      });
+    }
+    default:
+      return consoleLine('That form is from an older version. Run the command again.');
+  }
+}
+
+/** The /session pickers: the session itself, or a location used before. */
+export async function handleSessionAutocomplete(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const empty = { type: 8, data: { choices: [] as { name: string; value: string }[] } };
+  if (!context.discordUserId || !process.env.ADMIN_API_URL) return empty;
+  const chosen = subcommand(options);
+  const focused = chosen.options?.find((o) => o.focused);
+  const typed = encodeURIComponent(String(focused?.value ?? '').trim().slice(0, 80));
+  try {
+    if (focused?.name === 'session') {
+      const reply = await adminGet<{ sessions: ConsoleSession[] }>(
+        `/api/discord/reads/sessions?q=${typed}`,
+        context.discordUserId,
+        CONSOLE_PICKER_TIMEOUT_MS
+      );
+      if (!reply.ok) return empty;
+      return {
+        type: 8,
+        data: {
+          choices: reply.data.sessions
+            .slice(0, SELECT_OPTIONS_MAX)
+            .map((s) => ({ name: s.label.slice(0, 100), value: s.id })),
+        },
+      };
+    }
+    if (focused?.name === 'location') {
+      const reply = await adminGet<{ locations: string[] }>(
+        `/api/discord/reads/locations?q=${typed}`,
+        context.discordUserId,
+        CONSOLE_PICKER_TIMEOUT_MS
+      );
+      if (!reply.ok) return empty;
+      return {
+        type: 8,
+        data: {
+          choices: reply.data.locations
+            .slice(0, SELECT_OPTIONS_MAX)
+            .map((label) => ({ name: label.slice(0, 100), value: label.slice(0, 100) })),
+        },
+      };
+    }
+  } catch (error) {
+    console.error('[bot] session picker failed:', error instanceof Error ? error.message : 'unknown');
+  }
+  return empty;
+}
+
+/** The /event picker. */
+export async function handleEventAutocomplete(
+  options: CommandOption[] | undefined,
+  context: InteractionContext
+): Promise<BotResponse> {
+  const empty = { type: 8, data: { choices: [] as { name: string; value: string }[] } };
+  if (!context.discordUserId || !process.env.ADMIN_API_URL) return empty;
+  const chosen = subcommand(options);
+  const focused = chosen.options?.find((o) => o.focused);
+  if (focused?.name !== 'event') return empty;
+  const typed = encodeURIComponent(String(focused.value ?? '').trim().slice(0, 80));
+  try {
+    const reply = await adminGet<{ events: ConsoleEvent[] }>(
+      `/api/discord/reads/events?q=${typed}`,
+      context.discordUserId,
+      CONSOLE_PICKER_TIMEOUT_MS
+    );
+    if (!reply.ok) return empty;
+    return {
+      type: 8,
+      data: {
+        choices: reply.data.events
+          .slice(0, SELECT_OPTIONS_MAX)
+          .map((e) => ({ name: e.label.slice(0, 100), value: e.id })),
+      },
+    };
+  } catch (error) {
+    console.error('[bot] event picker failed:', error instanceof Error ? error.message : 'unknown');
+    return empty;
+  }
+}
+
 export async function dispatch(
   name: string,
   options: CommandOption[] | undefined,
@@ -5709,6 +6537,12 @@ export async function dispatch(
         return openSignupModal();
       case 'receipt':
         return await handleReceipt(options, context);
+      case 'schedule':
+        return await handleSchedule(context);
+      case 'session':
+        return handleSessionAdmin(options, context);
+      case 'event':
+        return handleEventAdmin(options, context);
       default:
         return ephemeral('Unknown command.');
     }
