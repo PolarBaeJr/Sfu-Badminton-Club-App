@@ -7,11 +7,14 @@ import {
   formatDate,
   formatTime,
   utcToClubWallClock,
+  TOURNAMENT_EVENT_TYPE_LABELS,
   type ClubEventInput,
   type ClubEventKind,
+  type TournamentEventType,
 } from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { discordActorStore, resolveDiscordActor } from '@/lib/discord-actor';
+import { isWaivedFee } from '@/lib/fee-status';
 import { isAuthorizedDiscordService, discordServiceUnauthorized } from '@/lib/discord-service-auth';
 import type { Capability } from '@/lib/permissions';
 
@@ -267,6 +270,306 @@ async function readEventSignups(adminClient: AdminClient, params: URLSearchParam
   };
 }
 
+// ---- tournaments (/tourney) -------------------------------------------------
+//
+// Every per-tournament read is scoped in two steps: the tournament's event ids
+// first, then `.in('event_id', ids)`. An embedded filter without !inner would
+// quietly return every tournament's rows.
+
+type TournamentRow = {
+  id: string;
+  name: string;
+  start_date: string;
+  end_date: string | null;
+  status: string;
+  suspended_at: string | null;
+};
+
+const STATUS_WORDS: Record<string, string> = {
+  draft: 'Draft',
+  active: 'Active',
+  completed: 'Completed',
+  archived: 'Archived',
+};
+
+function tournamentLabel(t: TournamentRow): string {
+  const dates = t.end_date && t.end_date !== t.start_date
+    ? `${formatDate(t.start_date)} to ${formatDate(t.end_date)}`
+    : formatDate(t.start_date);
+  return [t.name, dates, STATUS_WORDS[t.status] ?? t.status, t.suspended_at ? 'Suspended' : null]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+async function readTournaments(adminClient: AdminClient, params: URLSearchParams): Promise<ReadResult> {
+  const q = (params.get('q') ?? '').trim().toLowerCase().slice(0, 80);
+  const { data, error } = await adminClient
+    .from('tournaments')
+    .select('id, name, start_date, end_date, status, suspended_at')
+    .neq('status', 'archived')
+    .order('start_date', { ascending: false })
+    .limit(60);
+  if (error) return failed('tournaments', error);
+  const rows = ((data ?? []) as TournamentRow[]).filter(
+    (t) => !q || tournamentLabel(t).toLowerCase().includes(q),
+  );
+  return {
+    ok: true,
+    data: {
+      tournaments: rows.slice(0, CHOICES_MAX).map((t) => ({
+        id: t.id,
+        label: tournamentLabel(t),
+        status: t.status,
+        suspended: t.suspended_at !== null,
+      })),
+    },
+  };
+}
+
+type EventRef = { id: string; event_type: string; status: string };
+
+async function tournamentEvents(
+  adminClient: AdminClient,
+  tournamentId: string,
+): Promise<{ ok: true; events: Map<string, EventRef> } | { ok: false; error: { message: string } }> {
+  const { data, error } = await adminClient
+    .from('tournament_events')
+    .select('id, event_type, status')
+    .eq('tournament_id', tournamentId);
+  if (error) return { ok: false, error };
+  return { ok: true, events: new Map(((data ?? []) as EventRef[]).map((e) => [e.id, e])) };
+}
+
+function eventName(events: Map<string, EventRef>, eventId: string): string {
+  const type = events.get(eventId)?.event_type;
+  return type ? TOURNAMENT_EVENT_TYPE_LABELS[type as TournamentEventType] ?? type : 'Event';
+}
+
+type NameEmbed = { full_name: string | null } | { full_name: string | null }[] | null;
+
+function embeddedName(embed: NameEmbed): string | null {
+  const one = Array.isArray(embed) ? embed[0] : embed;
+  return one?.full_name ?? null;
+}
+
+type ParticipantRow = { id: string; event_id: string; status: string; player: NameEmbed };
+type PairRow = {
+  id: string;
+  event_id: string;
+  status: string;
+  pair_name: string | null;
+  external1_name: string | null;
+  external2_name: string | null;
+  player1: NameEmbed;
+  player2: NameEmbed;
+};
+
+function pairName(p: PairRow): string {
+  const names = [embeddedName(p.player1) ?? p.external1_name, embeddedName(p.player2) ?? p.external2_name]
+    .filter(Boolean)
+    .join(' & ');
+  return names || p.pair_name || 'A pair';
+}
+
+/** Every entry in these events: singles entrants and pairs, with names. */
+async function readEntryRows(adminClient: AdminClient, eventIds: string[]) {
+  const [participantRes, pairRes] = await Promise.all([
+    adminClient
+      .from('tournament_participants')
+      .select('id, event_id, status, player:players!player_id(full_name)')
+      .in('event_id', eventIds),
+    adminClient
+      .from('tournament_pairs')
+      .select(
+        'id, event_id, status, pair_name, external1_name, external2_name, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)',
+      )
+      .in('event_id', eventIds),
+  ]);
+  return { participantRes, pairRes };
+}
+
+function statusWords(status: string): string {
+  return status.replace(/_/g, ' ');
+}
+
+async function readTournamentEntries(adminClient: AdminClient, params: URLSearchParams): Promise<ReadResult> {
+  const tournamentId = params.get('tournamentId') ?? '';
+  if (!UUID.test(tournamentId)) return { ok: true, data: { entries: [] } };
+  const q = (params.get('q') ?? '').trim().toLowerCase().slice(0, 80);
+
+  const events = await tournamentEvents(adminClient, tournamentId);
+  if (!events.ok) return failed('tournament-entries', events.error);
+  const eventIds = [...events.events.keys()];
+  if (eventIds.length === 0) return { ok: true, data: { entries: [] } };
+
+  const { participantRes, pairRes } = await readEntryRows(adminClient, eventIds);
+  if (participantRes.error) return failed('tournament-entries', participantRes.error);
+  if (pairRes.error) return failed('tournament-entries', pairRes.error);
+
+  const entries = [
+    ...((participantRes.data ?? []) as unknown as ParticipantRow[]).map((p) => ({
+      value: `p:${p.id}`,
+      name: embeddedName(p.player) ?? 'A member',
+      label: [embeddedName(p.player) ?? 'A member', eventName(events.events, p.event_id), statusWords(p.status)].join(' · '),
+    })),
+    ...((pairRes.data ?? []) as unknown as PairRow[]).map((p) => ({
+      value: `pr:${p.id}`,
+      name: pairName(p),
+      label: [pairName(p), eventName(events.events, p.event_id), statusWords(p.status)].join(' · '),
+    })),
+  ]
+    .filter((e) => !q || e.label.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, CHOICES_MAX)
+    .map((e) => ({ value: e.value, label: e.label.slice(0, 100) }));
+  return { ok: true, data: { entries } };
+}
+
+type MatchRow = {
+  id: string;
+  event_id: string;
+  round_number: number;
+  bracket_position: number;
+  match_number: number | null;
+  match_label: string | null;
+  court: string | null;
+  status: string;
+  is_bye: boolean | null;
+  participant_a_id: string | null;
+  participant_b_id: string | null;
+  pair_a_id: string | null;
+  pair_b_id: string | null;
+};
+
+const MATCH_COLUMNS =
+  'id, event_id, round_number, bracket_position, match_number, match_label, court, status, is_bye, participant_a_id, participant_b_id, pair_a_id, pair_b_id';
+
+const PLAYABLE = ['pending', 'ready', 'live'];
+
+/** "R2 #3", or the staged event's own label. The member draw uses the same rule. */
+function matchRef(m: MatchRow): string {
+  return m.match_label ?? `R${m.round_number} #${m.match_number ?? m.bracket_position + 1}`;
+}
+
+async function readTournamentMatches(adminClient: AdminClient, params: URLSearchParams): Promise<ReadResult> {
+  const tournamentId = params.get('tournamentId') ?? '';
+  if (!UUID.test(tournamentId)) return { ok: true, data: { matches: [] } };
+  const id = params.get('id');
+  if (id !== null && !UUID.test(id)) return { ok: true, data: { matches: [] } };
+  const q = (params.get('q') ?? '').trim().toLowerCase().slice(0, 80);
+
+  const events = await tournamentEvents(adminClient, tournamentId);
+  if (!events.ok) return failed('tournament-matches', events.error);
+  const eventIds = [...events.events.keys()];
+  if (eventIds.length === 0) return { ok: true, data: { matches: [] } };
+
+  // One match by id (any status, for the result echo), or the playable ones.
+  let query = adminClient.from('tournament_matches').select(MATCH_COLUMNS).in('event_id', eventIds);
+  query = id ? query.eq('id', id) : query.in('status', PLAYABLE);
+  const [matchRes, entryRows] = await Promise.all([
+    query.order('round_number', { ascending: true }).order('bracket_position', { ascending: true }).limit(200),
+    readEntryRows(adminClient, eventIds),
+  ]);
+  if (matchRes.error) return failed('tournament-matches', matchRes.error);
+  if (entryRows.participantRes.error) return failed('tournament-matches', entryRows.participantRes.error);
+  if (entryRows.pairRes.error) return failed('tournament-matches', entryRows.pairRes.error);
+
+  const names = new Map<string, string>();
+  for (const p of (entryRows.participantRes.data ?? []) as unknown as ParticipantRow[]) {
+    names.set(p.id, embeddedName(p.player) ?? 'A member');
+  }
+  for (const p of (entryRows.pairRes.data ?? []) as unknown as PairRow[]) names.set(p.id, pairName(p));
+  const side = (entryId: string | null) => (entryId ? names.get(entryId) ?? 'TBD' : 'TBD');
+
+  const matches = ((matchRes.data ?? []) as MatchRow[])
+    .filter((m) => !m.is_bye)
+    .map((m) => {
+      // SIDE A ALWAYS FIRST. /tourney result reads the first number of every
+      // game as side A's, so the label has to put side A first too.
+      const sideA = side(m.pair_a_id ?? m.participant_a_id);
+      const sideB = side(m.pair_b_id ?? m.participant_b_id);
+      const label = [
+        `${eventName(events.events, m.event_id)} ${matchRef(m)}: ${sideA} v ${sideB}`,
+        m.status,
+        m.court ? `Court ${m.court}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      return { id: m.id, label: label.slice(0, 100), sideA, sideB, status: m.status };
+    })
+    .filter((m) => !q || m.label.toLowerCase().includes(q))
+    .slice(0, CHOICES_MAX);
+  return { ok: true, data: { matches } };
+}
+
+async function readTournamentFees(adminClient: AdminClient, params: URLSearchParams): Promise<ReadResult> {
+  const tournamentId = params.get('tournamentId') ?? '';
+  if (!UUID.test(tournamentId)) return { ok: true, data: { fees: [] } };
+  const q = (params.get('q') ?? '').trim().toLowerCase().slice(0, 80);
+
+  const events = await tournamentEvents(adminClient, tournamentId);
+  if (!events.ok) return failed('tournament-fees', events.error);
+  const eventIds = [...events.events.keys()];
+
+  // Who is on the fees page: everyone entered (not withdrawn) and everyone with
+  // an entry-fee row for this tournament, as TournamentFeesPage reads them.
+  const [participantRes, pairRes, feeRes] = await Promise.all([
+    eventIds.length
+      ? adminClient.from('tournament_participants').select('player_id').in('event_id', eventIds).neq('status', 'withdrawn')
+      : Promise.resolve({ data: [], error: null }),
+    eventIds.length
+      ? adminClient.from('tournament_pairs').select('player1_id, player2_id').in('event_id', eventIds).neq('status', 'withdrawn')
+      : Promise.resolve({ data: [], error: null }),
+    adminClient
+      .from('club_fees')
+      .select('player_id, amount_cents, paid_at, method')
+      .eq('tournament_id', tournamentId)
+      .eq('fee_type', 'tournament'),
+  ]);
+  if (participantRes.error) return failed('tournament-fees', participantRes.error);
+  if (pairRes.error) return failed('tournament-fees', pairRes.error);
+  if (feeRes.error) return failed('tournament-fees', feeRes.error);
+
+  type FeeRow = { player_id: string | null; amount_cents: number | null; paid_at: string | null; method: string | null };
+  const feeByPlayer = new Map<string, FeeRow>();
+  for (const f of (feeRes.data ?? []) as FeeRow[]) if (f.player_id) feeByPlayer.set(f.player_id, f);
+  const playerIds = new Set<string>(feeByPlayer.keys());
+  for (const row of (participantRes.data ?? []) as { player_id: string | null }[]) {
+    if (row.player_id) playerIds.add(row.player_id);
+  }
+  for (const row of (pairRes.data ?? []) as { player1_id: string | null; player2_id: string | null }[]) {
+    if (row.player1_id) playerIds.add(row.player1_id);
+    if (row.player2_id) playerIds.add(row.player2_id);
+  }
+  if (playerIds.size === 0) return { ok: true, data: { fees: [] } };
+
+  const { data: players, error: playersError } = await adminClient
+    .from('players')
+    .select('id, full_name')
+    .in('id', [...playerIds].slice(0, 500));
+  if (playersError) return failed('tournament-fees', playersError);
+
+  const money = (cents: number | null) => (cents != null ? `$${(cents / 100).toFixed(2)}` : null);
+  const fees = ((players ?? []) as { id: string; full_name: string | null }[])
+    .map((p) => {
+      const fee = feeByPlayer.get(p.id);
+      const state = !fee
+        ? 'No fee recorded'
+        : isWaivedFee(fee)
+          ? 'Waived'
+          : fee.paid_at
+            ? ['Paid', money(fee.amount_cents), fee.method].filter(Boolean).join(' ')
+            : ['Unpaid', money(fee.amount_cents)].filter(Boolean).join(' ');
+      const name = p.full_name ?? 'A member';
+      return { playerId: p.id, name, paid: Boolean(fee?.paid_at), label: `${name} · ${state}`.slice(0, 100) };
+    })
+    .filter((f) => !q || f.label.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, CHOICES_MAX)
+    .map(({ playerId, label, paid }) => ({ playerId, label, paid }));
+  return { ok: true, data: { fees } };
+}
+
 const READS: Record<
   string,
   { capability: Capability; run: (adminClient: AdminClient, params: URLSearchParams) => Promise<ReadResult> }
@@ -276,6 +579,10 @@ const READS: Record<
   locations: { capability: 'sessions.page', run: readLocations },
   events: { capability: 'events.page', run: readEvents },
   'event-signups': { capability: 'events.signups.read', run: readEventSignups },
+  tournaments: { capability: 'tournaments.page', run: readTournaments },
+  'tournament-entries': { capability: 'tournaments.page', run: readTournamentEntries },
+  'tournament-matches': { capability: 'tournaments.page', run: readTournamentMatches },
+  'tournament-fees': { capability: 'tournaments.fees.read', run: readTournamentFees },
 };
 
 export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
